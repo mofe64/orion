@@ -35,7 +35,7 @@ A link may contain multiple visual elements when it consists of several rigid CA
 ```xml
 <visual>
   <origin
-    xyz="0.0683802 0.000449515 0.192601"
+    xyz="0.06254786 -0.017843185 0.109691"
     rpy="-5.09262e-15 -0.486539 2.83295"/>
 
   <geometry>
@@ -51,7 +51,7 @@ The snippet above contains the visual geometry for one specific CAD part in a li
 3. Rotate it using the RPY values.
 4. Draw the specified STL mesh there.
 
-URDF distances are normally in metres, so our XYZ values are approximately 68.4 mm, 0.45 mm, and 192.6 mm.
+URDF distances are normally in metres, so our XYZ values are approximately 62.5 mm, -17.8 mm, and 109.7 mm.
 
 It is important to note that `xyz` values do not position the entire link in the robot. They position this particular mesh relative to the link's frame.
 
@@ -89,7 +89,7 @@ Inertial properties describe how a link responds to forces and rotational motion
 
 ```xml
 <inertial>
-  <origin xyz="0.0729066 -0.0229022 0.217607"
+  <origin xyz="0.06707426 -0.0411949 0.134697"
           rpy="0 0 0"/>
 
   <mass value="0.234138"/>
@@ -152,15 +152,16 @@ The link frame and inertial frame are conceptually separate coordinate frames. T
 
 ```xml
 <inertial>
-  <origin xyz="0.0729066 -0.0229022 0.217607"
+  <origin xyz="0.06707426 -0.0411949 0.134697"
           rpy="0 0 0"/>
 </inertial>
 ```
 
 ## Orion's Links
 
-Orion has seven links:
+Orion has eight links:
 
+- `base_footprint`
 - `upper_arm_link`
 - `shoulder_mount_link`
 - `base_link`
@@ -169,7 +170,7 @@ Orion has seven links:
 - `head_roll_link`
 - `lamp_head_link`
 
-Five are major mechanical assemblies. `lamp_head_link` also contains the diffuser geometry, and `imu_link` is a tiny dummy link used to provide an IMU coordinate frame.
+Five are major mechanical assemblies. `lamp_head_link` also contains the diffuser geometry. `base_footprint` and `imu_link` are empty links used to provide useful coordinate frames.
 
 ## Joints
 
@@ -186,13 +187,13 @@ For example:
 
 ```xml
 <joint name="shoulder_pitch_joint" type="revolute">
-  <origin xyz="0.00583234 0.0182927 0.08291"
-          rpy="-1.26215 1.5708 0"/>
+  <origin xyz="-0.04111 0 0.0192"
+          rpy="1.57079749794 -0.308646326793 -1.57080018218"/>
 
-  <parent link="upper_arm_link"/>
-  <child link="shoulder_mount_link"/>
+  <parent link="shoulder_mount_link"/>
+  <child link="upper_arm_link"/>
 
-  <axis xyz="0 0 1"/>
+  <axis xyz="-0.3037692089 -0.952745646919 1.11580660844e-06"/>
 
   <limit effort="10"
          velocity="10"
@@ -206,17 +207,17 @@ We can essentially think of a joint as a door hinge attached to the parent link.
 The parent-and-child relationship is set as:
 
 ```xml
-<parent link="upper_arm_link"/>
-<child link="shoulder_mount_link"/>
+<parent link="shoulder_mount_link"/>
+<child link="upper_arm_link"/>
 ```
 
 This means:
 
 ```text
-upper_arm_link -> shoulder_pitch_joint -> shoulder_mount_link
+shoulder_mount_link -> shoulder_pitch_joint -> upper_arm_link
 ```
 
-When `shoulder_pitch_joint` moves, its child, `shoulder_mount_link`, moves relative to the parent. Everything below the child also moves.
+When `shoulder_pitch_joint` moves, its child, `upper_arm_link`, moves relative to the parent. Everything below the child also moves.
 
 The propagation rule is fundamental: moving a joint moves its child link and every descendant of that child. It does not move the parent or the parent's other branches.
 
@@ -236,21 +237,21 @@ The joint origin describes the joint's zero-position frame relative to the paren
 For our `shoulder_pitch_joint` example, the joint is approximately:
 
 ```text
-x = 5.8 mm
-y = 18.3 mm
-z = 82.9 mm
+x = -41.1 mm
+y =   0.0 mm
+z =  19.2 mm
 ```
 
-from the `upper_arm_link` frame. Those XYZ values take us to the joint's pivot point. These measurements are relative to the parent, not the world or the whole robot.
+from the `shoulder_mount_link` frame. Those XYZ values take us to the joint's pivot point. These measurements are relative to the parent, not the world or the whole robot.
 
 ### RPY: How Is the Hinge Oriented?
 
 At the joint location, URDF rotates the joint's coordinate frame:
 
 ```text
-roll  = -72.3° around X
-pitch =  90°   around Y
-yaw   =   0°   around Z
+roll  =  90.0° around X
+pitch = -17.7° around Y
+yaw   = -90.0° around Z
 ```
 
 These values point the joint's coordinate arrows in the correct physical direction. This is necessary because the hinge might be mounted sideways or diagonally. Its rotation axis might not line up with the parent link's original X, Y, or Z axes.
@@ -296,7 +297,13 @@ It is important that these values match the motor/servo specifications.
 
 ## Fixed Joints
 
-Fixed joints allow no movement. In our Orion URDF, we use a fixed joint for our IMU:
+Fixed joints allow no movement. In our Orion URDF, we use fixed joints for our ground-contact and IMU frames:
+
+```xml
+<joint name="base_footprint_joint" type="fixed">
+```
+
+This places `base_link` above `base_footprint` while keeping them rigidly attached.
 
 ```xml
 <joint name="imu_fixed_joint" type="fixed">
