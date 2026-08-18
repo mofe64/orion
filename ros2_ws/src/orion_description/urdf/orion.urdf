@@ -25,36 +25,36 @@
         <mesh filename="package://orion_description/meshes/lamparm__base_elbow.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_驱动__v2 -->
+    <!-- Part servo_horn_driving -->
     <visual>
       <origin xyz="0.08896716 -0.0561013 0.227883" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
-      <material name="金属舵盘_驱动__v2_material">
+      <material name="servo_horn_driving_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="0.08896716 -0.0561013 0.227883" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_从动__v2 -->
+    <!-- Part servo_horn_driven -->
     <visual>
       <origin xyz="0.08484166 -0.0884256 0.20877" rpy="6.73844e-14 -1.27194 2.83295"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
-      <material name="金属舵盘_从动__v2_material">
+      <material name="servo_horn_driven_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="0.08484166 -0.0884256 0.20877" rpy="6.73844e-14 -1.27194 2.83295"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92 -->
@@ -177,36 +177,36 @@
         <mesh filename="package://orion_description/meshes/lamparm__wrist_head.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_驱动__v2_2 -->
+    <!-- Part servo_horn_driving_2 -->
     <visual>
       <origin xyz="-0.05111 0 -0.0078" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
-      <material name="金属舵盘_驱动__v2_2_material">
+      <material name="servo_horn_driving_2_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="-0.05111 0 -0.0078" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_从动__v2_2 -->
+    <!-- Part servo_horn_driven_2 -->
     <visual>
       <origin xyz="-0.03111 0 -0.03985" rpy="-1.5708 7.98655e-15 -3.14159"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
-      <material name="金属舵盘_从动__v2_2_material">
+      <material name="servo_horn_driven_2_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="-0.03111 0 -0.03985" rpy="-1.5708 7.98655e-15 -3.14159"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92_2 -->
@@ -352,36 +352,36 @@
         <mesh filename="package://orion_description/meshes/lamp_base_cover.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_驱动__v2_3 -->
+    <!-- Part servo_horn_driving_3 -->
     <visual>
       <origin xyz="-0.00952746 -0.00303768 -0.027" rpy="1.5708 3.66067e-15 0.308645"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
-      <material name="金属舵盘_驱动__v2_3_material">
+      <material name="servo_horn_driving_3_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="-0.00952746 -0.00303768 -0.027" rpy="1.5708 3.66067e-15 0.308645"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_从动__v2_3 -->
+    <!-- Part servo_horn_driven_3 -->
     <visual>
       <origin xyz="0.00952746 0.00303768 -0.05905" rpy="-1.5708 3.50027e-15 -2.83295"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
-      <material name="金属舵盘_从动__v2_3_material">
+      <material name="servo_horn_driven_3_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="0.00952746 0.00303768 -0.05905" rpy="-1.5708 3.50027e-15 -2.83295"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92_3 -->
@@ -527,36 +527,36 @@
         <mesh filename="package://orion_description/meshes/lamparm__elbow_wrist.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_驱动__v2_4 -->
+    <!-- Part servo_horn_driving_4 -->
     <visual>
       <origin xyz="2.60902e-15 0.158185 -0.003875" rpy="9.61063e-17 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
-      <material name="金属舵盘_驱动__v2_4_material">
+      <material name="servo_horn_driving_4_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="2.60902e-15 0.158185 -0.003875" rpy="9.61063e-17 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_从动__v2_4 -->
+    <!-- Part servo_horn_driven_4 -->
     <visual>
       <origin xyz="3.4972e-15 0.126135 0.016125" rpy="3.14159 1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
-      <material name="金属舵盘_从动__v2_4_material">
+      <material name="servo_horn_driven_4_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="3.4972e-15 0.126135 0.016125" rpy="3.14159 1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92_4 -->
@@ -679,36 +679,36 @@
         <mesh filename="package://orion_description/meshes/lamparm__wrist_head.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_驱动__v2_5 -->
+    <!-- Part servo_horn_driving_5 -->
     <visual>
       <origin xyz="1.60982e-15 -0.0078 -0.05111" rpy="-1.25444e-16 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
-      <material name="金属舵盘_驱动__v2_5_material">
+      <material name="servo_horn_driving_5_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="1.60982e-15 -0.0078 -0.05111" rpy="-1.25444e-16 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driving.stl"/>
       </geometry>
     </collision>
-    <!-- Part 金属舵盘_从动__v2_5 -->
+    <!-- Part servo_horn_driven_5 -->
     <visual>
       <origin xyz="3.88578e-16 -0.03985 -0.03111" rpy="3.14159 1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
-      <material name="金属舵盘_从动__v2_5_material">
+      <material name="servo_horn_driven_5_material">
         <color rgba="0.960784 0.960784 0.964706 1"/>
       </material>
     </visual>
     <collision>
       <origin xyz="3.88578e-16 -0.03985 -0.03111" rpy="3.14159 1.5708 0"/>
       <geometry>
-        <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
+        <mesh filename="package://orion_description/meshes/servo_horn_driven.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92_5 -->
@@ -872,4 +872,69 @@
     <axis xyz="0 0 1"/>
     <limit effort="10" velocity="10" lower="-2.82002" upper="0.321569"/>
   </joint>
+
+  <!-- Standard control interfaces backed by Gazebo simulation. -->
+  <ros2_control name="OrionGazeboSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+
+    <joint name="base_yaw_joint">
+      <command_interface name="position">
+        <param name="min">-5.02103</param>
+        <param name="max">1.26215</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+
+    <joint name="shoulder_pitch_joint">
+      <command_interface name="position">
+        <param name="min">-1.08426</param>
+        <param name="max">2.05734</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+
+    <joint name="elbow_pitch_joint">
+      <command_interface name="position">
+        <param name="min">-2.82002</param>
+        <param name="max">0.321569</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+
+    <joint name="head_roll_joint">
+      <command_interface name="position">
+        <param name="min">-3.78654</param>
+        <param name="max">2.49665</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+
+    <joint name="head_pitch_joint">
+      <command_interface name="position">
+        <param name="min">-0.853337</param>
+        <param name="max">2.28826</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </ros2_control>
+
+  <!-- Gazebo loads controller_manager and the simulated hardware interface. -->
+  <gazebo>
+    <plugin filename="libgz_ros2_control-system.so"
+            name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find orion_description)/config/orion_controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
 </robot>
