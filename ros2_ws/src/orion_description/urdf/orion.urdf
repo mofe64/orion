@@ -5,13 +5,13 @@
   <!-- Link upper_arm_link -->
   <link name="upper_arm_link">
     <inertial>
-      <origin xyz="0.0729066 -0.0229022 0.217607" rpy="0 0 0"/>
+      <origin xyz="0.06707426 -0.0411949 0.134697" rpy="0 0 0"/>
       <mass value="0.234138"/>
       <inertia ixx="0.0010919" ixy="7.35843e-05" ixz="-0.000504692" iyy="0.00129476" iyz="0.000161616" izz="0.000320305"/>
     </inertial>
     <!-- Part lamparm__base_elbow -->
     <visual>
-      <origin xyz="0.0683802 0.000449515 0.192601" rpy="-5.09262e-15 -0.486539 2.83295"/>
+      <origin xyz="0.06254786 -0.017843185 0.109691" rpy="-5.09262e-15 -0.486539 2.83295"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/lamparm__base_elbow.stl"/>
       </geometry>
@@ -20,14 +20,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0683802 0.000449515 0.192601" rpy="-5.09262e-15 -0.486539 2.83295"/>
+      <origin xyz="0.06254786 -0.017843185 0.109691" rpy="-5.09262e-15 -0.486539 2.83295"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/lamparm__base_elbow.stl"/>
       </geometry>
     </collision>
     <!-- Part 金属舵盘_驱动__v2 -->
     <visual>
-      <origin xyz="0.0947995 -0.0378086 0.310793" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.08896716 -0.0561013 0.227883" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
       </geometry>
@@ -36,14 +36,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0947995 -0.0378086 0.310793" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.08896716 -0.0561013 0.227883" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
       </geometry>
     </collision>
     <!-- Part 金属舵盘_从动__v2 -->
     <visual>
-      <origin xyz="0.090674 -0.0701329 0.29168" rpy="6.73844e-14 -1.27194 2.83295"/>
+      <origin xyz="0.08484166 -0.0884256 0.20877" rpy="6.73844e-14 -1.27194 2.83295"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
       </geometry>
@@ -52,14 +52,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.090674 -0.0701329 0.29168" rpy="6.73844e-14 -1.27194 2.83295"/>
+      <origin xyz="0.08484166 -0.0884256 0.20877" rpy="6.73844e-14 -1.27194 2.83295"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92 -->
     <visual>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/pcb_chazuo_92.stl"/>
       </geometry>
@@ -68,14 +68,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/pcb_chazuo_92.stl"/>
       </geometry>
     </collision>
     <!-- Part xg_ziji_16 -->
     <visual>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/xg_ziji_16.stl"/>
       </geometry>
@@ -84,14 +84,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/xg_ziji_16.stl"/>
       </geometry>
     </collision>
     <!-- Part ge_27 -->
     <visual>
-      <origin xyz="0.101068 -0.0278417 0.301237" rpy="1.5708 1.27194 -0.308645"/>
+      <origin xyz="0.09523566 -0.0461344 0.218327" rpy="1.5708 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/ge_27.stl"/>
       </geometry>
@@ -100,14 +100,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.101068 -0.0278417 0.301237" rpy="1.5708 1.27194 -0.308645"/>
+      <origin xyz="0.09523566 -0.0461344 0.218327" rpy="1.5708 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/ge_27.stl"/>
       </geometry>
     </collision>
     <!-- Part sg_ziji_15 -->
     <visual>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/sg_ziji_15.stl"/>
       </geometry>
@@ -116,14 +116,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/sg_ziji_15.stl"/>
       </geometry>
     </collision>
     <!-- Part zk_122 -->
     <visual>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/zk_122.stl"/>
       </geometry>
@@ -132,14 +132,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.110043 -0.0244059 0.276867" rpy="1.71355e-14 1.27194 -0.308645"/>
+      <origin xyz="0.10421066 -0.0426986 0.193957" rpy="1.71355e-14 1.27194 -0.308645"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/zk_122.stl"/>
       </geometry>
     </collision>
     <!-- Part motor_1723_3 -->
     <visual>
-      <origin xyz="0.101964 -0.0458133 0.276499" rpy="-3.14159 0.298859 2.83295"/>
+      <origin xyz="0.09613166 -0.064106 0.193589" rpy="-3.14159 0.298859 2.83295"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/motor_1723_3.stl"/>
       </geometry>
@@ -148,7 +148,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.101964 -0.0458133 0.276499" rpy="-3.14159 0.298859 2.83295"/>
+      <origin xyz="0.09613166 -0.064106 0.193589" rpy="-3.14159 0.298859 2.83295"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/motor_1723_3.stl"/>
       </geometry>
@@ -157,13 +157,13 @@
   <!-- Link shoulder_mount_link -->
   <link name="shoulder_mount_link">
     <inertial>
-      <origin xyz="0.0193636 0.000541554 -0.0196637" rpy="0 0 0"/>
+      <origin xyz="-0.0217464 0.000541554 -0.0004637" rpy="0 0 0"/>
       <mass value="0.0953804"/>
       <inertia ixx="1.16713e-05" ixy="-3.19269e-07" ixz="9.361e-07" iyy="2.19256e-05" iyz="6.98105e-08" izz="1.7794e-05"/>
     </inertial>
     <!-- Part lamparm__wrist_head -->
     <visual>
-      <origin xyz="0.04111 7.30741e-16 -0.0192" rpy="-1.5708 5.39003e-15 1.5708"/>
+      <origin xyz="0 0 0" rpy="-1.5708 5.39003e-15 1.5708"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/lamparm__wrist_head.stl"/>
       </geometry>
@@ -172,14 +172,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.04111 7.30741e-16 -0.0192" rpy="-1.5708 5.39003e-15 1.5708"/>
+      <origin xyz="0 0 0" rpy="-1.5708 5.39003e-15 1.5708"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/lamparm__wrist_head.stl"/>
       </geometry>
     </collision>
     <!-- Part 金属舵盘_驱动__v2_2 -->
     <visual>
-      <origin xyz="-0.01 1.67203e-18 -0.027" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.05111 0 -0.0078" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
       </geometry>
@@ -188,14 +188,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.01 1.67203e-18 -0.027" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.05111 0 -0.0078" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_驱动__v2.stl"/>
       </geometry>
     </collision>
     <!-- Part 金属舵盘_从动__v2_2 -->
     <visual>
-      <origin xyz="0.01 -7.90727e-16 -0.05905" rpy="-1.5708 7.98655e-15 -3.14159"/>
+      <origin xyz="-0.03111 0 -0.03985" rpy="-1.5708 7.98655e-15 -3.14159"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
       </geometry>
@@ -204,14 +204,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.01 -7.90727e-16 -0.05905" rpy="-1.5708 7.98655e-15 -3.14159"/>
+      <origin xyz="-0.03111 0 -0.03985" rpy="-1.5708 7.98655e-15 -3.14159"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/金属舵盘_从动__v2.stl"/>
       </geometry>
     </collision>
     <!-- Part pcb_chazuo_92_2 -->
     <visual>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/pcb_chazuo_92.stl"/>
       </geometry>
@@ -220,14 +220,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/pcb_chazuo_92.stl"/>
       </geometry>
     </collision>
     <!-- Part xg_ziji_16_2 -->
     <visual>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/xg_ziji_16.stl"/>
       </geometry>
@@ -236,14 +236,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/xg_ziji_16.stl"/>
       </geometry>
     </collision>
     <!-- Part ge_27_2 -->
     <visual>
-      <origin xyz="-1.80411e-16 3.21139e-16 -0.0156" rpy="3.14159 -4.06471e-16 5.01029e-15"/>
+      <origin xyz="-0.04111 0 0.0036" rpy="3.14159 -4.06471e-16 5.01029e-15"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/ge_27.stl"/>
       </geometry>
@@ -252,14 +252,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-1.80411e-16 3.21139e-16 -0.0156" rpy="3.14159 -4.06471e-16 5.01029e-15"/>
+      <origin xyz="-0.04111 0 0.0036" rpy="3.14159 -4.06471e-16 5.01029e-15"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/ge_27.stl"/>
       </geometry>
     </collision>
     <!-- Part sg_ziji_15_2 -->
     <visual>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/sg_ziji_15.stl"/>
       </geometry>
@@ -268,14 +268,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/sg_ziji_15.stl"/>
       </geometry>
     </collision>
     <!-- Part zk_122_2 -->
     <visual>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/zk_122.stl"/>
       </geometry>
@@ -284,14 +284,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0255 6.87024e-16 -0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
+      <origin xyz="-0.01561 0 0.0096" rpy="1.5708 3.77385e-32 5.58874e-32"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/zk_122.stl"/>
       </geometry>
     </collision>
     <!-- Part motor_1723_3_2 -->
     <visual>
-      <origin xyz="0.0255 0.00125 -0.03245" rpy="1.5708 -1.20176e-15 1.5708"/>
+      <origin xyz="-0.01561 0.00125 -0.01325" rpy="1.5708 -1.20176e-15 1.5708"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/motor_1723_3.stl"/>
       </geometry>
@@ -300,12 +300,19 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0255 0.00125 -0.03245" rpy="1.5708 -1.20176e-15 1.5708"/>
+      <origin xyz="-0.01561 0.00125 -0.01325" rpy="1.5708 -1.20176e-15 1.5708"/>
       <geometry>
         <mesh filename="package://orion_description/meshes/motor_1723_3.stl"/>
       </geometry>
     </collision>
   </link>
+  <!-- Ground-contact reference frame -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 0.0418" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
   <!-- Link base_link -->
   <link name="base_link">
     <inertial>
@@ -474,35 +481,27 @@
       </geometry>
     </collision>
   </link>
-  <!-- Frame imu_link (dummy link + fixed joint) -->
-  <link name="imu_link">
-    <origin xyz="0 0 0" rpy="0 -0 0"/>
-    <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <mass value="1e-9"/>
-      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
-    </inertial>
-  </link>
+  <!-- Frame imu_link (empty link + fixed joint) -->
+  <link name="imu_link"/>
   <joint name="imu_fixed_joint" type="fixed">
     <origin xyz="-3.4944e-17 4.02192e-17 -0.0378" rpy="3.14159 -5.41191e-15 1.87944"/>
     <parent link="base_link"/>
     <child link="imu_link"/>
-    <axis xyz="0 0 0"/>
   </joint>
-  <!-- Joint from shoulder_mount_link to base_link -->
+  <!-- Joint from base_link to shoulder_mount_link -->
   <joint name="base_yaw_joint" type="revolute">
-    <origin xyz="0.04111 7.30741e-16 -0.0192" rpy="-1.5708 5.39003e-15 1.5708"/>
-    <parent link="shoulder_mount_link"/>
-    <child link="base_link"/>
-    <axis xyz="0 0 1"/>
+    <origin xyz="0 0 0" rpy="-2.3561944902 1.5707911321 2.3561944902"/>
+    <parent link="base_link"/>
+    <child link="shoulder_mount_link"/>
+    <axis xyz="0.999999999987 3.67320510325e-06 3.67320510333e-06"/>
     <limit effort="10" velocity="10" lower="-5.02103" upper="1.26215"/>
   </joint>
-  <!-- Joint from upper_arm_link to shoulder_mount_link -->
+  <!-- Joint from shoulder_mount_link to upper_arm_link -->
   <joint name="shoulder_pitch_joint" type="revolute">
-    <origin xyz="0.00583234 0.0182927 0.08291" rpy="-1.26215 1.5708 0"/>
-    <parent link="upper_arm_link"/>
-    <child link="shoulder_mount_link"/>
-    <axis xyz="0 0 1"/>
+    <origin xyz="-0.04111 0 0.0192" rpy="1.57079749794 -0.308646326793 -1.57080018218"/>
+    <parent link="shoulder_mount_link"/>
+    <child link="upper_arm_link"/>
+    <axis xyz="-0.3037692089 -0.952745646919 1.11580660844e-06"/>
     <limit effort="10" velocity="10" lower="-1.08426" upper="2.05734"/>
   </joint>
   <!-- Link forearm_link -->
@@ -867,7 +866,7 @@
   </joint>
   <!-- Joint from upper_arm_link to forearm_link -->
   <joint name="elbow_pitch_joint" type="revolute">
-    <origin xyz="0.105806 -0.0129789 0.301237" rpy="1.5708 -1.54809 -0.308645"/>
+    <origin xyz="0.09997366 -0.0312716 0.218327" rpy="1.5708 -1.54809 -0.308645"/>
     <parent link="upper_arm_link"/>
     <child link="forearm_link"/>
     <axis xyz="0 0 1"/>
