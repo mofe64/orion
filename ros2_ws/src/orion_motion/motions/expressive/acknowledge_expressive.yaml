@@ -1,0 +1,18 @@
+format_version: 1
+
+motion:
+  name: acknowledge_expressive
+  description: Pause, nod once, and settle back into the attentive pose.
+  keyframes:
+    - pose: attentive
+      duration: 0.25
+      hold: 0.10
+    - pose: acknowledge_nod_down
+      duration: 0.25
+      hold: 0.12
+    - pose: acknowledge_nod_rebound
+      duration: 0.20
+      hold: 0.06
+    - pose: attentive
+      duration: 0.30
+      hold: 0.45

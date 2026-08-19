@@ -1,0 +1,9 @@
+format_version: 1
+
+motion:
+  name: target_unreachable
+  description: Remain attentive after a higher-level target-rejection result.
+  keyframes:
+    - pose: attentive
+      duration: 0.20
+      hold: 0.65

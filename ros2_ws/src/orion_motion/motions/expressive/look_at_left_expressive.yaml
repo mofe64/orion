@@ -1,0 +1,18 @@
+format_version: 1
+
+motion:
+  name: look_at_left_expressive
+  description: Notice, lean toward, and settle on the predefined left target.
+  keyframes:
+    - pose: look_left_anticipation
+      duration: 0.25
+      hold: 0.12
+    - pose: look_left_lean
+      duration: 0.45
+      hold: 0.08
+    - pose: look_left_overshoot
+      duration: 0.75
+      hold: 0.10
+    - pose: look_left
+      duration: 0.25
+      hold: 0.50

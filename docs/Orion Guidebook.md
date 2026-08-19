@@ -4,7 +4,7 @@
 
 **Project:** Orion  
 **Document type:** High-level development roadmap  
-**Current position:** Simulation foundation complete; motion-system development next  
+**Current position:** Motion foundation complete; motion quality and simulator parity next
 **Long-term goal:** Build a safe, useful, expressive robotic lamp inspired by LeLamp, Watti, Ongo, and the ELEGNT movement-design framework.
 
 ---
@@ -490,8 +490,8 @@ Local Orion scene player
 |---:|---|---|
 | 0 | Product and interaction charter | Partially defined |
 | 1 | Robot description and simulation foundation | **Complete** |
-| 2 | Motion foundation and first expressive behaviours | **Next** |
-| 3 | Motion quality, safety, and simulator parity | Planned |
+| 2 | Motion foundation and first expressive behaviours | **Complete** |
+| 3 | Motion quality, safety, and simulator parity | **Next** |
 | 4 | Task-space control and target pointing | Planned |
 | 5 | Lighting and multimodal scene runtime | Planned |
 | 6 | Orion Studio motion-and-light editor | Planned |

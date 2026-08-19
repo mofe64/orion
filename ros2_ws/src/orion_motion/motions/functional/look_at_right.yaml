@@ -1,0 +1,9 @@
+format_version: 1
+
+motion:
+  name: look_at_right
+  description: Turn directly toward the predefined target on Orion's right.
+  keyframes:
+    - pose: look_right
+      duration: 1.5
+      hold: 0.5

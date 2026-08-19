@@ -1,0 +1,9 @@
+format_version: 1
+
+motion:
+  name: acknowledge
+  description: Remain still to acknowledge without expressive physical movement.
+  keyframes:
+    - pose: attentive
+      duration: 0.25
+      hold: 0.65

@@ -1,0 +1,30 @@
+format_version: 1
+
+motion:
+  name: target_unreachable_expressive
+  description: Attempt, return attention, shake no, and settle safely.
+  keyframes:
+    - pose: attentive
+      duration: 0.20
+      hold: 0.30
+    - pose: unreachable_reach
+      duration: 0.55
+      hold: 0.18
+    - pose: unreachable_user
+      duration: 0.55
+      hold: 0.15
+    - pose: unreachable_shake_left
+      duration: 0.18
+      hold: 0.06
+    - pose: unreachable_shake_right
+      duration: 0.28
+      hold: 0.06
+    - pose: unreachable_shake_left
+      duration: 0.28
+      hold: 0.06
+    - pose: unreachable_user
+      duration: 0.20
+      hold: 0.12
+    - pose: attentive
+      duration: 0.45
+      hold: 0.45

@@ -1,0 +1,9 @@
+format_version: 1
+
+motion:
+  name: look_at_left
+  description: Turn directly toward the predefined target on Orion's left.
+  keyframes:
+    - pose: look_left
+      duration: 1.5
+      hold: 0.5

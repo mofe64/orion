@@ -1,0 +1,129 @@
+format_version: 1
+units: radians
+
+poses:
+  zero_reference:
+    description: CAD-defined zero configuration used as Orion's reference pose.
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.0
+      elbow_pitch_joint: 0.0
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.0
+
+  home:
+    description: Compact powered rest pose with a lower centre of gravity.
+    positions:
+      base_yaw_joint: -0.30
+      shoulder_pitch_joint: 0.30
+      elbow_pitch_joint: 0.10
+      head_roll_joint: -0.45
+      head_pitch_joint: 0.08
+
+  attentive:
+    description: Forward-facing posture with a focused, curious head tilt.
+    positions:
+      base_yaw_joint: -0.30
+      shoulder_pitch_joint: -0.10
+      elbow_pitch_joint: -0.28
+      head_roll_joint: -0.65
+      head_pitch_joint: -0.22
+
+  look_left:
+    description: Attentive posture oriented toward a predefined target on Orion's left.
+    positions:
+      base_yaw_joint: -1.0
+      shoulder_pitch_joint: -0.10
+      elbow_pitch_joint: -0.28
+      head_roll_joint: -0.65
+      head_pitch_joint: -0.22
+
+  look_right:
+    description: Attentive posture oriented toward a predefined target on Orion's right.
+    positions:
+      base_yaw_joint: 0.75
+      shoulder_pitch_joint: -0.10
+      elbow_pitch_joint: -0.28
+      head_roll_joint: -0.65
+      head_pitch_joint: -0.22
+
+  look_left_anticipation:
+    description: Small leftward glance with a lifted, curious head adjustment.
+    positions:
+      base_yaw_joint: -0.42
+      shoulder_pitch_joint: -0.04
+      elbow_pitch_joint: -0.28
+      head_roll_joint: -0.77
+      head_pitch_joint: -0.10
+
+  look_left_lean:
+    description: Committed leftward turn with a subtle lean toward the target.
+    positions:
+      base_yaw_joint: -0.65
+      shoulder_pitch_joint: -0.18
+      elbow_pitch_joint: -0.20
+      head_roll_joint: -0.77
+      head_pitch_joint: -0.30
+
+  look_left_overshoot:
+    description: Slightly passes the left target before settling into the final pose.
+    positions:
+      base_yaw_joint: -1.08
+      shoulder_pitch_joint: -0.14
+      elbow_pitch_joint: -0.25
+      head_roll_joint: -0.71
+      head_pitch_joint: -0.25
+
+  acknowledge_nod_down:
+    description: Small downward head movement that makes acknowledgement legible.
+    positions:
+      base_yaw_joint: -0.30
+      shoulder_pitch_joint: -0.08
+      elbow_pitch_joint: -0.26
+      head_roll_joint: -0.65
+      head_pitch_joint: 0.05
+
+  acknowledge_nod_rebound:
+    description: Slight upward rebound before returning to attentive.
+    positions:
+      base_yaw_joint: -0.30
+      shoulder_pitch_joint: -0.11
+      elbow_pitch_joint: -0.29
+      head_roll_joint: -0.65
+      head_pitch_joint: -0.28
+
+  unreachable_reach:
+    description: Restrained attempt toward a predefined boundary-like posture.
+    positions:
+      base_yaw_joint: -0.78
+      shoulder_pitch_joint: -0.32
+      elbow_pitch_joint: -0.08
+      head_roll_joint: -0.76
+      head_pitch_joint: -0.32
+
+  unreachable_user:
+    description: Return attention forward with a mild concerned head tilt.
+    positions:
+      base_yaw_joint: -0.30
+      shoulder_pitch_joint: -0.04
+      elbow_pitch_joint: -0.24
+      head_roll_joint: -0.58
+      head_pitch_joint: -0.10
+
+  unreachable_shake_left:
+    description: Left phase of a small base-yaw no gesture.
+    positions:
+      base_yaw_joint: -0.44
+      shoulder_pitch_joint: -0.04
+      elbow_pitch_joint: -0.24
+      head_roll_joint: -0.58
+      head_pitch_joint: -0.10
+
+  unreachable_shake_right:
+    description: Right phase of a small base-yaw no gesture.
+    positions:
+      base_yaw_joint: -0.16
+      shoulder_pitch_joint: -0.04
+      elbow_pitch_joint: -0.24
+      head_roll_joint: -0.58
+      head_pitch_joint: -0.10
