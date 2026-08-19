@@ -11,11 +11,17 @@ This document turns the guidebook's Milestone 3 direction into an engineering
 plan. It records the intended contracts before implementation changes the
 motion format, controller configuration, or simulator adapters.
 
-Implemented in the first code slice:
+Implemented so far:
 
 - Version 2 mechanical, operational, and dynamic-limit contract.
 - Complete stopped measured-state input.
-- Shared backend-neutral quintic generation and analytic dynamic validation.
+- Shared backend-neutral quintic generation.
+- Structured trajectory validation with complete dynamic diagnostics and
+  minimum safe-duration guidance.
+- Continuous joint-space forbidden-region checking and an explicit empty
+  project region contract pending evidence-backed regions.
+- `ValidatedTrajectory` gates at both ROS and native MuJoCo execution
+  boundaries.
 - ROS position, velocity, and acceleration trajectory points.
 - Native MuJoCo sampling of the same generated segments.
 
@@ -457,6 +463,10 @@ Verification:
 - Deterministic output independent of ROS and simulators.
 
 ### Slice 3 — Automated trajectory validation
+
+**Status: implemented 2026-08-19.** The project forbidden-region list remains
+empty until collision evidence defines real regions; synthetic tests prove the
+continuous-path checker catches crossings between safe endpoints.
 
 Files involved:
 

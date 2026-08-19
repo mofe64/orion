@@ -1,0 +1,7 @@
+format_version: 1
+units: radians
+
+# No evidence-backed self-collision regions have been established yet. Keep
+# this explicit empty list so execution still passes through the validator and
+# future regions can be added without changing either backend.
+regions: []

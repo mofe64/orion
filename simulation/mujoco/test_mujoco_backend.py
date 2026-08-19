@@ -17,7 +17,7 @@ from mujoco_backend import (  # noqa: E402
     resolve_joint_mapping,
     set_joint_state,
 )
-from motion_player import load_playback_data  # noqa: E402
+from motion_player import load_playback_data, run_playback_loop  # noqa: E402
 from orion_motion.trajectory_generator import sample_trajectory  # noqa: E402
 
 
@@ -93,17 +93,31 @@ class SharedTrajectoryPlaybackTests(unittest.TestCase):
         _, trajectory, start_positions = load_playback_data(
             "look_at_left", "attentive"
         )
+        generated = trajectory.trajectory
 
-        self.assertEqual(trajectory.points[0].positions, start_positions)
+        self.assertEqual(generated.points[0].positions, start_positions)
         self.assertEqual(
-            trajectory.joint_names,
+            generated.joint_names,
             JOINT_NAMES,
         )
 
-        midpoint, completed = sample_trajectory(trajectory, 0.75)
+        midpoint, completed = sample_trajectory(generated, 0.75)
         self.assertFalse(completed)
         self.assertAlmostEqual(midpoint.positions[0], -0.65, places=10)
-        self.assertNotEqual(midpoint.positions, trajectory.points[-1].positions)
+        self.assertNotEqual(midpoint.positions, generated.points[-1].positions)
+
+    def test_mujoco_execution_rejects_unvalidated_trajectory(self):
+        _, validated, _ = load_playback_data("look_at_left", "attentive")
+
+        with self.assertRaisesRegex(TypeError, "ValidatedTrajectory"):
+            run_playback_loop(
+                None,
+                None,
+                None,
+                validated.trajectory,
+                lead_in=0.0,
+                viewer=None,
+            )
 
 
 if __name__ == "__main__":

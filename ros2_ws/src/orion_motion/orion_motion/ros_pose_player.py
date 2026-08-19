@@ -32,8 +32,11 @@ from orion_motion.trajectory_builder import (
     build_pose_trajectory,
 )
 from orion_motion.trajectory_generator import (
-    GeneratedTrajectory,
     TrajectoryGenerationError,
+)
+from orion_motion.trajectory_validator import (
+    TrajectoryValidationError,
+    ValidatedTrajectory,
 )
 
 
@@ -74,7 +77,7 @@ def load_installed_pose_trajectory(
 def print_dry_run(
     pose_path: Path,
     pose_name: str,
-    trajectory: GeneratedTrajectory,
+    trajectory: ValidatedTrajectory,
     *,
     start_pose: str,
 ) -> None:
@@ -170,8 +173,12 @@ def run(arguments: Sequence[str] | None = None) -> int:
             generated = generate_for_start_state(
                 requested, start_state, package_share
             )
-        except (TrajectoryGenerationError, ValueError) as error:
-            print(f"Cannot generate pose motion: {error}", file=sys.stderr)
+        except (
+            TrajectoryGenerationError,
+            TrajectoryValidationError,
+            ValueError,
+        ) as error:
+            print(f"Cannot prepare pose motion: {error}", file=sys.stderr)
             return 1
         print_dry_run(
             pose_path,
@@ -193,7 +200,11 @@ def run(arguments: Sequence[str] | None = None) -> int:
             generated = generate_for_start_state(
                 requested, start_state, package_share
             )
-        except (JointStateError, TrajectoryGenerationError) as error:
+        except (
+            JointStateError,
+            TrajectoryGenerationError,
+            TrajectoryValidationError,
+        ) as error:
             node.get_logger().error(str(error))
             return 1
 

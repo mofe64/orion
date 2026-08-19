@@ -34,9 +34,13 @@ sys.path.insert(0, str(MOTION_PACKAGE_SOURCE))
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
 from orion_motion.trajectory_builder import build_trajectory  # noqa: E402
 from orion_motion.trajectory_generator import (  # noqa: E402
-    GeneratedTrajectory,
     generate_trajectory,
     sample_trajectory,
+)
+from orion_motion.trajectory_validator import (  # noqa: E402
+    TrajectoryValidationError,
+    ValidatedTrajectory,
+    require_valid_trajectory,
 )
 
 
@@ -61,13 +65,16 @@ def find_motion_file(motion_name: str) -> Path:
 
 def load_playback_data(
     motion_name: str, start_pose_name: str
-) -> tuple[Path, GeneratedTrajectory, tuple[float, ...]]:
-    """Load and generate a motion from an explicit stopped simulation pose."""
+) -> tuple[Path, ValidatedTrajectory, tuple[float, ...]]:
+    """Load, generate, and validate a motion for MuJoCo execution."""
 
     motion_path = find_motion_file(motion_name)
     motion_definition = load_yaml_file(motion_path)
     pose_library = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
     motion_limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
+    forbidden_regions = load_yaml_file(
+        CONFIG_DIRECTORY / "forbidden_regions.yaml"
+    )
     requested = build_trajectory(
         motion_definition,
         pose_library,
@@ -96,20 +103,26 @@ def load_playback_data(
         (0.0,) * len(requested.joint_names),
         motion_limits,
     )
-    return motion_path, generated, start_positions
+    validated = require_valid_trajectory(
+        generated, motion_limits, forbidden_regions
+    )
+    return motion_path, validated, start_positions
 
 
 def run_playback_loop(
     model: mujoco.MjModel,
     data: mujoco.MjData,
     mapping: MuJoCoJointMapping,
-    trajectory: GeneratedTrajectory,
+    validated: ValidatedTrajectory,
     *,
     lead_in: float,
     viewer: Any | None,
 ) -> bool:
     """Execute one trajectory; return false if its viewer closes early."""
 
+    if not isinstance(validated, ValidatedTrajectory):
+        raise TypeError("MuJoCo execution requires a ValidatedTrajectory")
+    trajectory = validated.trajectory
     playback_start = data.time + lead_in
     completed = False
     completion_reported = False
@@ -144,11 +157,13 @@ def run_playback_loop(
 def report_final_error(
     data: mujoco.MjData,
     mapping: MuJoCoJointMapping,
-    trajectory: GeneratedTrajectory,
+    validated: ValidatedTrajectory,
 ) -> float:
     """Print final measured positions and return the largest absolute error."""
 
-    desired = trajectory.points[-1].positions
+    if not isinstance(validated, ValidatedTrajectory):
+        raise TypeError("MuJoCo execution requires a ValidatedTrajectory")
+    desired = validated.trajectory.points[-1].positions
     measured = read_joint_positions(data, mapping)
     errors = tuple(
         actual - target
@@ -171,7 +186,7 @@ def report_final_error(
 
 def play_motion(
     scene_path: Path,
-    trajectory: GeneratedTrajectory,
+    validated: ValidatedTrajectory,
     start_positions: tuple[float, ...],
     *,
     lead_in: float,
@@ -179,6 +194,9 @@ def play_motion(
 ) -> bool:
     """Initialize MuJoCo and play one shared generated Orion trajectory."""
 
+    if not isinstance(validated, ValidatedTrajectory):
+        raise TypeError("MuJoCo execution requires a ValidatedTrajectory")
+    trajectory = validated.trajectory
     model = mujoco.MjModel.from_xml_path(str(scene_path))
     data = mujoco.MjData(model)
     mapping = resolve_joint_mapping(model, trajectory.joint_names)
@@ -189,7 +207,7 @@ def play_motion(
             model,
             data,
             mapping,
-            trajectory,
+            validated,
             lead_in=lead_in,
             viewer=None,
         )
@@ -203,12 +221,12 @@ def play_motion(
                 model,
                 data,
                 mapping,
-                trajectory,
+                validated,
                 lead_in=lead_in,
                 viewer=viewer,
             )
 
-    report_final_error(data, mapping, trajectory)
+    report_final_error(data, mapping, validated)
     return completed
 
 
@@ -253,14 +271,18 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_arguments()
-    motion_path, trajectory, start_positions = load_playback_data(
-        args.motion, args.start_pose
-    )
+    try:
+        motion_path, trajectory, start_positions = load_playback_data(
+            args.motion, args.start_pose
+        )
+    except TrajectoryValidationError as error:
+        raise SystemExit(f"Cannot play motion: {error}") from None
 
-    print(f"Motion: {trajectory.name}")
+    generated = trajectory.trajectory
+    print(f"Motion: {generated.name}")
     print(f"Source: {motion_path}")
     print(f"Start pose: {args.start_pose}")
-    print(f"Motion duration: {trajectory.total_duration:.3f} s")
+    print(f"Motion duration: {generated.total_duration:.3f} s")
 
     completed = play_motion(
         args.scene.resolve(),

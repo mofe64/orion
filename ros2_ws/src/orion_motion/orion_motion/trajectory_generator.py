@@ -16,7 +16,7 @@ _PEAK_JERK_FACTOR = 60.0
 
 
 class TrajectoryGenerationError(ValueError):
-    """Raised when measured state or generated dynamics are not executable."""
+    """Raised when a trajectory cannot be generated from the supplied state."""
 
 
 @dataclass(frozen=True)
@@ -104,7 +104,7 @@ def _stationary_point(
     )
 
 
-def _segment_peaks(
+def calculate_segment_peaks(
     segment_index: int,
     pose_name: str,
     joint_names: tuple[str, ...],
@@ -112,6 +112,8 @@ def _segment_peaks(
     end_positions: tuple[float, ...],
     duration: float,
 ) -> tuple[JointPeakDynamics, ...]:
+    """Return exact quintic peak magnitudes for every joint in a segment."""
+
     peaks = []
     for joint_name, start, end in zip(
         joint_names, start_positions, end_positions, strict=True
@@ -132,40 +134,19 @@ def _segment_peaks(
     return tuple(peaks)
 
 
-def _validate_peak_dynamics(
-    peaks: Sequence[JointPeakDynamics], limits: dict[str, Any]
-) -> None:
-    limit_fields = (
-        ("velocity", "max_velocity"),
-        ("acceleration", "max_acceleration"),
-        ("jerk", "max_jerk"),
-    )
-    for peak in peaks:
-        joint_limits = limits["joints"][peak.joint_name]
-        for measured_field, limit_field in limit_fields:
-            measured = getattr(peak, measured_field)
-            allowed = float(joint_limits[limit_field])
-            if measured > allowed + 1e-12:
-                raise TrajectoryGenerationError(
-                    f"transition to pose '{peak.pose_name}' segment "
-                    f"{peak.segment_index} "
-                    f"exceeds {peak.joint_name} {limit_field}: "
-                    f"peak {measured:.6f}, limit {allowed:.6f}"
-                )
-
-
 def generate_trajectory(
     requested: ResolvedTrajectory,
     measured_positions: Sequence[float],
     measured_velocities: Sequence[float],
     motion_limits: Any,
 ) -> GeneratedTrajectory:
-    """Generate and dynamically validate a stopped-start quintic trajectory.
+    """Generate an inspectable stopped-start quintic trajectory.
 
     Every transition uses the minimum-jerk quintic time scaling
     ``10u^3 - 15u^4 + 6u^5``. Position, velocity, and acceleration are zero-
     derivative matched at authored keyframes and holds. Moving-state blending
     is intentionally rejected until preemption and cancellation are available.
+    Execution policy is applied separately by ``trajectory_validator``.
     """
 
     limits = validate_motion_limits(motion_limits)
@@ -232,7 +213,7 @@ def generate_trajectory(
             start=current,
             end=arrival,
         )
-        peaks = _segment_peaks(
+        peaks = calculate_segment_peaks(
             segment_index,
             keyframe.pose_name,
             joint_names,
@@ -240,7 +221,6 @@ def generate_trajectory(
             arrival.positions,
             transition.duration,
         )
-        _validate_peak_dynamics(peaks, limits)
         segments.append(transition)
         all_peaks.extend(peaks)
         points.append(arrival)

@@ -34,6 +34,10 @@ ResolvedTrajectory
 GeneratedTrajectory
     shared quintic segments and position/velocity/acceleration points
           |
+          v
+ValidationReport -> ValidatedTrajectory
+    complete execution-safety decision
+          |
           +-------------------------+
           |                         |
           v                         v
@@ -51,6 +55,7 @@ ros2_ws/src/orion_motion/
 ├── orion_motion/
 │   ├── trajectory_builder.py
 │   ├── trajectory_generator.py
+│   ├── trajectory_validator.py
 │   ├── ros_state_reader.py
 │   ├── ros_motion_player.py
 │   └── ros_pose_player.py
@@ -63,8 +68,10 @@ simulation/mujoco/
 - `trajectory_builder.py` still resolves semantic pose names and authored
   durations. Its output is a request, not an executable trajectory.
 - `trajectory_generator.py` combines that request with a measured start and
-  shared limits. It produces smooth segments, records analytic peak dynamics,
-  and rejects unsafe requests.
+  shared limits. It produces smooth, inspectable segments and records analytic
+  peak dynamics without making the execution decision.
+- `trajectory_validator.py` checks the complete generated path and is the only
+  component that can issue a `ValidatedTrajectory` execution capability.
 - `ros_state_reader.py` maps `/joint_states` by semantic joint name into
   Orion's canonical order. It requires both position and velocity feedback.
 - `ros_motion_player.py` sends generated position, velocity, and acceleration
@@ -198,8 +205,9 @@ peak acceleration = (10 / sqrt(3)) D / T^2
 peak jerk         = 60 D / T^3
 ```
 
-The generator calculates these values for every joint and transition before it
-returns a `GeneratedTrajectory`. A violation reports:
+The generator calculates these values for every joint and transition. The
+trajectory validator independently checks them against the configured limits.
+A violation reports:
 
 - Destination pose.
 - Segment index.
@@ -207,10 +215,15 @@ returns a `GeneratedTrajectory`. A violation reports:
 - Violated limit.
 - Calculated peak.
 - Allowed value.
+- Exact minimum segment duration needed to satisfy that individual limit.
 
 Authored durations are not silently stretched. Timing contributes to
 expressive meaning, so a timing change should be a visible motion-authoring
 decision.
+
+Validation collects every violation before rejecting the trajectory. See
+`orion_trajectory_validation.md` for the report, forbidden-region, and
+execution-capability contracts.
 
 ## Generated Data
 
@@ -297,7 +310,10 @@ The tests cover:
 - Midpoint position, velocity, and acceleration.
 - Constant holds.
 - Analytic peak dynamics.
-- Dynamic-limit rejection.
+- Complete structured dynamic-limit rejection.
+- Minimum safe-duration guidance without automatic retiming.
+- Continuous forbidden-region intersection.
+- Backend rejection of raw, unvalidated trajectories.
 - ROS position/velocity/acceleration messages.
 - Native MuJoCo consumption of the shared generated trajectory.
 
@@ -309,7 +325,8 @@ This slice does not yet implement:
 - Action feedback capture.
 - Cancellation or preemption.
 - Smooth deceleration on cancel.
-- Forbidden joint-space regions.
+- Evidence-backed project forbidden regions (the contract and continuous
+  checker exist, but the project list is explicitly empty).
 - Base-stability checks.
 - `mujoco_ros2_control` integration.
 - Gazebo-versus-MuJoCo measured trajectory reports.

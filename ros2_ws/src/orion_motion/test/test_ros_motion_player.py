@@ -13,6 +13,7 @@ from orion_motion.ros_motion_player import (
 )
 from orion_motion.trajectory_builder import build_trajectory
 from orion_motion.trajectory_generator import generate_trajectory
+from orion_motion.trajectory_validator import require_valid_trajectory
 
 
 PACKAGE_DIRECTORY = Path(__file__).parent.parent
@@ -38,24 +39,27 @@ def load_project_trajectory(relative_motion_path, *, allow_aggressive=False):
         poses["poses"]["attentive"]["positions"][joint_name]
         for joint_name in requested.joint_names
     )
-    return generate_trajectory(requested, start, (0.0,) * 5, limits)
+    generated = generate_trajectory(requested, start, (0.0,) * 5, limits)
+    regions = load_yaml_file(CONFIG_DIRECTORY / "forbidden_regions.yaml")
+    return require_valid_trajectory(generated, limits, regions)
 
 
 def test_functional_motion_includes_measured_start_arrival_and_hold():
     trajectory = load_project_trajectory("functional/look_at_left.yaml")
+    generated = trajectory.trajectory
 
     message = trajectory_to_message(trajectory)
 
-    assert message.joint_names == list(trajectory.joint_names)
+    assert message.joint_names == list(generated.joint_names)
     assert len(message.points) == 3
     assert list(message.points[0].positions) == list(
-        trajectory.points[0].positions
+        generated.points[0].positions
     )
     assert list(message.points[1].positions) == list(
-        trajectory.points[1].positions
+        generated.points[1].positions
     )
     assert list(message.points[2].positions) == list(
-        trajectory.points[2].positions
+        generated.points[2].positions
     )
     assert [
         duration_seconds(point.time_from_start) for point in message.points
@@ -67,6 +71,7 @@ def test_expressive_motion_preserves_all_arrival_and_hold_times():
         "expressive/look_at_left_expressive.yaml",
         allow_aggressive=True,
     )
+    generated = trajectory.trajectory
 
     message = trajectory_to_message(trajectory)
 
@@ -77,7 +82,7 @@ def test_expressive_motion_preserves_all_arrival_and_hold_times():
         [0.0, 0.25, 0.37, 0.82, 0.90, 1.65, 1.75, 2.0, 2.5]
     )
     assert list(message.points[-1].positions) == list(
-        trajectory.points[-1].positions
+        generated.points[-1].positions
     )
 
 
@@ -91,8 +96,13 @@ def test_zero_hold_does_not_create_a_duplicate_point():
         poses["poses"]["attentive"]["positions"][joint_name]
         for joint_name in requested.joint_names
     )
-    no_hold_trajectory = generate_trajectory(
+    generated = generate_trajectory(
         requested, start, (0.0,) * 5, limits
+    )
+    no_hold_trajectory = require_valid_trajectory(
+        generated,
+        limits,
+        load_yaml_file(CONFIG_DIRECTORY / "forbidden_regions.yaml"),
     )
 
     message = trajectory_to_message(no_hold_trajectory)
@@ -102,12 +112,20 @@ def test_zero_hold_does_not_create_a_duplicate_point():
 
 def test_ros_points_include_velocity_and_acceleration_fields():
     trajectory = load_project_trajectory("functional/return_home.yaml")
+    generated = trajectory.trajectory
 
     message = trajectory_to_message(trajectory)
 
-    for source, point in zip(trajectory.points, message.points, strict=True):
+    for source, point in zip(generated.points, message.points, strict=True):
         assert list(point.velocities) == list(source.velocities)
         assert list(point.accelerations) == list(source.accelerations)
+
+
+def test_ros_message_rejects_an_unvalidated_trajectory():
+    validated = load_project_trajectory("functional/look_at_left.yaml")
+
+    with pytest.raises(TypeError, match="ValidatedTrajectory"):
+        trajectory_to_message(validated.trajectory)
 
 
 @pytest.mark.parametrize("invalid_seconds", [-1.0, float("inf"), float("nan")])

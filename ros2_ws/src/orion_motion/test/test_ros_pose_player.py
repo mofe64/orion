@@ -12,6 +12,7 @@ from orion_motion.ros_motion_player import (
 )
 from orion_motion.ros_pose_player import load_installed_pose_trajectory
 from orion_motion.trajectory_generator import generate_trajectory
+from orion_motion.trajectory_validator import require_valid_trajectory
 
 
 PACKAGE_DIRECTORY = Path(__file__).parent.parent
@@ -53,7 +54,12 @@ def test_named_pose_duration_and_hold_become_controller_points():
         poses["poses"]["zero_reference"]["positions"][joint_name]
         for joint_name in requested.joint_names
     )
-    trajectory = generate_trajectory(requested, start, (0.0,) * 5, limits)
+    generated = generate_trajectory(requested, start, (0.0,) * 5, limits)
+    trajectory = require_valid_trajectory(
+        generated,
+        limits,
+        load_yaml_file(PACKAGE_DIRECTORY / "config" / "forbidden_regions.yaml"),
+    )
 
     message = trajectory_to_message(trajectory)
     actual_times = [

@@ -29,9 +29,13 @@ from orion_motion.trajectory_builder import (
     build_trajectory,
 )
 from orion_motion.trajectory_generator import (
-    GeneratedTrajectory,
     TrajectoryGenerationError,
     generate_trajectory,
+)
+from orion_motion.trajectory_validator import (
+    TrajectoryValidationError,
+    ValidatedTrajectory,
+    require_valid_trajectory,
 )
 
 
@@ -52,8 +56,12 @@ def seconds_to_duration(seconds: float) -> Duration:
     return Duration(sec=whole_seconds, nanosec=nanoseconds)
 
 
-def trajectory_to_message(trajectory: GeneratedTrajectory) -> JointTrajectory:
-    """Convert one generated trajectory into a ROS controller message."""
+def trajectory_to_message(validated: ValidatedTrajectory) -> JointTrajectory:
+    """Convert one validated trajectory into a ROS controller message."""
+
+    if not isinstance(validated, ValidatedTrajectory):
+        raise TypeError("ROS execution requires a ValidatedTrajectory")
+    trajectory = validated.trajectory
 
     message = JointTrajectory()
     message.joint_names = list(trajectory.joint_names)
@@ -149,17 +157,23 @@ def generate_for_start_state(
     requested: ResolvedTrajectory,
     start_state: MeasuredJointState,
     package_share: Path,
-) -> GeneratedTrajectory:
-    """Generate one requested motion using package limits and measured state."""
+) -> ValidatedTrajectory:
+    """Generate and validate one requested motion for execution."""
 
     motion_limits = load_yaml_file(
         package_share / "config" / "motion_limits.yaml"
     )
-    return generate_trajectory(
+    forbidden_regions = load_yaml_file(
+        package_share / "config" / "forbidden_regions.yaml"
+    )
+    generated = generate_trajectory(
         requested,
         start_state.positions,
         start_state.velocities,
         motion_limits,
+    )
+    return require_valid_trajectory(
+        generated, motion_limits, forbidden_regions
     )
 
 
@@ -171,13 +185,14 @@ def duration_seconds(duration: Duration) -> float:
 
 def print_dry_run(
     motion_path: Path,
-    trajectory: GeneratedTrajectory,
+    validated: ValidatedTrajectory,
     message: JointTrajectory,
     *,
     start_pose: str,
 ) -> None:
     """Print the exact controller goal without contacting an action server."""
 
+    trajectory = validated.trajectory
     print(f"Motion: {trajectory.name}")
     print(f"Source: {motion_path}")
     print(f"Dry-run start pose: {start_pose}")
@@ -304,8 +319,12 @@ def run(arguments: Sequence[str] | None = None) -> int:
             generated = generate_for_start_state(
                 requested, start_state, package_share
             )
-        except (TrajectoryGenerationError, ValueError) as error:
-            print(f"Cannot generate motion: {error}", file=sys.stderr)
+        except (
+            TrajectoryGenerationError,
+            TrajectoryValidationError,
+            ValueError,
+        ) as error:
+            print(f"Cannot prepare motion: {error}", file=sys.stderr)
             return 1
         message = trajectory_to_message(generated)
         print_dry_run(
@@ -328,7 +347,11 @@ def run(arguments: Sequence[str] | None = None) -> int:
             generated = generate_for_start_state(
                 requested, start_state, package_share
             )
-        except (JointStateError, TrajectoryGenerationError) as error:
+        except (
+            JointStateError,
+            TrajectoryGenerationError,
+            TrajectoryValidationError,
+        ) as error:
             node.get_logger().error(str(error))
             return 1
 

@@ -1,4 +1,4 @@
-"""Tests for shared smooth trajectory generation and dynamic validation."""
+"""Tests for backend-neutral smooth trajectory generation."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -161,7 +161,9 @@ def test_analytic_peak_dynamics_are_recorded(project_poses, project_limits):
     assert shoulder.jerk == pytest.approx(60.0 * 0.4 / 2.0**3)
 
 
-def test_aggressive_authored_motion_is_rejected(project_poses, project_limits):
+def test_aggressive_authored_motion_remains_inspectable(
+    project_poses, project_limits
+):
     requested = load_requested(
         "expressive/acknowledge_expressive.yaml",
         project_poses,
@@ -169,11 +171,16 @@ def test_aggressive_authored_motion_is_rejected(project_poses, project_limits):
     )
     start = pose_positions(project_poses, "attentive", requested.joint_names)
 
-    with pytest.raises(
-        TrajectoryGenerationError,
-        match="head_pitch_joint max_(velocity|acceleration|jerk)",
-    ):
-        generate_trajectory(requested, start, (0.0,) * 5, project_limits)
+    generated = generate_trajectory(
+        requested, start, (0.0,) * 5, project_limits
+    )
+
+    assert generated.name == "acknowledge_expressive"
+    assert any(
+        peak.velocity
+        > project_limits["joints"][peak.joint_name]["max_velocity"]
+        for peak in generated.peak_dynamics
+    )
 
 
 @pytest.mark.parametrize(
