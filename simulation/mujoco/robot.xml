@@ -67,7 +67,7 @@
       <!-- Link lamparm__wrist_head -->
       <body name="lamparm__wrist_head" pos="0.00583234 0.0182927 0.08291" quat="0.570913 -0.417203 0.570913 0.417203">
         <!-- Joint from lamparm__base_elbow to lamparm__wrist_head -->
-        <joint axis="0 0 1" name="2" type="hinge" range="-1.0842575396713956 2.0573351139183975" class="sts3215"/>
+        <joint axis="0 0 1" name="shoulder_pitch_joint" type="hinge" range="-1.0842575396713956 2.0573351139183975" class="sts3215"/>
         <inertial pos="0.0193636 0.000541554 -0.0196637" mass="0.0953804" fullinertia="1.16713e-05 2.19256e-05 1.7794e-05 -3.19269e-07 9.361e-07 6.98105e-08"/>
         <!-- Part lamparm__wrist_head -->
         <geom type="mesh" class="visual" pos="0.04111 7.30741e-16 -0.0192" quat="0.5 -0.5 -0.5 0.5" mesh="lamparm__wrist_head" material="lamparm__wrist_head_material"/>
@@ -99,7 +99,7 @@
         <!-- Link scs215_v5 -->
         <body name="scs215_v5" pos="0.04111 7.30741e-16 -0.0192" quat="0.5 -0.5 -0.5 0.5">
           <!-- Joint from lamparm__wrist_head to scs215_v5 -->
-          <joint axis="0 0 1" name="1" type="hinge" range="-5.021033992714066 1.2621513144655205" class="sts3215"/>
+          <joint axis="0 0 1" name="base_yaw_joint" type="hinge" range="-5.021033992714066 1.2621513144655205" class="sts3215"/>
           <inertial pos="0.00584437 0.00206639 -0.0244202" mass="0.41735" fullinertia="0.00100304 0.00122902 0.00205034 -8.49257e-05 -8.64397e-06 -3.34823e-06"/>
           <!-- Part lamp_base -->
           <geom type="mesh" class="visual" pos="0.0119093 0.0037971 -0.0378" quat="0.590014 2.27628e-15 -1.55431e-15 0.807393" mesh="lamp_base" material="lamp_base_material"/>
@@ -138,7 +138,7 @@
       <!-- Link lamparm__elbow_wrist -->
       <body name="lamparm__elbow_wrist" pos="0.105806 -0.0129789 0.301237" quat="0.575614 0.423658 -0.566139 0.410693">
         <!-- Joint from lamparm__base_elbow to lamparm__elbow_wrist -->
-        <joint axis="0 0 1" name="3" type="hinge" range="-2.820024081304335 0.3215685722854582" class="sts3215"/>
+        <joint axis="0 0 1" name="elbow_pitch_joint" type="hinge" range="-2.820024081304335 0.3215685722854582" class="sts3215"/>
         <inertial pos="-0.00212937 0.119295 0.0220282" mass="0.206448" fullinertia="0.000632713 4.80236e-05 0.000602863 -1.84707e-05 -1.72868e-06 -1.49987e-05"/>
         <!-- Part lamparm__elbow_wrist -->
         <geom type="mesh" class="visual" pos="-0.00618 0.08736 0.03925" quat="0.707107 -0.707107 0 -1.89876e-18" mesh="lamparm__elbow_wrist" material="lamparm__elbow_wrist_material"/>
@@ -170,7 +170,7 @@
         <!-- Link lamparm__wrist_head_2 -->
         <body name="lamparm__wrist_head_2" pos="2.55351e-15 0.185185 0.006125" quat="0.670659 0.670659 -0.224092 0.224092">
           <!-- Joint from lamparm__elbow_wrist to lamparm__wrist_head_2 -->
-          <joint axis="0 0 1" name="4" type="hinge" range="-3.7865399953934267 2.4966453117861596" class="sts3215"/>
+          <joint axis="0 0 1" name="head_roll_joint" type="hinge" range="-3.7865399953934267 2.4966453117861596" class="sts3215"/>
           <inertial pos="0.000541554 -0.000463734 -0.0217464" mass="0.0953804" fullinertia="2.19256e-05 1.7794e-05 1.16713e-05 6.98105e-08 -3.19269e-07 9.361e-07"/>
           <!-- Part lamparm__wrist_head_2 -->
           <geom type="mesh" class="visual" pos="0 -2.77556e-17 -1.38778e-17" quat="0 1 0 0" mesh="lamparm__wrist_head" material="lamparm__wrist_head_material"/>
@@ -202,7 +202,7 @@
           <!-- Link diffuser -->
           <body name="diffuser" pos="1.58207e-15 0.0192 -0.04111" quat="0.5 0.5 -0.5 0.5">
             <!-- Joint from lamparm__wrist_head_2 to diffuser -->
-            <joint axis="0 0 1" name="5" type="hinge" range="-0.8533371981959901 2.288255455393803" class="sts3215"/>
+            <joint axis="0 0 1" name="head_pitch_joint" type="hinge" range="-0.8533371981959901 2.288255455393803" class="sts3215"/>
             <inertial pos="-0.0641891 0.0560099 0.0186249" mass="0.0933113" fullinertia="0.000164418 0.000170062 0.000206169 2.06383e-05 7.21792e-11 4.01082e-10"/>
             <!-- Part diffuser -->
             <geom type="mesh" class="visual" pos="-0.0018837 0.00164368 0.03925" quat="0.643714 0.643714 0.292629 0.292629" mesh="diffuser" material="diffuser_material"/>
@@ -248,11 +248,11 @@
     <material name="lamphead_material" rgba="0.301961 0.301961 0.301961 1"/>
   </asset>
   <actuator>
-    <position class="sts3215" name="2" joint="2" inheritrange="1"/>
-    <position class="sts3215" name="1" joint="1" inheritrange="1"/>
-    <position class="sts3215" name="3" joint="3" inheritrange="1"/>
-    <position class="sts3215" name="4" joint="4" inheritrange="1"/>
-    <position class="sts3215" name="5" joint="5" inheritrange="1"/>
+    <position class="sts3215" name="base_yaw_joint" joint="base_yaw_joint" inheritrange="1"/>
+    <position class="sts3215" name="shoulder_pitch_joint" joint="shoulder_pitch_joint" inheritrange="1"/>
+    <position class="sts3215" name="elbow_pitch_joint" joint="elbow_pitch_joint" inheritrange="1"/>
+    <position class="sts3215" name="head_roll_joint" joint="head_roll_joint" inheritrange="1"/>
+    <position class="sts3215" name="head_pitch_joint" joint="head_pitch_joint" inheritrange="1"/>
   </actuator>
   <equality/>
 </mujoco>
