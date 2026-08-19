@@ -2100,35 +2100,42 @@ Everything else should be introduced deliberately.
 
 # 29. Current Orion Position
 
-Orion has completed the robot-description and simulation-foundation phase.
+Orion has completed the motion-foundation phase.
 
 The immediate next milestone is:
 
-> Build an `orion_motion` ROS 2 package that can execute named poses and keyframed trajectories, then create functional and expressive versions of three behaviours.
-
-Those behaviours are:
-
-1. Look at a target.
-2. Acknowledge the user.
-3. Target unreachable.
+> Turn basic keyframe playback into a dependable motion system with smooth,
+> safe, interruptible, and simulator-portable trajectory execution.
 
 The required deliverables are:
 
 ```text
-orion_motion package
-named-pose library
-keyframe motion format
-ROS 2 trajectory action client
-joint-limit validation
-Gazebo playback
-MuJoCo playback from the same motion files
-three functional/expressive A/B pairs
-tests
-learning documentation
+interpolation library
+motion preemption
+motion cancellation
+trajectory feedback
+stability checks
+cross-simulator playback tests
+motion validation report
 ```
 
-Do not move to voice, cameras, an LLM, or a full expression optimiser until this motion foundation works.
+The motion pipeline must distinguish:
 
-The central mental model for the next stage remains:
+```text
+requested keyframes
+generated trajectory
+validated trajectory
+executed trajectory
+measured trajectory
+```
 
-> **A functional controller decides where Orion must end up. An expressive controller influences how Orion gets there—and what it does immediately before and after—without compromising safety or the task.**
+Do not move to task-space target pointing, voice, cameras, an LLM, or a full
+expression optimiser until motion quality, safety, cancellation, and simulator
+parity work reliably.
+
+The central mental model for this stage is:
+
+> **A requested motion is not executable merely because its keyframes are
+> valid. Orion must generate a continuous trajectory from measured state,
+> validate its dynamics and stability, execute it through a controlled
+> lifecycle, and compare the measured result with what was requested.**
