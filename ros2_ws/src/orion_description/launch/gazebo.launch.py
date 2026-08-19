@@ -3,8 +3,9 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 # IncludeLaunchDescription is used to include another launch file in our launch file
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 # this launch file launches six launch actions
@@ -19,6 +20,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    gz_args = LaunchConfiguration('gz_args')
     # locates the orion's insatlled pkg resources
     package_share = Path(get_package_share_directory('orion_description'))
     # locate the installed ros gazebo sim package
@@ -40,7 +42,7 @@ def generate_launch_description():
     # empty.sdf which loads the gazebo empty world
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(gazebo_launch_path)),
-        launch_arguments={'gz_args': '-r empty.sdf'}.items(),
+        launch_arguments={'gz_args': gz_args}.items(),
     )
     
     # create an action for our robot state publisder node
@@ -132,6 +134,13 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'gz_args',
+            default_value='-r empty.sdf',
+            description=(
+                'Gazebo arguments; use "-s -r empty.sdf" for server-only.'
+            ),
+        ),
         gazebo,
         robot_state_publisher,
         spawn_orion,

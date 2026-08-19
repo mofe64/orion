@@ -18,6 +18,7 @@ from orion_motion.ros_motion_player import (
     ACTION_NAME,
     duration_seconds,
     generate_for_start_state,
+    load_execution_policy,
     load_named_start_state,
     positive_float,
     send_trajectory_goal,
@@ -158,6 +159,7 @@ def run(arguments: Sequence[str] | None = None) -> int:
     cli_arguments = remove_ros_args(args=raw_arguments)[1:]
     options = parse_arguments(cli_arguments)
     package_share = Path(get_package_share_directory("orion_motion"))
+    execution_policy = load_execution_policy(package_share)
     pose_path, requested = load_installed_pose_trajectory(
         options.pose,
         options.duration,
@@ -208,12 +210,14 @@ def run(arguments: Sequence[str] | None = None) -> int:
             node.get_logger().error(str(error))
             return 1
 
-        succeeded = send_trajectory_goal(
+        result = send_trajectory_goal(
             node,
-            trajectory_to_message(generated),
+            generated,
+            start_state,
+            execution_policy,
             server_timeout=options.server_timeout,
         )
-        return 0 if succeeded else 1
+        return 0 if result.succeeded else 1
     finally:
         node.destroy_node()
         rclpy.shutdown()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Sequence
@@ -25,10 +26,22 @@ class MeasuredJointState:
 
     positions: tuple[float, ...]
     velocities: tuple[float, ...]
+    received_at: float | None = None
+
+    def age(self, *, now: float | None = None) -> float:
+        """Return monotonic sample age, or infinity when receipt is unknown."""
+
+        if self.received_at is None:
+            return math.inf
+        current = time.monotonic() if now is None else now
+        return max(0.0, current - self.received_at)
 
 
 def joint_state_to_measured_state(
-    message: JointState, joint_names: Sequence[str]
+    message: JointState,
+    joint_names: Sequence[str],
+    *,
+    received_at: float | None = None,
 ) -> MeasuredJointState:
     """Extract a complete canonical state from one ROS JointState message."""
 
@@ -55,7 +68,28 @@ def joint_state_to_measured_state(
         velocities=tuple(
             message.velocity[index_by_name[name]] for name in joint_names
         ),
+        received_at=(
+            time.monotonic() if received_at is None else received_at
+        ),
     )
+
+
+def require_fresh_measured_state(
+    state: MeasuredJointState,
+    maximum_age: float,
+    *,
+    now: float | None = None,
+) -> None:
+    """Reject state too old to remain a safe trajectory start condition."""
+
+    if not math.isfinite(maximum_age) or maximum_age <= 0:
+        raise ValueError("maximum state age must be finite and positive")
+    age = state.age(now=now)
+    if age > maximum_age:
+        raise JointStateError(
+            f"measured joint state age {age:.3f} seconds exceeds "
+            f"maximum {maximum_age:.3f} seconds"
+        )
 
 
 def wait_for_measured_joint_state(
@@ -66,11 +100,15 @@ def wait_for_measured_joint_state(
 ) -> MeasuredJointState:
     """Wait for a newly delivered complete joint-state sample."""
 
-    received: list[JointState] = []
+    received: list[tuple[JointState, float]] = []
+
+    def receive(message: JointState) -> None:
+        received.append((message, time.monotonic()))
+
     subscription = node.create_subscription(
         JointState,
         JOINT_STATE_TOPIC,
-        received.append,
+        receive,
         qos_profile_sensor_data,
     )
     deadline = time.monotonic() + timeout
@@ -83,6 +121,11 @@ def wait_for_measured_joint_state(
                     f"{timeout:.1f} seconds"
                 )
             rclpy.spin_once(node, timeout_sec=min(0.1, remaining))
-        return joint_state_to_measured_state(received[-1], joint_names)
+        message, received_at = received[-1]
+        return joint_state_to_measured_state(
+            message,
+            joint_names,
+            received_at=received_at,
+        )
     finally:
         node.destroy_subscription(subscription)

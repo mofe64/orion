@@ -6,6 +6,7 @@ from sensor_msgs.msg import JointState
 from orion_motion.ros_state_reader import (
     JointStateError,
     joint_state_to_measured_state,
+    require_fresh_measured_state,
 )
 
 
@@ -65,3 +66,20 @@ def test_duplicate_joint_name_is_rejected():
 
     with pytest.raises(JointStateError, match="duplicate"):
         joint_state_to_measured_state(message, JOINT_NAMES)
+
+
+def test_recent_state_passes_freshness_check():
+    measured = joint_state_to_measured_state(
+        make_message(), JOINT_NAMES, received_at=10.0
+    )
+
+    require_fresh_measured_state(measured, 0.25, now=10.20)
+
+
+def test_stale_state_is_rejected_before_execution():
+    measured = joint_state_to_measured_state(
+        make_message(), JOINT_NAMES, received_at=10.0
+    )
+
+    with pytest.raises(JointStateError, match="age.*exceeds"):
+        require_fresh_measured_state(measured, 0.25, now=10.26)

@@ -321,8 +321,7 @@ The tests cover:
 
 This slice does not yet implement:
 
-- Result deadlines and settling-based success.
-- Action feedback capture.
+- Settling-based success.
 - Cancellation or preemption.
 - Smooth deceleration on cancel.
 - Evidence-backed project forbidden regions (the contract and continuous

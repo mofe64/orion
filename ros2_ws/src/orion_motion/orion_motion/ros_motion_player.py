@@ -5,23 +5,36 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Callable, Sequence
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
+from control_msgs.msg import JointTolerance
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from orion_motion.motion_loader import load_yaml_file
-from orion_motion.motion_validator import validate_pose_library
+from orion_motion.motion_validator import (
+    MotionValidationError,
+    validate_pose_library,
+)
+from orion_motion.execution_types import (
+    ExecutionFeedback,
+    ExecutionResult,
+    ExecutionStatus,
+    JointExecutionState,
+)
 from orion_motion.ros_state_reader import (
     JointStateError,
     MeasuredJointState,
+    require_fresh_measured_state,
     wait_for_measured_joint_state,
 )
 from orion_motion.trajectory_builder import (
@@ -40,6 +53,84 @@ from orion_motion.trajectory_validator import (
 
 
 ACTION_NAME = "/joint_trajectory_controller/follow_joint_trajectory"
+BACKEND_NAME = "ros2_control"
+
+
+@dataclass(frozen=True)
+class RosExecutionPolicy:
+    """Versioned bounds for one ROS trajectory-controller interaction."""
+
+    max_state_age: float
+    path_position_tolerance: float
+    goal_position_tolerance: float
+    stopped_velocity_tolerance: float
+    goal_time_tolerance: float
+    result_timeout_factor: float
+    result_timeout_margin: float
+    cancel_response_timeout: float
+
+
+def execution_policy_from_data(data: Any) -> RosExecutionPolicy:
+    """Validate and build a typed ROS execution policy."""
+
+    if not isinstance(data, dict):
+        raise MotionValidationError("execution_policy must be a mapping")
+    if type(data.get("format_version")) is not int or data["format_version"] != 1:
+        raise MotionValidationError(
+            "execution_policy.format_version must be the integer 1"
+        )
+    if data.get("applicability") != "provisional_simulation_only":
+        raise MotionValidationError(
+            "execution_policy.applicability must be "
+            "'provisional_simulation_only'"
+        )
+    fields = (
+        "max_state_age",
+        "path_position_tolerance",
+        "goal_position_tolerance",
+        "stopped_velocity_tolerance",
+        "goal_time_tolerance",
+        "result_timeout_factor",
+        "result_timeout_margin",
+        "cancel_response_timeout",
+    )
+    for field_name in fields:
+        value = data.get(field_name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise MotionValidationError(
+                f"execution_policy.{field_name} must be a finite number "
+                "greater than zero"
+            )
+
+    return RosExecutionPolicy(
+        max_state_age=float(data["max_state_age"]),
+        path_position_tolerance=float(
+            data["path_position_tolerance"]
+        ),
+        goal_position_tolerance=float(
+            data["goal_position_tolerance"]
+        ),
+        stopped_velocity_tolerance=float(
+            data["stopped_velocity_tolerance"]
+        ),
+        goal_time_tolerance=float(data["goal_time_tolerance"]),
+        result_timeout_factor=float(data["result_timeout_factor"]),
+        result_timeout_margin=float(data["result_timeout_margin"]),
+        cancel_response_timeout=float(data["cancel_response_timeout"]),
+    )
+
+
+def load_execution_policy(package_share: Path) -> RosExecutionPolicy:
+    """Load the installed execution policy used by the ROS action adapter."""
+
+    return execution_policy_from_data(
+        load_yaml_file(package_share / "config" / "execution_policy.yaml")
+    )
 
 
 def seconds_to_duration(seconds: float) -> Duration:
@@ -212,49 +303,225 @@ def print_dry_run(
         )
 
 
+def _execution_state_from_message(point: JointTrajectoryPoint) -> JointExecutionState:
+    return JointExecutionState(
+        positions=tuple(point.positions),
+        velocities=tuple(point.velocities),
+        accelerations=tuple(point.accelerations),
+        time_from_start=duration_seconds(point.time_from_start),
+    )
+
+
+def feedback_from_message(feedback: Any) -> ExecutionFeedback:
+    """Convert ROS action feedback without losing desired/actual/error state."""
+
+    return ExecutionFeedback(
+        timestamp=(
+            feedback.header.stamp.sec
+            + feedback.header.stamp.nanosec / 1_000_000_000
+        ),
+        joint_names=tuple(feedback.joint_names),
+        desired=_execution_state_from_message(feedback.desired),
+        actual=_execution_state_from_message(feedback.actual),
+        error=_execution_state_from_message(feedback.error),
+    )
+
+
+def _apply_goal_tolerances(
+    goal: FollowJointTrajectory.Goal,
+    joint_names: Sequence[str],
+    policy: RosExecutionPolicy,
+) -> None:
+    goal.path_tolerance = [
+        JointTolerance(
+            name=joint_name,
+            position=policy.path_position_tolerance,
+        )
+        for joint_name in joint_names
+    ]
+    goal.goal_tolerance = [
+        JointTolerance(
+            name=joint_name,
+            position=policy.goal_position_tolerance,
+            velocity=policy.stopped_velocity_tolerance,
+        )
+        for joint_name in joint_names
+    ]
+    goal.goal_time_tolerance = seconds_to_duration(
+        policy.goal_time_tolerance
+    )
+
+
+_RESULT_STATUSES = {
+    FollowJointTrajectory.Result.INVALID_GOAL: ExecutionStatus.INVALID_GOAL,
+    FollowJointTrajectory.Result.INVALID_JOINTS: ExecutionStatus.INVALID_JOINTS,
+    FollowJointTrajectory.Result.OLD_HEADER_TIMESTAMP: (
+        ExecutionStatus.OLD_HEADER_TIMESTAMP
+    ),
+    FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED: (
+        ExecutionStatus.PATH_TOLERANCE_VIOLATED
+    ),
+    FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED: (
+        ExecutionStatus.GOAL_TOLERANCE_VIOLATED
+    ),
+}
+
+
 def send_trajectory_goal(
     node: Node,
-    trajectory: JointTrajectory,
+    validated: ValidatedTrajectory,
+    start_state: MeasuredJointState,
+    policy: RosExecutionPolicy,
     *,
     server_timeout: float,
-) -> bool:
-    """Send one trajectory goal and wait for its controller result."""
+    action_client: Any | None = None,
+    spin_until_complete: Callable[..., Any] | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> ExecutionResult:
+    """Execute one validated trajectory with bounded waits and full feedback."""
 
-    client = ActionClient(node, FollowJointTrajectory, ACTION_NAME)
+    if not isinstance(validated, ValidatedTrajectory):
+        raise TypeError("ROS execution requires a ValidatedTrajectory")
+    generated = validated.trajectory
+    feedback_samples: list[ExecutionFeedback] = []
+    client = action_client or ActionClient(
+        node, FollowJointTrajectory, ACTION_NAME
+    )
+    spin = spin_until_complete or rclpy.spin_until_future_complete
     node.get_logger().info(f"Waiting for action server {ACTION_NAME}")
     if not client.wait_for_server(timeout_sec=server_timeout):
-        node.get_logger().error(
-            f"Action server was unavailable after {server_timeout:.1f} seconds"
+        message = (
+            f"Action server was unavailable after {server_timeout:.1f} "
+            "seconds"
         )
-        return False
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.TIMED_OUT,
+            message=message,
+        )
+
+    try:
+        require_fresh_measured_state(
+            start_state,
+            policy.max_state_age,
+            now=monotonic(),
+        )
+    except JointStateError as error:
+        node.get_logger().error(str(error))
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.REJECTED,
+            message=str(error),
+        )
 
     goal = FollowJointTrajectory.Goal()
-    goal.trajectory = trajectory
-    send_future = client.send_goal_async(goal)
-    rclpy.spin_until_future_complete(node, send_future)
+    goal.trajectory = trajectory_to_message(validated)
+    _apply_goal_tolerances(goal, generated.joint_names, policy)
+
+    def receive_feedback(message: Any) -> None:
+        feedback_samples.append(feedback_from_message(message.feedback))
+
+    send_future = client.send_goal_async(
+        goal,
+        feedback_callback=receive_feedback,
+    )
+    spin(node, send_future, timeout_sec=server_timeout)
+    if not send_future.done():
+        message = "Timed out waiting for trajectory goal response"
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.TIMED_OUT,
+            message=message,
+            feedback=tuple(feedback_samples),
+        )
     goal_handle = send_future.result()
 
     if goal_handle is None or not goal_handle.accepted:
-        node.get_logger().error("Trajectory goal was rejected")
-        return False
+        message = "Trajectory goal was rejected"
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.REJECTED,
+            message=message,
+            feedback=tuple(feedback_samples),
+        )
 
     node.get_logger().info("Trajectory goal accepted")
     result_future = goal_handle.get_result_async()
-    rclpy.spin_until_future_complete(node, result_future)
+    result_timeout = (
+        generated.total_duration * policy.result_timeout_factor
+        + policy.goal_time_tolerance
+        + policy.result_timeout_margin
+    )
+    spin(node, result_future, timeout_sec=result_timeout)
+    if not result_future.done():
+        cancel_future = goal_handle.cancel_goal_async()
+        spin(
+            node,
+            cancel_future,
+            timeout_sec=policy.cancel_response_timeout,
+        )
+        message = (
+            f"Trajectory result exceeded {result_timeout:.3f}-second "
+            "deadline; cancellation requested"
+        )
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.TIMED_OUT,
+            message=message,
+            feedback=tuple(feedback_samples),
+            cancel_requested=True,
+        )
+
     wrapped_result = result_future.result()
     if wrapped_result is None:
-        node.get_logger().error("Trajectory action returned no result")
-        return False
+        message = "Trajectory action returned no result"
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.FAILED,
+            message=message,
+            feedback=tuple(feedback_samples),
+        )
 
     result = wrapped_result.result
     if result.error_code != FollowJointTrajectory.Result.SUCCESSFUL:
-        node.get_logger().error(
-            f"Trajectory failed with code {result.error_code}: {result.error_string}"
+        status = _RESULT_STATUSES.get(
+            result.error_code, ExecutionStatus.FAILED
         )
-        return False
+        message = (
+            f"Trajectory failed with code {result.error_code}: "
+            f"{result.error_string}"
+        )
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=status,
+            message=message,
+            feedback=tuple(feedback_samples),
+            backend_error_code=result.error_code,
+        )
 
-    node.get_logger().info("Trajectory completed successfully")
-    return True
+    message = "Trajectory completed successfully"
+    node.get_logger().info(message)
+    return ExecutionResult(
+        motion_name=generated.name,
+        backend=BACKEND_NAME,
+        status=ExecutionStatus.SUCCEEDED,
+        message=message,
+        feedback=tuple(feedback_samples),
+        backend_error_code=result.error_code,
+    )
 
 
 def positive_float(text: str) -> float:
@@ -307,6 +574,7 @@ def run(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(cli_arguments)
 
     package_share = Path(get_package_share_directory("orion_motion"))
+    execution_policy = load_execution_policy(package_share)
     motion_path, requested = load_installed_trajectory(
         options.motion, package_share=package_share
     )
@@ -355,12 +623,14 @@ def run(arguments: Sequence[str] | None = None) -> int:
             node.get_logger().error(str(error))
             return 1
 
-        succeeded = send_trajectory_goal(
+        result = send_trajectory_goal(
             node,
-            trajectory_to_message(generated),
+            generated,
+            start_state,
+            execution_policy,
             server_timeout=options.server_timeout,
         )
-        return 0 if succeeded else 1
+        return 0 if result.succeeded else 1
     finally:
         node.destroy_node()
         rclpy.shutdown()

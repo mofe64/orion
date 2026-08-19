@@ -23,3 +23,23 @@ joint_trajectory_controller:
       - position
       - velocity
     allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    action_monitor_rate: 20.0
+    constraints:
+      goal_time: 0.50
+      stopped_velocity_tolerance: 0.05
+      base_yaw_joint:
+        trajectory: 0.20
+        goal: 0.05
+      shoulder_pitch_joint:
+        trajectory: 0.20
+        goal: 0.05
+      elbow_pitch_joint:
+        trajectory: 0.20
+        goal: 0.05
+      head_roll_joint:
+        trajectory: 0.20
+        goal: 0.05
+      head_pitch_joint:
+        trajectory: 0.20
+        goal: 0.05

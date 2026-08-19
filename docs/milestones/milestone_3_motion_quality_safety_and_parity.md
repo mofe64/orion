@@ -22,11 +22,14 @@ Implemented so far:
   project region contract pending evidence-backed regions.
 - `ValidatedTrajectory` gates at both ROS and native MuJoCo execution
   boundaries.
+- Backend-neutral execution result and feedback records.
+- Fresh-state ROS execution with explicit controller tolerances, feedback
+  capture, finite deadlines, and timeout cancellation requests.
 - ROS position, velocity, and acceleration trajectory points.
 - Native MuJoCo sampling of the same generated segments.
 
-Cancellation, preemption, settling-based results, stability checks, and the
-full cross-simulator report remain pending.
+Controlled cancellation, preemption, settling-based results, stability checks,
+and the full cross-simulator report remain pending.
 
 ## Objective
 
@@ -326,6 +329,7 @@ No new ROS package is needed yet. The boundary belongs inside
 orion_motion/
 ├── config/
 │   ├── motion_limits.yaml          # migrated joint and dynamic-limit contract
+│   ├── execution_policy.yaml       # ROS state, tolerance, and deadline bounds
 │   ├── forbidden_regions.yaml      # joint-space exclusion rules
 │   └── stability_limits.yaml       # provisional simulator thresholds
 ├── orion_motion/
@@ -491,6 +495,12 @@ Verification:
 - Only a passing report can construct an executable validated trajectory.
 
 ### Slice 4 — Measured-state ROS execution
+
+**Status: implemented 2026-08-19.** Deterministic fake-action tests cover all
+failure branches, and a server-only Gazebo run completed `look_at_left`
+successfully with the configured controller constraints. Timeout currently
+requests cancellation; controlled deceleration and confirmed stopping belong
+to Slice 5.
 
 Files involved:
 
