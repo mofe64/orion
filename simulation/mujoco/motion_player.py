@@ -6,9 +6,8 @@ import argparse
 import math
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import mujoco
 import mujoco.viewer
@@ -33,54 +32,12 @@ DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 sys.path.insert(0, str(MOTION_PACKAGE_SOURCE))
 
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
-from orion_motion.trajectory_builder import (  # noqa: E402
-    ResolvedTrajectory,
-    build_trajectory,
+from orion_motion.trajectory_builder import build_trajectory  # noqa: E402
+from orion_motion.trajectory_generator import (  # noqa: E402
+    GeneratedTrajectory,
+    generate_trajectory,
+    sample_trajectory,
 )
-
-
-@dataclass
-class PlaybackCursor:
-    """Track the active keyframe and measured start of each transition."""
-
-    trajectory: ResolvedTrajectory
-    keyframe_index: int = 0
-    segment_start_positions: tuple[float, ...] | None = None
-
-    def target_at(
-        self, elapsed: float, measured_positions: Sequence[float]
-    ) -> tuple[tuple[float, ...], bool]:
-        """Return actuator targets and whether the complete motion has elapsed."""
-
-        measured = tuple(float(value) for value in measured_positions)
-
-        while True:
-            keyframe = self.trajectory.keyframes[self.keyframe_index]
-            if self.segment_start_positions is None:
-                self.segment_start_positions = measured
-
-            if elapsed < keyframe.arrival_time:
-                transition_duration = keyframe.arrival_time - keyframe.start_time
-                alpha = (elapsed - keyframe.start_time) / transition_duration
-                alpha = min(1.0, max(0.0, alpha))
-                target = tuple(
-                    start + alpha * (end - start)
-                    for start, end in zip(
-                        self.segment_start_positions,
-                        keyframe.positions,
-                        strict=True,
-                    )
-                )
-                return target, False
-
-            if elapsed < keyframe.hold_until:
-                return keyframe.positions, False
-
-            if self.keyframe_index == len(self.trajectory.keyframes) - 1:
-                return keyframe.positions, True
-
-            self.keyframe_index += 1
-            self.segment_start_positions = measured
 
 
 def find_motion_file(motion_name: str) -> Path:
@@ -104,22 +61,22 @@ def find_motion_file(motion_name: str) -> Path:
 
 def load_playback_data(
     motion_name: str, start_pose_name: str
-) -> tuple[Path, ResolvedTrajectory, tuple[float, ...]]:
-    """Load, validate, and resolve a motion plus its simulation start pose."""
+) -> tuple[Path, GeneratedTrajectory, tuple[float, ...]]:
+    """Load and generate a motion from an explicit stopped simulation pose."""
 
     motion_path = find_motion_file(motion_name)
     motion_definition = load_yaml_file(motion_path)
     pose_library = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
     motion_limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
-    trajectory = build_trajectory(
+    requested = build_trajectory(
         motion_definition,
         pose_library,
         motion_limits,
     )
 
-    if trajectory.name != motion_name:
+    if requested.name != motion_name:
         raise ValueError(
-            f"Motion file '{motion_path.name}' declares name '{trajectory.name}'"
+            f"Motion file '{motion_path.name}' declares name '{requested.name}'"
         )
 
     poses = pose_library["poses"]
@@ -131,23 +88,28 @@ def load_playback_data(
 
     start_positions = tuple(
         float(poses[start_pose_name]["positions"][joint_name])
-        for joint_name in trajectory.joint_names
+        for joint_name in requested.joint_names
     )
-    return motion_path, trajectory, start_positions
+    generated = generate_trajectory(
+        requested,
+        start_positions,
+        (0.0,) * len(requested.joint_names),
+        motion_limits,
+    )
+    return motion_path, generated, start_positions
 
 
 def run_playback_loop(
     model: mujoco.MjModel,
     data: mujoco.MjData,
     mapping: MuJoCoJointMapping,
-    trajectory: ResolvedTrajectory,
+    trajectory: GeneratedTrajectory,
     *,
     lead_in: float,
     viewer: Any | None,
 ) -> bool:
     """Execute one trajectory; return false if its viewer closes early."""
 
-    cursor = PlaybackCursor(trajectory)
     playback_start = data.time + lead_in
     completed = False
     completion_reported = False
@@ -157,9 +119,8 @@ def run_playback_loop(
 
         if data.time >= playback_start:
             elapsed = data.time - playback_start
-            measured = read_joint_positions(data, mapping)
-            targets, completed = cursor.target_at(elapsed, measured)
-            set_actuator_targets(data, mapping, targets)
+            desired, completed = sample_trajectory(trajectory, elapsed)
+            set_actuator_targets(data, mapping, desired.positions)
 
         mujoco.mj_step(model, data)
 
@@ -183,11 +144,11 @@ def run_playback_loop(
 def report_final_error(
     data: mujoco.MjData,
     mapping: MuJoCoJointMapping,
-    trajectory: ResolvedTrajectory,
+    trajectory: GeneratedTrajectory,
 ) -> float:
     """Print final measured positions and return the largest absolute error."""
 
-    desired = trajectory.keyframes[-1].positions
+    desired = trajectory.points[-1].positions
     measured = read_joint_positions(data, mapping)
     errors = tuple(
         actual - target
@@ -210,13 +171,13 @@ def report_final_error(
 
 def play_motion(
     scene_path: Path,
-    trajectory: ResolvedTrajectory,
+    trajectory: GeneratedTrajectory,
     start_positions: tuple[float, ...],
     *,
     lead_in: float,
     headless: bool,
 ) -> bool:
-    """Initialize MuJoCo and play one resolved Orion motion."""
+    """Initialize MuJoCo and play one shared generated Orion trajectory."""
 
     model = mujoco.MjModel.from_xml_path(str(scene_path))
     data = mujoco.MjData(model)

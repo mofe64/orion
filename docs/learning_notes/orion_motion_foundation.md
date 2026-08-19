@@ -1,5 +1,11 @@
 # Orion Motion Foundation
 
+> **Milestone 3 update:** Orion now generates a shared measured-start quintic
+> trajectory before ROS or MuJoCo execution. The Milestone 2 representation
+> described below remains the requested-keyframe layer. See
+> [Shared Trajectory Generation](orion_shared_trajectory_generation.md) for the
+> current generation and dynamic-validation path.
+
 This note explains the Milestone 2 motion system from its data files to its
 simulator adapters. The goal is to make the subsystem reproducible, not merely
 to record commands that happen to work.

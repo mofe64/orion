@@ -1,10 +1,22 @@
-format_version: 1
-units: radians
-limit_kind: mechanical_position
+format_version: 2
+
+units:
+  position: radians
+  velocity: radians_per_second
+  acceleration: radians_per_second_squared
+  jerk: radians_per_second_cubed
+
+# These operational limits are deliberately conservative development
+# thresholds for Gazebo and MuJoCo. They are not validated hardware limits.
+applicability: provisional_simulation_only
 
 source:
-  package: orion_description
-  path: urdf/orion.urdf
+  mechanical_position:
+    package: orion_description
+    path: urdf/orion.urdf
+  operational_dynamics:
+    method: conservative_initial_thresholds
+    evidence: pending_milestone_3_simulator_sweeps
 
 # Array-based consumers, such as trajectory controllers, must use this order.
 joint_order:
@@ -14,21 +26,68 @@ joint_order:
   - head_roll_joint
   - head_pitch_joint
 
-# These are the mechanical position limits from the URDF. They are not yet
-# evidence-based operational safety limits.
+# Motion generation currently assumes a stopped start. A moving-state blend is
+# a later feature and must not be approximated by discarding measured velocity.
+start_state:
+  max_abs_velocity: 0.05
+
 joints:
   base_yaw_joint:
-    lower: -5.02103
-    upper: 1.26215
+    mechanical_position:
+      lower: -5.02103
+      upper: 1.26215
+    operational_position:
+      lower: -5.02103
+      upper: 1.26215
+    max_velocity: 1.5
+    max_acceleration: 8.0
+    max_jerk: 80.0
+    max_cancel_deceleration: 4.0
+
   shoulder_pitch_joint:
-    lower: -1.08426
-    upper: 2.05734
+    mechanical_position:
+      lower: -1.08426
+      upper: 2.05734
+    operational_position:
+      lower: -1.08426
+      upper: 2.05734
+    max_velocity: 1.5
+    max_acceleration: 8.0
+    max_jerk: 80.0
+    max_cancel_deceleration: 4.0
+
   elbow_pitch_joint:
-    lower: -2.82002
-    upper: 0.321569
+    mechanical_position:
+      lower: -2.82002
+      upper: 0.321569
+    operational_position:
+      lower: -2.82002
+      upper: 0.321569
+    max_velocity: 1.5
+    max_acceleration: 8.0
+    max_jerk: 80.0
+    max_cancel_deceleration: 4.0
+
   head_roll_joint:
-    lower: -3.78654
-    upper: 2.49665
+    mechanical_position:
+      lower: -3.78654
+      upper: 2.49665
+    operational_position:
+      lower: -3.78654
+      upper: 2.49665
+    max_velocity: 1.5
+    max_acceleration: 8.0
+    max_jerk: 80.0
+    max_cancel_deceleration: 4.0
+
   head_pitch_joint:
-    lower: -0.853337
-    upper: 2.28826
+    mechanical_position:
+      lower: -0.853337
+      upper: 2.28826
+    operational_position:
+      lower: -0.853337
+      upper: 2.28826
+    max_velocity: 1.5
+    max_acceleration: 8.0
+    max_jerk: 80.0
+    max_cancel_deceleration: 4.0

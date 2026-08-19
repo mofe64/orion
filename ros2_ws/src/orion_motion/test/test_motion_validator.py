@@ -56,10 +56,50 @@ def test_every_project_motion_is_valid(motion_path, valid_poses):
 
 def test_motion_limits_reject_reversed_range(valid_limits):
     invalid_limits = deepcopy(valid_limits)
-    invalid_limits["joints"]["elbow_pitch_joint"]["lower"] = 1.0
-    invalid_limits["joints"]["elbow_pitch_joint"]["upper"] = -1.0
+    position_range = invalid_limits["joints"]["elbow_pitch_joint"][
+        "mechanical_position"
+    ]
+    position_range["lower"] = 1.0
+    position_range["upper"] = -1.0
 
     with pytest.raises(MotionValidationError, match="lower must be less than upper"):
+        validate_motion_limits(invalid_limits)
+
+
+def test_motion_limits_require_version_two(valid_limits):
+    invalid_limits = deepcopy(valid_limits)
+    invalid_limits["format_version"] = 1
+
+    with pytest.raises(MotionValidationError, match="integer 2"):
+        validate_motion_limits(invalid_limits)
+
+
+def test_operational_range_must_fit_inside_mechanical_range(valid_limits):
+    invalid_limits = deepcopy(valid_limits)
+    invalid_limits["joints"]["base_yaw_joint"]["operational_position"][
+        "lower"
+    ] = -6.0
+
+    with pytest.raises(MotionValidationError, match="contained by mechanical"):
+        validate_motion_limits(invalid_limits)
+
+
+@pytest.mark.parametrize(
+    "field,invalid_value",
+    [
+        ("max_velocity", 0.0),
+        ("max_acceleration", -1.0),
+        ("max_jerk", float("inf")),
+        ("max_cancel_deceleration", 0.0),
+    ],
+)
+def test_motion_limits_require_positive_finite_dynamics(
+    field, invalid_value, valid_limits
+):
+    invalid_limits = deepcopy(valid_limits)
+    invalid_limits["joints"]["head_pitch_joint"][field] = invalid_value
+
+    with pytest.raises(MotionValidationError, match=field):
         validate_motion_limits(invalid_limits)
 
 

@@ -18,7 +18,21 @@ from rclpy.utilities import remove_ros_args
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from orion_motion.motion_loader import load_yaml_file
-from orion_motion.trajectory_builder import ResolvedTrajectory, build_trajectory
+from orion_motion.motion_validator import validate_pose_library
+from orion_motion.ros_state_reader import (
+    JointStateError,
+    MeasuredJointState,
+    wait_for_measured_joint_state,
+)
+from orion_motion.trajectory_builder import (
+    ResolvedTrajectory,
+    build_trajectory,
+)
+from orion_motion.trajectory_generator import (
+    GeneratedTrajectory,
+    TrajectoryGenerationError,
+    generate_trajectory,
+)
 
 
 ACTION_NAME = "/joint_trajectory_controller/follow_joint_trajectory"
@@ -38,23 +52,21 @@ def seconds_to_duration(seconds: float) -> Duration:
     return Duration(sec=whole_seconds, nanosec=nanoseconds)
 
 
-def trajectory_to_message(trajectory: ResolvedTrajectory) -> JointTrajectory:
-    """Convert resolved keyframes and holds into ROS trajectory points."""
+def trajectory_to_message(trajectory: GeneratedTrajectory) -> JointTrajectory:
+    """Convert one generated trajectory into a ROS controller message."""
 
     message = JointTrajectory()
     message.joint_names = list(trajectory.joint_names)
 
-    for keyframe in trajectory.keyframes:
-        arrival = JointTrajectoryPoint()
-        arrival.positions = list(keyframe.positions)
-        arrival.time_from_start = seconds_to_duration(keyframe.arrival_time)
-        message.points.append(arrival)
-
-        if keyframe.hold_until > keyframe.arrival_time:
-            hold_end = JointTrajectoryPoint()
-            hold_end.positions = list(keyframe.positions)
-            hold_end.time_from_start = seconds_to_duration(keyframe.hold_until)
-            message.points.append(hold_end)
+    for generated_point in trajectory.points:
+        point = JointTrajectoryPoint()
+        point.positions = list(generated_point.positions)
+        point.velocities = list(generated_point.velocities)
+        point.accelerations = list(generated_point.accelerations)
+        point.time_from_start = seconds_to_duration(
+            generated_point.time_from_start
+        )
+        message.points.append(point)
 
     return message
 
@@ -104,6 +116,53 @@ def load_installed_trajectory(
     return motion_path, trajectory
 
 
+def load_named_start_state(
+    package_share: Path,
+    pose_name: str,
+    joint_names: Sequence[str],
+) -> MeasuredJointState:
+    """Load an explicit stopped start pose for offline dry-run generation."""
+
+    motion_limits = load_yaml_file(
+        package_share / "config" / "motion_limits.yaml"
+    )
+    pose_library = validate_pose_library(
+        load_yaml_file(package_share / "config" / "poses.yaml"),
+        motion_limits,
+    )
+    poses = pose_library["poses"]
+    if pose_name not in poses:
+        available = ", ".join(sorted(poses))
+        raise ValueError(
+            f"Unknown start pose '{pose_name}'. Available poses: {available}"
+        )
+    return MeasuredJointState(
+        positions=tuple(
+            float(poses[pose_name]["positions"][joint_name])
+            for joint_name in joint_names
+        ),
+        velocities=(0.0,) * len(joint_names),
+    )
+
+
+def generate_for_start_state(
+    requested: ResolvedTrajectory,
+    start_state: MeasuredJointState,
+    package_share: Path,
+) -> GeneratedTrajectory:
+    """Generate one requested motion using package limits and measured state."""
+
+    motion_limits = load_yaml_file(
+        package_share / "config" / "motion_limits.yaml"
+    )
+    return generate_trajectory(
+        requested,
+        start_state.positions,
+        start_state.velocities,
+        motion_limits,
+    )
+
+
 def duration_seconds(duration: Duration) -> float:
     """Return a ROS duration message as seconds for readable diagnostics."""
 
@@ -112,21 +171,29 @@ def duration_seconds(duration: Duration) -> float:
 
 def print_dry_run(
     motion_path: Path,
-    trajectory: ResolvedTrajectory,
+    trajectory: GeneratedTrajectory,
     message: JointTrajectory,
+    *,
+    start_pose: str,
 ) -> None:
     """Print the exact controller goal without contacting an action server."""
 
     print(f"Motion: {trajectory.name}")
     print(f"Source: {motion_path}")
+    print(f"Dry-run start pose: {start_pose}")
     print(f"Action: {ACTION_NAME}")
     print(f"Joints: {', '.join(message.joint_names)}")
     print("Trajectory points:")
     for index, point in enumerate(message.points):
         positions = ", ".join(f"{value:+.3f}" for value in point.positions)
+        velocities = ", ".join(f"{value:+.3f}" for value in point.velocities)
+        accelerations = ", ".join(
+            f"{value:+.3f}" for value in point.accelerations
+        )
         print(
             f"  {index}: t={duration_seconds(point.time_from_start):.3f} s "
-            f"positions=[{positions}]"
+            f"positions=[{positions}] velocities=[{velocities}] "
+            f"accelerations=[{accelerations}]"
         )
 
 
@@ -195,6 +262,20 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
         help="Print the controller goal without contacting ROS action servers.",
     )
     parser.add_argument(
+        "--start-pose",
+        default="attentive",
+        help=(
+            "Stopped named start used only for --dry-run generation "
+            "(default: attentive)."
+        ),
+    )
+    parser.add_argument(
+        "--state-timeout",
+        type=positive_float,
+        default=3.0,
+        help="Seconds to wait for measured joint state (default: 3).",
+    )
+    parser.add_argument(
         "--server-timeout",
         type=positive_float,
         default=10.0,
@@ -210,19 +291,50 @@ def run(arguments: Sequence[str] | None = None) -> int:
     cli_arguments = remove_ros_args(args=raw_arguments)[1:]
     options = parse_arguments(cli_arguments)
 
-    motion_path, trajectory = load_installed_trajectory(options.motion)
-    message = trajectory_to_message(trajectory)
+    package_share = Path(get_package_share_directory("orion_motion"))
+    motion_path, requested = load_installed_trajectory(
+        options.motion, package_share=package_share
+    )
 
     if options.dry_run:
-        print_dry_run(motion_path, trajectory, message)
+        try:
+            start_state = load_named_start_state(
+                package_share, options.start_pose, requested.joint_names
+            )
+            generated = generate_for_start_state(
+                requested, start_state, package_share
+            )
+        except (TrajectoryGenerationError, ValueError) as error:
+            print(f"Cannot generate motion: {error}", file=sys.stderr)
+            return 1
+        message = trajectory_to_message(generated)
+        print_dry_run(
+            motion_path,
+            generated,
+            message,
+            start_pose=options.start_pose,
+        )
         return 0
 
     rclpy.init(args=raw_arguments)
     node = Node("orion_motion_player")
     try:
+        try:
+            start_state = wait_for_measured_joint_state(
+                node,
+                requested.joint_names,
+                timeout=options.state_timeout,
+            )
+            generated = generate_for_start_state(
+                requested, start_state, package_share
+            )
+        except (JointStateError, TrajectoryGenerationError) as error:
+            node.get_logger().error(str(error))
+            return 1
+
         succeeded = send_trajectory_goal(
             node,
-            message,
+            trajectory_to_message(generated),
             server_timeout=options.server_timeout,
         )
         return 0 if succeeded else 1

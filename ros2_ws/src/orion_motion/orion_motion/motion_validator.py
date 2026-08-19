@@ -24,9 +24,16 @@ def _require_finite_number(value: Any, path: str) -> float | int:
     return value
 
 
-def _require_format_version(data: dict[str, Any], path: str) -> None:
-    if type(data.get("format_version")) is not int or data["format_version"] != 1:
-        raise MotionValidationError(f"{path}.format_version must be the integer 1")
+def _require_format_version(
+    data: dict[str, Any], path: str, *, expected: int = 1
+) -> None:
+    if (
+        type(data.get("format_version")) is not int
+        or data["format_version"] != expected
+    ):
+        raise MotionValidationError(
+            f"{path}.format_version must be the integer {expected}"
+        )
 
 
 def _require_format_header(data: dict[str, Any], path: str) -> None:
@@ -49,14 +56,26 @@ def _describe_joint_difference(
 
 
 def validate_motion_limits(data: Any) -> dict[str, Any]:
-    """Validate and return Orion's joint-order and position-limit contract."""
+    """Validate and return Orion's joint and dynamic-limit contract."""
 
     root = _require_mapping(data, "motion_limits")
-    _require_format_header(root, "motion_limits")
+    _require_format_version(root, "motion_limits", expected=2)
 
-    if root.get("limit_kind") != "mechanical_position":
+    expected_units = {
+        "position": "radians",
+        "velocity": "radians_per_second",
+        "acceleration": "radians_per_second_squared",
+        "jerk": "radians_per_second_cubed",
+    }
+    units = _require_mapping(root.get("units"), "motion_limits.units")
+    if units != expected_units:
         raise MotionValidationError(
-            "motion_limits.limit_kind must be 'mechanical_position'"
+            "motion_limits.units must define radians and their time derivatives"
+        )
+
+    if root.get("applicability") != "provisional_simulation_only":
+        raise MotionValidationError(
+            "motion_limits.applicability must be 'provisional_simulation_only'"
         )
 
     joint_order = root.get("joint_order")
@@ -82,16 +101,66 @@ def validate_motion_limits(data: Any) -> dict[str, Any]:
         limits = _require_mapping(
             joints[joint_name], f"motion_limits.joints.{joint_name}"
         )
-        lower = _require_finite_number(
-            limits.get("lower"), f"motion_limits.joints.{joint_name}.lower"
-        )
-        upper = _require_finite_number(
-            limits.get("upper"), f"motion_limits.joints.{joint_name}.upper"
-        )
-        if lower >= upper:
-            raise MotionValidationError(
-                f"motion_limits.joints.{joint_name}.lower must be less than upper"
+
+        ranges: dict[str, tuple[float | int, float | int]] = {}
+        for range_name in ("mechanical_position", "operational_position"):
+            position_range = _require_mapping(
+                limits.get(range_name),
+                f"motion_limits.joints.{joint_name}.{range_name}",
             )
+            lower = _require_finite_number(
+                position_range.get("lower"),
+                f"motion_limits.joints.{joint_name}.{range_name}.lower",
+            )
+            upper = _require_finite_number(
+                position_range.get("upper"),
+                f"motion_limits.joints.{joint_name}.{range_name}.upper",
+            )
+            if lower >= upper:
+                raise MotionValidationError(
+                    f"motion_limits.joints.{joint_name}.{range_name}.lower "
+                    "must be less than upper"
+                )
+            ranges[range_name] = (lower, upper)
+
+        mechanical_lower, mechanical_upper = ranges["mechanical_position"]
+        operational_lower, operational_upper = ranges["operational_position"]
+        if (
+            operational_lower < mechanical_lower
+            or operational_upper > mechanical_upper
+        ):
+            raise MotionValidationError(
+                f"motion_limits.joints.{joint_name}.operational_position must "
+                "be contained by mechanical_position"
+            )
+
+        for dynamic_name in (
+            "max_velocity",
+            "max_acceleration",
+            "max_jerk",
+            "max_cancel_deceleration",
+        ):
+            value = _require_finite_number(
+                limits.get(dynamic_name),
+                f"motion_limits.joints.{joint_name}.{dynamic_name}",
+            )
+            if value <= 0:
+                raise MotionValidationError(
+                    f"motion_limits.joints.{joint_name}.{dynamic_name} must be "
+                    "greater than zero"
+                )
+
+    start_state = _require_mapping(
+        root.get("start_state"), "motion_limits.start_state"
+    )
+    max_start_velocity = _require_finite_number(
+        start_state.get("max_abs_velocity"),
+        "motion_limits.start_state.max_abs_velocity",
+    )
+    if max_start_velocity < 0:
+        raise MotionValidationError(
+            "motion_limits.start_state.max_abs_velocity must not be negative"
+        )
 
     return root
 
@@ -140,8 +209,9 @@ def validate_pose_library(
                 positions[joint_name],
                 f"poses.poses.{pose_name}.positions.{joint_name}",
             )
-            lower = joint_limits[joint_name]["lower"]
-            upper = joint_limits[joint_name]["upper"]
+            operational_range = joint_limits[joint_name]["operational_position"]
+            lower = operational_range["lower"]
+            upper = operational_range["upper"]
             if not lower <= position <= upper:
                 raise MotionValidationError(
                     f"poses.poses.{pose_name}.positions.{joint_name}={position} "

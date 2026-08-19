@@ -2,7 +2,7 @@
 
 ## Document status
 
-- **Status:** Design baseline; implementation not started
+- **Status:** Implementation in progress
 - **Created:** 2026-08-19
 - **Milestone 2 baseline:** `c4eaca9` (`motion foundation`)
 - **Roadmap source:** `docs/Orion Guidebook.md`, section 12
@@ -10,6 +10,17 @@
 This document turns the guidebook's Milestone 3 direction into an engineering
 plan. It records the intended contracts before implementation changes the
 motion format, controller configuration, or simulator adapters.
+
+Implemented in the first code slice:
+
+- Version 2 mechanical, operational, and dynamic-limit contract.
+- Complete stopped measured-state input.
+- Shared backend-neutral quintic generation and analytic dynamic validation.
+- ROS position, velocity, and acceleration trajectory points.
+- Native MuJoCo sampling of the same generated segments.
+
+Cancellation, preemption, settling-based results, stability checks, and the
+full cross-simulator report remain pending.
 
 ## Objective
 

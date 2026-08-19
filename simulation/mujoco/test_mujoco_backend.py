@@ -17,6 +17,8 @@ from mujoco_backend import (  # noqa: E402
     resolve_joint_mapping,
     set_joint_state,
 )
+from motion_player import load_playback_data  # noqa: E402
+from orion_motion.trajectory_generator import sample_trajectory  # noqa: E402
 
 
 JOINT_NAMES = (
@@ -84,6 +86,24 @@ class SetJointStateTests(unittest.TestCase):
         self.assertAlmostEqual(
             read_joint_positions(self.data, self.mapping)[0], -0.3, places=10
         )
+
+
+class SharedTrajectoryPlaybackTests(unittest.TestCase):
+    def test_mujoco_loads_the_shared_generated_trajectory(self):
+        _, trajectory, start_positions = load_playback_data(
+            "look_at_left", "attentive"
+        )
+
+        self.assertEqual(trajectory.points[0].positions, start_positions)
+        self.assertEqual(
+            trajectory.joint_names,
+            JOINT_NAMES,
+        )
+
+        midpoint, completed = sample_trajectory(trajectory, 0.75)
+        self.assertFalse(completed)
+        self.assertAlmostEqual(midpoint.positions[0], -0.65, places=10)
+        self.assertNotEqual(midpoint.positions, trajectory.points[-1].positions)
 
 
 if __name__ == "__main__":
