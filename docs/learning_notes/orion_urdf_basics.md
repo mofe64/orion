@@ -221,6 +221,19 @@ When `shoulder_pitch_joint` moves, its child, `upper_arm_link`, moves relative t
 
 The propagation rule is fundamental: moving a joint moves its child link and every descendant of that child. It does not move the parent or the parent's other branches.
 
+### Orion's Moving Joints
+
+| Joint | What it moves |
+|---|---|
+| `base_yaw_joint` | Turns the lamp around the base's vertical axis. |
+| `shoulder_pitch_joint` | Raises and lowers the first arm section. |
+| `elbow_pitch_joint` | Bends and straightens the arm. |
+| `head_roll_joint` | Rolls the head support at the end of the arm. |
+| `head_pitch_joint` | Tilts the complete lamp head. |
+
+This table describes their jobs. The URDF remains the source for their exact
+parent, child, axis, and movement limits.
+
 Before the door hinge (joint) can rotate, URDF must answer two questions:
 
 1. Where is the hinge attached?
