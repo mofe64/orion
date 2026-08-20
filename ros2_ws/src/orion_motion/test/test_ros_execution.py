@@ -3,14 +3,19 @@
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+import time
 
 import pytest
 from control_msgs.action import FollowJointTrajectory
+from action_msgs.msg import GoalStatus
 
-from orion_motion.execution_types import ExecutionStatus
+from orion_motion.execution_types import ExecutionResult, ExecutionStatus
 from orion_motion.motion_loader import load_yaml_file
 from orion_motion.motion_validator import MotionValidationError
 from orion_motion.ros_motion_player import (
+    GoalCancellation,
+    LatestMotionRequestQueue,
+    execute_motion_queue,
     execution_policy_from_data,
     send_trajectory_goal,
 )
@@ -77,8 +82,10 @@ class FakeActionClient:
         self.server_available = server_available
         self.sent_goal = None
         self.send_calls = 0
+        self.wait_calls = 0
 
     def wait_for_server(self, *, timeout_sec):
+        self.wait_calls += 1
         return self.server_available
 
     def send_goal_async(self, goal, *, feedback_callback):
@@ -141,11 +148,16 @@ def make_feedback(joint_names):
     return feedback
 
 
-def wrapped_result(error_code, error_string=""):
+def wrapped_result(
+    error_code,
+    error_string="",
+    *,
+    status=GoalStatus.STATUS_SUCCEEDED,
+):
     result = FollowJointTrajectory.Result()
     result.error_code = error_code
     result.error_string = error_string
-    return SimpleNamespace(result=result)
+    return SimpleNamespace(result=result, status=status)
 
 
 def recording_spin(timeouts):
@@ -163,9 +175,13 @@ def recording_spin(timeouts):
         "goal_position_tolerance",
         "stopped_velocity_tolerance",
         "goal_time_tolerance",
+        "goal_settle_duration",
+        "goal_settle_timeout",
         "result_timeout_factor",
         "result_timeout_margin",
         "cancel_response_timeout",
+        "stop_confirmation_timeout",
+        "stop_confirmation_duration",
     ],
 )
 def test_execution_policy_requires_positive_finite_thresholds(field):
@@ -201,6 +217,15 @@ def test_success_preserves_feedback_and_applies_explicit_tolerances():
         feedback=make_feedback(validated.trajectory.joint_names),
     )
     timeouts = []
+    settled_calls = []
+
+    def settled_waiter(node, joint_names, target_positions, **kwargs):
+        settled_calls.append((tuple(joint_names), tuple(target_positions), kwargs))
+        return MeasuredJointState(
+            positions=tuple(target_positions),
+            velocities=(0.0,) * len(joint_names),
+            received_at=10.2,
+        )
 
     result = send_trajectory_goal(
         FakeNode(),
@@ -211,6 +236,7 @@ def test_success_preserves_feedback_and_applies_explicit_tolerances():
         action_client=client,
         spin_until_complete=recording_spin(timeouts),
         monotonic=lambda: 10.1,
+        settled_state_waiter=settled_waiter,
     )
 
     assert result.status is ExecutionStatus.SUCCEEDED
@@ -228,6 +254,43 @@ def test_success_preserves_feedback_and_applies_explicit_tolerances():
     assert client.sent_goal.goal_tolerance[0].position == pytest.approx(0.05)
     assert client.sent_goal.goal_tolerance[0].velocity == pytest.approx(0.05)
     assert timeouts == pytest.approx([3.0, 11.5])
+    assert len(settled_calls) == 1
+    assert settled_calls[0][2] == {
+        "maximum_position_error": pytest.approx(0.05),
+        "maximum_velocity": pytest.approx(0.05),
+        "stable_duration": pytest.approx(0.25),
+        "timeout": pytest.approx(2.0),
+    }
+    assert result.metrics.settling_time == pytest.approx(0.0)
+    assert result.metrics.final_position_errors == pytest.approx((0.0,) * 5)
+    assert result.metrics.final_velocities == pytest.approx((0.0,) * 5)
+
+
+def test_success_result_without_sustained_settling_is_failure():
+    validated, state, policy = project_execution_inputs()
+    handle = FakeGoalHandle(
+        FakeFuture(wrapped_result(FollowJointTrajectory.Result.SUCCESSFUL))
+    )
+
+    def fail_to_settle(*args, **kwargs):
+        from orion_motion.ros_state_reader import JointStateError
+
+        raise JointStateError("still moving")
+
+    result = send_trajectory_goal(
+        FakeNode(),
+        validated,
+        state,
+        policy,
+        server_timeout=3.0,
+        action_client=FakeActionClient(handle),
+        spin_until_complete=recording_spin([]),
+        monotonic=lambda: 10.1,
+        settled_state_waiter=fail_to_settle,
+    )
+
+    assert result.status is ExecutionStatus.SETTLING_FAILED
+    assert "still moving" in result.message
 
 
 @pytest.mark.parametrize(
@@ -248,7 +311,13 @@ def test_controller_tolerance_failures_remain_distinguishable(
 ):
     validated, state, policy = project_execution_inputs()
     handle = FakeGoalHandle(
-        FakeFuture(wrapped_result(error_code, "tolerance failure"))
+        FakeFuture(
+            wrapped_result(
+                error_code,
+                "tolerance failure",
+                status=GoalStatus.STATUS_ABORTED,
+            )
+        )
     )
 
     result = send_trajectory_goal(
@@ -281,12 +350,309 @@ def test_result_deadline_requests_cancellation():
         action_client=FakeActionClient(handle),
         spin_until_complete=recording_spin(timeouts),
         monotonic=lambda: 10.1,
+        stopped_state_waiter=lambda *args, **kwargs: state,
     )
 
     assert result.status is ExecutionStatus.TIMED_OUT
     assert result.cancel_requested
+    assert result.stop_confirmed
     assert handle.cancel_calls == 1
-    assert timeouts == pytest.approx([3.0, 11.5, 1.0])
+    assert timeouts == pytest.approx([3.0, 11.5, 1.0, 1.0])
+
+
+def test_repeated_cancel_requests_share_one_controller_request():
+    cancellation = GoalCancellation()
+    handle = FakeGoalHandle(FakeFuture())
+    cancellation.attach(handle)
+
+    first = cancellation.request(ExecutionStatus.PREEMPTED)
+    second = cancellation.request(ExecutionStatus.PREEMPTED)
+    third = cancellation.request(ExecutionStatus.CANCELLED)
+
+    assert first is second is third
+    assert handle.cancel_calls == 1
+    assert cancellation.reason is ExecutionStatus.CANCELLED
+
+
+def test_cancelled_action_requires_and_records_stopped_confirmation():
+    validated, state, policy = project_execution_inputs()
+    handle = FakeGoalHandle(
+        FakeFuture(
+            wrapped_result(
+                FollowJointTrajectory.Result.SUCCESSFUL,
+                status=GoalStatus.STATUS_CANCELED,
+            )
+        )
+    )
+    cancellation = GoalCancellation()
+    cancellation.request(ExecutionStatus.CANCELLED)
+
+    result = send_trajectory_goal(
+        FakeNode(),
+        validated,
+        state,
+        policy,
+        server_timeout=3.0,
+        action_client=FakeActionClient(handle),
+        spin_until_complete=recording_spin([]),
+        monotonic=lambda: 10.1,
+        cancellation=cancellation,
+        stopped_state_waiter=lambda *args, **kwargs: state,
+    )
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert result.cancel_requested
+    assert result.stop_confirmed
+    assert handle.cancel_calls == 1
+
+
+def test_cancelled_action_records_stopping_time_and_joint_distance():
+    validated, state, policy = project_execution_inputs()
+    feedback = make_feedback(validated.trajectory.joint_names)
+    handle = FakeGoalHandle(
+        FakeFuture(
+            wrapped_result(
+                FollowJointTrajectory.Result.SUCCESSFUL,
+                status=GoalStatus.STATUS_CANCELED,
+            )
+        )
+    )
+    cancellation = GoalCancellation()
+
+    def request_after_feedback(sample):
+        cancellation.request(ExecutionStatus.CANCELLED)
+
+    stopped = MeasuredJointState(
+        positions=(0.92,) * 5,
+        velocities=(0.0,) * 5,
+        received_at=time.monotonic(),
+    )
+    result = send_trajectory_goal(
+        FakeNode(),
+        validated,
+        state,
+        policy,
+        server_timeout=3.0,
+        action_client=FakeActionClient(handle, feedback=feedback),
+        spin_until_complete=recording_spin([]),
+        monotonic=lambda: 10.1,
+        cancellation=cancellation,
+        stopped_state_waiter=lambda *args, **kwargs: stopped,
+        feedback_observer=request_after_feedback,
+    )
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert result.metrics.cancellation_stopping_time >= 0.0
+    assert result.metrics.cancellation_stopping_distances == pytest.approx(
+        (0.02,) * 5
+    )
+
+
+def test_latest_request_preempts_once_and_regenerates_from_fresh_state():
+    limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
+    poses = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
+
+    def requested(name):
+        return build_trajectory(
+            load_yaml_file(MOTIONS_DIRECTORY / "functional" / f"{name}.yaml"),
+            poses,
+            limits,
+        )
+
+    first = requested("look_at_left")
+    replaced = requested("return_home")
+    latest = requested("look_at_right")
+    queue = LatestMotionRequestQueue()
+    queue.submit(first)
+    state_reads = []
+    sent = []
+    cancel_handles = []
+
+    def state_reader(node, joint_names, *, timeout):
+        offset = -0.1 * len(state_reads)
+        positions = tuple(
+            poses["poses"]["attentive"]["positions"][name]
+            for name in joint_names
+        )
+        positions = (positions[0] + offset, *positions[1:])
+        state = MeasuredJointState(
+            positions=positions,
+            velocities=(0.0,) * len(joint_names),
+            received_at=10.0 + len(state_reads),
+        )
+        state_reads.append(state)
+        return state
+
+    def goal_sender(
+        node,
+        validated,
+        start_state,
+        policy,
+        *,
+        server_timeout,
+        cancellation,
+    ):
+        sent.append(
+            (
+                validated.trajectory.name,
+                validated.trajectory.points[0].positions,
+            )
+        )
+        if len(sent) == 1:
+            handle = FakeGoalHandle(FakeFuture())
+            cancel_handles.append(handle)
+            cancellation.attach(handle)
+            queue.submit(replaced)
+            queue.submit(latest)
+            return ExecutionResult(
+                motion_name=validated.trajectory.name,
+                backend="test",
+                status=ExecutionStatus.PREEMPTED,
+                message="replaced",
+                cancel_requested=True,
+                stop_confirmed=True,
+            )
+        return ExecutionResult(
+            motion_name=validated.trajectory.name,
+            backend="test",
+            status=ExecutionStatus.SUCCEEDED,
+            message="done",
+        )
+
+    _, _, policy = project_execution_inputs()
+    results = execute_motion_queue(
+        FakeNode(),
+        queue,
+        PACKAGE_DIRECTORY,
+        policy,
+        state_timeout=3.0,
+        server_timeout=3.0,
+        state_reader=state_reader,
+        goal_sender=goal_sender,
+    )
+
+    assert [result.status for result in results] == [
+        ExecutionStatus.PREEMPTED,
+        ExecutionStatus.SUCCEEDED,
+    ]
+    assert [name for name, _ in sent] == ["look_at_left", "look_at_right"]
+    assert sent[0][1] == state_reads[0].positions
+    assert sent[1][1] == state_reads[1].positions
+    assert sent[0][1] != sent[1][1]
+    assert cancel_handles[0].cancel_calls == 1
+
+
+def test_queue_waits_for_action_server_before_reading_fresh_state():
+    validated, _, policy = project_execution_inputs()
+    requested = build_trajectory(
+        load_yaml_file(MOTIONS_DIRECTORY / "functional/look_at_left.yaml"),
+        load_yaml_file(CONFIG_DIRECTORY / "poses.yaml"),
+        load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml"),
+    )
+    queue = LatestMotionRequestQueue()
+    queue.submit(requested)
+    client = FakeActionClient(
+        FakeGoalHandle(
+            FakeFuture(wrapped_result(FollowJointTrajectory.Result.SUCCESSFUL))
+        )
+    )
+
+    def state_reader(node, joint_names, *, timeout):
+        assert client.wait_calls == 1
+        return MeasuredJointState(
+            positions=validated.trajectory.points[0].positions,
+            velocities=(0.0,) * len(joint_names),
+            received_at=time.monotonic(),
+        )
+
+    def goal_sender(*args, **kwargs):
+        return send_trajectory_goal(
+            *args,
+            spin_until_complete=recording_spin([]),
+            settled_state_waiter=lambda node, names, targets, **unused: (
+                MeasuredJointState(
+                    positions=tuple(targets),
+                    velocities=(0.0,) * len(names),
+                    received_at=time.monotonic(),
+                )
+            ),
+            **kwargs,
+        )
+
+    results = execute_motion_queue(
+        FakeNode(),
+        queue,
+        PACKAGE_DIRECTORY,
+        policy,
+        state_timeout=3.0,
+        server_timeout=3.0,
+        state_reader=state_reader,
+        goal_sender=goal_sender,
+        action_client=client,
+    )
+
+    assert results[-1].status is ExecutionStatus.SUCCEEDED
+    assert client.wait_calls == 2
+
+
+def test_user_cancel_discards_pending_replacement_and_overrides_preemption():
+    limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
+    poses = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
+    replacement = build_trajectory(
+        load_yaml_file(MOTIONS_DIRECTORY / "functional/look_at_right.yaml"),
+        poses,
+        limits,
+    )
+    queue = LatestMotionRequestQueue()
+    cancellation = GoalCancellation()
+    handle = FakeGoalHandle(FakeFuture())
+    cancellation.attach(handle)
+    queue.set_active(cancellation)
+
+    queue.submit(replacement)
+    queue.cancel()
+
+    assert queue.take_latest() is None
+    assert cancellation.reason is ExecutionStatus.CANCELLED
+    assert handle.cancel_calls == 1
+
+
+def test_cancel_during_server_discovery_prevents_state_read_and_goal_send():
+    limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
+    poses = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
+    requested = build_trajectory(
+        load_yaml_file(MOTIONS_DIRECTORY / "functional/look_at_left.yaml"),
+        poses,
+        limits,
+    )
+    queue = LatestMotionRequestQueue()
+    queue.submit(requested)
+
+    class CancellingClient(FakeActionClient):
+        def wait_for_server(self, *, timeout_sec):
+            self.wait_calls += 1
+            queue.cancel()
+            return True
+
+    client = CancellingClient(None)
+
+    def unexpected_state_read(*args, **kwargs):
+        raise AssertionError("state must not be read after early cancellation")
+
+    _, _, policy = project_execution_inputs()
+    results = execute_motion_queue(
+        FakeNode(),
+        queue,
+        PACKAGE_DIRECTORY,
+        policy,
+        state_timeout=3.0,
+        server_timeout=3.0,
+        state_reader=unexpected_state_read,
+        action_client=client,
+    )
+
+    assert [result.status for result in results] == [ExecutionStatus.CANCELLED]
+    assert client.send_calls == 0
 
 
 def test_stale_start_is_rejected_without_sending_goal():

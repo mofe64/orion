@@ -77,29 +77,33 @@ def test_functional_motions_receive_execution_capability(
         "target_unreachable_expressive",
     ],
 )
-def test_expressive_motions_report_all_dynamic_violations(
+def test_expressive_motions_receive_execution_capability(
     motion_name, project_data
 ):
     _, limits, regions = project_data
     generated = generate(f"expressive/{motion_name}.yaml", project_data)
 
-    report = validate_trajectory(generated, limits, regions)
+    validated = require_valid_trajectory(generated, limits, regions)
 
-    assert not report.is_valid
-    assert len(report.issues) > 1
-    assert all(issue.code.endswith("_LIMIT") for issue in report.issues)
-    assert report.duration_requirements
-    assert all(
-        requirement.minimum_duration > requirement.requested_duration
-        for requirement in report.duration_requirements
-    )
+    assert validated.trajectory is generated
+    assert validated.report.is_valid
+    assert validated.report.issues == ()
 
 
 def test_rejection_carries_complete_report_and_does_not_retime(project_data):
-    _, limits, regions = project_data
-    generated = generate(
-        "expressive/acknowledge_expressive.yaml", project_data
+    poses, limits, regions = project_data
+    motion = load_yaml_file(
+        MOTIONS_DIRECTORY / "expressive/acknowledge_expressive.yaml"
     )
+    motion["motion"]["keyframes"][1]["duration"] = 0.25
+    motion["motion"]["keyframes"][2]["duration"] = 0.20
+    motion["motion"]["keyframes"][3]["duration"] = 0.30
+    requested = build_trajectory(motion, poses, limits)
+    start = tuple(
+        poses["poses"]["attentive"]["positions"][joint_name]
+        for joint_name in requested.joint_names
+    )
+    generated = generate_trajectory(requested, start, (0.0,) * 5, limits)
     authored_times = tuple(point.time_from_start for point in generated.points)
 
     with pytest.raises(TrajectoryValidationError) as caught:

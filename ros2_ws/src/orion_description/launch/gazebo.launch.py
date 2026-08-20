@@ -8,6 +8,21 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+
+BASE_ODOMETRY_TOPIC = '/orion/base_odometry'
+BASE_ODOMETRY_BRIDGE = (
+    f'{BASE_ODOMETRY_TOPIC}@nav_msgs/msg/Odometry[gz.msgs.Odometry'
+)
+BASE_CONTACT_TOPIC = '/orion/base_contacts'
+GAZEBO_BASE_CONTACT_TOPIC = (
+    '/world/empty/model/orion/link/base_footprint/'
+    'sensor/base_contact_sensor/contact'
+)
+BASE_CONTACT_BRIDGE = (
+    f'{GAZEBO_BASE_CONTACT_TOPIC}'
+    '@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts'
+)
+
 # this launch file launches six launch actions
 # Gazebo
 # robot_state_publisher
@@ -89,14 +104,17 @@ def generate_launch_description():
     # and ros mesages
     # argument we provided heres is /topicname@rosMessageType[gazeboMessageType
     # '[' specifies a one way gazebo to ros bridge: Gazebo clock → ROS /clock
-    clock_bridge = Node(
+    simulator_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
-        name='clock_bridge',
+        name='simulator_bridge',
         output='screen',
         arguments=[
-            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'
-            ],
+            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
+            BASE_ODOMETRY_BRIDGE,
+            BASE_CONTACT_BRIDGE,
+        ],
+        remappings=[(GAZEBO_BASE_CONTACT_TOPIC, BASE_CONTACT_TOPIC)],
     )
 
     # this creates another short lived helper node. 
@@ -144,7 +162,7 @@ def generate_launch_description():
         gazebo,
         robot_state_publisher,
         spawn_orion,
-        clock_bridge,
+        simulator_bridge,
         joint_state_broadcaster_spawner,
         joint_trajectory_controller_spawner,
     ])

@@ -3,52 +3,65 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, replace
 import math
-import sys
-import time
-from dataclasses import dataclass
 from pathlib import Path
+import sys
+import threading
+import time
 from typing import Any, Callable, Sequence
 
-import rclpy
+from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from control_msgs.msg import JointTolerance
+import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from rclpy.utilities import remove_ros_args
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from orion_motion.execution_types import (
+    ExecutionFeedback,
+    ExecutionMetrics,
+    ExecutionResult,
+    ExecutionStatus,
+    JointExecutionState,
+    execution_metrics_from_feedback,
+    execution_result_data,
+)
 from orion_motion.motion_loader import load_yaml_file
 from orion_motion.motion_validator import (
     MotionValidationError,
     validate_pose_library,
-)
-from orion_motion.execution_types import (
-    ExecutionFeedback,
-    ExecutionResult,
-    ExecutionStatus,
-    JointExecutionState,
 )
 from orion_motion.ros_state_reader import (
     JointStateError,
     MeasuredJointState,
     require_fresh_measured_state,
     wait_for_measured_joint_state,
+    wait_for_settled_joint_state,
+    wait_for_stopped_joint_state,
+)
+from orion_motion.reporting import build_run_report, write_json_report
+from orion_motion.ros_stability_monitor import (
+    RosBaseStabilityMonitor,
+    ros_base_stability_policy_from_data,
 )
 from orion_motion.trajectory_builder import (
-    ResolvedTrajectory,
     build_trajectory,
+    ResolvedTrajectory,
 )
 from orion_motion.trajectory_generator import (
-    TrajectoryGenerationError,
     generate_trajectory,
+    TrajectoryGenerationError,
 )
 from orion_motion.trajectory_validator import (
+    require_valid_trajectory,
     TrajectoryValidationError,
     ValidatedTrajectory,
-    require_valid_trajectory,
 )
 
 
@@ -65,9 +78,13 @@ class RosExecutionPolicy:
     goal_position_tolerance: float
     stopped_velocity_tolerance: float
     goal_time_tolerance: float
+    goal_settle_duration: float
+    goal_settle_timeout: float
     result_timeout_factor: float
     result_timeout_margin: float
     cancel_response_timeout: float
+    stop_confirmation_timeout: float
+    stop_confirmation_duration: float
 
 
 def execution_policy_from_data(data: Any) -> RosExecutionPolicy:
@@ -90,9 +107,13 @@ def execution_policy_from_data(data: Any) -> RosExecutionPolicy:
         "goal_position_tolerance",
         "stopped_velocity_tolerance",
         "goal_time_tolerance",
+        "goal_settle_duration",
+        "goal_settle_timeout",
         "result_timeout_factor",
         "result_timeout_margin",
         "cancel_response_timeout",
+        "stop_confirmation_timeout",
+        "stop_confirmation_duration",
     )
     for field_name in fields:
         value = data.get(field_name)
@@ -119,10 +140,150 @@ def execution_policy_from_data(data: Any) -> RosExecutionPolicy:
             data["stopped_velocity_tolerance"]
         ),
         goal_time_tolerance=float(data["goal_time_tolerance"]),
+        goal_settle_duration=float(data["goal_settle_duration"]),
+        goal_settle_timeout=float(data["goal_settle_timeout"]),
         result_timeout_factor=float(data["result_timeout_factor"]),
         result_timeout_margin=float(data["result_timeout_margin"]),
         cancel_response_timeout=float(data["cancel_response_timeout"]),
+        stop_confirmation_timeout=float(data["stop_confirmation_timeout"]),
+        stop_confirmation_duration=float(data["stop_confirmation_duration"]),
     )
+
+
+class GoalCancellation:
+    """Own one idempotent cancellation request for one accepted ROS goal."""
+
+    _ALLOWED_REASONS = {
+        ExecutionStatus.CANCELLED,
+        ExecutionStatus.PREEMPTED,
+        ExecutionStatus.TIMED_OUT,
+    }
+
+    def __init__(self) -> None:
+        """Create a cancellation state before or after goal acceptance."""
+
+        self._lock = threading.Lock()
+        self._goal_handle: Any | None = None
+        self._cancel_future: Any | None = None
+        self._reason: ExecutionStatus | None = None
+        self._latest_positions: tuple[float, ...] | None = None
+        self._requested_positions: tuple[float, ...] | None = None
+        self._requested_at: float | None = None
+
+    @property
+    def reason(self) -> ExecutionStatus | None:
+        """Return why the goal is being cancelled, if requested."""
+
+        with self._lock:
+            return self._reason
+
+    @property
+    def cancel_future(self) -> Any | None:
+        """Return the one controller cancellation future, when available."""
+
+        with self._lock:
+            return self._cancel_future
+
+    @property
+    def request_snapshot(self) -> tuple[float, tuple[float, ...]] | None:
+        """Return the request time and measured positions captured then."""
+
+        with self._lock:
+            if self._requested_at is None or self._requested_positions is None:
+                return None
+            return self._requested_at, self._requested_positions
+
+    def observe_positions(self, positions: Sequence[float]) -> None:
+        """Remember the newest measured positions until cancellation begins."""
+
+        measured = tuple(float(position) for position in positions)
+        if any(not math.isfinite(position) for position in measured):
+            raise ValueError("observed positions must be finite")
+        with self._lock:
+            if self._requested_at is None:
+                self._latest_positions = measured
+
+    def attach(self, goal_handle: Any) -> None:
+        """Attach the accepted goal and honour any earlier cancel request."""
+
+        with self._lock:
+            self._goal_handle = goal_handle
+            self._request_once_locked()
+
+    def request(self, reason: ExecutionStatus) -> Any | None:
+        """Request cancellation once and return the shared cancel future."""
+
+        if reason not in self._ALLOWED_REASONS:
+            raise ValueError(f"invalid cancellation reason: {reason.value}")
+        with self._lock:
+            if self._reason is None or reason is ExecutionStatus.CANCELLED:
+                self._reason = reason
+            if self._requested_at is None:
+                self._requested_at = time.monotonic()
+                self._requested_positions = self._latest_positions
+            self._request_once_locked()
+            return self._cancel_future
+
+    def _request_once_locked(self) -> None:
+        if (
+            self._reason is not None
+            and self._goal_handle is not None
+            and self._cancel_future is None
+        ):
+            self._cancel_future = self._goal_handle.cancel_goal_async()
+
+
+class LatestMotionRequestQueue:
+    """Keep one newest pending request and preempt an active older request."""
+
+    def __init__(self) -> None:
+        """Create an empty one-slot request queue."""
+
+        self._lock = threading.Lock()
+        self._pending: ResolvedTrajectory | None = None
+        self._active_cancellation: GoalCancellation | None = None
+
+    def submit(self, requested: ResolvedTrajectory) -> None:
+        """Replace the pending request and interrupt any active request."""
+
+        with self._lock:
+            self._pending = requested
+            active = self._active_cancellation
+        if active is not None:
+            active.request(ExecutionStatus.PREEMPTED)
+
+    def cancel(self) -> None:
+        """Discard pending work and cancel the active request, if any."""
+
+        with self._lock:
+            self._pending = None
+            active = self._active_cancellation
+        if active is not None:
+            active.request(ExecutionStatus.CANCELLED)
+
+    def take_latest(self) -> ResolvedTrajectory | None:
+        """Remove and return the newest pending request."""
+
+        with self._lock:
+            requested = self._pending
+            self._pending = None
+            return requested
+
+    def set_active(self, cancellation: GoalCancellation) -> None:
+        """Register cancellation control for the request being executed."""
+
+        with self._lock:
+            self._active_cancellation = cancellation
+            newer_request_waiting = self._pending is not None
+        if newer_request_waiting:
+            cancellation.request(ExecutionStatus.PREEMPTED)
+
+    def clear_active(self, cancellation: GoalCancellation) -> None:
+        """Clear the active request if it still matches the caller."""
+
+        with self._lock:
+            if self._active_cancellation is cancellation:
+                self._active_cancellation = None
 
 
 def load_execution_policy(package_share: Path) -> RosExecutionPolicy:
@@ -367,6 +528,114 @@ _RESULT_STATUSES = {
 }
 
 
+def _confirm_stopped_after_cancel(
+    node: Node,
+    joint_names: Sequence[str],
+    policy: RosExecutionPolicy,
+    *,
+    stopped_state_waiter: Callable[..., MeasuredJointState],
+) -> tuple[bool, str, MeasuredJointState | None]:
+    try:
+        stopped_state = stopped_state_waiter(
+            node,
+            joint_names,
+            maximum_velocity=policy.stopped_velocity_tolerance,
+            stable_duration=policy.stop_confirmation_duration,
+            timeout=policy.stop_confirmation_timeout,
+        )
+    except (JointStateError, ValueError) as error:
+        return False, f"stop could not be confirmed: {error}", None
+    return True, "fresh joint feedback confirmed a stopped state", stopped_state
+
+
+def _cancellation_metrics(
+    feedback: Sequence[ExecutionFeedback],
+    cancellation: GoalCancellation,
+    stopped_state: MeasuredJointState | None,
+) -> ExecutionMetrics:
+    """Add measured stopping time and distance to ordinary feedback metrics."""
+
+    metrics = execution_metrics_from_feedback(feedback)
+    snapshot = cancellation.request_snapshot
+    if snapshot is None or stopped_state is None:
+        return metrics
+    requested_at, requested_positions = snapshot
+    if len(requested_positions) != len(stopped_state.positions):
+        return metrics
+    return replace(
+        metrics,
+        final_velocities=stopped_state.velocities,
+        cancellation_stopping_time=max(0.0, time.monotonic() - requested_at),
+        cancellation_stopping_distances=tuple(
+            abs(stopped - requested)
+            for requested, stopped in zip(
+                requested_positions,
+                stopped_state.positions,
+                strict=True,
+            )
+        ),
+    )
+
+
+def _finish_requested_cancellation(
+    node: Node,
+    result_future: Any,
+    cancellation: GoalCancellation,
+    reason: ExecutionStatus,
+    joint_names: Sequence[str],
+    policy: RosExecutionPolicy,
+    *,
+    spin: Callable[..., Any],
+    stopped_state_waiter: Callable[..., MeasuredJointState],
+) -> tuple[bool, str, MeasuredJointState | None]:
+    """Wait for one cancellation request, its result, and a measured stop."""
+
+    cancel_future = cancellation.request(reason)
+    details: list[str] = []
+    if cancel_future is None:
+        details.append("goal was not available for cancellation")
+    else:
+        spin(
+            node,
+            cancel_future,
+            timeout_sec=policy.cancel_response_timeout,
+        )
+        if not cancel_future.done():
+            details.append("controller cancellation response timed out")
+        else:
+            response = cancel_future.result()
+            goals_canceling = getattr(response, "goals_canceling", None)
+            if goals_canceling is not None and not goals_canceling:
+                details.append("controller did not accept the cancellation")
+            else:
+                details.append("controller accepted the cancellation")
+
+    if not result_future.done():
+        spin(
+            node,
+            result_future,
+            timeout_sec=policy.cancel_response_timeout,
+        )
+    if not result_future.done():
+        details.append("cancelled goal did not return a terminal result")
+    else:
+        wrapped_result = result_future.result()
+        wrapped_status = getattr(wrapped_result, "status", None)
+        if wrapped_status == GoalStatus.STATUS_CANCELED:
+            details.append("controller reported the goal as cancelled")
+        else:
+            details.append("controller returned after the cancellation request")
+
+    stopped, stop_detail, stopped_state = _confirm_stopped_after_cancel(
+        node,
+        joint_names,
+        policy,
+        stopped_state_waiter=stopped_state_waiter,
+    )
+    details.append(stop_detail)
+    return stopped, "; ".join(details), stopped_state
+
+
 def send_trajectory_goal(
     node: Node,
     validated: ValidatedTrajectory,
@@ -377,6 +646,10 @@ def send_trajectory_goal(
     action_client: Any | None = None,
     spin_until_complete: Callable[..., Any] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
+    cancellation: GoalCancellation | None = None,
+    stopped_state_waiter: Callable[..., MeasuredJointState] | None = None,
+    settled_state_waiter: Callable[..., MeasuredJointState] | None = None,
+    feedback_observer: Callable[[ExecutionFeedback], None] | None = None,
 ) -> ExecutionResult:
     """Execute one validated trajectory with bounded waits and full feedback."""
 
@@ -388,6 +661,10 @@ def send_trajectory_goal(
         node, FollowJointTrajectory, ACTION_NAME
     )
     spin = spin_until_complete or rclpy.spin_until_future_complete
+    cancellation_state = cancellation or GoalCancellation()
+    wait_for_stopped = stopped_state_waiter or wait_for_stopped_joint_state
+    wait_for_settled = settled_state_waiter or wait_for_settled_joint_state
+    cancellation_state.observe_positions(start_state.positions)
     node.get_logger().info(f"Waiting for action server {ACTION_NAME}")
     if not client.wait_for_server(timeout_sec=server_timeout):
         message = (
@@ -422,7 +699,11 @@ def send_trajectory_goal(
     _apply_goal_tolerances(goal, generated.joint_names, policy)
 
     def receive_feedback(message: Any) -> None:
-        feedback_samples.append(feedback_from_message(message.feedback))
+        sample = feedback_from_message(message.feedback)
+        feedback_samples.append(sample)
+        cancellation_state.observe_positions(sample.actual.positions)
+        if feedback_observer is not None:
+            feedback_observer(sample)
 
     send_future = client.send_goal_async(
         goal,
@@ -453,23 +734,54 @@ def send_trajectory_goal(
         )
 
     node.get_logger().info("Trajectory goal accepted")
+    cancellation_state.attach(goal_handle)
     result_future = goal_handle.get_result_async()
     result_timeout = (
         generated.total_duration * policy.result_timeout_factor
         + policy.goal_time_tolerance
         + policy.result_timeout_margin
     )
-    spin(node, result_future, timeout_sec=result_timeout)
-    if not result_future.done():
-        cancel_future = goal_handle.cancel_goal_async()
-        spin(
+    try:
+        spin(node, result_future, timeout_sec=result_timeout)
+    except KeyboardInterrupt:
+        stopped, detail, stopped_state = _finish_requested_cancellation(
             node,
-            cancel_future,
-            timeout_sec=policy.cancel_response_timeout,
+            result_future,
+            cancellation_state,
+            ExecutionStatus.CANCELLED,
+            generated.joint_names,
+            policy,
+            spin=spin,
+            stopped_state_waiter=wait_for_stopped,
+        )
+        message = f"Motion cancelled by user; {detail}"
+        node.get_logger().info(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.CANCELLED,
+            message=message,
+            feedback=tuple(feedback_samples),
+            cancel_requested=True,
+            stop_confirmed=stopped,
+            metrics=_cancellation_metrics(
+                feedback_samples, cancellation_state, stopped_state
+            ),
+        )
+    if not result_future.done():
+        stopped, detail, stopped_state = _finish_requested_cancellation(
+            node,
+            result_future,
+            cancellation_state,
+            ExecutionStatus.TIMED_OUT,
+            generated.joint_names,
+            policy,
+            spin=spin,
+            stopped_state_waiter=wait_for_stopped,
         )
         message = (
             f"Trajectory result exceeded {result_timeout:.3f}-second "
-            "deadline; cancellation requested"
+            f"deadline; {detail}"
         )
         node.get_logger().error(message)
         return ExecutionResult(
@@ -479,6 +791,10 @@ def send_trajectory_goal(
             message=message,
             feedback=tuple(feedback_samples),
             cancel_requested=True,
+            stop_confirmed=stopped,
+            metrics=_cancellation_metrics(
+                feedback_samples, cancellation_state, stopped_state
+            ),
         )
 
     wrapped_result = result_future.result()
@@ -494,6 +810,34 @@ def send_trajectory_goal(
         )
 
     result = wrapped_result.result
+    action_status = getattr(
+        wrapped_result,
+        "status",
+        GoalStatus.STATUS_SUCCEEDED,
+    )
+    if action_status == GoalStatus.STATUS_CANCELED:
+        reason = cancellation_state.reason or ExecutionStatus.CANCELLED
+        stopped, detail, stopped_state = _confirm_stopped_after_cancel(
+            node,
+            generated.joint_names,
+            policy,
+            stopped_state_waiter=wait_for_stopped,
+        )
+        message = f"Trajectory {reason.value}; {detail}"
+        node.get_logger().info(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=reason,
+            message=message,
+            feedback=tuple(feedback_samples),
+            backend_error_code=result.error_code,
+            cancel_requested=cancellation_state.reason is not None,
+            stop_confirmed=stopped,
+            metrics=_cancellation_metrics(
+                feedback_samples, cancellation_state, stopped_state
+            ),
+        )
     if result.error_code != FollowJointTrajectory.Result.SUCCESSFUL:
         status = _RESULT_STATUSES.get(
             result.error_code, ExecutionStatus.FAILED
@@ -511,8 +855,58 @@ def send_trajectory_goal(
             feedback=tuple(feedback_samples),
             backend_error_code=result.error_code,
         )
+    if action_status != GoalStatus.STATUS_SUCCEEDED:
+        message = f"Trajectory action ended with status {action_status}"
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.FAILED,
+            message=message,
+            feedback=tuple(feedback_samples),
+            backend_error_code=result.error_code,
+        )
 
-    message = "Trajectory completed successfully"
+    settle_started = monotonic()
+    try:
+        settled_state = wait_for_settled(
+            node,
+            generated.joint_names,
+            generated.points[-1].positions,
+            maximum_position_error=policy.goal_position_tolerance,
+            maximum_velocity=policy.stopped_velocity_tolerance,
+            stable_duration=policy.goal_settle_duration,
+            timeout=policy.goal_settle_timeout,
+        )
+    except (JointStateError, ValueError) as error:
+        message = f"Trajectory ended but did not settle: {error}"
+        node.get_logger().error(message)
+        return ExecutionResult(
+            motion_name=generated.name,
+            backend=BACKEND_NAME,
+            status=ExecutionStatus.SETTLING_FAILED,
+            message=message,
+            feedback=tuple(feedback_samples),
+            backend_error_code=result.error_code,
+            metrics=execution_metrics_from_feedback(feedback_samples),
+        )
+
+    base_metrics = execution_metrics_from_feedback(feedback_samples)
+    final_target = generated.points[-1].positions
+    metrics = replace(
+        base_metrics,
+        final_position_errors=tuple(
+            target - actual
+            for target, actual in zip(
+                final_target,
+                settled_state.positions,
+                strict=True,
+            )
+        ),
+        final_velocities=settled_state.velocities,
+        settling_time=max(0.0, monotonic() - settle_started),
+    )
+    message = "Trajectory completed and remained settled"
     node.get_logger().info(message)
     return ExecutionResult(
         motion_name=generated.name,
@@ -521,7 +915,168 @@ def send_trajectory_goal(
         message=message,
         feedback=tuple(feedback_samples),
         backend_error_code=result.error_code,
+        metrics=metrics,
     )
+
+
+def execute_motion_queue(
+    node: Node,
+    requests: LatestMotionRequestQueue,
+    package_share: Path,
+    policy: RosExecutionPolicy,
+    *,
+    state_timeout: float,
+    server_timeout: float,
+    state_reader: Callable[..., MeasuredJointState] = (
+        wait_for_measured_joint_state
+    ),
+    goal_sender: Callable[..., ExecutionResult] = send_trajectory_goal,
+    action_client: Any | None = None,
+    execution_observer: Callable[
+        [ValidatedTrajectory, MeasuredJointState, float, ExecutionResult],
+        None,
+    ]
+    | None = None,
+    execution_feedback_observer: Callable[
+        [ResolvedTrajectory, ExecutionFeedback], None
+    ]
+    | None = None,
+    execution_started: Callable[[ValidatedTrajectory], None] | None = None,
+    result_transformer: Callable[[ExecutionResult], ExecutionResult]
+    | None = None,
+) -> tuple[ExecutionResult, ...]:
+    """Execute requests serially, keeping only the newest replacement."""
+
+    results: list[ExecutionResult] = []
+    active_action_client = (
+        action_client
+        if action_client is not None
+        else (
+            ActionClient(node, FollowJointTrajectory, ACTION_NAME)
+            if goal_sender is send_trajectory_goal
+            else None
+        )
+    )
+    while True:
+        requested = requests.take_latest()
+        if requested is None:
+            break
+
+        cancellation = GoalCancellation()
+        requests.set_active(cancellation)
+
+        def skip_interrupted_request() -> bool:
+            reason = cancellation.reason
+            if reason is None:
+                return False
+            results.append(
+                ExecutionResult(
+                    motion_name=requested.name,
+                    backend=BACKEND_NAME,
+                    status=reason,
+                    message=(
+                        f"Request {reason.value} before a movement goal "
+                        "was sent"
+                    ),
+                )
+            )
+            return True
+
+        try:
+            if skip_interrupted_request():
+                continue
+
+            if (
+                active_action_client is not None
+                and not active_action_client.wait_for_server(
+                    timeout_sec=server_timeout
+                )
+            ):
+                message = (
+                    f"Action server was unavailable after "
+                    f"{server_timeout:.1f} seconds"
+                )
+                node.get_logger().error(message)
+                results.append(
+                    ExecutionResult(
+                        motion_name=requested.name,
+                        backend=BACKEND_NAME,
+                        status=ExecutionStatus.TIMED_OUT,
+                        message=message,
+                    )
+                )
+                continue
+
+            if skip_interrupted_request():
+                continue
+
+            try:
+                start_state = state_reader(
+                    node,
+                    requested.joint_names,
+                    timeout=state_timeout,
+                )
+                start_state_age = start_state.age()
+                validated = generate_for_start_state(
+                    requested,
+                    start_state,
+                    package_share,
+                )
+            except (
+                JointStateError,
+                TrajectoryGenerationError,
+                TrajectoryValidationError,
+            ) as error:
+                node.get_logger().error(str(error))
+                results.append(
+                    ExecutionResult(
+                        motion_name=requested.name,
+                        backend=BACKEND_NAME,
+                        status=ExecutionStatus.REJECTED,
+                        message=str(error),
+                    )
+                )
+                continue
+
+            if skip_interrupted_request():
+                continue
+
+            if execution_started is not None:
+                execution_started(validated)
+            sender_arguments = {
+                "server_timeout": server_timeout,
+                "cancellation": cancellation,
+            }
+            if active_action_client is not None:
+                sender_arguments["action_client"] = active_action_client
+            if execution_feedback_observer is not None:
+                sender_arguments["feedback_observer"] = lambda sample: (
+                    execution_feedback_observer(requested, sample)
+                )
+            result = goal_sender(
+                node,
+                validated,
+                start_state,
+                policy,
+                **sender_arguments,
+            )
+            if result_transformer is not None:
+                result = result_transformer(result)
+            if execution_observer is not None:
+                execution_observer(
+                    validated,
+                    start_state,
+                    start_state_age,
+                    result,
+                )
+        finally:
+            requests.clear_active(cancellation)
+        results.append(result)
+
+        if result.status is ExecutionStatus.CANCELLED:
+            requests.cancel()
+
+    return tuple(results)
 
 
 def positive_float(text: str) -> float:
@@ -530,6 +1085,15 @@ def positive_float(text: str) -> float:
     value = float(text)
     if not math.isfinite(value) or value <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than zero")
+    return value
+
+
+def nonempty_text(text: str) -> str:
+    """Reject empty labels used to identify an execution backend."""
+
+    value = text.strip()
+    if not value:
+        raise argparse.ArgumentTypeError("must be a non-empty string")
     return value
 
 
@@ -563,7 +1127,51 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
         default=10.0,
         help="Seconds to wait for the trajectory action server (default: 10).",
     )
-    return parser.parse_args(arguments)
+    parser.add_argument(
+        "--report-json",
+        type=Path,
+        help="Optional path for a complete machine-readable run report.",
+    )
+    parser.add_argument(
+        "--backend-label",
+        type=nonempty_text,
+        default=BACKEND_NAME,
+        help=(
+            "Backend recorded in --report-json, such as gazebo or "
+            "mujoco_ros2_control (default: ros2_control)."
+        ),
+    )
+    lifecycle = parser.add_mutually_exclusive_group()
+    lifecycle.add_argument(
+        "--cancel-at",
+        type=positive_float,
+        metavar="SECONDS",
+        help=(
+            "Cancel from controller feedback when trajectory time reaches "
+            "this value."
+        ),
+    )
+    lifecycle.add_argument(
+        "--replace-with",
+        metavar="MOTION",
+        help="Replace the active motion with this named motion.",
+    )
+    parser.add_argument(
+        "--replace-at",
+        type=positive_float,
+        metavar="SECONDS",
+        help=(
+            "Controller trajectory time at which --replace-with is submitted."
+        ),
+    )
+    options = parser.parse_args(arguments)
+    if (options.replace_with is None) != (options.replace_at is None):
+        parser.error("--replace-with and --replace-at must be used together")
+    if options.dry_run and (
+        options.cancel_at is not None or options.replace_with is not None
+    ):
+        parser.error("lifecycle triggers cannot be used with --dry-run")
+    return options
 
 
 def run(arguments: Sequence[str] | None = None) -> int:
@@ -578,6 +1186,22 @@ def run(arguments: Sequence[str] | None = None) -> int:
     motion_path, requested = load_installed_trajectory(
         options.motion, package_share=package_share
     )
+    replacement_path: Path | None = None
+    replacement: ResolvedTrajectory | None = None
+    trigger_time = options.cancel_at
+    if options.replace_with is not None:
+        replacement_path, replacement = load_installed_trajectory(
+            options.replace_with,
+            package_share=package_share,
+        )
+        trigger_time = options.replace_at
+    if trigger_time is not None and trigger_time >= requested.total_duration:
+        print(
+            f"Lifecycle trigger {trigger_time:.3f} s must be earlier than "
+            f"the initial motion duration {requested.total_duration:.3f} s",
+            file=sys.stderr,
+        )
+        return 2
 
     if options.dry_run:
         try:
@@ -603,37 +1227,166 @@ def run(arguments: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    rclpy.init(args=raw_arguments)
+    rclpy.init(
+        args=raw_arguments,
+        signal_handler_options=SignalHandlerOptions.NO,
+    )
     node = Node("orion_motion_player")
+    stability_monitor: RosBaseStabilityMonitor | None = None
     try:
-        try:
-            start_state = wait_for_measured_joint_state(
-                node,
-                requested.joint_names,
-                timeout=options.state_timeout,
-            )
-            generated = generate_for_start_state(
-                requested, start_state, package_share
-            )
-        except (
-            JointStateError,
-            TrajectoryGenerationError,
-            TrajectoryValidationError,
-        ) as error:
-            node.get_logger().error(str(error))
-            return 1
+        observed: list[
+            tuple[
+                ValidatedTrajectory,
+                MeasuredJointState,
+                float,
+                ExecutionResult,
+            ]
+        ] = []
 
-        result = send_trajectory_goal(
+        def observe_execution(
+            validated: ValidatedTrajectory,
+            start_state: MeasuredJointState,
+            start_state_age: float,
+            result: ExecutionResult,
+        ) -> None:
+            observed.append(
+                (validated, start_state, start_state_age, result)
+            )
+
+        requests = LatestMotionRequestQueue()
+        requests.submit(requested)
+        if options.backend_label in ("gazebo", "gazebo_ros2_control"):
+            stability_monitor = RosBaseStabilityMonitor(
+                node,
+                ros_base_stability_policy_from_data(
+                    load_yaml_file(
+                        package_share / "config" / "stability_limits.yaml"
+                    )
+                ),
+            )
+        lifecycle_triggered = False
+
+        def observe_feedback(
+            active_request: ResolvedTrajectory,
+            sample: ExecutionFeedback,
+        ) -> None:
+            nonlocal lifecycle_triggered
+            if lifecycle_triggered or trigger_time is None:
+                return
+            if active_request is not requested:
+                return
+            if sample.actual.time_from_start < trigger_time:
+                return
+            lifecycle_triggered = True
+            if replacement is None:
+                node.get_logger().info(
+                    f"Requesting cancellation at trajectory time "
+                    f"{sample.actual.time_from_start:.3f} s"
+                )
+                requests.cancel()
+            else:
+                node.get_logger().info(
+                    f"Replacing {requested.name} with {replacement.name} at "
+                    f"trajectory time {sample.actual.time_from_start:.3f} s"
+                )
+                requests.submit(replacement)
+
+        results = execute_motion_queue(
             node,
-            generated,
-            start_state,
+            requests,
+            package_share,
             execution_policy,
+            state_timeout=options.state_timeout,
             server_timeout=options.server_timeout,
+            execution_observer=observe_execution,
+            execution_feedback_observer=observe_feedback,
+            execution_started=(
+                (lambda unused: stability_monitor.begin())
+                if stability_monitor is not None
+                else None
+            ),
+            result_transformer=(
+                stability_monitor.enrich_result
+                if stability_monitor is not None
+                else None
+            ),
         )
+        if not results:
+            return 1
+        result = results[-1]
+        if options.report_json is not None:
+            if not observed:
+                node.get_logger().error(
+                    "Run report unavailable because no trajectory was executed"
+                )
+                return 1
+            validated, start_state, start_state_age, observed_result = observed[-1]
+            labeled_result = replace(
+                observed_result,
+                backend=options.backend_label,
+            )
+            report_motion_path = (
+                replacement_path
+                if replacement is not None
+                and validated.trajectory.name == replacement.name
+                else motion_path
+            )
+            report = build_run_report(
+                motion_path=report_motion_path,
+                limits_path=package_share / "config" / "motion_limits.yaml",
+                validated=validated,
+                start_positions=start_state.positions,
+                start_velocities=start_state.velocities,
+                start_state_age=start_state_age,
+                result=labeled_result,
+            )
+            if trigger_time is not None:
+                report["lifecycle"] = {
+                    "triggered": lifecycle_triggered,
+                    "trigger_time": trigger_time,
+                    "operation": (
+                        "cancel" if replacement is None else "replace"
+                    ),
+                    "replacement_motion": (
+                        replacement.name if replacement is not None else None
+                    ),
+                    "results": [
+                        execution_result_data(
+                            replace(item, backend=options.backend_label)
+                        )
+                        for item in results
+                    ],
+                }
+            write_json_report(options.report_json, report)
+            node.get_logger().info(
+                f"Machine-readable report: {options.report_json.resolve()}"
+            )
+        if options.cancel_at is not None:
+            return (
+                0
+                if lifecycle_triggered
+                and len(results) == 1
+                and result.status is ExecutionStatus.CANCELLED
+                and result.stop_confirmed
+                else 1
+            )
+        if replacement is not None:
+            return (
+                0
+                if lifecycle_triggered
+                and len(results) == 2
+                and results[0].status is ExecutionStatus.PREEMPTED
+                and results[0].stop_confirmed
+                and results[1].succeeded
+                else 1
+            )
         return 0 if result.succeeded else 1
     finally:
+        if stability_monitor is not None:
+            stability_monitor.close()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 def main() -> None:

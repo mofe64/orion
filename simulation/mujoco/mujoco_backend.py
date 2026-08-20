@@ -16,6 +16,7 @@ class MuJoCoJointMapping:
 
     joint_names: tuple[str, ...]
     qpos_addresses: tuple[int, ...]
+    dof_addresses: tuple[int, ...]
     actuator_ids: tuple[int, ...]
 
 
@@ -26,6 +27,7 @@ def resolve_joint_mapping(
 
     ordered_names = tuple(joint_names)
     qpos_addresses: list[int] = []
+    dof_addresses: list[int] = []
     actuator_ids: list[int] = []
 
     for name in ordered_names:
@@ -45,11 +47,13 @@ def resolve_joint_mapping(
             raise ValueError(f"MuJoCo model has no actuator named '{name}'")
 
         qpos_addresses.append(int(model.jnt_qposadr[joint_id]))
+        dof_addresses.append(int(model.jnt_dofadr[joint_id]))
         actuator_ids.append(actuator_id)
 
     return MuJoCoJointMapping(
         joint_names=ordered_names,
         qpos_addresses=tuple(qpos_addresses),
+        dof_addresses=tuple(dof_addresses),
         actuator_ids=tuple(actuator_ids),
     )
 
@@ -71,6 +75,24 @@ def read_joint_positions(
     """Read Orion's scalar joint positions in canonical order."""
 
     return tuple(float(data.qpos[address]) for address in mapping.qpos_addresses)
+
+
+def read_joint_velocities(
+    data: mujoco.MjData,
+    mapping: MuJoCoJointMapping,
+) -> tuple[float, ...]:
+    """Read Orion's scalar joint velocities in canonical order."""
+
+    return tuple(float(data.qvel[address]) for address in mapping.dof_addresses)
+
+
+def read_joint_accelerations(
+    data: mujoco.MjData,
+    mapping: MuJoCoJointMapping,
+) -> tuple[float, ...]:
+    """Read Orion's scalar joint accelerations in canonical order."""
+
+    return tuple(float(data.qacc[address]) for address in mapping.dof_addresses)
 
 
 def set_actuator_targets(

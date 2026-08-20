@@ -68,6 +68,16 @@ def test_duplicate_joint_name_is_rejected():
         joint_state_to_measured_state(message, JOINT_NAMES)
 
 
+@pytest.mark.parametrize("field", ["position", "velocity"])
+def test_non_finite_required_joint_state_is_rejected(field):
+    message = make_message()
+    values = getattr(message, field)
+    values[message.name.index("elbow_pitch_joint")] = float("nan")
+
+    with pytest.raises(JointStateError, match=f"non-finite {field}"):
+        joint_state_to_measured_state(message, JOINT_NAMES)
+
+
 def test_recent_state_passes_freshness_check():
     measured = joint_state_to_measured_state(
         make_message(), JOINT_NAMES, received_at=10.0

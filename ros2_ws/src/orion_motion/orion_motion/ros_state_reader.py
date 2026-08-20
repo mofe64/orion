@@ -61,6 +61,20 @@ def joint_state_to_measured_state(
             f"joint state is missing required joints: {missing}"
         )
 
+    for field_name, values in (
+        ("position", message.position),
+        ("velocity", message.velocity),
+    ):
+        invalid = [
+            name
+            for name in joint_names
+            if not math.isfinite(values[index_by_name[name]])
+        ]
+        if invalid:
+            raise JointStateError(
+                f"joint state has non-finite {field_name} values for: {invalid}"
+            )
+
     return MeasuredJointState(
         positions=tuple(
             message.position[index_by_name[name]] for name in joint_names
@@ -127,5 +141,178 @@ def wait_for_measured_joint_state(
             joint_names,
             received_at=received_at,
         )
+    finally:
+        node.destroy_subscription(subscription)
+
+
+def wait_for_stopped_joint_state(
+    node: Node,
+    joint_names: Sequence[str],
+    *,
+    maximum_velocity: float,
+    stable_duration: float,
+    timeout: float,
+) -> MeasuredJointState:
+    """Wait until fresh feedback remains stopped for a bounded duration."""
+
+    for field_name, value in (
+        ("maximum_velocity", maximum_velocity),
+        ("stable_duration", stable_duration),
+        ("timeout", timeout),
+    ):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{field_name} must be finite and positive")
+
+    stopped_since: float | None = None
+    latest_stopped: MeasuredJointState | None = None
+    last_error: JointStateError | None = None
+
+    def receive(message: JointState) -> None:
+        nonlocal stopped_since, latest_stopped, last_error
+        received_at = time.monotonic()
+        try:
+            measured = joint_state_to_measured_state(
+                message,
+                joint_names,
+                received_at=received_at,
+            )
+        except JointStateError as error:
+            last_error = error
+            stopped_since = None
+            latest_stopped = None
+            return
+
+        if all(
+            abs(velocity) <= maximum_velocity
+            for velocity in measured.velocities
+        ):
+            if stopped_since is None:
+                stopped_since = received_at
+            latest_stopped = measured
+        else:
+            stopped_since = None
+            latest_stopped = None
+
+    subscription = node.create_subscription(
+        JointState,
+        JOINT_STATE_TOPIC,
+        receive,
+        qos_profile_sensor_data,
+    )
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            now = time.monotonic()
+            if (
+                stopped_since is not None
+                and latest_stopped is not None
+                and now - stopped_since >= stable_duration
+            ):
+                return latest_stopped
+            remaining = deadline - now
+            if remaining <= 0:
+                detail = f" Last invalid sample: {last_error}" if last_error else ""
+                raise JointStateError(
+                    "joints did not remain below "
+                    f"{maximum_velocity:.3f} rad/s for "
+                    f"{stable_duration:.3f} seconds within "
+                    f"{timeout:.3f} seconds.{detail}"
+                )
+            rclpy.spin_once(node, timeout_sec=min(0.05, remaining))
+    finally:
+        node.destroy_subscription(subscription)
+
+
+def wait_for_settled_joint_state(
+    node: Node,
+    joint_names: Sequence[str],
+    target_positions: Sequence[float],
+    *,
+    maximum_position_error: float,
+    maximum_velocity: float,
+    stable_duration: float,
+    timeout: float,
+) -> MeasuredJointState:
+    """Wait until the final target remains reached and stopped."""
+
+    if len(target_positions) != len(joint_names):
+        raise ValueError("target_positions must match joint_names")
+    if any(not math.isfinite(position) for position in target_positions):
+        raise ValueError("target_positions must contain only finite values")
+    for field_name, value in (
+        ("maximum_position_error", maximum_position_error),
+        ("maximum_velocity", maximum_velocity),
+        ("stable_duration", stable_duration),
+        ("timeout", timeout),
+    ):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{field_name} must be finite and positive")
+
+    settled_since: float | None = None
+    latest_settled: MeasuredJointState | None = None
+    last_error: JointStateError | None = None
+
+    def receive(message: JointState) -> None:
+        nonlocal settled_since, latest_settled, last_error
+        received_at = time.monotonic()
+        try:
+            measured = joint_state_to_measured_state(
+                message,
+                joint_names,
+                received_at=received_at,
+            )
+        except JointStateError as error:
+            last_error = error
+            settled_since = None
+            latest_settled = None
+            return
+
+        positions_reached = all(
+            abs(target - actual) <= maximum_position_error
+            for target, actual in zip(
+                target_positions,
+                measured.positions,
+                strict=True,
+            )
+        )
+        stopped = all(
+            abs(velocity) <= maximum_velocity
+            for velocity in measured.velocities
+        )
+        if positions_reached and stopped:
+            if settled_since is None:
+                settled_since = received_at
+            latest_settled = measured
+        else:
+            settled_since = None
+            latest_settled = None
+
+    subscription = node.create_subscription(
+        JointState,
+        JOINT_STATE_TOPIC,
+        receive,
+        qos_profile_sensor_data,
+    )
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            now = time.monotonic()
+            if (
+                settled_since is not None
+                and latest_settled is not None
+                and now - settled_since >= stable_duration
+            ):
+                return latest_settled
+            remaining = deadline - now
+            if remaining <= 0:
+                detail = f" Last invalid sample: {last_error}" if last_error else ""
+                raise JointStateError(
+                    "joints did not remain within "
+                    f"{maximum_position_error:.3f} rad of the final target and "
+                    f"below {maximum_velocity:.3f} rad/s for "
+                    f"{stable_duration:.3f} seconds within "
+                    f"{timeout:.3f} seconds.{detail}"
+                )
+            rclpy.spin_once(node, timeout_sec=min(0.05, remaining))
     finally:
         node.destroy_subscription(subscription)

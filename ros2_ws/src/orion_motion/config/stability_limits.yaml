@@ -1,0 +1,23 @@
+format_version: 1
+applicability: provisional_simulation_only
+
+# Completion means the final pose and low velocity remain inside these bounds
+# for the full settle duration.
+completion:
+  position_tolerance: 0.05
+  velocity_tolerance: 0.05
+  settle_duration: 0.25
+  settle_timeout: 2.00
+
+# Stability is measured from the physical base pose at motion start.
+base:
+  body_name: scs215_v5
+  maximum_translation: 0.01
+  maximum_tilt: 0.0872664626
+  maximum_height_change: 0.01
+
+# Contact is the named base support shape touching the named floor shape.
+contact:
+  base_geometry: base_floor_collision
+  floor_geometry: floor
+  maximum_loss_duration: 0.05

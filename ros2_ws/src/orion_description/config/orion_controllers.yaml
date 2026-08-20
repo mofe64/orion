@@ -26,20 +26,26 @@ joint_trajectory_controller:
     allow_nonzero_velocity_at_trajectory_end: false
     action_monitor_rate: 20.0
     constraints:
+      decelerate_on_cancel: true
       goal_time: 0.50
       stopped_velocity_tolerance: 0.05
       base_yaw_joint:
         trajectory: 0.20
         goal: 0.05
+        max_deceleration_on_cancel: 4.0
       shoulder_pitch_joint:
         trajectory: 0.20
         goal: 0.05
+        max_deceleration_on_cancel: 4.0
       elbow_pitch_joint:
         trajectory: 0.20
         goal: 0.05
+        max_deceleration_on_cancel: 4.0
       head_roll_joint:
         trajectory: 0.20
         goal: 0.05
+        max_deceleration_on_cancel: 4.0
       head_pitch_joint:
         trajectory: 0.20
         goal: 0.05
+        max_deceleration_on_cancel: 4.0

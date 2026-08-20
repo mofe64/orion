@@ -118,7 +118,7 @@ def test_expressive_acknowledgement_returns_to_attentive(
     assert len(trajectory.keyframes) == 4
     assert trajectory.keyframes[-1].pose_name == "attentive"
     assert trajectory.keyframes[-1].positions == attentive_positions
-    assert trajectory.total_duration == pytest.approx(1.73)
+    assert trajectory.total_duration == pytest.approx(2.69)
 
 
 def test_functional_unreachable_response_remains_attentive(
@@ -131,7 +131,7 @@ def test_functional_unreachable_response_remains_attentive(
     trajectory = build_trajectory(motion, project_poses, project_limits)
 
     assert [keyframe.pose_name for keyframe in trajectory.keyframes] == ["attentive"]
-    assert trajectory.total_duration == pytest.approx(0.85)
+    assert trajectory.total_duration == pytest.approx(1.00)
 
 
 def test_expressive_unreachable_response_has_no_gesture_and_safe_settle(
@@ -154,4 +154,4 @@ def test_expressive_unreachable_response_has_no_gesture_and_safe_settle(
         "attentive",
     ]
     assert trajectory.keyframes[-1].positions == trajectory.keyframes[0].positions
-    assert trajectory.total_duration == pytest.approx(4.07)
+    assert trajectory.total_duration == pytest.approx(5.80)

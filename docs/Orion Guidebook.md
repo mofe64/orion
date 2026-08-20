@@ -491,8 +491,8 @@ Local Orion scene player
 | 0 | Product and interaction charter | Partially defined |
 | 1 | Robot description and simulation foundation | **Complete** |
 | 2 | Motion foundation and first expressive behaviours | **Complete** |
-| 3 | Motion quality, safety, and simulator parity | **Next** |
-| 4 | Task-space control and target pointing | Planned |
+| 3 | Motion quality, safety, and simulator parity | **Complete** |
+| 4 | Task-space control and target pointing | **Next** |
 | 5 | Lighting and multimodal scene runtime | Planned |
 | 6 | Orion Studio motion-and-light editor | Planned |
 | 7 | Physical LeLamp-compatible prototype | Planned |

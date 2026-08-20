@@ -14,6 +14,7 @@ sys.path.insert(0, str(MUJOCO_DIRECTORY))
 from mujoco_backend import (  # noqa: E402
     DEFAULT_BASE_BODY_NAME,
     read_joint_positions,
+    read_joint_velocities,
     resolve_joint_mapping,
     set_joint_state,
 )
@@ -86,6 +87,7 @@ class SetJointStateTests(unittest.TestCase):
         self.assertAlmostEqual(
             read_joint_positions(self.data, self.mapping)[0], -0.3, places=10
         )
+        self.assertEqual(read_joint_velocities(self.data, self.mapping), (0.0,) * 5)
 
 
 class SharedTrajectoryPlaybackTests(unittest.TestCase):

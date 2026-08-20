@@ -11,22 +11,20 @@ from typing import Sequence
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from rclpy.utilities import remove_ros_args
 
 from orion_motion.motion_loader import load_yaml_file
 from orion_motion.ros_motion_player import (
     ACTION_NAME,
+    LatestMotionRequestQueue,
     duration_seconds,
+    execute_motion_queue,
     generate_for_start_state,
     load_execution_policy,
     load_named_start_state,
     positive_float,
-    send_trajectory_goal,
     trajectory_to_message,
-)
-from orion_motion.ros_state_reader import (
-    JointStateError,
-    wait_for_measured_joint_state,
 )
 from orion_motion.trajectory_builder import (
     ResolvedTrajectory,
@@ -190,37 +188,30 @@ def run(arguments: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    rclpy.init(args=raw_arguments)
+    rclpy.init(
+        args=raw_arguments,
+        signal_handler_options=SignalHandlerOptions.NO,
+    )
     node = Node("orion_pose_player")
     try:
-        try:
-            start_state = wait_for_measured_joint_state(
-                node,
-                requested.joint_names,
-                timeout=options.state_timeout,
-            )
-            generated = generate_for_start_state(
-                requested, start_state, package_share
-            )
-        except (
-            JointStateError,
-            TrajectoryGenerationError,
-            TrajectoryValidationError,
-        ) as error:
-            node.get_logger().error(str(error))
-            return 1
-
-        result = send_trajectory_goal(
+        requests = LatestMotionRequestQueue()
+        requests.submit(requested)
+        results = execute_motion_queue(
             node,
-            generated,
-            start_state,
+            requests,
+            package_share,
             execution_policy,
+            state_timeout=options.state_timeout,
             server_timeout=options.server_timeout,
         )
+        if not results:
+            return 1
+        result = results[-1]
         return 0 if result.succeeded else 1
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 def main() -> None:

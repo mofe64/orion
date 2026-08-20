@@ -34,6 +34,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
+            "compare_motion_runs = orion_motion.reporting:main",
             "go_to_pose = orion_motion.ros_pose_player:main",
             "play_motion = orion_motion.ros_motion_player:main",
         ],

@@ -161,14 +161,14 @@ def test_analytic_peak_dynamics_are_recorded(project_poses, project_limits):
     assert shoulder.jerk == pytest.approx(60.0 * 0.4 / 2.0**3)
 
 
-def test_aggressive_authored_motion_remains_inspectable(
+def test_aggressive_requested_motion_remains_inspectable(
     project_poses, project_limits
 ):
-    requested = load_requested(
-        "expressive/acknowledge_expressive.yaml",
-        project_poses,
-        project_limits,
+    motion = load_yaml_file(
+        MOTIONS_DIRECTORY / "expressive/acknowledge_expressive.yaml"
     )
+    motion["motion"]["keyframes"][1]["duration"] = 0.10
+    requested = build_trajectory(motion, project_poses, project_limits)
     start = pose_positions(project_poses, "attentive", requested.joint_names)
 
     generated = generate_trajectory(

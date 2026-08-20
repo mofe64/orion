@@ -26,6 +26,7 @@ def test_controller_tolerances_match_motion_execution_policy():
     ]
     constraints = parameters["constraints"]
 
+    assert constraints["decelerate_on_cancel"] is True
     assert constraints["goal_time"] == policy.goal_time_tolerance
     assert (
         constraints["stopped_velocity_tolerance"]
@@ -39,4 +40,8 @@ def test_controller_tolerances_match_motion_execution_policy():
         assert (
             constraints[joint_name]["goal"]
             == policy.goal_position_tolerance
+        )
+        assert (
+            constraints[joint_name]["max_deceleration_on_cancel"]
+            == limits["joints"][joint_name]["max_cancel_deceleration"]
         )
