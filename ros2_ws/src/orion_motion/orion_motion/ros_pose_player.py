@@ -18,11 +18,11 @@ from orion_motion.motion_loader import load_yaml_file
 from orion_motion.ros_motion_player import (
     ACTION_NAME,
     LatestMotionRequestQueue,
+    build_dry_run_start_state_from_pose,
     duration_seconds,
     execute_motion_queue,
-    generate_for_start_state,
+    generate_validated_trajectory_from_start_state,
     load_execution_policy,
-    load_named_start_state,
     positive_float,
     trajectory_to_message,
 )
@@ -167,10 +167,10 @@ def run(arguments: Sequence[str] | None = None) -> int:
 
     if options.dry_run:
         try:
-            start_state = load_named_start_state(
+            start_state = build_dry_run_start_state_from_pose(
                 package_share, options.start_pose, requested.joint_names
             )
-            generated = generate_for_start_state(
+            generated = generate_validated_trajectory_from_start_state(
                 requested, start_state, package_share
             )
         except (

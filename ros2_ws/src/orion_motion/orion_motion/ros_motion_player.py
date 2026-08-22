@@ -153,6 +153,8 @@ def execution_policy_from_data(data: Any) -> RosExecutionPolicy:
 class GoalCancellation:
     """Own one idempotent cancellation request for one accepted ROS goal."""
 
+    # Orion may stop a motion because the user cancelled it, a newer motion
+    # replaced it, or the controller took too long to finish it.
     _ALLOWED_REASONS = {
         ExecutionStatus.CANCELLED,
         ExecutionStatus.PREEMPTED,
@@ -162,74 +164,156 @@ class GoalCancellation:
     def __init__(self) -> None:
         """Create a cancellation state before or after goal acceptance."""
 
+        # Orion creates one GoalCancellation for each motion it starts. The motion
+        # queue and the ROS execution code share this same object.
+
+        # Protect the data below because the motion queue and ROS callbacks may
+        # read or change it at the same time.
         self._lock = threading.Lock()
+
+        # This is Orion's reference to the goal accepted by the trajectory
+        # controller. It is the exact goal we will ask the controller to cancel.
         self._goal_handle: Any | None = None
+
+        # This future will later contain the controller's reply to our cancel
+        # request. A reply does not by itself prove that Orion has stopped moving.
         self._cancel_future: Any | None = None
+
+        # Remember whether Orion is stopping because of a direct cancellation,
+        # a replacement motion, or a timeout.
         self._reason: ExecutionStatus | None = None
+
+        # Remember the newest real joint positions reported before cancellation.
         self._latest_positions: tuple[float, ...] | None = None
+
+        # Freeze the joint positions from the moment cancellation first starts.
+        # Orion later compares these with the final stopped positions.
         self._requested_positions: tuple[float, ...] | None = None
+
+        # Remember when cancellation started so Orion can measure stopping time.
         self._requested_at: float | None = None
 
     @property
     def reason(self) -> ExecutionStatus | None:
         """Return why the goal is being cancelled, if requested."""
 
+        # Before sending a goal, the motion queue reads this to see whether the
+        # request was already cancelled or replaced. After a cancelled result,
+        # Orion reads it again to report why the motion stopped.
         with self._lock:
+            # Use the lock so the reason cannot change while Orion reads it.
             return self._reason
 
     @property
     def cancel_future(self) -> Any | None:
         """Return the one controller cancellation future, when available."""
 
+        # This lets Orion read the same controller reply without sending another
+        # cancel request. It is None until the goal exists and the request is sent.
         with self._lock:
             return self._cancel_future
 
     @property
     def request_snapshot(self) -> tuple[float, tuple[float, ...]] | None:
-        """Return the request time and measured positions captured then."""
+        """Return the request time and measured joint positions captured when
+        cancellation began."""
 
+        # After Orion confirms that the joints have stopped, the cancellation
+        # metrics code reads this to calculate stopping time and joint movement.
         with self._lock:
+            # A complete snapshot needs both the request time and joint positions.
             if self._requested_at is None or self._requested_positions is None:
                 return None
+
+            # Orion uses these values to measure stopping time and distance.
             return self._requested_at, self._requested_positions
 
     def observe_positions(self, positions: Sequence[float]) -> None:
         """Remember the newest measured positions until cancellation begins."""
 
+        # Orion calls this first with the starting joint positions, then again
+        # whenever the controller sends new feedback while the robot is moving.
+
+        # These are the actual measured positions, not the commanded targets.
+        # Copy them into a fixed tuple so we keep one clear snapshot.
         measured = tuple(float(position) for position in positions)
+
+        # Invalid joint feedback cannot be used to measure Orion's stopping motion.
         if any(not math.isfinite(position) for position in measured):
             raise ValueError("observed positions must be finite")
+
         with self._lock:
+            # Keep the newest measurement until the first cancel request arrives.
+            # After that, stop updating it so Orion can measure how far each joint
+            # moved between the cancel request and the confirmed stop.
             if self._requested_at is None:
                 self._latest_positions = measured
 
     def attach(self, goal_handle: Any) -> None:
         """Attach the accepted goal and honour any earlier cancel request."""
+        # this method attaches the goal, so that we have a reference to the goal
+        # in case we want to cancel it
 
+        # send_trajectory_goal() calls this after the trajectory controller accepts
+        # Orion's FollowJointTrajectory goal. Before this point, there is no
+        # accepted controller goal that Orion can ask to cancel.
         with self._lock:
+            # Save the handle for the exact controller goal Orion is running.
             self._goal_handle = goal_handle
+
+            # A cancel or replacement may have arrived while Orion was waiting for
+            # goal acceptance. If so, send that saved request now.
+            # if there is no cancellation/replacement request will be a no-op
             self._request_once_locked()
 
     def request(self, reason: ExecutionStatus) -> Any | None:
         """Request cancellation once and return the shared cancel future."""
 
+        # The motion queue calls this for a direct cancel or replacement motion.
+        # The execution code also calls it when the user interrupts a run or the
+        # controller does not return a result before Orion's time limit.
+
+        # Reject statuses such as success or failure because they are results,
+        # not reasons for asking the controller to cancel an active goal.
         if reason not in self._ALLOWED_REASONS:
             raise ValueError(f"invalid cancellation reason: {reason.value}")
+
         with self._lock:
+            # Keep the first stopping reason. A direct cancellation may replace a
+            # previous replacement or timeout reason because it is more explicit.
             if self._reason is None or reason is ExecutionStatus.CANCELLED:
                 self._reason = reason
+
+            # Save one starting point for the whole stopping measurement. Later
+            # calls must not reset the time or positions while Orion is stopping.
             if self._requested_at is None:
                 self._requested_at = time.monotonic()
                 self._requested_positions = self._latest_positions
+
+            # Send now if the controller has accepted the goal. Otherwise, keep
+            # the reason and snapshot until attach() receives the goal handle.
             self._request_once_locked()
+
+            # Every caller receives the same future. It is None only when Orion is
+            # still waiting for the controller to accept the goal.
             return self._cancel_future
 
     def _request_once_locked(self) -> None:
+        # request() and attach() call this while already holding the lock. Keeping
+        # this check inside the lock prevents them from sending two cancel requests
+        # for the same controller goal at the same time.
+
+        # Send only when cancellation was requested, the controller goal exists,
+        # and Orion has not already sent a cancel request for it.
         if (
             self._reason is not None
             and self._goal_handle is not None
             and self._cancel_future is None
         ):
+            # Ask the trajectory controller to cancel the goal. This returns at
+            # once; the future receives the controller's reply later. Orion still
+            # checks the goal result and measured joint feedback before it says the
+            # robot has stopped.
             self._cancel_future = self._goal_handle.cancel_goal_async()
 
 
@@ -239,32 +323,62 @@ class LatestMotionRequestQueue:
     def __init__(self) -> None:
         """Create an empty one-slot request queue."""
 
+        # The ROS execution loop and feedback callbacks can use this queue at the
+        # same time. The lock stops them from changing the queue together.
         self._lock = threading.Lock()
+
+        # Store the newest motion waiting to start. There is only one waiting
+        # place, so a newer request replaces an older request that has not started.
         self._pending: ResolvedTrajectory | None = None
+
+        # Store the cancellation control for the motion currently running. This
+        # lets a new request ask the old motion to stop before the new one starts.
         self._active_cancellation: GoalCancellation | None = None
 
     def submit(self, requested: ResolvedTrajectory) -> None:
         """Replace the pending request and interrupt any active request."""
 
+        # Orion calls this for the first requested motion and for every replacement
+        # motion that arrives while another motion may still be running.
         with self._lock:
+            # Keep only the newest motion. If two replacements arrive quickly, the
+            # second one replaces the first before the execution loop takes it.
             self._pending = requested
+
+            # Remember the running motion's cancellation control, if one exists.
             active = self._active_cancellation
+
+        # Do this after releasing the queue lock. GoalCancellation has its own lock
+        # and may need to send a request to the trajectory controller.
         if active is not None:
+            # PREEMPTED means the old motion is stopping because a newer one won.
             active.request(ExecutionStatus.PREEMPTED)
 
     def cancel(self) -> None:
         """Discard pending work and cancel the active request, if any."""
 
+        # Orion calls this when the user wants motion to stop without starting a
+        # replacement. It must remove both waiting work and current work.
         with self._lock:
+            # Remove the waiting motion so it cannot start after the current one.
             self._pending = None
+
+            # Remember the running motion's cancellation control, if one exists.
             active = self._active_cancellation
+
+        # Release the queue lock before asking GoalCancellation to stop the goal.
         if active is not None:
+            # CANCELLED records that this was a direct stop, not a replacement.
             active.request(ExecutionStatus.CANCELLED)
 
     def take_latest(self) -> ResolvedTrajectory | None:
         """Remove and return the newest pending request."""
 
+        # execute_motion_queue() calls this when it is ready to start another
+        # motion. None tells the loop that there is no more work to run.
         with self._lock:
+            # Take ownership of the waiting motion and empty the waiting place.
+            # A replacement submitted after this point becomes the next motion.
             requested = self._pending
             self._pending = None
             return requested
@@ -272,16 +386,29 @@ class LatestMotionRequestQueue:
     def set_active(self, cancellation: GoalCancellation) -> None:
         """Register cancellation control for the request being executed."""
 
+        # After taking a motion from the queue, execute_motion_queue() creates a
+        # GoalCancellation for it and registers that object here.
         with self._lock:
+            # New submit() or cancel() calls can now stop this running motion.
             self._active_cancellation = cancellation
+
+            # A replacement may have arrived after take_latest() but before this
+            # method. Remember that race so the older motion does not continue.
             newer_request_waiting = self._pending is not None
+
+        # If a newer motion is already waiting, stop this older motion and let the
+        # execution loop move on to the newer one.
         if newer_request_waiting:
             cancellation.request(ExecutionStatus.PREEMPTED)
 
     def clear_active(self, cancellation: GoalCancellation) -> None:
         """Clear the active request if it still matches the caller."""
 
+        # execute_motion_queue() calls this after a motion finishes, fails, or is
+        # cancelled, so later requests do not try to stop an old finished goal.
         with self._lock:
+            # Clear only the same cancellation object that finished. This prevents
+            # old cleanup code from clearing a newer active motion by mistake.
             if self._active_cancellation is cancellation:
                 self._active_cancellation = None
 
@@ -376,26 +503,37 @@ def load_installed_trajectory(
     return motion_path, trajectory
 
 
-def load_named_start_state(
+def build_dry_run_start_state_from_pose(
     package_share: Path,
     pose_name: str,
     joint_names: Sequence[str],
 ) -> MeasuredJointState:
-    """Load an explicit stopped start pose for offline dry-run generation."""
+    """Build an assumed stopped start state from a pose for a dry run."""
 
+    # Orion calls this only for --dry-run, when there is no live joint feedback.
+    # Real execution reads the starting positions and velocities from the robot.
+
+    # Load the motion limits so the pose library can be checked before it is used.
     motion_limits = load_yaml_file(
         package_share / "config" / "motion_limits.yaml"
     )
+
+    # Load the named poses and check their joints, units, and position limits.
     pose_library = validate_pose_library(
         load_yaml_file(package_share / "config" / "poses.yaml"),
         motion_limits,
     )
     poses = pose_library["poses"]
+
+    # Give the user a clear list if the requested dry-run start pose does not exist.
     if pose_name not in poses:
         available = ", ".join(sorted(poses))
         raise ValueError(
             f"Unknown start pose '{pose_name}'. Available poses: {available}"
         )
+
+    # Build the positions in the same joint order as the requested trajectory.
+    # Set every velocity to zero because a dry run assumes Orion starts stopped.
     return MeasuredJointState(
         positions=tuple(
             float(poses[pose_name]["positions"][joint_name])
@@ -405,25 +543,37 @@ def load_named_start_state(
     )
 
 
-def generate_for_start_state(
+def generate_validated_trajectory_from_start_state(
     requested: ResolvedTrajectory,
     start_state: MeasuredJointState,
     package_share: Path,
 ) -> ValidatedTrajectory:
-    """Generate and validate one requested motion for execution."""
+    """Generate and validate a trajectory from Orion's given start state."""
 
+    # Real execution passes a state measured from Orion. A dry run passes the
+    # assumed stopped state built from a named pose by the function above.
+
+    # Use the same motion limits for both trajectory generation and validation.
     motion_limits = load_yaml_file(
         package_share / "config" / "motion_limits.yaml"
     )
+
+    # Forbidden regions describe joint combinations Orion must not move through.
     forbidden_regions = load_yaml_file(
         package_share / "config" / "forbidden_regions.yaml"
     )
+
+    # Turn the resolved pose targets into timed trajectory points that begin at
+    # the supplied starting positions and velocities.
     generated = generate_trajectory(
         requested,
         start_state.positions,
         start_state.velocities,
         motion_limits,
     )
+
+    # Check all generated points and segments before they can be printed in a dry
+    # run or sent to the real trajectory controller.
     return require_valid_trajectory(
         generated, motion_limits, forbidden_regions
     )
@@ -493,6 +643,17 @@ def _apply_goal_tolerances(
     joint_names: Sequence[str],
     policy: RosExecutionPolicy,
 ) -> None:
+    """Tell the trajectory controller how closely Orion must follow the goal."""
+
+    # send_trajectory_goal() calls this after adding the validated trajectory and
+    # before sending the FollowJointTrajectory goal to the controller.
+
+    # These values come from execution_policy.yaml. They do not change the motion
+    # points. They tell the controller when tracking error is too large.
+
+    # While Orion is moving, each real joint position must stay this close to its
+    # desired position. If it moves farther away, the controller stops the goal
+    # and reports a path-tolerance failure.
     goal.path_tolerance = [
         JointTolerance(
             name=joint_name,
@@ -500,6 +661,10 @@ def _apply_goal_tolerances(
         )
         for joint_name in joint_names
     ]
+
+    # At the planned end, every joint must be close to its final position and
+    # moving slowly enough to count as stopped. If not, the controller reports a
+    # goal-tolerance failure.
     goal.goal_tolerance = [
         JointTolerance(
             name=joint_name,
@@ -508,24 +673,43 @@ def _apply_goal_tolerances(
         )
         for joint_name in joint_names
     ]
+
+    # Give the controller this much extra time after the planned end to enter the
+    # final position and velocity limits before it marks the goal as failed.
     goal.goal_time_tolerance = seconds_to_duration(
         policy.goal_time_tolerance
-    )
+    ) # A successful controller result is not Orion's final physical check. Orion later reads fresh joint feedback and confirms that the final pose stays still.
 
 
+# The trajectory controller returns ROS error codes when a goal fails. Orion uses
+# this table to turn each known ROS code into its own ExecutionStatus for logs,
+# reports, tests, and callers of the motion player.
+# Successful results are handled by the normal success path, so they do not need
+# an entry here. Any unknown error code becomes the general FAILED status later.
 _RESULT_STATUSES = {
+    # The controller rejected the structure or timing of the trajectory goal.
     FollowJointTrajectory.Result.INVALID_GOAL: ExecutionStatus.INVALID_GOAL,
+
+    # The goal's joint names do not match the joints managed by the controller.
     FollowJointTrajectory.Result.INVALID_JOINTS: ExecutionStatus.INVALID_JOINTS,
+
+    # The goal asked the controller to start from a timestamp that was already old.
     FollowJointTrajectory.Result.OLD_HEADER_TIMESTAMP: (
         ExecutionStatus.OLD_HEADER_TIMESTAMP
     ),
+
+    # A real joint moved too far from its desired position during the motion.
     FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED: (
         ExecutionStatus.PATH_TOLERANCE_VIOLATED
     ),
+
+    # A joint did not reach the final limits within the allowed finishing time.
     FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED: (
         ExecutionStatus.GOAL_TOLERANCE_VIOLATED
     ),
 }
+
+
 
 
 def _confirm_stopped_after_cancel(
@@ -1017,7 +1201,7 @@ def execute_motion_queue(
                     timeout=state_timeout,
                 )
                 start_state_age = start_state.age()
-                validated = generate_for_start_state(
+                validated = generate_validated_trajectory_from_start_state(
                     requested,
                     start_state,
                     package_share,
@@ -1205,10 +1389,10 @@ def run(arguments: Sequence[str] | None = None) -> int:
 
     if options.dry_run:
         try:
-            start_state = load_named_start_state(
+            start_state = build_dry_run_start_state_from_pose(
                 package_share, options.start_pose, requested.joint_names
             )
-            generated = generate_for_start_state(
+            generated = generate_validated_trajectory_from_start_state(
                 requested, start_state, package_share
             )
         except (
