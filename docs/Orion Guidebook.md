@@ -488,7 +488,7 @@ Local Orion scene player
 
 | Milestone | Name | Current status |
 |---:|---|---|
-| 0 | Product and interaction charter | Partially defined |
+| 0 | Product and interaction charter | **In progress** — charter drafted |
 | 1 | Robot description and simulation foundation | **Complete** |
 | 2 | Motion foundation and first expressive behaviours | **Complete** |
 | 3 | Motion quality, safety, and simulator parity | **Complete** |
@@ -509,6 +509,45 @@ Local Orion scene player
 ---
 
 # 9. Milestone 0 — Product and Interaction Charter
+
+## Status
+
+**In progress.** The first product-owner interview was recorded in
+`docs/product/orion_product_charter.md` on 2026-08-22. The main product
+direction is defined, but the scenario, character-guide, sensor-mapping, and
+out-of-scope work required for closeout is not complete.
+
+## Confirmed decisions
+
+- Orion is an expressive companion robot for screen-free embodied AI
+  interaction.
+- Its first audience is a broad household audience.
+- It is a stationary tabletop robot that may be carried between suitable
+  surfaces.
+- It has a desk-lamp-sized base and a larger arm working area across the desk.
+- Ambient room lighting is the priority, supported by task and expressive
+  lighting.
+- Its character is curious, calm, playful, mature, and unintrusive.
+- Speech begins after a user addresses Orion.
+- Limited proactive greeting, lighting, reminder, notification, music, and
+  household-activity responses are allowed when they remain unintrusive.
+- Core operation, perception, conversation, and approved memory must work
+  locally.
+- Raw camera and microphone data is processed locally and discarded. Only
+  selected preferences, reminders, and user-approved memories may be retained.
+- Household data must not leave the device.
+
+## Remaining closeout work
+
+- Agree the complete first-version out-of-scope list.
+- Define safe movement boundaries around people and household objects.
+- Complete the six required interaction storyboards.
+- Create functional, expressive, reactive, and proactive variants for each
+  scenario.
+- Define proactive frequency, interruption, quiet-hour, and notification rules.
+- Create `docs/personality/orion_character_guide.md`.
+- Connect every proposed sensor and feature to an approved scenario.
+- Review the finished artifacts against the Milestone 0 exit criteria.
 
 ## Objective
 

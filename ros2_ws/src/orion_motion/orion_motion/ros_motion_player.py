@@ -774,42 +774,78 @@ def _finish_requested_cancellation(
 ) -> tuple[bool, str, MeasuredJointState | None]:
     """Wait for one cancellation request, its result, and a measured stop."""
 
+    # send_trajectory_goal() calls this when the user interrupts an active motion
+    # or when the controller takes too long to return the action result.
+
+    # This helper checks three separate things:
+    # 1. Did the controller answer Orion's cancel request?
+    # 2. Did the action goal return a final result?
+    # 3. Does fresh joint feedback show that Orion has physically stopped?
+
+    # Ask GoalCancellation to send its one cancel request for this goal. It also
+    # remembers the reason, request time, and measured positions at this moment.
     cancel_future = cancellation.request(reason)
+
+    # Collect each outcome so the final ExecutionResult can explain what happened.
     details: list[str] = []
+
+    # This is a defensive case for cancellation before an accepted goal handle is
+    # available. Without a goal handle, Orion cannot contact a specific ROS goal.
     if cancel_future is None:
         details.append("goal was not available for cancellation")
     else:
+        # Keep processing ROS messages until the controller answers or Orion's
+        # configured cancellation-response time limit expires.
         spin(
             node,
             cancel_future,
             timeout_sec=policy.cancel_response_timeout,
         )
+
+        # A future that is still unfinished means no reply arrived in time.
         if not cancel_future.done():
             details.append("controller cancellation response timed out")
         else:
+            # The cancel future contains the controller's response to the request.
             response = cancel_future.result()
             goals_canceling = getattr(response, "goals_canceling", None)
+
+            # ROS normally lists the goals it accepted for cancellation. An empty
+            # list means the controller did not accept this goal for cancellation.
             if goals_canceling is not None and not goals_canceling:
                 details.append("controller did not accept the cancellation")
             else:
                 details.append("controller accepted the cancellation")
 
+    # The cancel response only says whether the request was accepted. Orion must
+    # separately wait for the original trajectory action to reach a final state.
     if not result_future.done():
+        # Give the controller a short, bounded time to finish the cancelled goal.
         spin(
             node,
             result_future,
             timeout_sec=policy.cancel_response_timeout,
         )
+
+    # Record whether the original action supplied a final result in time.
     if not result_future.done():
         details.append("cancelled goal did not return a terminal result")
     else:
+        # A ROS action result wraps both the controller result and action status.
         wrapped_result = result_future.result()
         wrapped_status = getattr(wrapped_result, "status", None)
+
+        # STATUS_CANCELED confirms the action ended through ROS cancellation. A
+        # different status can occur if the goal finished or failed at the same
+        # time that Orion requested cancellation.
         if wrapped_status == GoalStatus.STATUS_CANCELED:
             details.append("controller reported the goal as cancelled")
         else:
             details.append("controller returned after the cancellation request")
 
+    # Controller replies describe software state, not physical movement. Always
+    # read fresh joint feedback and check that every Orion joint stays slow enough
+    # for long enough to count as stopped.
     stopped, stop_detail, stopped_state = _confirm_stopped_after_cancel(
         node,
         joint_names,
@@ -817,6 +853,9 @@ def _finish_requested_cancellation(
         stopped_state_waiter=stopped_state_waiter,
     )
     details.append(stop_detail)
+
+    # Return whether stopping was confirmed, one readable account of all three
+    # checks, and the final measured state used for stopping-distance metrics.
     return stopped, "; ".join(details), stopped_state
 
 
