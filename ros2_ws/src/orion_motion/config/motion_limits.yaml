@@ -46,10 +46,10 @@ joints:
 
   shoulder_pitch_joint:
     mechanical_position:
-      lower: -1.08426
+      lower: -1.33456
       upper: 2.05734
     operational_position:
-      lower: -1.08426
+      lower: -1.30388
       upper: 2.05734
     max_velocity: 1.5
     max_acceleration: 8.0
@@ -59,10 +59,10 @@ joints:
   elbow_pitch_joint:
     mechanical_position:
       lower: -2.82002
-      upper: 0.321569
+      upper: 0.76699
     operational_position:
       lower: -2.82002
-      upper: 0.321569
+      upper: 0.736311
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0
