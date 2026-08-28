@@ -25,6 +25,7 @@ MAX_TEST_CURRENT_RAW = 154  # 154 * 6.5 mA ~= 1.0 A.
 
 NUDGE_STEPS = 10  # 4096 steps/rev: about 0.88 degrees.
 POSITION_TOLERANCE_STEPS = 3
+MIN_DIRECTIONAL_RESPONSE_STEPS = 3
 GOAL_VELOCITY_RAW = 50  # About 4.4 degrees/second.
 ACCELERATION_RAW = 5
 TORQUE_LIMIT_RAW = 200  # 20% of the STS3215's 0..1000 RAM torque limit.
@@ -85,6 +86,7 @@ class MotionResult:
     final_position_raw: int
     peak_current_ma: float
     final_temperature_c: int
+    reached_target: bool
 
 
 def motion_test_plan(
@@ -234,10 +236,11 @@ def nudge_joint(
                 reached_target = True
                 break
 
-        if not reached_target:
+        directional_response = direction * (final_position - start_position)
+        if not reached_target and directional_response < MIN_DIRECTIONAL_RESPONSE_STEPS:
             raise MotionTestError(
-                f"ID {assignment.servo_id} did not reach raw target {target_position}; "
-                f"last position was {final_position}."
+                f"ID {assignment.servo_id} did not show a clear response toward raw target "
+                f"{target_position}; it moved from {start_position} to {final_position}."
             )
     finally:
         if torque_enabled:
@@ -250,4 +253,5 @@ def nudge_joint(
         final_position_raw=final_position,
         peak_current_ma=peak_current_raw * 6.5,
         final_temperature_c=final_temperature,
+        reached_target=reached_target,
     )

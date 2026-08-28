@@ -79,6 +79,7 @@ class MotionTestTests(unittest.TestCase):
         self.assertEqual(result.start_position_raw, 2048)
         self.assertEqual(result.target_position_raw, 2058)
         self.assertEqual(result.final_position_raw, 2058)
+        self.assertTrue(result.reached_target)
         initial_goal = ("write", "Goal_Position", "base_yaw_joint", 2048, False, 2)
         enable = ("enable_torque", "base_yaw_joint", 2)
         target_goal = ("write", "Goal_Position", "base_yaw_joint", 2058, False, 2)
@@ -96,6 +97,34 @@ class MotionTestTests(unittest.TestCase):
             nudge_joint(bus, self.assignment, direction=1, sleep=lambda _: None)
 
         self.assertIn(("disable_torque", "base_yaw_joint", 2), bus.calls)
+        self.assertEqual(bus.values["Torque_Enable"], 0)
+
+    def test_nudge_accepts_small_clear_response_in_commanded_direction(self) -> None:
+        bus = FakeMotionBus()
+        goal_writes = 0
+
+        original_write = bus.write
+
+        def partially_follow_goal(data_name, motor, value, *, normalize=True, num_retry=0):
+            nonlocal goal_writes
+            original_write(
+                data_name,
+                motor,
+                value,
+                normalize=normalize,
+                num_retry=num_retry,
+            )
+            if data_name == "Goal_Position":
+                goal_writes += 1
+                if goal_writes == 2:
+                    bus.values["Present_Position"] = 2052
+
+        bus.write = partially_follow_goal  # type: ignore[method-assign]
+
+        result = nudge_joint(bus, self.assignment, direction=1, sleep=lambda _: None)
+
+        self.assertEqual(result.final_position_raw, 2052)
+        self.assertFalse(result.reached_target)
         self.assertEqual(bus.values["Torque_Enable"], 0)
 
 

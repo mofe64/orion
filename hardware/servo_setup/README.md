@@ -171,7 +171,10 @@ joint:
 1. Requires an explicit direction choice after the operator checks clearance.
 2. Uses the present encoder position as the goal before enabling torque.
 3. Enables only that joint with a 20% RAM torque limit.
-4. Nudges 10 raw encoder steps (about 0.88 degrees) at low speed.
+4. Commands 10 raw encoder steps (about 0.88 degrees) at low speed and accepts
+   either reaching the target or a clear response of at least 3 steps in the
+   commanded direction. Exact tracking is deferred to calibration because a
+   tiny loaded move can be smaller than joint friction and backlash.
 5. Monitors current, temperature, and servo status.
 6. Disables that joint before offering the next one.
 
@@ -189,6 +192,14 @@ uv run orion-test-servos --port /dev/not-opened --dry-run
 Passing this nudge test proves basic controlled motion only. It does not define
 joint zero, direction, or safe mechanical limits; those remain calibration
 work before simultaneous trajectories are allowed.
+
+To resume after earlier joints have already passed, keep the full bus connected
+and select the first untested ID. Earlier IDs are still preflighted and included
+in the final torque-off cleanup, but they are not prompted or moved:
+
+```bash
+uv run orion-test-servos --port /dev/ttyACM0 --start-id 4
+```
 
 ## How the write works
 

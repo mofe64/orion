@@ -27,6 +27,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
     parser.add_argument(
+        "--start-id",
+        type=int,
+        choices=range(1, 6),
+        default=1,
+        help="Begin prompts at this servo ID while still preflighting and disabling all five.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the motion plan without importing LeRobot, opening the port, or writing a register.",
@@ -34,10 +41,11 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_plan() -> None:
+def _print_plan(start_id: int) -> None:
     print("Orion sequential five-joint first-motion plan:")
     for assignment in motion_test_plan():
-        print(f"  ID {assignment.servo_id}: {assignment.joint_name}")
+        action = "test" if assignment.servo_id >= start_id else "preflight only"
+        print(f"  ID {assignment.servo_id}: {assignment.joint_name} ({action})")
     print(
         f"Limits: {NUDGE_STEPS} raw steps (~0.88 deg), velocity {GOAL_VELOCITY_RAW}, "
         f"acceleration {ACCELERATION_RAW}, torque {TORQUE_LIMIT_RAW}/1000."
@@ -66,7 +74,8 @@ def _direction_prompt(servo_id: int, joint_name: str, position_raw: int) -> int 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     plan = motion_test_plan()
-    _print_plan()
+    test_plan = tuple(item for item in plan if item.servo_id >= args.start_id)
+    _print_plan(args.start_id)
 
     if args.dry_run:
         print("Dry run only: no serial port was opened and no servo register was read or written.")
@@ -92,6 +101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\nPreflight passed: all five STS3215 servos are in position mode with torque off.")
         for snapshot in preflight:
             assignment = snapshot.assignment
+            if assignment.servo_id < args.start_id:
+                continue
             direction = _direction_prompt(
                 assignment.servo_id,
                 assignment.joint_name,
@@ -104,10 +115,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             result = nudge_joint(bus, assignment, direction=direction)
             results.append(result)
+            response = "target reached" if result.reached_target else "directional response confirmed"
             print(
                 f"ID {assignment.servo_id} passed: {result.start_position_raw} -> "
                 f"{result.final_position_raw}, peak current {result.peak_current_ma:.0f} mA, "
-                f"{result.final_temperature_c} C; torque is off."
+                f"{result.final_temperature_c} C, {response}; torque is off."
             )
     except KeyboardInterrupt:
         print("\nTest aborted by operator. Disabling all torque.")
@@ -123,7 +135,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             finally:
                 bus.disconnect(disable_torque=True)
 
-    print(f"\nFirst-motion session complete: {len(results)} passed, {len(skipped)} skipped.")
+    print(
+        f"\nFirst-motion session complete for IDs {args.start_id}-5: "
+        f"{len(results)} passed, {len(skipped)} skipped."
+    )
     print("All five servos have torque disabled. Turn the 6 V servo supply off.")
     return 0
 

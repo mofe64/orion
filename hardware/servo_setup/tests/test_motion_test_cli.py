@@ -87,7 +87,7 @@ class MotionTestCliTests(unittest.TestCase):
             self.assertIs(bus_arg, bus)
             self.assertEqual(direction, 1)
             tested_joints.append(assignment.joint_name)
-            return MotionResult(assignment, 2048, 2058, 2058, 130.0, 25)
+            return MotionResult(assignment, 2048, 2058, 2058, 130.0, 25, True)
 
         stream = io.StringIO()
         responses = ["TEST ALL", *("NUDGE +" for _ in ORION_SERVO_ASSIGNMENTS)]
@@ -104,6 +104,28 @@ class MotionTestCliTests(unittest.TestCase):
         self.assertEqual(bus.disable_calls, [(None, 2)])
         self.assertEqual(bus.disconnect_calls, [True])
         self.assertIn("5 passed, 0 skipped", stream.getvalue())
+
+    def test_start_id_skips_prompts_but_preflights_all_earlier_ids(self) -> None:
+        bus = FakeMotionCliBus()
+        tested_joints: list[str] = []
+
+        def fake_nudge(bus_arg, assignment, *, direction):
+            tested_joints.append(assignment.joint_name)
+            return MotionResult(assignment, 2048, 2058, 2052, 130.0, 25, False)
+
+        stream = io.StringIO()
+        with (
+            patch("orion_servo_setup.motion_test_cli.create_lerobot_bus", return_value=bus),
+            patch("orion_servo_setup.motion_test_cli.nudge_joint", side_effect=fake_nudge),
+            patch("builtins.input", side_effect=["TEST ALL", "NUDGE +", "NUDGE -"]),
+            redirect_stdout(stream),
+        ):
+            result = main(["--port", "/dev/fake", "--start-id", "4"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(tested_joints, ["head_roll_joint", "head_pitch_joint"])
+        self.assertIn("ID 1: base_yaw_joint (preflight only)", stream.getvalue())
+        self.assertIn("directional response confirmed", stream.getvalue())
 
 
 if __name__ == "__main__":
