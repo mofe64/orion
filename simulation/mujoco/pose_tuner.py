@@ -80,8 +80,12 @@ def load_pose_configuration(pose_name: str) -> PoseConfiguration:
     joint_order = tuple(limits_data["joint_order"])
     limits = {
         name: (
-            float(limits_data["joints"][name]["lower"]),
-            float(limits_data["joints"][name]["upper"]),
+            float(
+                limits_data["joints"][name]["operational_position"]["lower"]
+            ),
+            float(
+                limits_data["joints"][name]["operational_position"]["upper"]
+            ),
         )
         for name in joint_order
     }

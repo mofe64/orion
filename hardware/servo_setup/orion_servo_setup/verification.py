@@ -1,4 +1,4 @@
-"""Read-only identity and telemetry checks for provisioned Orion servos."""
+"""Read-only register audit for Orion's provisioned STS3215 servos."""
 
 from __future__ import annotations
 
@@ -9,16 +9,109 @@ from typing import Protocol
 from .provisioning import ORION_SERVO_ASSIGNMENTS, ServoAssignment, validate_assignments
 
 
+REGISTER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "identity",
+        (
+            "Firmware_Major_Version",
+            "Firmware_Minor_Version",
+            "ID",
+            "Baud_Rate",
+        ),
+    ),
+    (
+        "persistent configuration",
+        (
+            "Return_Delay_Time",
+            "Min_Position_Limit",
+            "Max_Position_Limit",
+            "Max_Temperature_Limit",
+            "Max_Voltage_Limit",
+            "Min_Voltage_Limit",
+            "Max_Torque_Limit",
+            "Phase",
+            "P_Coefficient",
+            "I_Coefficient",
+            "D_Coefficient",
+            "Protection_Current",
+            "Homing_Offset",
+            "Operating_Mode",
+            "Protective_Torque",
+            "Protection_Time",
+            "Overload_Torque",
+            "Over_Current_Protection_Time",
+            "Maximum_Velocity_Limit",
+            "Maximum_Acceleration",
+        ),
+    ),
+    (
+        "runtime configuration",
+        (
+            "Torque_Enable",
+            "Acceleration",
+            "Goal_Position",
+            "Goal_Velocity",
+            "Torque_Limit",
+            "Lock",
+        ),
+    ),
+    (
+        "live telemetry",
+        (
+            "Present_Position",
+            "Present_Velocity",
+            "Present_Load",
+            "Present_Voltage",
+            "Present_Temperature",
+            "Status",
+            "Moving",
+            "Present_Current",
+        ),
+    ),
+)
+
+AUDIT_REGISTERS = tuple(
+    register for _, registers in REGISTER_GROUPS for register in registers
+)
+
+
 @dataclass(frozen=True)
-class ServoTelemetry:
-    """One read-only snapshot from a provisioned STS3215 servo."""
+class ServoRegisterSnapshot:
+    """Raw register values captured from one STS3215 without writing to it."""
 
     assignment: ServoAssignment
     model_number: int
-    position_raw: int
-    voltage_v: float
-    temperature_c: int
-    torque_enabled: bool
+    registers: dict[str, int]
+
+    def raw(self, register: str) -> int:
+        return self.registers[register]
+
+    @property
+    def firmware_version(self) -> str:
+        return (
+            f"{self.raw('Firmware_Major_Version')}."
+            f"{self.raw('Firmware_Minor_Version')}"
+        )
+
+    @property
+    def position_raw(self) -> int:
+        return self.raw("Present_Position")
+
+    @property
+    def voltage_v(self) -> float:
+        return self.raw("Present_Voltage") / 10.0
+
+    @property
+    def temperature_c(self) -> int:
+        return self.raw("Present_Temperature")
+
+    @property
+    def current_ma(self) -> float:
+        return self.raw("Present_Current") * 6.5
+
+    @property
+    def torque_enabled(self) -> bool:
+        return bool(self.raw("Torque_Enable"))
 
 
 class VerificationBus(Protocol):
@@ -54,13 +147,13 @@ def verification_plan(
     return matches
 
 
-def read_servo_telemetry(
+def read_servo_registers(
     bus: VerificationBus,
     assignments: Iterable[ServoAssignment],
-) -> tuple[ServoTelemetry, ...]:
-    """Ping and read each servo without changing any motor register."""
+) -> tuple[ServoRegisterSnapshot, ...]:
+    """Ping and audit each servo using read operations only."""
 
-    snapshots: list[ServoTelemetry] = []
+    snapshots: list[ServoRegisterSnapshot] = []
     for assignment in validate_assignments(assignments):
         model_number = bus.ping(assignment.joint_name, num_retry=2, raise_on_error=True)
         if model_number is None:
@@ -68,25 +161,23 @@ def read_servo_telemetry(
                 f"Servo ID {assignment.servo_id} ({assignment.joint_name}) did not answer its ping."
             )
 
-        position_raw = int(
-            bus.read("Present_Position", assignment.joint_name, normalize=False, num_retry=2)
-        )
-        voltage_raw = int(
-            bus.read("Present_Voltage", assignment.joint_name, normalize=False, num_retry=2)
-        )
-        temperature_c = int(
-            bus.read("Present_Temperature", assignment.joint_name, normalize=False, num_retry=2)
-        )
-        torque_raw = int(bus.read("Torque_Enable", assignment.joint_name, normalize=False, num_retry=2))
+        registers = {
+            register: int(
+                bus.read(
+                    register,
+                    assignment.joint_name,
+                    normalize=False,
+                    num_retry=2,
+                )
+            )
+            for register in AUDIT_REGISTERS
+        }
 
         snapshots.append(
-            ServoTelemetry(
+            ServoRegisterSnapshot(
                 assignment=assignment,
                 model_number=int(model_number),
-                position_raw=position_raw,
-                voltage_v=voltage_raw / 10.0,
-                temperature_c=temperature_c,
-                torque_enabled=bool(torque_raw),
+                registers=registers,
             )
         )
 

@@ -19,6 +19,7 @@ from mujoco_backend import (  # noqa: E402
     set_joint_state,
 )
 from motion_player import load_playback_data, run_playback_loop  # noqa: E402
+from pose_tuner import load_pose_configuration  # noqa: E402
 from orion_motion.trajectory_generator import sample_trajectory  # noqa: E402
 
 
@@ -88,6 +89,21 @@ class SetJointStateTests(unittest.TestCase):
             read_joint_positions(self.data, self.mapping)[0], -0.3, places=10
         )
         self.assertEqual(read_joint_velocities(self.data, self.mapping), (0.0,) * 5)
+
+
+class PoseTunerConfigurationTests(unittest.TestCase):
+    def test_pose_tuner_reads_current_operational_limit_schema(self):
+        configuration = load_pose_configuration("rest")
+
+        self.assertEqual(configuration.joint_order, JOINT_NAMES)
+        self.assertEqual(
+            configuration.limits["shoulder_pitch_joint"],
+            (-1.30388, 2.05734),
+        )
+        self.assertAlmostEqual(
+            configuration.initial_targets["elbow_pitch_joint"],
+            0.72250495,
+        )
 
 
 class SharedTrajectoryPlaybackTests(unittest.TestCase):

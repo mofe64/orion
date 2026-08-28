@@ -116,32 +116,29 @@ After all five succeed, leave them disconnected until the next bench-test step:
 read ID and position, enable/disable torque, and command a deliberately small
 unloaded movement.
 
-## Verify the provisioned bus without movement
+## Audit the provisioned bus without movement
 
-After all five servos have unique IDs, verify them before commanding movement.
-With servo power off, daisy-chain the five labelled servos and connect the end
-of the chain to the controller. Keep all horns detached and unloaded. Then turn
-servo power on and run:
+With the five servos connected and powered, run the read-only register audit:
 
 ```bash
 uv run orion-verify-servos --port /dev/ttyACM0
 ```
 
-Replace the example port with the controller port found earlier. Type `VERIFY`
-only after checking that IDs 1 through 5 are present in the printed plan.
-
-The verification command is deliberately read-only. It:
+Replace the example port with the controller port found earlier. The command
+opens the bus immediately; it does not prompt or write servo registers. It:
 
 1. Opens the bus at LeRobot's standard 1 Mbps baud rate.
 2. Pings IDs 1 through 5 and checks that each reports the STS3215 model number.
-3. Checks that all connected servos use compatible firmware.
-4. Reads raw encoder position, supply voltage, temperature, and torque state.
-5. Closes the serial port without writing a torque or configuration register.
+3. Reports each servo's firmware version so differences remain visible.
+4. Reads firmware, calibration, PID, acceleration, velocity, torque, protection,
+   runtime, and live telemetry registers.
+5. Prints a compact live-state table and a raw register matrix for comparison.
+6. Closes the serial port without writing a torque or configuration register.
 
 The raw encoder position is not yet an Orion joint angle. Mechanical zero,
 direction, and safe ranges are established during calibration after assembly.
 
-To preview the verification plan without opening hardware:
+To list the selected bus IDs without opening hardware:
 
 ```bash
 uv run orion-verify-servos --port /dev/not-opened --dry-run

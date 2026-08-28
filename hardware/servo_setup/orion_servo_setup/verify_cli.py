@@ -1,4 +1,4 @@
-"""Command-line entry point for read-only Orion servo verification."""
+"""Command-line entry point for Orion's read-only STS3215 register audit."""
 
 from __future__ import annotations
 
@@ -6,13 +6,18 @@ import argparse
 from collections.abc import Sequence
 
 from .bus import create_lerobot_bus
-from .provisioning import ORION_SERVO_ASSIGNMENTS, ServoAssignment
-from .verification import ServoTelemetry, read_servo_telemetry, verification_plan
+from .provisioning import ORION_SERVO_ASSIGNMENTS
+from .verification import (
+    REGISTER_GROUPS,
+    ServoRegisterSnapshot,
+    read_servo_registers,
+    verification_plan,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Read and report Orion STS3215 identities and telemetry without commanding movement."
+        description="Read Orion STS3215 configuration and telemetry without writing registers."
     )
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
     parser.add_argument(
@@ -23,61 +28,69 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the verification plan without importing LeRobot or opening the serial port.",
+        help="List the selected bus IDs without opening the serial port.",
     )
     return parser
 
 
-def _print_plan(plan: Sequence[ServoAssignment]) -> None:
-    print("Orion STS3215 read-only verification plan:")
-    for assignment in plan:
-        print(
-            f"  ID {assignment.servo_id}: {assignment.joint_name} "
-            f"(joint_ref_name: {assignment.joint_ref_name})"
-        )
-
-
-def _print_telemetry(snapshots: Sequence[ServoTelemetry]) -> None:
-    print("\nVerification results:")
-    print("  ID  joint                     model  position_raw  voltage  temp  torque")
+def _print_live_summary(snapshots: Sequence[ServoRegisterSnapshot]) -> None:
+    print("Live state:")
+    print(
+        "ID  joint                     model  fw     baud  position  velocity  load  "
+        "current  voltage  temp  status  moving  torque"
+    )
     for snapshot in snapshots:
         assignment = snapshot.assignment
         torque = "ON" if snapshot.torque_enabled else "off"
         print(
-            f"  {assignment.servo_id:<3} "
+            f"{assignment.servo_id:<3} "
             f"{assignment.joint_name:<25} "
             f"{snapshot.model_number:<6} "
-            f"{snapshot.position_raw:<13} "
-            f"{snapshot.voltage_v:>4.1f} V  "
-            f"{snapshot.temperature_c:>3} C  "
+            f"{snapshot.firmware_version:<6} "
+            f"{snapshot.raw('Baud_Rate'):>4}  "
+            f"{snapshot.position_raw:>8}  "
+            f"{snapshot.raw('Present_Velocity'):>8}  "
+            f"{snapshot.raw('Present_Load'):>4}  "
+            f"{snapshot.current_ma:>6.1f}mA  "
+            f"{snapshot.voltage_v:>5.1f}V  "
+            f"{snapshot.temperature_c:>3}C  "
+            f"{snapshot.raw('Status'):>6}  "
+            f"{snapshot.raw('Moving'):>6}  "
             f"{torque}"
         )
+
+
+def _print_register_matrix(snapshots: Sequence[ServoRegisterSnapshot]) -> None:
+    id_columns = "".join(
+        f"ID {snapshot.assignment.servo_id:>2}  " for snapshot in snapshots
+    )
+    print("\nRegister values (raw):")
+    print(f"{'register':<38}{id_columns}")
+    for group, registers in REGISTER_GROUPS:
+        if group in {"identity", "live telemetry"}:
+            continue
+        print(f"[{group}]")
+        for register in registers:
+            values = "".join(f"{snapshot.raw(register):>5}  " for snapshot in snapshots)
+            print(f"{register:<38}{values}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     plan = verification_plan(selected_joint=args.joint)
-    _print_plan(plan)
 
     if args.dry_run:
-        print("Dry run only: no serial port was opened and no servo register was read or changed.")
+        ids = ", ".join(str(assignment.servo_id) for assignment in plan)
+        print(f"Would audit STS3215 bus IDs {ids} on {args.port}.")
         return 0
-
-    confirmation = input(
-        "\nTurn servo power OFF, connect only the labelled servo(s) listed above, and keep horns "
-        "unloaded. Turn servo power ON, then type VERIFY to perform read-only checks: "
-    )
-    if confirmation.strip() != "VERIFY":
-        print("Verification cancelled. No serial port was opened.")
-        return 2
 
     bus = None
     try:
         bus = create_lerobot_bus(args.port, plan)
-        bus.connect(handshake=True)
-        snapshots = read_servo_telemetry(bus, plan)
+        bus.connect(handshake=False)
+        snapshots = read_servo_registers(bus, plan)
     except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
-        print(f"Servo verification failed: {exc}")
+        print(f"Register audit failed: {exc}")
         return 1
     finally:
         # Verification is strictly read-only. Disabling torque during disconnect
@@ -85,8 +98,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if bus is not None and getattr(bus, "is_connected", False):
             bus.disconnect(disable_torque=False)
 
-    _print_telemetry(snapshots)
-    print("\nRead-only verification passed. No servo configuration or movement command was written.")
+    print(f"Orion STS3215 audit: {args.port}\n")
+    _print_live_summary(snapshots)
+    _print_register_matrix(snapshots)
     return 0
 
 

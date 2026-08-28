@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 
 from orion_servo_setup.provisioning import ServoAssignment
-from orion_servo_setup.verification import read_servo_telemetry, verification_plan
+from orion_servo_setup.verification import (
+    AUDIT_REGISTERS,
+    read_servo_registers,
+    verification_plan,
+)
 
 
 class FakeReadOnlyBus:
@@ -23,13 +27,16 @@ class FakeReadOnlyBus:
         num_retry: int = 0,
     ) -> int:
         self.calls.append(("read", data_name, motor, normalize, num_retry))
-        values = {
+        overrides = {
+            "Firmware_Major_Version": 2,
+            "Firmware_Minor_Version": 54,
             "Present_Position": 2048,
             "Present_Voltage": 60,
             "Present_Temperature": 24,
+            "Present_Current": 10,
             "Torque_Enable": 0,
         }
-        return values[data_name]
+        return overrides.get(data_name, 1)
 
 
 class VerificationTests(unittest.TestCase):
@@ -44,23 +51,23 @@ class VerificationTests(unittest.TestCase):
         bus = FakeReadOnlyBus()
         assignment = ServoAssignment("head_pitch_joint", 5, "wrist_pitch")
 
-        snapshots = read_servo_telemetry(bus, (assignment,))
+        snapshots = read_servo_registers(bus, (assignment,))
 
         self.assertEqual(len(snapshots), 1)
         snapshot = snapshots[0]
         self.assertEqual(snapshot.model_number, 777)
         self.assertEqual(snapshot.position_raw, 2048)
+        self.assertEqual(snapshot.firmware_version, "2.54")
         self.assertEqual(snapshot.voltage_v, 6.0)
         self.assertEqual(snapshot.temperature_c, 24)
+        self.assertEqual(snapshot.current_ma, 65.0)
         self.assertFalse(snapshot.torque_enabled)
         self.assertEqual(
             bus.calls,
-            [
-                ("ping", "head_pitch_joint", 2, True),
-                ("read", "Present_Position", "head_pitch_joint", False, 2),
-                ("read", "Present_Voltage", "head_pitch_joint", False, 2),
-                ("read", "Present_Temperature", "head_pitch_joint", False, 2),
-                ("read", "Torque_Enable", "head_pitch_joint", False, 2),
+            [("ping", "head_pitch_joint", 2, True)]
+            + [
+                ("read", register, "head_pitch_joint", False, 2)
+                for register in AUDIT_REGISTERS
             ],
         )
 
