@@ -25,7 +25,8 @@ SAFE_MARGIN_RAW = 20  # About 1.76 degrees inside each measured endpoint.
 MIN_CAPTURE_SPAN_RAW = 512  # 45 degrees; catches joints that were not swept.
 MIN_EACH_SIDE_RAW = 128  # 11.25 degrees; proves both sides of neutral were sampled.
 MAX_CAPTURE_SPAN_RAW = 2304  # 202.5 degrees; Orion joints are not continuous.
-YAW_MAX_ABS_DELTA_RAW = 1100  # About 96.7 degrees from neutral, with tolerance.
+YAW_REFERENCE_LIMIT_RAW = 1024  # 90 degrees from neutral.
+YAW_SAFE_LIMIT_RAW = YAW_REFERENCE_LIMIT_RAW - SAFE_MARGIN_RAW
 YAW_JOINTS = frozenset({"base_yaw_joint", "head_roll_joint"})
 
 
@@ -61,6 +62,7 @@ class JointCalibration:
     safe_max_delta_raw: int
     safe_min_degrees: float
     safe_max_degrees: float
+    safety_cap_applied: bool
     lerobot_drive_mode: int
     lerobot_homing_offset: int
     lerobot_safe_range_min: int
@@ -127,7 +129,7 @@ def update_captures(
 def validate_captures(
     captures: Mapping[str, JointRangeCapture],
 ) -> tuple[JointRangeCapture, ...]:
-    """Reject missed joints, continuous-looking sweeps, and yaw over-rotation."""
+    """Reject missed joints and ranges inconsistent with Orion's bounded joints."""
 
     expected_names = {item.joint_name for item in ORION_SERVO_ASSIGNMENTS}
     captured_names = set(captures)
@@ -161,14 +163,6 @@ def validate_captures(
                 f"{assignment.joint_name} covered {capture.measured_span_raw} raw steps "
                 "(over 202.5 deg). Orion has no continuous joint; inspect the capture."
             )
-        if assignment.joint_name in YAW_JOINTS and (
-            abs(capture.measured_min_delta_raw) > YAW_MAX_ABS_DELTA_RAW
-            or abs(capture.measured_max_delta_raw) > YAW_MAX_ABS_DELTA_RAW
-        ):
-            raise CalibrationError(
-                f"{assignment.joint_name} exceeded the LeLamp cable-safe yaw window of about "
-                "+/-90 deg from neutral. Inspect cable routing before retrying."
-            )
         if capture.measured_span_raw <= 2 * SAFE_MARGIN_RAW:
             raise CalibrationError(f"{assignment.joint_name} has no range after its safety margin.")
         validated.append(capture)
@@ -187,6 +181,12 @@ def build_calibration_document(
     for capture in validate_captures(captures):
         safe_min = capture.measured_min_delta_raw + SAFE_MARGIN_RAW
         safe_max = capture.measured_max_delta_raw - SAFE_MARGIN_RAW
+        safety_cap_applied = False
+        if capture.assignment.joint_name in YAW_JOINTS:
+            capped_min = max(safe_min, -YAW_SAFE_LIMIT_RAW)
+            capped_max = min(safe_max, YAW_SAFE_LIMIT_RAW)
+            safety_cap_applied = capped_min != safe_min or capped_max != safe_max
+            safe_min, safe_max = capped_min, capped_max
         homing_offset = capture.neutral_raw - LELAMP_HOMING_TARGET_RAW
         calibration = JointCalibration(
             servo_id=capture.assignment.servo_id,
@@ -199,6 +199,7 @@ def build_calibration_document(
             safe_max_delta_raw=safe_max,
             safe_min_degrees=safe_min * 360.0 / ENCODER_RESOLUTION,
             safe_max_degrees=safe_max * 360.0 / ENCODER_RESOLUTION,
+            safety_cap_applied=safety_cap_applied,
             lerobot_drive_mode=0,
             lerobot_homing_offset=homing_offset,
             lerobot_safe_range_min=LELAMP_HOMING_TARGET_RAW + safe_min,

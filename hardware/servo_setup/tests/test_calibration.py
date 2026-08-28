@@ -39,7 +39,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertTrue(all(item.measured_max_delta_raw == 546 for item in captures.values()))
         validate_captures(captures)
 
-    def test_validation_rejects_yaw_beyond_reference_safe_window(self) -> None:
+    def test_document_caps_yaw_instead_of_rejecting_measured_overrun(self) -> None:
         neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
         captures = initialize_captures(neutral)
         captures = update_captures(
@@ -50,8 +50,12 @@ class CalibrationTests(unittest.TestCase):
         positions["base_yaw_joint"] = 3200
         captures = update_captures(captures, positions)
 
-        with self.assertRaisesRegex(CalibrationError, "cable-safe yaw window"):
-            validate_captures(captures)
+        document = build_calibration_document(captures, port="/dev/fake")
+        base_yaw = document["joints"]["base_yaw_joint"]  # type: ignore[index]
+
+        self.assertEqual(base_yaw["measured_max_delta_raw"], 1152)
+        self.assertEqual(base_yaw["safe_max_delta_raw"], 1004)
+        self.assertTrue(base_yaw["safety_cap_applied"])
 
     def test_validation_requires_all_five_canonical_joints(self) -> None:
         neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}

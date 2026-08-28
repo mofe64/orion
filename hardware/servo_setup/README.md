@@ -230,10 +230,13 @@ The workflow has one neutral capture and one combined recording window:
 6. After all five joints have been swept, press Enter once to finish.
 
 The live line displays `minimum/maximum` raw displacement from neutral for each
-ID. The command rejects a joint that was barely moved, a range that looks like
-a continuous rotation, and yaw/roll movement beyond the protected window. It
-then subtracts 20 raw steps (about 1.76 degrees) from both measured endpoints
-to make software safety limits.
+ID. The command rejects a joint that was barely moved or a range that looks
+like a continuous rotation. It subtracts 20 raw steps (about 1.76 degrees) from
+both measured endpoints to make software safety limits. If ID 1 or ID 4 was
+swept beyond the reference yaw window, the measurement is retained but its
+commandable software range is capped at +/-1004 raw steps (about +/-88.2
+degrees). The command warns and continues instead of discarding the complete
+five-joint session.
 
 The default output is:
 

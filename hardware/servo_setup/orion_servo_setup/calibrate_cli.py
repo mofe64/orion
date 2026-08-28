@@ -14,6 +14,8 @@ from .calibration import (
     SAFE_MARGIN_RAW,
     CalibrationError,
     JointRangeCapture,
+    YAW_JOINTS,
+    YAW_SAFE_LIMIT_RAW,
     build_calibration_document,
     initialize_captures,
     update_captures,
@@ -145,6 +147,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         captures = _record_until_enter(bus, neutral_positions)
         validate_captures(captures)
+        for joint_name in sorted(YAW_JOINTS):
+            capture = captures[joint_name]
+            if (
+                capture.measured_min_delta_raw < -YAW_SAFE_LIMIT_RAW
+                or capture.measured_max_delta_raw > YAW_SAFE_LIMIT_RAW
+            ):
+                print(
+                    f"WARNING: {joint_name} was swept beyond the protected yaw range; "
+                    f"its commandable limits will be capped at +/-{YAW_SAFE_LIMIT_RAW} raw "
+                    "steps (~88.2 deg)."
+                )
 
         # Repeat the same safety checks after handling the mechanism and before
         # accepting its measurements.
