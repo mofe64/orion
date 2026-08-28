@@ -32,6 +32,10 @@ if(BUILD_TESTING)
     test_gazebo_description
     test/test_gazebo_description.py
   )
+  ament_add_pytest_test(
+    test_hardware_description
+    test/test_hardware_description.py
+  )
 endif()
 
 ament_package()

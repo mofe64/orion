@@ -1,17 +1,21 @@
-# Orion's Future Control Architecture
+# Orion Control Architecture
 
 ## Status of This Document
 
-This document records Orion's intended future control architecture. It is a design plan, not a description of functionality that has already been implemented.
+This document records Orion's shared control architecture and the remaining bring-up work.
 
 Orion currently has:
 
 - A semantic ROS robot description
 - RViz visualization
 - A working Gazebo `ros2_control` integration
-- A validated native MuJoCo model
+- A MuJoCo `ros2_control` integration using the validated native model
+- A compiled and unit-tested physical STS3215 `SystemInterface`
+- Backend-specific Gazebo, MuJoCo, and physical launch files
 
-The shared Gazebo, MuJoCo, and physical-hardware bringup described below is future work.
+The physical adapter has not yet been exercised against the assembled lamp.
+One unified `backend:=...` bring-up command and hardware diagnostics/shutdown
+orchestration remain future work.
 
 ## Architecture Decision
 
@@ -246,15 +250,13 @@ The Python environment should remain useful even after ROS–MuJoCo integration 
 
 ## Physical STS3215 Adapter
 
-Physical Orion will need its own `ros2_control` system interface. A future plugin might be named:
+Physical Orion uses its own `ros2_control` system interface:
 
 ```xml
 <plugin>orion_hardware/STS3215System</plugin>
 ```
 
-This name is only a proposal.
-
-The adapter would be responsible for:
+The adapter is responsible for:
 
 - Opening and closing the servo bus
 - Mapping radians to servo units
@@ -265,6 +267,18 @@ The adapter would be responsible for:
 - Avoiding sudden motion when controllers activate
 
 The trajectory controller should not contain serial-port or servo-protocol code. That belongs behind the hardware adapter.
+
+The implementation lives in `ros2_ws/src/orion_hardware`. It uses the
+software calibration JSON as the joint-to-servo mapping, applies the selected
+LeRobot/LeLamp PID and acceleration profile while torque is off, seeds each
+goal register from measured position before torque-on, and uses synchronized
+state reads and position-only writes. It deliberately does not impose a
+`Goal_Velocity` or `Torque_Limit` ceiling.
+
+`ros2 launch orion_description hardware.launch.py` selects this adapter while
+preserving the same five position command interfaces and trajectory action.
+Successful build/fake-transport tests are not evidence of physical direction,
+tracking, thermal, or shutdown validation; those remain commissioning work.
 
 ## Free-Standing Base and Sensors
 

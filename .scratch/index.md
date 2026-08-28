@@ -34,10 +34,10 @@
 **Tags:** `orion`, `sts3215`, `servo-setup`, `calibration`, `rest-pose`, `pose-execution`, `ros2-control`, `mujoco`, `hardware`, `safety`
 **Key Deliverables:**
 - Five-servo provisioning, verification, first-motion, calibration, rest-capture, and guarded pose-runner workflows
-- Accepted torque-free rest pose and a concrete MuJoCo-torque/physical-ROS-control continuation plan
+- Accepted torque-free rest pose and a compiled, unit-tested physical `ros2_control` backend
 **Bugs Fixed:** 6
 **Files Changed:** 41 across the commissioning series, plus this report and index
-**Next Steps:** Retrieve the live Pi calibration JSON, characterize joint torque in MuJoCo, and implement `orion_hardware/STS3215System`.
+**Next Steps:** Commission `orion_hardware/STS3215System` on the Pi, validate URDF-positive directions, and add the controlled rest/deactivate shutdown flow.
 
 ---
 
@@ -69,7 +69,7 @@ Reports about physical hardware:
 
 ### ROS 2 Control
 Reports about ROS 2 control:
-- [2026-08-28](./handover-2026-08-28.md) - Scopes the future `orion_hardware/STS3215System` and graceful shutdown orchestration.
+- [2026-08-28](./handover-2026-08-28.md) - Records the implemented `orion_hardware/STS3215System`; physical commissioning and graceful shutdown orchestration remain.
 
 ### Simulation
 Reports about simulation:
