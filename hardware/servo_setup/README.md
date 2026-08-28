@@ -324,7 +324,7 @@ One successful commissioning cycle:
 
 1. Reads and validates the measured starting position of every joint.
 2. Writes those current encoder positions as goals before enabling torque.
-3. Enables all five joints with conservative RAM-only limits: `300/1000`
+3. Enables all five joints with conservative RAM-only limits: `400/1000`
    torque for the load-bearing shoulder, `200/1000` for the other joints,
    velocity `50`, and acceleration `5`.
 4. Moves directly from the measured start to the named pose over six seconds.
@@ -336,7 +336,8 @@ One successful commissioning cycle:
    disables torque and asks the operator to verify stability before turning 6 V off.
 
 Current, temperature, servo status, and final tracking error are monitored
-throughout. `Ctrl+C` has its planned park-at-rest meaning only while the command
+throughout. Pose execution stops above `1 A` or `50 C`; the guarded first-motion
+nudge retains its stricter `45 C` cutoff. `Ctrl+C` has its planned park-at-rest meaning only while the command
 is already holding calibrated zero. A fault, communication error, terminal
 loss, `Ctrl+C` during any commanded move, or a second `Ctrl+C` while parking at
 rest triggers immediate emergency torque-off. Because the STS3215 joints have

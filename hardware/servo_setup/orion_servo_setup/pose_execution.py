@@ -23,7 +23,6 @@ from .motion_test import (
     ACCELERATION_RAW,
     GOAL_VELOCITY_RAW,
     MAX_TEST_CURRENT_RAW,
-    MAX_TEST_TEMPERATURE_C,
     TORQUE_LIMIT_RAW,
 )
 from .provisioning import ORION_SERVO_ASSIGNMENTS
@@ -33,7 +32,8 @@ STEPS_PER_RADIAN = ENCODER_RESOLUTION / (2.0 * math.pi)
 POSITION_TOLERANCE_RAW = 20  # About 1.76 degrees at phase completion.
 CONTROL_INTERVAL_SECONDS = 0.10
 MIN_POSE_DURATION_SECONDS = 4.0
-SHOULDER_POSE_TORQUE_LIMIT_RAW = 300
+SHOULDER_POSE_TORQUE_LIMIT_RAW = 400
+MAX_POSE_TEMPERATURE_C = 50
 
 
 class PoseExecutionError(RuntimeError):
@@ -281,9 +281,16 @@ def _read_health(bus: PoseBus) -> tuple[float, int]:
     maximum_temperature = max(int(value) for value in temperatures.values())
     if peak_current > MAX_TEST_CURRENT_RAW:
         raise PoseExecutionError("A servo exceeded the 1.0 A commissioning current limit.")
-    if maximum_temperature > MAX_TEST_TEMPERATURE_C:
+    hot_servos = {
+        name: int(value)
+        for name, value in temperatures.items()
+        if int(value) > MAX_POSE_TEMPERATURE_C
+    }
+    if hot_servos:
+        details = ", ".join(f"{name}={value} C" for name, value in hot_servos.items())
         raise PoseExecutionError(
-            f"A servo exceeded the {MAX_TEST_TEMPERATURE_C} C commissioning limit."
+            f"Servo temperature exceeded the {MAX_POSE_TEMPERATURE_C} C pose limit: "
+            f"{details}."
         )
     faults = {name: int(value) for name, value in statuses.items() if int(value) != 0}
     if faults:

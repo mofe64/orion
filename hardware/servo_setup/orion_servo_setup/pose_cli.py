@@ -11,6 +11,7 @@ from pathlib import Path
 from .bus import create_lerobot_bus
 from .motion_test import motion_test_plan, read_motion_preflight
 from .pose_execution import (
+    MAX_POSE_TEMPERATURE_C,
     MIN_POSE_DURATION_SECONDS,
     PoseExecutionError,
     SHOULDER_POSE_TORQUE_LIMIT_RAW,
@@ -84,6 +85,7 @@ def _print_plan(plan) -> None:
         f"Pose torque limits: shoulder {SHOULDER_POSE_TORQUE_LIMIT_RAW}/1000; "
         "all other joints 200/1000."
     )
+    print(f"Pose temperature cutoff: {MAX_POSE_TEMPERATURE_C} C; current cutoff: 1 A.")
 
 
 class EmergencyTermination(BaseException):

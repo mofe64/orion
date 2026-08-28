@@ -76,6 +76,7 @@ class FakePoseBus:
         self.torque_enabled = False
         self.calls: list[tuple[object, ...]] = []
         self.current_raw = 10
+        self.temperature_c = 25
 
     def read(self, data_name, motor, *, normalize=True, num_retry=0):
         raise AssertionError("pose execution uses synchronized telemetry")
@@ -90,7 +91,7 @@ class FakePoseBus:
         if data_name == "Present_Current":
             return {name: self.current_raw for name in self.positions}
         if data_name == "Present_Temperature":
-            return {name: 25 for name in self.positions}
+            return {name: self.temperature_c for name in self.positions}
         if data_name == "Status":
             return {name: 0 for name in self.positions}
         raise KeyError(data_name)
@@ -179,7 +180,7 @@ class PoseExecutionTests(unittest.TestCase):
         self.assertIn(("enable_torque", None, 2), bus.calls)
         self.assertIn(("disable_torque", None, 2), bus.calls)
         self.assertIn(
-            ("write", "Torque_Limit", "shoulder_pitch_joint", 300, False, 2),
+            ("write", "Torque_Limit", "shoulder_pitch_joint", 400, False, 2),
             bus.calls,
         )
         self.assertIn(
@@ -263,6 +264,34 @@ class PoseExecutionTests(unittest.TestCase):
         bus.current_raw = 200
 
         with self.assertRaisesRegex(PoseExecutionError, "1.0 A"):
+            execute_pose_cycle(
+                bus,
+                plan,
+                rest_plan,
+                pose_duration=4.0,
+                hold_seconds=0.0,
+                return_duration=4.0,
+                rest_duration=4.0,
+                sleep=lambda _: None,
+                should_leave_zero_hold=lambda: True,
+            )
+
+        self.assertFalse(bus.torque_enabled)
+        self.assertIn(("disable_torque", None, 2), bus.calls)
+
+    def test_pose_temperature_above_fifty_disables_all_torque(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration, poses = self._files(directory)
+            plan = build_hardware_pose_plan(
+                "home", pose_path=poses, calibration_path=calibration
+            )
+            rest_plan = build_hardware_pose_plan(
+                "rest", pose_path=poses, calibration_path=calibration
+            )
+        bus = FakePoseBus()
+        bus.temperature_c = 51
+
+        with self.assertRaisesRegex(PoseExecutionError, "50 C pose limit"):
             execute_pose_cycle(
                 bus,
                 plan,
