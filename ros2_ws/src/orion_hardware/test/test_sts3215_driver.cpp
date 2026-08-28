@@ -169,6 +169,42 @@ TEST(Sts3215DriverTest, AppliesOnlyLeLampProfileDifferences)
     call_index(transport->calls, "eeprom_lock"));
 }
 
+TEST(Sts3215DriverTest, ConnectsAndReadsWithoutWritingServoState)
+{
+  auto transport = std::make_shared<FakeTransport>();
+  transport->add_servo(1, 904);
+  transport->add_servo(5, 3547);
+  Sts3215Driver driver(transport);
+
+  driver.connect("/dev/fake", 1000000, calibrations());
+  const auto states = driver.read();
+
+  ASSERT_EQ(states.size(), 2U);
+  EXPECT_TRUE(transport->register_writes.empty());
+  EXPECT_TRUE(transport->position_writes.empty());
+  EXPECT_EQ(
+    std::count(transport->calls.begin(), transport->calls.end(), "eeprom_unlock"), 0);
+  EXPECT_EQ(
+    std::count(transport->calls.begin(), transport->calls.end(), "eeprom_lock"), 0);
+  EXPECT_EQ(
+    std::count(transport->calls.begin(), transport->calls.end(), "torque_on"), 0);
+  EXPECT_EQ(
+    std::count(transport->calls.begin(), transport->calls.end(), "torque_off"), 0);
+}
+
+TEST(Sts3215DriverTest, RefusesActivationUntilServoProfileIsApplied)
+{
+  auto transport = std::make_shared<FakeTransport>();
+  transport->add_servo(1, 904);
+  transport->add_servo(5, 3547);
+  Sts3215Driver driver(transport);
+
+  driver.connect("/dev/fake", 1000000, calibrations());
+
+  EXPECT_THROW(driver.activate(), std::logic_error);
+  EXPECT_TRUE(transport->position_writes.empty());
+}
+
 TEST(Sts3215DriverTest, SeedsPresentPositionsBeforeTorqueOn)
 {
   auto transport = std::make_shared<FakeTransport>();

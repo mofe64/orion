@@ -56,6 +56,14 @@ void Sts3215Driver::configure(
   const std::string & port, int baud_rate,
   const std::vector<JointCalibration> & calibrations)
 {
+  connect(port, baud_rate, calibrations);
+  apply_servo_profile();
+}
+
+void Sts3215Driver::connect(
+  const std::string & port, int baud_rate,
+  const std::vector<JointCalibration> & calibrations)
+{
   if (port.empty() || baud_rate <= 0 || calibrations.empty())
   {
     throw std::invalid_argument("Port, baud rate, and calibrations are required.");
@@ -75,8 +83,6 @@ void Sts3215Driver::configure(
   transport_->open(port, baud_rate);
   try
   {
-    const auto all_ids = servo_ids(calibrations);
-    std::vector<PendingWrite> persistent_writes;
     int firmware_major = -1;
     int firmware_minor = -1;
 
@@ -112,7 +118,38 @@ void Sts3215Driver::configure(
       {
         throw std::runtime_error("All five STS3215 servos must use the same firmware.");
       }
+    }
 
+    calibrations_ = calibrations;
+    configured_ = true;
+    profile_applied_ = false;
+    active_ = false;
+  }
+  catch (...)
+  {
+    configured_ = false;
+    profile_applied_ = false;
+    active_ = false;
+    transport_->close();
+    throw;
+  }
+}
+
+void Sts3215Driver::apply_servo_profile()
+{
+  if (!configured_ || active_)
+  {
+    throw std::logic_error(
+            "STS3215 driver must be connected and inactive before applying its profile.");
+  }
+
+  try
+  {
+    const auto all_ids = servo_ids(calibrations_);
+    std::vector<PendingWrite> persistent_writes;
+    for (const auto & joint : calibrations_)
+    {
+      const auto id = joint.servo_id;
       const auto queue_if_different =
         [this, id, &persistent_writes](Sts3215Register register_name, int desired) {
           if (transport_->read_register(id, register_name) != desired)
@@ -163,7 +200,7 @@ void Sts3215Driver::configure(
       transport_->set_eeprom_lock(all_ids, true);
     }
 
-    for (const auto & joint : calibrations)
+    for (const auto & joint : calibrations_)
     {
       const auto id = joint.servo_id;
       if (transport_->read_register(id, Sts3215Register::ACCELERATION) != 254)
@@ -175,25 +212,21 @@ void Sts3215Driver::configure(
         throw std::runtime_error("STS3215 runtime acceleration verification failed.");
       }
     }
-
-    calibrations_ = calibrations;
-    configured_ = true;
-    active_ = false;
+    profile_applied_ = true;
   }
   catch (...)
   {
-    configured_ = false;
-    active_ = false;
-    transport_->close();
+    close();
     throw;
   }
 }
 
 std::vector<JointState> Sts3215Driver::activate()
 {
-  if (!configured_ || active_)
+  if (!configured_ || !profile_applied_ || active_)
   {
-    throw std::logic_error("STS3215 driver must be configured and inactive before activation.");
+    throw std::logic_error(
+            "STS3215 driver must have its profile applied and be inactive before activation.");
   }
 
   const auto ids = servo_ids(calibrations_);
@@ -255,6 +288,7 @@ void Sts3215Driver::close() noexcept
   if (!transport_->is_open())
   {
     configured_ = false;
+    profile_applied_ = false;
     active_ = false;
     return;
   }
@@ -270,6 +304,7 @@ void Sts3215Driver::close() noexcept
   }
   transport_->close();
   configured_ = false;
+  profile_applied_ = false;
   active_ = false;
 }
 

@@ -44,6 +44,10 @@ public:
   explicit Sts3215Driver(std::shared_ptr<Sts3215Transport> transport);
   ~Sts3215Driver();
 
+  void connect(
+    const std::string & port, int baud_rate,
+    const std::vector<JointCalibration> & calibrations);
+  void apply_servo_profile();
   void configure(
     const std::string & port, int baud_rate,
     const std::vector<JointCalibration> & calibrations);
@@ -66,6 +70,7 @@ private:
   std::shared_ptr<Sts3215Transport> transport_;
   std::vector<JointCalibration> calibrations_;
   bool configured_ = false;
+  bool profile_applied_ = false;
   bool active_ = false;
 };
 
