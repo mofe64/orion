@@ -877,7 +877,7 @@
     <parent link="upper_arm_link"/>
     <child link="forearm_link"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-2.82002" upper="0.321569"/>
+    <limit effort="10" velocity="10" lower="-2.82002" upper="0.76699"/>
   </joint>
 
   <!-- Standard control interfaces backed by Gazebo simulation. -->
@@ -909,7 +909,7 @@
     <joint name="elbow_pitch_joint">
       <command_interface name="position">
         <param name="min">-2.82002</param>
-        <param name="max">0.321569</param>
+        <param name="max">0.736311</param>
       </command_interface>
       <state_interface name="position"/>
       <state_interface name="velocity"/>

@@ -59,10 +59,10 @@ joints:
   elbow_pitch_joint:
     mechanical_position:
       lower: -2.82002
-      upper: 0.321569
+      upper: 0.76699
     operational_position:
       lower: -2.82002
-      upper: 0.321569
+      upper: 0.736311
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0
