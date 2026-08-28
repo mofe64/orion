@@ -8,8 +8,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .bus import create_lerobot_bus
-from .motion_test import motion_test_plan, read_motion_preflight
-from .pose_execution import load_hardware_calibration
+from .archived.motion_test import motion_test_plan, read_motion_preflight
+from .archived.pose_execution import load_hardware_calibration
 from .rest_capture import (
     STABILITY_DURATION_SECONDS,
     RestCaptureError,

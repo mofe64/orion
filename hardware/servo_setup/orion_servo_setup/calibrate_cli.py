@@ -22,7 +22,7 @@ from .calibration import (
     validate_captures,
     write_calibration_file,
 )
-from .motion_test import motion_test_plan, read_motion_preflight
+from .archived.motion_test import motion_test_plan, read_motion_preflight
 
 
 DEFAULT_OUTPUT_PATH = Path("~/.config/orion/servo_calibration.json")

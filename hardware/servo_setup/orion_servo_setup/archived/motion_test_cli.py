@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from .bus import create_lerobot_bus
+from ..bus import create_lerobot_bus
 from .motion_test import (
     ACCELERATION_RAW,
     GOAL_VELOCITY_RAW,

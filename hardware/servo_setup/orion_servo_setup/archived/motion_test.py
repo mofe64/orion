@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from .provisioning import ORION_SERVO_ASSIGNMENTS, ServoAssignment, validate_assignments
+from ..provisioning import ORION_SERVO_ASSIGNMENTS, ServoAssignment, validate_assignments
 
 
 MODEL_NUMBER_STS3215 = 777

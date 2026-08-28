@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from orion_servo_setup.motion_test import (
+from orion_servo_setup.archived.motion_test import (
     MotionTestError,
     nudge_joint,
     read_motion_preflight,

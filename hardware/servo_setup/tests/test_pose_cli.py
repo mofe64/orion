@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import yaml
 
-from orion_servo_setup.pose_cli import main
+from orion_servo_setup.archived.pose_cli import main
 from test_pose_execution import calibration_document, pose_document
 
 
@@ -24,7 +24,7 @@ class PoseCliTests(unittest.TestCase):
             stream = io.StringIO()
             with (
                 patch(
-                    "orion_servo_setup.pose_cli.create_lerobot_bus",
+                    "orion_servo_setup.archived.pose_cli.create_lerobot_bus",
                     side_effect=AssertionError("hardware bus must not be created"),
                 ),
                 redirect_stdout(stream),

@@ -8,7 +8,7 @@ import signal
 from collections.abc import Sequence
 from pathlib import Path
 
-from .bus import create_lerobot_bus
+from ..bus import create_lerobot_bus
 from .motion_test import motion_test_plan, read_motion_preflight
 from .pose_execution import (
     MAX_POSE_TEMPERATURE_C,

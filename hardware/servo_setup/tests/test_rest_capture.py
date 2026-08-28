@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from orion_servo_setup.pose_execution import load_hardware_calibration
+from orion_servo_setup.archived.pose_execution import load_hardware_calibration
 from orion_servo_setup.rest_capture import (
     RestCaptureError,
     positions_to_rest_angles,

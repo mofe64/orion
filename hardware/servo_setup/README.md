@@ -144,64 +144,16 @@ To list the selected bus IDs without opening hardware:
 uv run orion-verify-servos --port /dev/not-opened --dry-run
 ```
 
-If all five pass, switch servo power off before disconnecting the chain. The
-next step is a single-servo torque and deliberately small unloaded-motion test.
+## Archived one-off physical motion tools
 
-## Test all five assembled joints in one guarded session
-
-After read-only verification passes with all five servos reporting `torque
-off`, Orion can perform the first assembled motion checks in one command:
-
-```bash
-uv run orion-test-servos --port /dev/ttyACM0
-```
-
-Start the command with the 6 V servo supply off. At its first prompt, arrange
-the padded supports, turn 6 V on, confirm that the mechanism remains still,
-and then type the exact confirmation phrase.
-
-This is one session and one power cycle, but it deliberately does **not** move
-all five joints simultaneously. Their mechanical zero, direction, and safe
-ranges are still unknown. The command walks IDs 1 through 5 and, for each
-joint:
-
-1. Requires an explicit direction choice after the operator checks clearance.
-2. Uses the present encoder position as the goal before enabling torque.
-3. Enables only that joint with a 20% RAM torque limit.
-4. Commands 10 raw encoder steps (about 0.88 degrees) at low speed and accepts
-   either reaching the target or a clear response of at least 3 steps in the
-   commanded direction. Exact tracking is deferred to calibration because a
-   tiny loaded move can be smaller than joint friction and backlash.
-5. Monitors current, temperature, and servo status.
-6. Disables that joint before offering the next one.
-
-The operator may type `SKIP` for a joint or `ABORT` at any prompt. Errors and
-`Ctrl+C` trigger a best-effort torque-off for the complete bus. Keep the lamp
-supported with padded blocks, hands clear, and the 6 V cutoff within reach for
-the entire session. Turn the 6 V supply off when the command exits.
-
-Preview the complete plan without opening the serial port or writing a servo:
-
-```bash
-uv run orion-test-servos --port /dev/not-opened --dry-run
-```
-
-Passing this nudge test proves basic controlled motion only. It does not define
-joint zero, direction, or safe mechanical limits; those remain calibration
-work before simultaneous trajectories are allowed.
-
-To resume after earlier joints have already passed, keep the full bus connected
-and select the first untested ID. Earlier IDs are still preflighted and included
-in the final torque-off cleanup, but they are not prompted or moved:
-
-```bash
-uv run orion-test-servos --port /dev/ttyACM0 --start-id 4
-```
+The first-motion nudge and direct named-pose commands were commissioning tools,
+not runtime control. Their installed entry points have been removed and their
+source now lives in `orion_servo_setup/archived/`. New physical movement will
+run through the C++ `ros2_control` hardware interface.
 
 ## Calibrate all five joints in one session
 
-Run calibration only after all five assembled joints have passed their first
-motion checks:
+The torque-off calibration command remains available as a setup utility:
 
 ```bash
 uv run orion-calibrate-servos --port /dev/ttyACM0
@@ -269,14 +221,7 @@ uv run orion-calibrate-servos --port /dev/not-opened --dry-run
 On completion or any error, the command performs a best-effort torque-off for
 all five servos. Turn the 6 V supply off after it exits.
 
-## Commission an existing Orion named pose on hardware
-
-Orion's normal `orion-pose` command targets a ROS `FollowJointTrajectory`
-controller. Until the STS3215 `ros2_control` hardware adapter exists, the
-servo-setup package provides a deliberately limited commissioning bridge that
-reads the same `orion_motion/config/poses.yaml` file:
-
-First capture a mechanically stable shutdown pose:
+## Capture a mechanically stable rest pose
 
 ```bash
 uv run orion-capture-rest --port /dev/ttyACM0
@@ -294,65 +239,8 @@ deliberately recapturing an existing rest pose. Servo EEPROM is never changed.
 This test demonstrates short-term stability in the captured environment; it
 cannot certify stability after moving the base, changing payload or cable
 routing, or changing the lamp's surface or orientation. Recapture or retest
-after any such change.
-
-```bash
-uv run orion-run-hardware-pose home --port /dev/ttyACM0 --dry-run
-```
-
-Dry-run resolves the named radian pose through the saved hardware calibration,
-prints every raw target, and rejects any target outside the measured safe
-range. It does not open the serial port or write a register.
-
-The first physical cycle must use the small `home` pose:
-
-```bash
-uv run orion-run-hardware-pose home --port /dev/ttyACM0
-```
-
-Before confirming the run, keep 6 V off, position Orion anywhere inside its
-measured safe joint ranges, provide a clear padded movement area, and remove
-any support block that would obstruct the planned motion. Turn 6 V on only when
-prompted and type the exact displayed confirmation. A starting joint outside
-its measured range, or across a raw encoder wrap that the commissioning tool
-cannot traverse safely, is rejected before torque is enabled.
-
-One successful commissioning cycle:
-
-1. Reads and validates the measured starting position of every joint.
-2. Writes those current encoder positions as goals before enabling torque.
-3. Enables all five joints with conservative RAM-only limits: `400/1000`
-   torque for the load-bearing shoulder, `200/1000` for the other joints,
-   velocity `50`, and acceleration `5`.
-4. Moves directly from the measured start to the named pose over six seconds.
-5. Holds the named pose for the requested `--hold` duration.
-6. Returns to calibrated zero over six seconds.
-7. Holds zero indefinitely with continuous health monitoring.
-8. Treats the first `Ctrl+C` during that zero hold as a planned shutdown request,
-   moves to the captured mechanically stable `rest` pose over six seconds, then
-   disables torque and asks the operator to verify stability before turning 6 V off.
-
-Current, temperature, servo status, and final tracking error are monitored
-throughout. Pose execution stops above `1 A` or `50 C`; the guarded first-motion
-nudge retains its stricter `45 C` cutoff. `Ctrl+C` has its planned park-at-rest meaning only while the command
-is already holding calibrated zero. A fault, communication error, terminal
-loss, `Ctrl+C` during any commanded move, or a second `Ctrl+C` while parking at
-rest triggers immediate emergency torque-off. Because the STS3215 joints have
-no passive brake, any non-rest pose can fall after emergency torque-off or
-power loss; keep the full movement area padded.
-Terminal hangup and normal process termination are also routed through the same
-cleanup where the operating system permits it.
-Keep hands clear and the physical 6 V cutoff within reach whenever torque is
-enabled.
-
-This tool is for physical bring-up, not Orion's final runtime. It runs one pose,
-returns to zero, and holds there until the operator requests the planned
-shutdown with `Ctrl+C`. It then parks at `rest` and disables torque. Cutting the
-physical 6 V supply cannot command a move: software must first move Orion to
-`rest`, disable torque, and only then may the operator turn 6 V off. The final
-ROS hardware adapter must provide continuous state feedback, watchdogs,
-cancellation, trajectory execution, and safe shutdown before normal motion
-playback is enabled.
+after any such change. The former direct named-pose executor is archived and
+must not be used in place of `ros2_control`.
 
 ## How the write works
 

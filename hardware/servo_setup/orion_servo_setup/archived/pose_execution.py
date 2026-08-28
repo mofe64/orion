@@ -18,14 +18,14 @@ from typing import Any, Protocol
 
 import yaml
 
-from .calibration import ENCODER_RESOLUTION, circular_delta
+from ..calibration import ENCODER_RESOLUTION, circular_delta
 from .motion_test import (
     ACCELERATION_RAW,
     GOAL_VELOCITY_RAW,
     MAX_TEST_CURRENT_RAW,
     TORQUE_LIMIT_RAW,
 )
-from .provisioning import ORION_SERVO_ASSIGNMENTS
+from ..provisioning import ORION_SERVO_ASSIGNMENTS
 
 
 STEPS_PER_RADIAN = ENCODER_RESOLUTION / (2.0 * math.pi)
