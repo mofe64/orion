@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=71"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orion-servo-setup"
+version = "0.1.0"
+description = "One-time STS3215 identity provisioning for Orion."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = "GPL-3.0-only"
+dependencies = [
+    "lerobot[feetech]>=0.5.1,<0.7.0",
+]
+
+[project.scripts]
+orion-setup-servos = "orion_servo_setup.cli:main"
+orion-verify-servos = "orion_servo_setup.verify_cli:main"
