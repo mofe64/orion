@@ -46,10 +46,10 @@ joints:
 
   shoulder_pitch_joint:
     mechanical_position:
-      lower: -1.08426
+      lower: -1.33456
       upper: 2.05734
     operational_position:
-      lower: -1.08426
+      lower: -1.30388
       upper: 2.05734
     max_velocity: 1.5
     max_acceleration: 8.0
