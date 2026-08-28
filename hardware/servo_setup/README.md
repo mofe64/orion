@@ -150,6 +150,46 @@ uv run orion-verify-servos --port /dev/not-opened --dry-run
 If all five pass, switch servo power off before disconnecting the chain. The
 next step is a single-servo torque and deliberately small unloaded-motion test.
 
+## Test all five assembled joints in one guarded session
+
+After read-only verification passes with all five servos reporting `torque
+off`, Orion can perform the first assembled motion checks in one command:
+
+```bash
+uv run orion-test-servos --port /dev/ttyACM0
+```
+
+Start the command with the 6 V servo supply off. At its first prompt, arrange
+the padded supports, turn 6 V on, confirm that the mechanism remains still,
+and then type the exact confirmation phrase.
+
+This is one session and one power cycle, but it deliberately does **not** move
+all five joints simultaneously. Their mechanical zero, direction, and safe
+ranges are still unknown. The command walks IDs 1 through 5 and, for each
+joint:
+
+1. Requires an explicit direction choice after the operator checks clearance.
+2. Uses the present encoder position as the goal before enabling torque.
+3. Enables only that joint with a 20% RAM torque limit.
+4. Nudges 10 raw encoder steps (about 0.88 degrees) at low speed.
+5. Monitors current, temperature, and servo status.
+6. Disables that joint before offering the next one.
+
+The operator may type `SKIP` for a joint or `ABORT` at any prompt. Errors and
+`Ctrl+C` trigger a best-effort torque-off for the complete bus. Keep the lamp
+supported with padded blocks, hands clear, and the 6 V cutoff within reach for
+the entire session. Turn the 6 V supply off when the command exits.
+
+Preview the complete plan without opening the serial port or writing a servo:
+
+```bash
+uv run orion-test-servos --port /dev/not-opened --dry-run
+```
+
+Passing this nudge test proves basic controlled motion only. It does not define
+joint zero, direction, or safe mechanical limits; those remain calibration
+work before simultaneous trajectories are allowed.
+
 ## How the write works
 
 For each joint, LeRobot's `setup_motor()`:
