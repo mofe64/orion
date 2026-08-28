@@ -129,7 +129,6 @@ class PoseCycleResult:
     pose_name: str
     peak_current_ma: float
     maximum_temperature_c: int
-    rest_hold_exit_reason: str
 
 
 def _require_int(value: Any, path: str) -> int:
@@ -335,15 +334,22 @@ def execute_pose_cycle(
     pose_duration: float,
     hold_seconds: float,
     return_duration: float,
+    rest_duration: float,
     sleep: Callable[[float], None] = time.sleep,
-    should_power_down: Callable[[], bool] = lambda: False,
-    on_rest_hold: Callable[[], None] = lambda: None,
+    should_leave_zero_hold: Callable[[], bool] = lambda: False,
+    on_zero_hold: Callable[[], None] = lambda: None,
+    on_rest_reached: Callable[[], None] = lambda: None,
 ) -> PoseCycleResult:
-    """Visit one pose, return to captured rest, hold until confirmed, then disable."""
+    """Visit a pose, hold zero until interrupted, then park at rest and disable."""
 
-    if pose_duration < MIN_POSE_DURATION_SECONDS or return_duration < MIN_POSE_DURATION_SECONDS:
+    durations = (pose_duration, return_duration, rest_duration)
+    if any(
+        not math.isfinite(value) or value < MIN_POSE_DURATION_SECONDS
+        for value in durations
+    ):
         raise PoseExecutionError(
-            f"Pose and return durations must each be at least {MIN_POSE_DURATION_SECONDS:.1f} s."
+            "Pose, zero-return, and rest-parking durations must each be at least "
+            f"{MIN_POSE_DURATION_SECONDS:.1f} s."
         )
     if not math.isfinite(hold_seconds) or hold_seconds < 0:
         raise PoseExecutionError("Hold duration must be finite and non-negative.")
@@ -390,8 +396,6 @@ def execute_pose_cycle(
     peak_current_ma = 0.0
     maximum_temperature = 0
     torque_enabled = False
-    holding_rest = False
-    rest_hold_exit_reason = "not_reached"
     try:
         bus.enable_torque(num_retry=2)
         torque_enabled = True
@@ -421,25 +425,34 @@ def execute_pose_cycle(
         return_peak, return_temp = _move_interpolated(
             bus,
             plan.target_positions,
-            rest_plan.target_positions,
+            plan.neutral_positions,
             return_duration,
             sleep=sleep,
         )
         peak_current_ma = max(peak_current_ma, return_peak)
         maximum_temperature = max(maximum_temperature, return_temp)
-        holding_rest = True
-        on_rest_hold()
-        while not should_power_down():
-            sleep(CONTROL_INTERVAL_SECONDS)
-            current_ma, temperature = _read_health(bus)
-            peak_current_ma = max(peak_current_ma, current_ma)
-            maximum_temperature = max(maximum_temperature, temperature)
-        rest_hold_exit_reason = "power_down_confirmed"
-    except KeyboardInterrupt:
-        if holding_rest:
-            rest_hold_exit_reason = "interrupt_at_rest"
-        else:
-            raise
+        on_zero_hold()
+        try:
+            while not should_leave_zero_hold():
+                sleep(CONTROL_INTERVAL_SECONDS)
+                current_ma, temperature = _read_health(bus)
+                peak_current_ma = max(peak_current_ma, current_ma)
+                maximum_temperature = max(maximum_temperature, temperature)
+        except KeyboardInterrupt:
+            # Ctrl+C has a planned meaning only after zero has been reached:
+            # leave the zero hold and perform a controlled park at rest.
+            pass
+
+        rest_peak, rest_temp = _move_interpolated(
+            bus,
+            plan.neutral_positions,
+            rest_plan.target_positions,
+            rest_duration,
+            sleep=sleep,
+        )
+        peak_current_ma = max(peak_current_ma, rest_peak)
+        maximum_temperature = max(maximum_temperature, rest_temp)
+        on_rest_reached()
     finally:
         if torque_enabled:
             bus.disable_torque(num_retry=2)
@@ -448,5 +461,4 @@ def execute_pose_cycle(
         plan.pose_name,
         peak_current_ma,
         maximum_temperature,
-        rest_hold_exit_reason,
     )

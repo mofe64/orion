@@ -328,27 +328,29 @@ One successful commissioning cycle:
    velocity, and acceleration limits.
 4. Moves directly from the measured start to the named pose over six seconds.
 5. Holds the named pose for the requested `--hold` duration.
-6. Returns to the captured mechanically stable `rest` pose over six seconds.
-7. Holds `rest` with continuous health monitoring.
-8. Accepts the exact `POWER DOWN` confirmation, disables all torque, and asks
-   the operator to verify that the lamp remains still before turning 6 V off.
+6. Returns to calibrated zero over six seconds.
+7. Holds zero indefinitely with continuous health monitoring.
+8. Treats the first `Ctrl+C` during that zero hold as a planned shutdown request,
+   moves to the captured mechanically stable `rest` pose over six seconds, then
+   disables torque and asks the operator to verify stability before turning 6 V off.
 
 Current, temperature, servo status, and final tracking error are monitored
-throughout. At `rest`, `Ctrl+C` disables torque just like `POWER DOWN`. Before
-`rest` has been reached, a fault, communication error, or `Ctrl+C` triggers
-immediate emergency torque-off. Because the STS3215 joints have no passive
-brake, any non-rest pose can fall after emergency torque-off or power loss;
-keep the full movement area padded.
+throughout. `Ctrl+C` has its planned park-at-rest meaning only while the command
+is already holding calibrated zero. A fault, communication error, terminal
+loss, `Ctrl+C` during any commanded move, or a second `Ctrl+C` while parking at
+rest triggers immediate emergency torque-off. Because the STS3215 joints have
+no passive brake, any non-rest pose can fall after emergency torque-off or
+power loss; keep the full movement area padded.
 Terminal hangup and normal process termination are also routed through the same
 cleanup where the operating system permits it.
 Keep hands clear and the physical 6 V cutoff within reach whenever torque is
 enabled.
 
 This tool is for physical bring-up, not Orion's final runtime. It runs one pose,
-returns to the captured `rest` pose, and holds there until normal shutdown is
-confirmed. Cutting the physical 6 V supply cannot command a move: software must
-first move Orion to `rest`, disable torque, and only then may the operator turn
-6 V off. The final
+returns to zero, and holds there until the operator requests the planned
+shutdown with `Ctrl+C`. It then parks at `rest` and disables torque. Cutting the
+physical 6 V supply cannot command a move: software must first move Orion to
+`rest`, disable torque, and only then may the operator turn 6 V off. The final
 ROS hardware adapter must provide continuous state feedback, watchdogs,
 cancellation, trajectory execution, and safe shutdown before normal motion
 playback is enabled.

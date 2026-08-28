@@ -11,6 +11,15 @@ poses:
       head_roll_joint: 0.0
       head_pitch_joint: 0.0
 
+  rest:
+    description: Captured torque-free mechanical rest pose; verify stability again after hardware changes.
+    positions:
+      base_yaw_joint: -0.01687379
+      shoulder_pitch_joint: -1.27167007
+      elbow_pitch_joint: 0.72250495
+      head_roll_joint: -0.04295146
+      head_pitch_joint: -0.01840777
+
   home:
     description: Compact powered rest pose with a lower centre of gravity.
     positions:

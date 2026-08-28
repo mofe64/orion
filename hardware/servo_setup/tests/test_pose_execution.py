@@ -150,7 +150,7 @@ class PoseExecutionTests(unittest.TestCase):
                     "home", pose_path=poses, calibration_path=calibration
                 )
 
-    def test_pose_cycle_visits_pose_returns_to_rest_and_disables(self) -> None:
+    def test_pose_cycle_visits_pose_holds_zero_then_parks_at_rest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             calibration, poses = self._files(directory)
             plan = build_hardware_pose_plan(
@@ -168,16 +168,28 @@ class PoseExecutionTests(unittest.TestCase):
             pose_duration=4.0,
             hold_seconds=0.0,
             return_duration=4.0,
+            rest_duration=4.0,
             sleep=lambda _: None,
-            should_power_down=lambda: True,
+            should_leave_zero_hold=lambda: True,
         )
 
         self.assertEqual(result.pose_name, "home")
-        self.assertEqual(result.rest_hold_exit_reason, "power_down_confirmed")
         self.assertEqual(bus.positions, rest_plan.target_positions)
         self.assertFalse(bus.torque_enabled)
         self.assertIn(("enable_torque", None, 2), bus.calls)
         self.assertIn(("disable_torque", None, 2), bus.calls)
+        zero_write_index = next(
+            index
+            for index, call in enumerate(bus.calls)
+            if call[:2] == ("sync_write", "Goal_Position") and call[2] == NEUTRALS
+        )
+        rest_write_index = max(
+            index
+            for index, call in enumerate(bus.calls)
+            if call[:2] == ("sync_write", "Goal_Position")
+            and call[2] == rest_plan.target_positions
+        )
+        self.assertLess(zero_write_index, rest_write_index)
 
     def test_pose_cycle_accepts_any_start_inside_calibrated_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -197,8 +209,9 @@ class PoseExecutionTests(unittest.TestCase):
             pose_duration=4.0,
             hold_seconds=0.0,
             return_duration=4.0,
+            rest_duration=4.0,
             sleep=lambda _: None,
-            should_power_down=lambda: True,
+            should_leave_zero_hold=lambda: True,
         )
 
         self.assertIn(("enable_torque", None, 2), bus.calls)
@@ -222,8 +235,9 @@ class PoseExecutionTests(unittest.TestCase):
                 pose_duration=4.0,
                 hold_seconds=0.0,
                 return_duration=4.0,
+                rest_duration=4.0,
                 sleep=lambda _: None,
-                should_power_down=lambda: True,
+                should_leave_zero_hold=lambda: True,
             )
 
         self.assertNotIn(("enable_torque", None, 2), bus.calls)
@@ -248,14 +262,15 @@ class PoseExecutionTests(unittest.TestCase):
                 pose_duration=4.0,
                 hold_seconds=0.0,
                 return_duration=4.0,
+                rest_duration=4.0,
                 sleep=lambda _: None,
-                should_power_down=lambda: True,
+                should_leave_zero_hold=lambda: True,
             )
 
         self.assertFalse(bus.torque_enabled)
         self.assertIn(("disable_torque", None, 2), bus.calls)
 
-    def test_ctrl_c_at_rest_disables_torque_without_restarting_motion(self) -> None:
+    def test_ctrl_c_at_zero_performs_controlled_move_to_rest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             calibration, poses = self._files(directory)
             plan = build_hardware_pose_plan(
@@ -266,7 +281,7 @@ class PoseExecutionTests(unittest.TestCase):
             )
         bus = FakePoseBus()
 
-        def interrupt_at_rest() -> bool:
+        def interrupt_at_zero() -> bool:
             raise KeyboardInterrupt
 
         result = execute_pose_cycle(
@@ -276,13 +291,40 @@ class PoseExecutionTests(unittest.TestCase):
             pose_duration=4.0,
             hold_seconds=0.0,
             return_duration=4.0,
+            rest_duration=4.0,
             sleep=lambda _: None,
-            should_power_down=interrupt_at_rest,
+            should_leave_zero_hold=interrupt_at_zero,
         )
 
-        self.assertEqual(result.rest_hold_exit_reason, "interrupt_at_rest")
+        self.assertEqual(result.pose_name, "home")
         self.assertEqual(bus.positions, rest_plan.target_positions)
         self.assertFalse(bus.torque_enabled)
+
+    def test_ctrl_c_before_zero_is_emergency_torque_off_without_rest_motion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration, poses = self._files(directory)
+            plan = build_hardware_pose_plan(
+                "home", pose_path=poses, calibration_path=calibration
+            )
+            rest_plan = build_hardware_pose_plan(
+                "rest", pose_path=poses, calibration_path=calibration
+            )
+        bus = FakePoseBus(initial_offset=20)
+
+        with self.assertRaises(KeyboardInterrupt):
+            execute_pose_cycle(
+                bus,
+                plan,
+                rest_plan,
+                pose_duration=4.0,
+                hold_seconds=0.0,
+                return_duration=4.0,
+                rest_duration=4.0,
+                sleep=lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+            )
+
+        self.assertFalse(bus.torque_enabled)
+        self.assertNotEqual(bus.positions, rest_plan.target_positions)
 
 
 if __name__ == "__main__":

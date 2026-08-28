@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
-import select
 import signal
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -51,8 +49,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Commission one physical Orion named pose: move from the measured safe start, "
-            "hold, return to the captured torque-free rest pose, and disable torque only "
-            "after explicit power-down confirmation."
+            "hold, return to calibrated zero until Ctrl+C, then park at the captured "
+            "torque-free rest pose and disable torque."
         )
     )
     parser.add_argument("pose", help="Pose name from Orion's poses.yaml, initially use 'home'.")
@@ -62,6 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration", type=_duration, default=6.0)
     parser.add_argument("--hold", type=_nonnegative, default=2.0)
     parser.add_argument("--return-duration", type=_duration, default=6.0)
+    parser.add_argument("--rest-duration", type=_duration, default=6.0)
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -82,23 +81,14 @@ def _print_plan(plan) -> None:
         )
 
 
-def _raise_keyboard_interrupt(_signum, _frame) -> None:
-    """Route terminal loss and termination through torque-off cleanup."""
-
-    raise KeyboardInterrupt
+class EmergencyTermination(BaseException):
+    """Terminal loss or process termination that must not start planned motion."""
 
 
-def _power_down_confirmed() -> bool:
-    """Read a non-blocking normal-shutdown confirmation during rest hold."""
+def _raise_emergency_termination(_signum, _frame) -> None:
+    """Route terminal loss and termination through immediate torque-off cleanup."""
 
-    ready, _, _ = select.select([sys.stdin], [], [], 0)
-    if not ready:
-        return False
-    response = sys.stdin.readline().strip()
-    if response == "POWER DOWN":
-        return True
-    print("Rest remains powered and monitored. Type POWER DOWN only when ready.")
-    return False
+    raise EmergencyTermination
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -140,7 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal_value = getattr(signal, signal_name, None)
         if signal_value is not None:
             previous_signal_handlers[signal_value] = signal.signal(
-                signal_value, _raise_keyboard_interrupt
+                signal_value, _raise_emergency_termination
             )
     try:
         assignments = motion_test_plan()
@@ -155,13 +145,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             pose_duration=args.duration,
             hold_seconds=args.hold,
             return_duration=args.return_duration,
-            should_power_down=_power_down_confirmed,
-            on_rest_hold=lambda: print(
-                "Reached the captured rest pose and holding with health monitoring. Keep hands "
-                "clear, then type POWER DOWN and press Enter to disable torque. Ctrl+C here also "
-                "disables torque; Ctrl+C before rest is reached is an emergency stop."
+            rest_duration=args.rest_duration,
+            on_zero_hold=lambda: print(
+                "Reached calibrated zero and holding with health monitoring. Press Ctrl+C once "
+                "to perform the planned move to rest. Keep the path clear; another Ctrl+C while "
+                "parking is an emergency torque-off."
+            ),
+            on_rest_reached=lambda: print(
+                "Reached the captured torque-free rest pose. Disabling torque now."
             ),
         )
+    except EmergencyTermination:
+        print("\nTerminal closed or process terminated. Disabling all torque immediately.")
+        return 143
     except KeyboardInterrupt:
         print("\nPose cycle interrupted. Disabling all torque immediately.")
         return 130
@@ -183,13 +179,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.peak_current_ma:.0f} mA, maximum temperature "
         f"{result.maximum_temperature_c} C."
     )
-    if result.rest_hold_exit_reason == "interrupt_at_rest":
-        print(
-            "Torque was disabled at the captured rest pose. Confirm the lamp remains still, "
-            "then turn 6 V OFF."
-        )
-    else:
-        print("Power-down confirmed at rest; all torque is off. Turn 6 V OFF.")
+    print(
+        "Parked at the validated mechanical rest pose; all torque is off. Confirm the lamp "
+        "remains still, then turn 6 V OFF."
+    )
     return 0
 
 
