@@ -28,6 +28,46 @@ From another terminal, query that daemon without opening the servo port:
 runtime/build/oriond --status
 ```
 
+The daemon lifecycle is explicit. Apply and verify the LeLamp-compatible servo
+profile while torque remains off:
+
+```bash
+runtime/build/oriond --configure
+```
+
+Enable holding torque only after configuration. The driver first writes each
+servo's measured position back as its goal, verifies those goals, and then
+enables torque:
+
+```bash
+runtime/build/oriond --enable
+```
+
+No pose or trajectory is sent in holding mode. Disable torque through the same
+daemon-owned connection:
+
+```bash
+runtime/build/oriond --disable
+```
+
+Move to any complete pose in Orion's existing pose library with a quintic
+trajectory. The daemon validates all five targets against the physical
+calibration and sends one synchronized position update per 50 Hz cycle:
+
+```bash
+runtime/build/oriond --goto rest --duration 2.0
+runtime/build/oriond --goto home --duration 4.0
+```
+
+While moving, `--status` reports `mode: "moving"`, the active pose name, and
+normalized progress. At completion it returns to `mode: "holding"`. Calling
+`--disable` during a move cancels the trajectory and turns torque off.
+
+The native trajectory path does not use the provisional simulation-only
+velocity, acceleration, or jerk ceilings from `orion_motion`. The requested
+duration determines the motion rate. Physical calibrated joint-position bounds
+remain mandatory.
+
 ## Native build
 
 On Debian or Ubuntu, the required system packages are:
@@ -60,6 +100,5 @@ The ROS adapter is optional and is not part of the native build. Once the
 standalone daemon lifecycle is established, the reusable sources can move to a
 neutral package without changing their behavior.
 
-The next runtime increment is explicit servo-profile application followed by a
-snap-free torque lifecycle. Motion commands will only be added after those
-operations are testable with the fake transport.
+The next runtime increment is the matching MuJoCo backend and richer animation
+sequencing. The physical daemon already supports named-pose movement.

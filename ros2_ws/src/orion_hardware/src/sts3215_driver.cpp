@@ -323,6 +323,22 @@ void Sts3215Driver::write(const std::map<std::string, double> & positions_radian
   {
     throw std::logic_error("STS3215 driver is not active.");
   }
+  transport_->write_positions(encode_positions(positions_radians));
+}
+
+void Sts3215Driver::validate_positions(
+  const std::map<std::string, double> & positions_radians) const
+{
+  if (!configured_)
+  {
+    throw std::logic_error("STS3215 driver is not configured.");
+  }
+  (void)encode_positions(positions_radians);
+}
+
+std::map<std::uint8_t, int> Sts3215Driver::encode_positions(
+  const std::map<std::string, double> & positions_radians) const
+{
   if (positions_radians.size() != calibrations_.size())
   {
     throw std::invalid_argument("A position command is required for every Orion joint.");
@@ -338,7 +354,7 @@ void Sts3215Driver::write(const std::map<std::string, double> & positions_radian
     }
     raw_positions.emplace(joint.servo_id, radians_to_raw(joint, command->second));
   }
-  transport_->write_positions(raw_positions);
+  return raw_positions;
 }
 
 bool Sts3215Driver::is_active() const noexcept

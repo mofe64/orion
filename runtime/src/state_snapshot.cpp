@@ -45,30 +45,68 @@ void require_finite(double value, const std::string & field)
 }  // namespace
 
 StateSnapshot make_state_snapshot(
-  std::uint64_t sequence, double update_hz,
-  std::vector<orion_hardware::JointState> joints)
+  RuntimeMode mode, std::uint64_t sequence, double update_hz,
+  std::vector<orion_hardware::JointState> joints,
+  std::string active_motion, double motion_progress)
 {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   return StateSnapshot{
+    mode,
     sequence,
     std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
     update_hz,
     std::move(joints),
+    std::move(active_motion),
+    motion_progress,
   };
+}
+
+const char * runtime_mode_name(RuntimeMode mode)
+{
+  switch (mode)
+  {
+    case RuntimeMode::OBSERVE: return "observe";
+    case RuntimeMode::CONFIGURED: return "configured";
+    case RuntimeMode::HOLDING: return "holding";
+    case RuntimeMode::MOVING: return "moving";
+  }
+  throw std::logic_error("Unknown Orion runtime mode.");
+}
+
+bool profile_is_applied(RuntimeMode mode)
+{
+  return mode != RuntimeMode::OBSERVE;
+}
+
+bool torque_is_enabled(RuntimeMode mode)
+{
+  return mode == RuntimeMode::HOLDING || mode == RuntimeMode::MOVING;
 }
 
 std::string state_snapshot_to_json(const StateSnapshot & snapshot)
 {
   require_finite(snapshot.update_hz, "update_hz");
+  require_finite(snapshot.motion_progress, "motion_progress");
   std::ostringstream output;
   output << std::setprecision(15)
          << "{\"schema_version\":" << kStateSchemaVersion
          << ",\"robot\":\"orion\""
-         << ",\"mode\":\"observe\""
+         << ",\"mode\":" << json_string(runtime_mode_name(snapshot.mode))
+         << ",\"profile_applied\":" << (profile_is_applied(snapshot.mode) ? "true" : "false")
+         << ",\"torque_enabled\":" << (torque_is_enabled(snapshot.mode) ? "true" : "false")
          << ",\"sequence\":" << snapshot.sequence
          << ",\"sampled_at_unix_ns\":" << snapshot.sampled_at_unix_ns
-         << ",\"update_hz\":" << snapshot.update_hz
-         << ",\"joints\":[";
+         << ",\"update_hz\":" << snapshot.update_hz;
+  if (snapshot.active_motion.empty())
+  {
+    output << ",\"motion\":null";
+  }
+  else
+  {
+    output << ",\"motion\":{\"name\":" << json_string(snapshot.active_motion)
+           << ",\"progress\":" << snapshot.motion_progress << '}';
+  }
+  output << ",\"joints\":[";
 
   for (std::size_t index = 0; index < snapshot.joints.size(); ++index)
   {

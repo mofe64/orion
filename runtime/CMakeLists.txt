@@ -11,6 +11,8 @@ set(ORION_HARDWARE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../ros2_ws/src/orion_hardwa
 set(FTSERVO_ROOT "${ORION_HARDWARE_ROOT}/vendor/ftservo")
 
 add_library(orion_control STATIC
+  src/joint_trajectory.cpp
+  src/pose_library.cpp
   src/state_snapshot.cpp
   "${ORION_HARDWARE_ROOT}/src/calibration.cpp"
   "${ORION_HARDWARE_ROOT}/src/ftservo_transport.cpp"
@@ -42,7 +44,15 @@ if(BUILD_TESTING)
   add_executable(test_state_snapshot test/test_state_snapshot.cpp)
   target_link_libraries(test_state_snapshot PRIVATE orion_control GTest::gtest_main)
 
+  add_executable(test_motion test/test_motion.cpp)
+  target_compile_definitions(
+    test_motion PRIVATE
+    ORION_TEST_POSES_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../ros2_ws/src/orion_motion/config/poses.yaml"
+  )
+  target_link_libraries(test_motion PRIVATE orion_control GTest::gtest_main)
+
   include(GoogleTest)
   gtest_discover_tests(test_sts3215_driver)
   gtest_discover_tests(test_state_snapshot)
+  gtest_discover_tests(test_motion)
 endif()

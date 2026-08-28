@@ -56,6 +56,7 @@ public:
   void close() noexcept;
 
   std::vector<JointState> read();
+  void validate_positions(const std::map<std::string, double> & positions_radians) const;
   void write(const std::map<std::string, double> & positions_radians);
 
   bool is_active() const noexcept;
@@ -64,6 +65,8 @@ public:
 private:
   std::vector<JointState> convert_states(
     const std::map<std::uint8_t, Sts3215RawState> & raw_states) const;
+  std::map<std::uint8_t, int> encode_positions(
+    const std::map<std::string, double> & positions_radians) const;
   int radians_to_raw(const JointCalibration & joint, double radians) const;
   double raw_to_radians(const JointCalibration & joint, int raw_position) const;
 

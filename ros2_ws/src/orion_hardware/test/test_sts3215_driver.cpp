@@ -228,6 +228,23 @@ TEST(Sts3215DriverTest, SeedsPresentPositionsBeforeTorqueOn)
     call_index(transport->calls, "torque_on"));
 }
 
+TEST(Sts3215DriverTest, DeactivationTurnsTorqueOff)
+{
+  auto transport = std::make_shared<FakeTransport>();
+  transport->add_servo(1, 904);
+  transport->add_servo(5, 3547);
+  Sts3215Driver driver(transport);
+  driver.configure("/dev/fake", 1000000, calibrations());
+  driver.activate();
+  transport->calls.clear();
+
+  driver.deactivate();
+
+  EXPECT_EQ(
+    std::count(transport->calls.begin(), transport->calls.end(), "torque_off"), 1);
+  EXPECT_FALSE(driver.is_active());
+}
+
 TEST(Sts3215DriverTest, ConvertsCommandsAcrossEncoderWrap)
 {
   auto transport = std::make_shared<FakeTransport>();
@@ -244,6 +261,22 @@ TEST(Sts3215DriverTest, ConvertsCommandsAcrossEncoderWrap)
   EXPECT_EQ(transport->position_writes.back().at(5), 32);
   EXPECT_THROW(
     driver.write({{"base_yaw_joint", 0.0}, {"head_pitch_joint", 2.0}}),
+    std::out_of_range);
+}
+
+TEST(Sts3215DriverTest, ValidatesTargetsWithoutWriting)
+{
+  auto transport = std::make_shared<FakeTransport>();
+  transport->add_servo(1, 942);
+  transport->add_servo(5, 3476);
+  Sts3215Driver driver(transport);
+  driver.configure("/dev/fake", 1000000, calibrations());
+
+  driver.validate_positions({{"base_yaw_joint", 0.5}, {"head_pitch_joint", 0.5}});
+
+  EXPECT_TRUE(transport->position_writes.empty());
+  EXPECT_THROW(
+    driver.validate_positions({{"base_yaw_joint", 2.0}, {"head_pitch_joint", 0.0}}),
     std::out_of_range);
 }
 
