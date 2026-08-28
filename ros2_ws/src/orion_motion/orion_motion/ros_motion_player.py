@@ -876,18 +876,48 @@ def send_trajectory_goal(
 ) -> ExecutionResult:
     """Execute one validated trajectory with bounded waits and full feedback."""
 
+    # execute_motion_queue() calls this after it has read Orion's joint state,
+    # generated a trajectory from that state, and passed trajectory validation.
+    # This method owns the ROS action conversation with the trajectory controller.
+
+    # Do not let normal ROS execution bypass Orion's trajectory validator. The
+    # ValidatedTrajectory type is the proof that the generated path passed checks.
     if not isinstance(validated, ValidatedTrajectory):
         raise TypeError("ROS execution requires a ValidatedTrajectory")
+
+    # Keep a shorter name for the generated trajectory stored inside the validated
+    # wrapper. It contains Orion's joint order, points, timing, and motion name.
     generated = validated.trajectory
+
+    # Save every controller feedback sample so the final result can report desired
+    # positions, measured positions, errors, and maximum tracking error.
     feedback_samples: list[ExecutionFeedback] = []
+
+    # Normal execution creates a client for Orion's FollowJointTrajectory action.
+    # Tests may pass a fake client so they can exercise this flow without ROS.
     client = action_client or ActionClient(
         node, FollowJointTrajectory, ACTION_NAME
     )
+
+    # Spinning lets ROS process replies and feedback while Orion waits for a future.
+    # Tests replace it with a small controlled function.
     spin = spin_until_complete or rclpy.spin_until_future_complete
+
+    # The motion queue supplies this object so a user cancel or replacement can
+    # reach the active goal. A direct call gets its own cancellation state.
     cancellation_state = cancellation or GoalCancellation()
+
+    # These waiters read real joint feedback in normal execution. Tests can replace
+    # them with known measured states for cancellation and settling checks.
     wait_for_stopped = stopped_state_waiter or wait_for_stopped_joint_state
     wait_for_settled = settled_state_waiter or wait_for_settled_joint_state
+
+    # Use the measured starting positions as the first cancellation snapshot. New
+    # controller feedback will replace them until cancellation actually begins.
     cancellation_state.observe_positions(start_state.positions)
+
+    # First check that the trajectory controller's action server can be reached.
+    # This wait is bounded so Orion cannot hang forever when control is unavailable.
     node.get_logger().info(f"Waiting for action server {ACTION_NAME}")
     if not client.wait_for_server(timeout_sec=server_timeout):
         message = (
@@ -895,6 +925,8 @@ def send_trajectory_goal(
             "seconds"
         )
         node.get_logger().error(message)
+
+        # No goal was sent, so there is nothing to cancel or physically stop here.
         return ExecutionResult(
             motion_name=generated.name,
             backend=BACKEND_NAME,
@@ -902,6 +934,9 @@ def send_trajectory_goal(
             message=message,
         )
 
+    # The trajectory was generated from start_state. Check its age again after
+    # waiting for the server, because Orion may have moved while time passed.
+    # Sending a path from an old position could cause a jump at the first point.
     try:
         require_fresh_measured_state(
             start_state,
@@ -910,6 +945,9 @@ def send_trajectory_goal(
         )
     except JointStateError as error:
         node.get_logger().error(str(error))
+
+        # Reject before contacting the controller. The caller can read a fresh
+        # state, regenerate the trajectory, and try again safely.
         return ExecutionResult(
             motion_name=generated.name,
             backend=BACKEND_NAME,
@@ -917,22 +955,39 @@ def send_trajectory_goal(
             message=str(error),
         )
 
+    # Build the ROS action goal from Orion's validated points. The tolerance helper
+    # tells the controller how much error is allowed during and after the motion.
     goal = FollowJointTrajectory.Goal()
     goal.trajectory = trajectory_to_message(validated)
     _apply_goal_tolerances(goal, generated.joint_names, policy)
 
     def receive_feedback(message: Any) -> None:
+        # The controller calls this repeatedly while the goal is running. Convert
+        # the ROS message into Orion's backend-neutral feedback record.
         sample = feedback_from_message(message.feedback)
         feedback_samples.append(sample)
+
+        # Cancellation needs the newest actual measured positions so Orion can
+        # later calculate how far each joint moved while stopping.
         cancellation_state.observe_positions(sample.actual.positions)
+
+        # The outer execution flow may also observe feedback to trigger a timed
+        # cancellation, submit a replacement, or record extra execution evidence.
         if feedback_observer is not None:
             feedback_observer(sample)
 
+    # Send the goal without blocking. send_future will later contain the controller
+    # goal handle, which tells Orion whether this specific goal was accepted.
     send_future = client.send_goal_async(
         goal,
         feedback_callback=receive_feedback,
     )
+
+    # Process ROS messages while waiting, but only up to the server time limit.
     spin(node, send_future, timeout_sec=server_timeout)
+
+    # An unfinished send future means Orion did not receive an acceptance or
+    # rejection reply in time, so it cannot continue with this goal safely.
     if not send_future.done():
         message = "Timed out waiting for trajectory goal response"
         node.get_logger().error(message)
@@ -943,8 +998,13 @@ def send_trajectory_goal(
             message=message,
             feedback=tuple(feedback_samples),
         )
+
+    # The accepted goal handle is Orion's reference to this controller goal. It is
+    # needed to wait for the result or ask the controller to cancel this goal.
     goal_handle = send_future.result()
 
+    # A completed send future can still say that the controller rejected the goal.
+    # Rejection means the trajectory never became an active controller command.
     if goal_handle is None or not goal_handle.accepted:
         message = "Trajectory goal was rejected"
         node.get_logger().error(message)
@@ -957,16 +1017,30 @@ def send_trajectory_goal(
         )
 
     node.get_logger().info("Trajectory goal accepted")
+
+    # Connect GoalCancellation to this accepted goal. If a cancel or replacement
+    # arrived while Orion waited for acceptance, attach() sends that request now.
     cancellation_state.attach(goal_handle)
+
+    # result_future is different from send_future. It completes when the accepted
+    # action ends, not when the controller first accepts the goal.
     result_future = goal_handle.get_result_async()
+
+    # Give the controller enough wall-clock time for the planned motion, its final
+    # tolerance window, and a communication margin. The factor allows simulation
+    # to run slower than real time without allowing an endless wait.
     result_timeout = (
         generated.total_duration * policy.result_timeout_factor
         + policy.goal_time_tolerance
         + policy.result_timeout_margin
     )
     try:
+        # While this spins, ROS can deliver motion feedback, cancellation requests,
+        # and the final action result.
         spin(node, result_future, timeout_sec=result_timeout)
     except KeyboardInterrupt:
+        # A keyboard interrupt is a user cancellation. Ask the controller to stop,
+        # wait for its final result, and confirm the joints physically stopped.
         stopped, detail, stopped_state = _finish_requested_cancellation(
             node,
             result_future,
@@ -979,6 +1053,9 @@ def send_trajectory_goal(
         )
         message = f"Motion cancelled by user; {detail}"
         node.get_logger().info(message)
+
+        # Preserve feedback and stopping measurements even though the motion did
+        # not finish normally.
         return ExecutionResult(
             motion_name=generated.name,
             backend=BACKEND_NAME,
@@ -991,6 +1068,9 @@ def send_trajectory_goal(
                 feedback_samples, cancellation_state, stopped_state
             ),
         )
+
+    # If the result future is unfinished after the deadline, the controller did
+    # not finish the goal in time. Cancel it instead of leaving motion active.
     if not result_future.done():
         stopped, detail, stopped_state = _finish_requested_cancellation(
             node,
@@ -1007,6 +1087,9 @@ def send_trajectory_goal(
             f"deadline; {detail}"
         )
         node.get_logger().error(message)
+
+        # The status remains TIMED_OUT even if cancellation and stopping succeed;
+        # those fields separately record whether the timeout was handled safely.
         return ExecutionResult(
             motion_name=generated.name,
             backend=BACKEND_NAME,
@@ -1020,7 +1103,12 @@ def send_trajectory_goal(
             ),
         )
 
+    # The result future returns a ROS wrapper containing both the action status and
+    # the FollowJointTrajectory controller result.
     wrapped_result = result_future.result()
+
+    # A completed future should contain a wrapper. Treat a missing one as a general
+    # execution failure rather than claiming success.
     if wrapped_result is None:
         message = "Trajectory action returned no result"
         node.get_logger().error(message)
@@ -1032,14 +1120,22 @@ def send_trajectory_goal(
             feedback=tuple(feedback_samples),
         )
 
+    # result contains the controller error code and message. action_status says how
+    # ROS ended the action, such as succeeded, cancelled, or aborted.
     result = wrapped_result.result
     action_status = getattr(
         wrapped_result,
         "status",
         GoalStatus.STATUS_SUCCEEDED,
     )
+
+    # Cancellation may have come from the user, a newer replacement motion, or a
+    # timeout path. Use GoalCancellation to preserve that Orion-level reason.
     if action_status == GoalStatus.STATUS_CANCELED:
         reason = cancellation_state.reason or ExecutionStatus.CANCELLED
+
+        # The action status says the software goal ended. Fresh joint feedback must
+        # still prove that the physical or simulated joints have stopped.
         stopped, detail, stopped_state = _confirm_stopped_after_cancel(
             node,
             generated.joint_names,
@@ -1048,6 +1144,9 @@ def send_trajectory_goal(
         )
         message = f"Trajectory {reason.value}; {detail}"
         node.get_logger().info(message)
+
+        # Return the correct Orion reason together with stop confirmation and the
+        # distance each joint travelled after cancellation was requested.
         return ExecutionResult(
             motion_name=generated.name,
             backend=BACKEND_NAME,
@@ -1061,6 +1160,9 @@ def send_trajectory_goal(
                 feedback_samples, cancellation_state, stopped_state
             ),
         )
+
+    # A non-success controller code gives a more useful reason than a general ROS
+    # aborted status. Translate known FollowJointTrajectory codes into Orion names.
     if result.error_code != FollowJointTrajectory.Result.SUCCESSFUL:
         status = _RESULT_STATUSES.get(
             result.error_code, ExecutionStatus.FAILED
@@ -1078,6 +1180,9 @@ def send_trajectory_goal(
             feedback=tuple(feedback_samples),
             backend_error_code=result.error_code,
         )
+
+    # Require both layers to agree on success: the controller error code above and
+    # the outer ROS action status here. A mismatch is treated as a failure.
     if action_status != GoalStatus.STATUS_SUCCEEDED:
         message = f"Trajectory action ended with status {action_status}"
         node.get_logger().error(message)
@@ -1090,8 +1195,12 @@ def send_trajectory_goal(
             backend_error_code=result.error_code,
         )
 
+    # Controller success is not enough to prove Orion reached a stable final pose.
+    # Start a separate measured settling check using fresh joint-state messages.
     settle_started = monotonic()
     try:
+        # Every joint must stay close to the final target and below the stopped
+        # velocity limit for the full settle duration, within a bounded timeout.
         settled_state = wait_for_settled(
             node,
             generated.joint_names,
@@ -1102,6 +1211,8 @@ def send_trajectory_goal(
             timeout=policy.goal_settle_timeout,
         )
     except (JointStateError, ValueError) as error:
+        # The controller completed its action, but measured feedback did not prove
+        # a stable final pose. Keep this distinct from an action/controller error.
         message = f"Trajectory ended but did not settle: {error}"
         node.get_logger().error(message)
         return ExecutionResult(
@@ -1114,6 +1225,9 @@ def send_trajectory_goal(
             metrics=execution_metrics_from_feedback(feedback_samples),
         )
 
+    # Summarize tracking error from action feedback, then add final measurements
+    # from the independent settling check. ExecutionMetrics is frozen, so replace()
+    # creates a new record instead of changing the original one.
     base_metrics = execution_metrics_from_feedback(feedback_samples)
     final_target = generated.points[-1].positions
     metrics = replace(
@@ -1129,6 +1243,9 @@ def send_trajectory_goal(
         final_velocities=settled_state.velocities,
         settling_time=max(0.0, monotonic() - settle_started),
     )
+
+    # Only this path means the controller succeeded and fresh joint feedback proved
+    # that Orion reached the target and remained still.
     message = "Trajectory completed and remained settled"
     node.get_logger().info(message)
     return ExecutionResult(
