@@ -719,10 +719,14 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "lerobot", extra = ["feetech"] },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lerobot", extras = ["feetech"], specifier = ">=0.5.1,<0.7.0" }]
+requires-dist = [
+    { name = "lerobot", extras = ["feetech"], specifier = ">=0.5.1,<0.7.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0" },
+]
 
 [[package]]
 name = "packaging"

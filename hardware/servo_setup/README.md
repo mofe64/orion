@@ -272,6 +272,87 @@ uv run orion-calibrate-servos --port /dev/not-opened --dry-run
 On completion or any error, the command performs a best-effort torque-off for
 all five servos. Turn the 6 V supply off after it exits.
 
+## Commission an existing Orion named pose on hardware
+
+Orion's normal `orion-pose` command targets a ROS `FollowJointTrajectory`
+controller. Until the STS3215 `ros2_control` hardware adapter exists, the
+servo-setup package provides a deliberately limited commissioning bridge that
+reads the same `orion_motion/config/poses.yaml` file:
+
+First capture a mechanically stable shutdown pose:
+
+```bash
+uv run orion-capture-rest --port /dev/ttyACM0
+```
+
+The capture runs with servo torque off. Over a clear padded area, manually put
+Orion into a low, balanced arrangement that remains upright without blocks or
+hands. The command observes all five encoders for five seconds, rejects more
+than 10 raw steps (about 0.88 degrees) of drift, checks the pose against both
+the measured hardware calibration and the shared ROS operational ranges, then
+requires the exact `SAVE REST` confirmation. A successful capture atomically
+adds `rest` to `orion_motion/config/poses.yaml`; use `--replace` only when
+deliberately recapturing an existing rest pose. Servo EEPROM is never changed.
+
+This test demonstrates short-term stability in the captured environment; it
+cannot certify stability after moving the base, changing payload or cable
+routing, or changing the lamp's surface or orientation. Recapture or retest
+after any such change.
+
+```bash
+uv run orion-run-hardware-pose home --port /dev/ttyACM0 --dry-run
+```
+
+Dry-run resolves the named radian pose through the saved hardware calibration,
+prints every raw target, and rejects any target outside the measured safe
+range. It does not open the serial port or write a register.
+
+The first physical cycle must use the small `home` pose:
+
+```bash
+uv run orion-run-hardware-pose home --port /dev/ttyACM0
+```
+
+Before confirming the run, keep 6 V off, position Orion anywhere inside its
+measured safe joint ranges, provide a clear padded movement area, and remove
+any support block that would obstruct the planned motion. Turn 6 V on only when
+prompted and type the exact displayed confirmation. A starting joint outside
+its measured range, or across a raw encoder wrap that the commissioning tool
+cannot traverse safely, is rejected before torque is enabled.
+
+One successful commissioning cycle:
+
+1. Reads and validates the measured starting position of every joint.
+2. Writes those current encoder positions as goals before enabling torque.
+3. Enables all five joints with the conservative first-motion RAM torque,
+   velocity, and acceleration limits.
+4. Moves directly from the measured start to the named pose over six seconds.
+5. Holds the named pose for the requested `--hold` duration.
+6. Returns to the captured mechanically stable `rest` pose over six seconds.
+7. Holds `rest` with continuous health monitoring.
+8. Accepts the exact `POWER DOWN` confirmation, disables all torque, and asks
+   the operator to verify that the lamp remains still before turning 6 V off.
+
+Current, temperature, servo status, and final tracking error are monitored
+throughout. At `rest`, `Ctrl+C` disables torque just like `POWER DOWN`. Before
+`rest` has been reached, a fault, communication error, or `Ctrl+C` triggers
+immediate emergency torque-off. Because the STS3215 joints have no passive
+brake, any non-rest pose can fall after emergency torque-off or power loss;
+keep the full movement area padded.
+Terminal hangup and normal process termination are also routed through the same
+cleanup where the operating system permits it.
+Keep hands clear and the physical 6 V cutoff within reach whenever torque is
+enabled.
+
+This tool is for physical bring-up, not Orion's final runtime. It runs one pose,
+returns to the captured `rest` pose, and holds there until normal shutdown is
+confirmed. Cutting the physical 6 V supply cannot command a move: software must
+first move Orion to `rest`, disable torque, and only then may the operator turn
+6 V off. The final
+ROS hardware adapter must provide continuous state feedback, watchdogs,
+cancellation, trajectory execution, and safe shutdown before normal motion
+playback is enabled.
+
 ## How the write works
 
 For each joint, LeRobot's `setup_motor()`:
