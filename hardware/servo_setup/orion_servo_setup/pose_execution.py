@@ -33,6 +33,7 @@ STEPS_PER_RADIAN = ENCODER_RESOLUTION / (2.0 * math.pi)
 POSITION_TOLERANCE_RAW = 20  # About 1.76 degrees at phase completion.
 CONTROL_INTERVAL_SECONDS = 0.10
 MIN_POSE_DURATION_SECONDS = 4.0
+SHOULDER_POSE_TORQUE_LIMIT_RAW = 300
 
 
 class PoseExecutionError(RuntimeError):
@@ -321,8 +322,14 @@ def _move_interpolated(
         if abs(int(final_positions[name]) - expected) > POSITION_TOLERANCE_RAW
     }
     if errors:
-        details = ", ".join(f"{name}={error} steps" for name, error in errors.items())
-        raise PoseExecutionError(f"Pose tracking error exceeded tolerance: {details}.")
+        details = ", ".join(
+            f"{name}={error} steps (actual {int(final_positions[name])}, target {target[name]})"
+            for name, error in errors.items()
+        )
+        raise PoseExecutionError(
+            f"Pose tracking error exceeded tolerance: {details}; phase peak current "
+            f"{peak_current_ma:.0f} mA, maximum temperature {maximum_temperature} C."
+        )
     return peak_current_ma, maximum_temperature
 
 
@@ -388,9 +395,14 @@ def execute_pose_cycle(
 
     for target in plan.targets:
         motor = target.calibration.joint_name
+        torque_limit = (
+            SHOULDER_POSE_TORQUE_LIMIT_RAW
+            if motor == "shoulder_pitch_joint"
+            else TORQUE_LIMIT_RAW
+        )
         bus.write("Acceleration", motor, ACCELERATION_RAW, normalize=False, num_retry=2)
         bus.write("Goal_Velocity", motor, GOAL_VELOCITY_RAW, normalize=False, num_retry=2)
-        bus.write("Torque_Limit", motor, TORQUE_LIMIT_RAW, normalize=False, num_retry=2)
+        bus.write("Torque_Limit", motor, torque_limit, normalize=False, num_retry=2)
     bus.sync_write("Goal_Position", current, normalize=False, num_retry=2)
 
     peak_current_ma = 0.0

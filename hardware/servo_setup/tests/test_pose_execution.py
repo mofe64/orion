@@ -178,6 +178,14 @@ class PoseExecutionTests(unittest.TestCase):
         self.assertFalse(bus.torque_enabled)
         self.assertIn(("enable_torque", None, 2), bus.calls)
         self.assertIn(("disable_torque", None, 2), bus.calls)
+        self.assertIn(
+            ("write", "Torque_Limit", "shoulder_pitch_joint", 300, False, 2),
+            bus.calls,
+        )
+        self.assertIn(
+            ("write", "Torque_Limit", "elbow_pitch_joint", 200, False, 2),
+            bus.calls,
+        )
         zero_write_index = next(
             index
             for index, call in enumerate(bus.calls)

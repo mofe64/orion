@@ -13,6 +13,7 @@ from .motion_test import motion_test_plan, read_motion_preflight
 from .pose_execution import (
     MIN_POSE_DURATION_SECONDS,
     PoseExecutionError,
+    SHOULDER_POSE_TORQUE_LIMIT_RAW,
     build_hardware_pose_plan,
     execute_pose_cycle,
 )
@@ -79,6 +80,10 @@ def _print_plan(plan) -> None:
             f"  {target.calibration.joint_name:<29} "
             f"{target.angle_radians:+8.3f} {target.delta_raw:+11d} {target.target_raw:11d}"
         )
+    print(
+        f"Pose torque limits: shoulder {SHOULDER_POSE_TORQUE_LIMIT_RAW}/1000; "
+        "all other joints 200/1000."
+    )
 
 
 class EmergencyTermination(BaseException):

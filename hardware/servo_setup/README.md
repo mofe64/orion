@@ -324,8 +324,9 @@ One successful commissioning cycle:
 
 1. Reads and validates the measured starting position of every joint.
 2. Writes those current encoder positions as goals before enabling torque.
-3. Enables all five joints with the conservative first-motion RAM torque,
-   velocity, and acceleration limits.
+3. Enables all five joints with conservative RAM-only limits: `300/1000`
+   torque for the load-bearing shoulder, `200/1000` for the other joints,
+   velocity `50`, and acceleration `5`.
 4. Moves directly from the measured start to the named pose over six seconds.
 5. Holds the named pose for the requested `--hold` duration.
 6. Returns to calibrated zero over six seconds.
