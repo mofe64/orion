@@ -1,18 +1,37 @@
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include "orion_hardware/ftservo_transport.hpp"
 #include "orion_hardware/sts3215_driver.hpp"
+#include "orion_runtime/state_snapshot.hpp"
 
 namespace
 {
 
 constexpr int kDefaultBaudRate = 1000000;
+constexpr double kObserveFrequencyHz = 50.0;
+constexpr auto kObservePeriod = std::chrono::milliseconds(20);
+constexpr const char * kDefaultSocketPath = "/tmp/oriond.sock";
+
+volatile std::sig_atomic_t g_stop_requested = 0;
 
 const std::vector<std::string> kOrionJointNames = {
   "base_yaw_joint",
@@ -22,13 +41,182 @@ const std::vector<std::string> kOrionJointNames = {
   "head_pitch_joint",
 };
 
+enum class Operation
+{
+  NONE,
+  CHECK,
+  SERVE,
+  STATUS,
+};
+
 struct Options
 {
-  bool check = false;
+  Operation operation = Operation::NONE;
   bool help = false;
   std::string port = "/dev/ttyACM0";
   int baud_rate = kDefaultBaudRate;
   std::string calibration_file;
+  std::string socket_path = kDefaultSocketPath;
+};
+
+class UnixStatusServer
+{
+public:
+  explicit UnixStatusServer(std::string path)
+  : path_(std::move(path))
+  {
+    if (path_.empty() || path_.size() >= sizeof(sockaddr_un::sun_path))
+    {
+      throw std::invalid_argument("Unix socket path is empty or too long.");
+    }
+
+    struct stat existing{};
+    if (::lstat(path_.c_str(), &existing) == 0)
+    {
+      if (!S_ISSOCK(existing.st_mode))
+      {
+        throw std::runtime_error(
+                "Refusing to replace non-socket path: " + path_);
+      }
+      if (::unlink(path_.c_str()) != 0)
+      {
+        throw_system_error("Could not remove stale Orion socket");
+      }
+    }
+    else if (errno != ENOENT)
+    {
+      throw_system_error("Could not inspect Orion socket path");
+    }
+
+    fd_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd_ < 0)
+    {
+      throw_system_error("Could not create Orion Unix socket");
+    }
+
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, path_.c_str(), path_.size() + 1);
+    if (::bind(fd_, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) != 0)
+    {
+      const auto message = system_error_message("Could not bind Orion Unix socket");
+      close_socket();
+      throw std::runtime_error(message);
+    }
+    owns_path_ = true;
+    if (::chmod(path_.c_str(), 0660) != 0)
+    {
+      const auto message = system_error_message("Could not set Orion socket permissions");
+      close_socket();
+      throw std::runtime_error(message);
+    }
+    if (::listen(fd_, 8) != 0)
+    {
+      const auto message = system_error_message("Could not listen on Orion Unix socket");
+      close_socket();
+      throw std::runtime_error(message);
+    }
+  }
+
+  ~UnixStatusServer()
+  {
+    close_socket();
+  }
+
+  UnixStatusServer(const UnixStatusServer &) = delete;
+  UnixStatusServer & operator=(const UnixStatusServer &) = delete;
+
+  void serve_pending(const orion_runtime::StateSnapshot & snapshot)
+  {
+    while (true)
+    {
+      const int client = ::accept4(fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+      if (client < 0)
+      {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+          return;
+        }
+        throw_system_error("Could not accept Orion status client");
+      }
+
+      char request_buffer[64]{};
+      const ssize_t received = ::recv(client, request_buffer, sizeof(request_buffer) - 1, 0);
+      std::string response;
+      if (received > 0 && trim(std::string(request_buffer, received)) == "status")
+      {
+        response = orion_runtime::state_snapshot_to_json(snapshot) + "\n";
+      }
+      else
+      {
+        response = "{\"error\":\"expected status command\"}\n";
+      }
+      send_all(client, response);
+      ::close(client);
+    }
+  }
+
+private:
+  static std::string trim(std::string value)
+  {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+      return "";
+    }
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+  }
+
+  static std::string system_error_message(const std::string & operation)
+  {
+    return operation + ": " + std::strerror(errno);
+  }
+
+  [[noreturn]] static void throw_system_error(const std::string & operation)
+  {
+    throw std::runtime_error(system_error_message(operation));
+  }
+
+  static void send_all(int client, const std::string & response)
+  {
+    std::size_t sent = 0;
+    while (sent < response.size())
+    {
+      const ssize_t count = ::send(
+        client, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
+      if (count > 0)
+      {
+        sent += static_cast<std::size_t>(count);
+      }
+      else if (count < 0 && errno == EINTR)
+      {
+        continue;
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+
+  void close_socket() noexcept
+  {
+    if (fd_ >= 0)
+    {
+      ::close(fd_);
+      fd_ = -1;
+    }
+    if (owns_path_)
+    {
+      ::unlink(path_.c_str());
+      owns_path_ = false;
+    }
+  }
+
+  std::string path_;
+  int fd_ = -1;
+  bool owns_path_ = false;
 };
 
 std::string default_calibration_file()
@@ -45,14 +233,20 @@ std::string default_calibration_file()
 void print_usage(std::ostream & output)
 {
   output <<
-    "Usage: oriond --check [--port DEVICE] [--baud-rate RATE] "
-    "[--calibration FILE]\n\n"
-    "  --check             Validate the five-servo bus and print one state snapshot.\n"
-    "                      This mode never enables torque or writes servo registers.\n"
+    "Usage:\n"
+    "  oriond --check  [--port DEVICE] [--baud-rate RATE] [--calibration FILE]\n"
+    "  oriond --serve  [--port DEVICE] [--baud-rate RATE] [--calibration FILE] "
+    "[--socket PATH]\n"
+    "  oriond --status [--socket PATH]\n\n"
+    "  --check             Print one direct hardware state snapshot and exit.\n"
+    "  --serve             Sample hardware at 50 Hz and serve local status JSON.\n"
+    "  --status            Request the latest JSON snapshot from the daemon.\n"
     "  --port DEVICE       Servo serial device (default: /dev/ttyACM0).\n"
     "  --baud-rate RATE     Servo bus rate (default: 1000000).\n"
     "  --calibration FILE  Orion calibration JSON file.\n"
-    "  --help               Show this help.\n";
+    "  --socket PATH       Local API socket (default: /tmp/oriond.sock).\n"
+    "  --help               Show this help.\n\n"
+    "Check and serve modes never enable torque or write servo registers.\n";
 }
 
 std::string require_value(int argc, char ** argv, int & index, const std::string & option)
@@ -64,16 +258,32 @@ std::string require_value(int argc, char ** argv, int & index, const std::string
   return argv[++index];
 }
 
+void select_operation(Options & options, Operation operation, const std::string & argument)
+{
+  if (options.operation != Operation::NONE)
+  {
+    throw std::invalid_argument("Select exactly one operation; repeated at " + argument + ".");
+  }
+  options.operation = operation;
+}
+
 Options parse_options(int argc, char ** argv)
 {
   Options options;
-  options.calibration_file = default_calibration_file();
   for (int index = 1; index < argc; ++index)
   {
     const std::string argument = argv[index];
     if (argument == "--check")
     {
-      options.check = true;
+      select_operation(options, Operation::CHECK, argument);
+    }
+    else if (argument == "--serve")
+    {
+      select_operation(options, Operation::SERVE, argument);
+    }
+    else if (argument == "--status")
+    {
+      select_operation(options, Operation::STATUS, argument);
     }
     else if (argument == "--help" || argument == "-h")
     {
@@ -91,10 +301,21 @@ Options parse_options(int argc, char ** argv)
     {
       options.calibration_file = require_value(argc, argv, index, argument);
     }
+    else if (argument == "--socket")
+    {
+      options.socket_path = require_value(argc, argv, index, argument);
+    }
     else
     {
       throw std::invalid_argument("Unknown option: " + argument);
     }
+  }
+
+  if (!options.help &&
+    (options.operation == Operation::CHECK || options.operation == Operation::SERVE) &&
+    options.calibration_file.empty())
+  {
+    options.calibration_file = default_calibration_file();
   }
   return options;
 }
@@ -124,6 +345,104 @@ void print_states(const std::vector<orion_hardware::JointState> & states)
   }
 }
 
+std::unique_ptr<orion_hardware::Sts3215Driver> connect_driver(const Options & options)
+{
+  auto transport = std::make_shared<orion_hardware::FtServoTransport>();
+  auto driver = std::make_unique<orion_hardware::Sts3215Driver>(transport);
+  const auto calibrations = orion_hardware::load_calibration_file(
+    options.calibration_file, kOrionJointNames);
+  driver->connect(options.port, options.baud_rate, calibrations);
+  return driver;
+}
+
+void request_stop(int)
+{
+  g_stop_requested = 1;
+}
+
+int serve(const Options & options)
+{
+  auto driver = connect_driver(options);
+  std::uint64_t sequence = 1;
+  auto snapshot = orion_runtime::make_state_snapshot(
+    sequence, kObserveFrequencyHz, driver->read());
+  UnixStatusServer server(options.socket_path);
+
+  std::signal(SIGINT, request_stop);
+  std::signal(SIGTERM, request_stop);
+  std::cout << "oriond: observing at 50 Hz on " << options.socket_path << '\n';
+
+  auto next_sample = std::chrono::steady_clock::now();
+  while (g_stop_requested == 0)
+  {
+    next_sample += kObservePeriod;
+    snapshot = orion_runtime::make_state_snapshot(
+      ++sequence, kObserveFrequencyHz, driver->read());
+    server.serve_pending(snapshot);
+    std::this_thread::sleep_until(next_sample);
+  }
+  return 0;
+}
+
+int request_status(const std::string & socket_path)
+{
+  if (socket_path.empty() || socket_path.size() >= sizeof(sockaddr_un::sun_path))
+  {
+    throw std::invalid_argument("Unix socket path is empty or too long.");
+  }
+  const int client = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (client < 0)
+  {
+    throw std::runtime_error("Could not create Orion status client: " +
+            std::string(std::strerror(errno)));
+  }
+
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::memcpy(address.sun_path, socket_path.c_str(), socket_path.size() + 1);
+  if (::connect(client, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) != 0)
+  {
+    const std::string message = "Could not connect to Orion daemon: " +
+      std::string(std::strerror(errno));
+    ::close(client);
+    throw std::runtime_error(message);
+  }
+  const std::string request = "status\n";
+  if (::send(client, request.data(), request.size(), MSG_NOSIGNAL) !=
+    static_cast<ssize_t>(request.size()))
+  {
+    const std::string message = "Could not request Orion status: " +
+      std::string(std::strerror(errno));
+    ::close(client);
+    throw std::runtime_error(message);
+  }
+
+  std::string response;
+  char buffer[1024];
+  while (true)
+  {
+    const ssize_t count = ::recv(client, buffer, sizeof(buffer), 0);
+    if (count > 0)
+    {
+      response.append(buffer, static_cast<std::size_t>(count));
+    }
+    else if (count == 0)
+    {
+      break;
+    }
+    else if (errno != EINTR)
+    {
+      const std::string message = "Could not read Orion status: " +
+        std::string(std::strerror(errno));
+      ::close(client);
+      throw std::runtime_error(message);
+    }
+  }
+  ::close(client);
+  std::cout << response;
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -136,23 +455,28 @@ int main(int argc, char ** argv)
       print_usage(std::cout);
       return 0;
     }
-    if (!options.check)
-    {
-      print_usage(std::cerr);
-      return 2;
-    }
 
-    auto transport = std::make_shared<orion_hardware::FtServoTransport>();
-    orion_hardware::Sts3215Driver driver(transport);
-    const auto calibrations = orion_hardware::load_calibration_file(
-      options.calibration_file, kOrionJointNames);
-    driver.connect(options.port, options.baud_rate, calibrations);
-    print_states(driver.read());
-    return 0;
+    switch (options.operation)
+    {
+      case Operation::CHECK:
+      {
+        auto driver = connect_driver(options);
+        print_states(driver->read());
+        return 0;
+      }
+      case Operation::SERVE:
+        return serve(options);
+      case Operation::STATUS:
+        return request_status(options.socket_path);
+      case Operation::NONE:
+        print_usage(std::cerr);
+        return 2;
+    }
   }
   catch (const std::exception & error)
   {
     std::cerr << "oriond: " << error.what() << '\n';
     return 1;
   }
+  return 1;
 }

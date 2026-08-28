@@ -4,7 +4,7 @@
 STS3215 driver, calibration loader, Feetech transport, and the `oriond`
 executable with ordinary CMake.
 
-The first implemented daemon operation is deliberately narrow:
+The direct hardware check is deliberately narrow:
 
 ```bash
 oriond --check
@@ -13,6 +13,20 @@ oriond --check
 It validates the calibration and five-servo bus, reads one synchronized state
 snapshot, prints it, and exits. It does not enable torque, write a goal
 position, apply the servo profile, or write servo registers.
+
+The persistent observe mode samples the same state at 50 Hz and exposes the
+latest versioned JSON snapshot on a local Unix socket. It remains torque-off
+and does not write servo registers:
+
+```bash
+runtime/build/oriond --serve
+```
+
+From another terminal, query that daemon without opening the servo port:
+
+```bash
+runtime/build/oriond --status
+```
 
 ## Native build
 
@@ -46,6 +60,6 @@ The ROS adapter is optional and is not part of the native build. Once the
 standalone daemon lifecycle is established, the reusable sources can move to a
 neutral package without changing their behavior.
 
-The next runtime increment is a persistent fixed-rate state loop with a local
-structured API. Torque activation and motion commands will be added after that
-loop is testable with the fake transport.
+The next runtime increment is explicit servo-profile application followed by a
+snap-free torque lifecycle. Motion commands will only be added after those
+operations are testable with the fake transport.
