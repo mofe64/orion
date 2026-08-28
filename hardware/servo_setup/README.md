@@ -201,6 +201,74 @@ in the final torque-off cleanup, but they are not prompted or moved:
 uv run orion-test-servos --port /dev/ttyACM0 --start-id 4
 ```
 
+## Calibrate all five joints in one session
+
+Run calibration only after all five assembled joints have passed their first
+motion checks:
+
+```bash
+uv run orion-calibrate-servos --port /dev/ttyACM0
+```
+
+Start with the 6 V servo supply off and use padded blocks to support the arm and
+head. At the first prompt, turn 6 V on and type `CALIBRATE ALL`. The supply must
+be on for encoder communication, but torque stays off for the complete session;
+the command never sends a goal position.
+
+The workflow has one neutral capture and one combined recording window:
+
+1. Put the assembled lamp in the reference LeLamp zero/middle pose and capture
+   that position.
+2. Start range recording.
+3. Move one joint at a time slowly through its usable travel while keeping the
+   other links supported.
+4. Stop before collision, cable tension, or a hard stop. Never force the
+   gearbox.
+5. For `base_yaw_joint` (ID 1) and `head_roll_joint` (ID 4), move only about 90
+   degrees clockwise and 90 degrees counter-clockwise from neutral. This is the
+   original LeLamp cable-protection rule for its two yaw/roll joints.
+6. After all five joints have been swept, press Enter once to finish.
+
+The live line displays `minimum/maximum` raw displacement from neutral for each
+ID. The command rejects a joint that was barely moved, a range that looks like
+a continuous rotation, and yaw/roll movement beyond the protected window. It
+then subtracts 20 raw steps (about 1.76 degrees) from both measured endpoints
+to make software safety limits.
+
+The default output is:
+
+```text
+~/.config/orion/servo_calibration.json
+```
+
+The file contains the neutral encoder value, measured range, reduced safe
+range, encoder direction, and equivalent LeRobot homing/range values for every
+joint. Existing output is preserved as a timestamped backup before replacement.
+
+### Original LeLamp behavior and Orion's deliberate deviation
+
+Original LeLamp calls LeRobot's `set_half_turn_homings()`, records encoder
+ranges, and writes the homing offset and min/max values persistently to each
+servo. It uses `drive_mode=0` for all five motors.
+
+Orion records the same measurements in a versioned JSON file without changing
+servo EEPROM. It calculates movement as a circular displacement from neutral,
+so a joint crossing raw encoder zero is not mistaken for an almost-complete
+turn. The stored `encoder_direction=1` preserves LeLamp's `drive_mode=0`
+convention for this mechanically compatible build. That sign still needs to be
+checked against Orion's URDF joint-positive convention when the physical
+`ros2_control` adapter is introduced; full trajectories must not run before
+that check.
+
+To preview the complete plan without opening hardware or writing a file:
+
+```bash
+uv run orion-calibrate-servos --port /dev/not-opened --dry-run
+```
+
+On completion or any error, the command performs a best-effort torque-off for
+all five servos. Turn the 6 V supply off after it exits.
+
 ## How the write works
 
 For each joint, LeRobot's `setup_motor()`:
@@ -222,6 +290,8 @@ path.
   <https://github.com/humancomputerlab/LeLamp/blob/master/docs/2.%20Servos%20Setup.md>
 - LeLamp runtime behavior used as the reference:
   <https://github.com/humancomputerlab/lelamp_runtime/blob/main/lelamp/follower/lelamp_follower.py>
+- LeLamp assembled-lamp calibration and protected-yaw instructions:
+  <https://github.com/humancomputerlab/LeLamp/blob/master/docs/5.%20LeLamp%20Control.md>
 - LeRobot Feetech bus implementation used as a dependency:
   <https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py>
 
