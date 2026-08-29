@@ -1,10 +1,9 @@
 # Orion native control architecture
 
-Orion is moving deterministic physical control to a native Rust process. The
-existing C++ process remains the parity oracle until physical validation is
-complete. MuJoCo is owned by the existing Python adapter and connected to the
-same Rust state machine through a narrow JSON-lines process bridge. ROS is not
-part of the runtime.
+Orion uses a native Rust process for deterministic physical control. MuJoCo is
+owned by the existing Python adapter and connected to the same Rust state
+machine through a narrow JSON-lines process bridge. ROS is not part of the
+runtime.
 
 ```text
 motion/config + motion/motions
@@ -13,7 +12,6 @@ motion/config + motion/motions
              |             |
              |             +--> MuJoCo bridge --> simulated Orion
              |
-             +--> runtime/oriond (C++ comparison oracle)
              +--> motion Python library --> established MuJoCo validation
 
 description/meshes --> description/urdf/orion.urdf
@@ -28,9 +26,9 @@ validates every target against the captured calibration file before writing a
 servo goal.
 
 The shared motion assets live under `motion/`. They do not know whether the
-consumer is hardware or MuJoCo. Both native runtimes parse pose and motion YAML
-directly. The Rust daemon uses one state machine for `rustypot` hardware and
-MuJoCo. The established Python player continues to provide independent
+consumer is hardware or MuJoCo. The Rust daemon parses pose and motion YAML
+directly and uses one state machine for `rustypot` hardware and MuJoCo. The
+established Python player continues to provide independent
 trajectory, settling, and stability validation through `motion/orion_motion`.
 
 ## Physical runtime
@@ -62,10 +60,10 @@ MuJoCo keeps simulator-specific actuators, contact, references, and physics in
 
 ## Safety boundary
 
-Both native runtimes enforce captured physical position limits. Dynamic limits
+The Rust runtime enforces captured physical position limits. Dynamic limits
 in `motion/config/motion_limits.yaml` remain validation evidence for offline
 tools and MuJoCo; the currently requested physical duration determines the
 daemon's trajectory rate. Motion timing must therefore be validated on the
-assembled lamp before it becomes a production behaviour. The Rust port does
-not itself prove physical parity: torque-off telemetry comparison and staged
-low-speed hardware trials are still required.
+assembled lamp before it becomes a production behaviour. The Rust transport,
+lifecycle, named poses, authored motions, stop, rest, and disable paths have
+been validated on the assembled Orion hardware.

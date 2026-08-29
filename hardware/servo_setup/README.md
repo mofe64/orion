@@ -29,7 +29,7 @@ Setup is not calibration and does not command movement:
 - **Setup** identifies each physical servo on the shared bus.
 - **Calibration** later measures its zero offset, direction, and safe range in
   the assembled mechanism.
-- **Runtime control** sends validated positions through Orion's native C++
+- **Runtime control** sends validated positions through Orion's native Rust
   daemon.
 
 ## Authoritative ID map
@@ -148,7 +148,7 @@ uv run orion-verify-servos --port /dev/not-opened --dry-run
 The first-motion nudge and direct named-pose commands were commissioning tools,
 not runtime control. Their installed entry points have been removed and their
 source now lives in `orion_servo_setup/archived/`. New physical movement runs
-through the C++ `oriond` runtime.
+through the Rust `oriond` runtime.
 
 ## Calibrate all five joints in one session
 

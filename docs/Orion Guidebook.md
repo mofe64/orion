@@ -4,7 +4,7 @@
 
 **Project:** Orion  
 **Document type:** High-level development roadmap  
-**Current position:** Rust runtime software/MuJoCo parity implemented; physical Rust transport validation next
+**Current position:** Native Rust runtime validated in MuJoCo and on hardware; device integration next
 **Long-term goal:** Build a safe, useful, expressive robotic lamp inspired by LeLamp, Watti, Ongo, and the ELEGNT movement-design framework.
 
 ---
@@ -37,17 +37,13 @@ It is **not** an implementation manual. Each milestone should eventually have it
 
 The purpose of this guidebook is to prevent Orion from becoming a collection of disconnected experiments. Every new feature should fit into a deliberate sequence.
 
-> **Architecture decision — 2026-08-29:** Orion now uses the native C++
-> `oriond` runtime for physical control and a native MuJoCo adapter. ROS 2 is no
-> longer part of the implementation. Later ROS-specific milestone text is
-> retained as historical planning context and is superseded by
+> **Architecture decision — 2026-08-29:** Orion uses the native Rust `oriond`
+> runtime for physical control and MuJoCo, with `rustypot` providing the
+> STS3215 protocol and serial boundary. The Rust runtime has completed
+> software, simulator, and physical feature-parity trials. ROS 2 is no longer
+> part of the implementation. Later ROS-specific milestone text is retained as
+> historical planning context and is superseded by
 > `docs/orion_control_architecture.md`.
-
-> **Runtime-port decision — 2026-08-29:** Orion is porting `oriond` to pure
-> Rust, using `rustypot` for the STS3215 protocol and serial boundary. The C++
-> runtime remains the comparison oracle until torque-off telemetry and
-> controlled physical-motion trials prove parity. Behaviour orchestration,
-> lighting, and speaker work resume after that gate.
 
 ---
 
@@ -473,7 +469,7 @@ Questions such as these should guide future hardware design:
                        ┌───────────┴───────────┐
                        v                       v
                     MuJoCo              Physical Orion
-                native adapter        C++ STS3215 runtime
+                native adapter        Rust STS3215 runtime
               
               ┌───────────────────┴───────────────────┐
               v                                       v
@@ -813,7 +809,7 @@ At this stage, “look at target” may use a predefined joint-space target. Act
 backend-independent motion library
 named-pose library
 keyframe motion format
-native C++ motion player
+native Rust motion player
 joint-limit validation
 MuJoCo playback using the same motion files
 three functional/expressive A/B pairs
@@ -824,7 +820,7 @@ learning documentation
 ## Exit criteria
 
 - A named pose can be requested by name.
-- A multi-keyframe animation executes on the native C++ runtime.
+- A multi-keyframe animation executes on the native Rust runtime.
 - The same animation definition executes in MuJoCo.
 - Invalid joint values are rejected.
 - All five joints are represented consistently.
@@ -1179,8 +1175,7 @@ native backend adapters.
 
 ## Work required
 
-Maintain the proven C++ runtime as a parity oracle and complete an STS3215
-Rust runtime that converts between:
+Create an STS3215 Rust runtime that converts between:
 
 ```text
 Orion joint radians
@@ -1226,7 +1221,7 @@ High-level motion software should not contain direct servo-register operations.
 ## Deliverables
 
 ```text
-native Rust runtime and retained C++ parity oracle
+native Rust runtime
 joint calibration configuration
 local command/status socket
 watchdog
@@ -2053,7 +2048,7 @@ Everything else should be introduced deliberately.
 
 - URDF.
 - MuJoCo.
-- Native C++ runtime.
+- Native Rust runtime.
 - Semantic joints.
 - Valid trajectory command.
 

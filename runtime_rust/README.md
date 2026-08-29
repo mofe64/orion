@@ -1,16 +1,16 @@
 # Orion Rust runtime
 
-`runtime_rust` is the pure-Rust port of Orion's ROS-independent C++ runtime.
-It preserves the current `oriond` command protocol, lifecycle, pose and motion
-loading, quintic interpolation, calibration contract, STS3215 profile, and
-50 Hz state snapshots.
+`runtime_rust` is Orion's ROS-independent native runtime. It implements the
+`oriond` command protocol, lifecycle, pose and motion loading, quintic
+interpolation, calibration contract, STS3215 profile, and 50 Hz state
+snapshots.
 
 The physical transport uses
 [`rustypot`](https://github.com/pollen-robotics/rustypot) for protocol-v1 packet
 parsing, synchronized reads/writes, and serial communication. Orion retains its
-own raw register map and conversions because its proven C++ contract includes
-firmware bytes at addresses 0/1, a one-byte maximum-acceleration register at
-address 85, and project-specific encoder/velocity conversions.
+own raw register map and conversions for firmware bytes at addresses 0/1, a
+one-byte maximum-acceleration register at address 85, and project-specific
+encoder/velocity conversions.
 
 ## Build and test
 
@@ -21,8 +21,8 @@ cargo build --manifest-path runtime_rust/Cargo.toml
 cargo test --manifest-path runtime_rust/Cargo.toml --all-targets
 ```
 
-The tests cover the C++ parity contract and launch Orion's existing native
-MuJoCo model through the same Rust daemon state machine used by hardware.
+The tests cover the complete runtime contract and launch Orion's native MuJoCo
+model through the same Rust daemon state machine used by hardware.
 MuJoCo tests expect the repository Python environment at `.venv/bin/python`.
 
 ## MuJoCo-first daemon
@@ -51,10 +51,11 @@ defaults. The MuJoCo bridge reports measured positions and velocities and
 accumulates the shared base translation, tilt, height, and contact policy in
 `motion/config/stability_limits.yaml`.
 
-## Physical hardware gate
+## Physical hardware
 
-Do not test the Rust transport on Orion until the Rust suite, the C++ suite,
-and the existing repository MuJoCo suite all pass. Then begin torque-off:
+The Rust transport has been validated on Orion's Raspberry Pi and five-servo
+STS3215 bus. Begin a new checkout or hardware change with a torque-off state
+snapshot:
 
 ```bash
 runtime_rust/target/debug/oriond --check \
@@ -62,9 +63,8 @@ runtime_rust/target/debug/oriond --check \
   --calibration "$HOME/.config/orion/servo_calibration.json"
 ```
 
-Only after comparing the Rust telemetry to the known C++ output should the
-daemon be started against hardware. The existing lifecycle remains:
-`--serve`, `--configure`, `--enable`, motion commands, then `--disable`.
+The hardware lifecycle is `--serve`, `--configure`, `--enable`, motion
+commands, then `--disable`.
 Neither daemon command is a physical emergency stop; an accessible hardware
 torque/power interruption remains required during physical trials.
 
@@ -76,7 +76,7 @@ torque/power interruption remains required during physical trials.
 - `src/socket.rs` — local Unix command server/client.
 - `src/pose.rs`, `motion.rs`, `trajectory.rs` — shared motion semantics.
 - `src/mujoco.rs` and `mujoco_bridge.py` — native simulation backend.
-- `src/main.rs` — `oriond` arguments and 50 Hz service loop.
+- `src/main.rs` — `oriond` arguments and 50 Hz control loop.
 
-The C++ runtime remains in `runtime/` as the comparison oracle until physical
-feature-parity trials are complete.
+During development, build and run `oriond` directly from this source tree. It
+is not installed as a system service.

@@ -8,7 +8,7 @@ and how long to hold each arrival.
 motion/config/poses.yaml
 motion/motions/**/*.yaml
             |
-            +--> C++ motion library --> oriond --> physical servos
+            +--> Rust motion library --> oriond --> physical servos
             +--> Python trajectory library --> MuJoCo actuators
 ```
 
@@ -45,6 +45,7 @@ changing the authored motion format.
 ## Validation
 
 The motion tests check schema, joint order, ranges, timing, quintic dynamics,
-forbidden regions, and report consistency. The C++ tests independently verify
-native YAML loading and keyframe sampling. Both suites must pass when a shared
-pose or motion changes.
+forbidden regions, and report consistency. The Rust tests independently verify
+native YAML loading, keyframe sampling, daemon behavior, and both hardware and
+MuJoCo driver boundaries. Both suites must pass when a shared pose or motion
+changes.
