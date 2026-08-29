@@ -38,8 +38,29 @@ std::vector<std::uint8_t> servo_ids(const std::vector<JointCalibration> & calibr
 
 }  // namespace
 
-Sts3215Driver::Sts3215Driver(std::shared_ptr<Sts3215Transport> transport)
-: transport_(std::move(transport))
+ServoProfiles make_orion_servo_profiles()
+{
+  ServoProfiles profiles;
+  for (const auto * joint_name : {
+      "base_yaw_joint",
+      "shoulder_pitch_joint",
+      "elbow_pitch_joint",
+      "head_roll_joint",
+      "head_pitch_joint"})
+  {
+    profiles.emplace(joint_name, JointServoProfile{});
+  }
+
+  // The elbow showed a 51-count holding error at P=16 under the assembled head load.
+  // Restore its factory P=32 as the first measured tuning step; leave every other
+  // profile value unchanged so the physical trial isolates this one variable.
+  profiles.at("elbow_pitch_joint").p_coefficient = 32;
+  return profiles;
+}
+
+Sts3215Driver::Sts3215Driver(
+  std::shared_ptr<Sts3215Transport> transport, ServoProfiles servo_profiles)
+: transport_(std::move(transport)), servo_profiles_(std::move(servo_profiles))
 {
   if (!transport_)
   {
@@ -150,6 +171,16 @@ void Sts3215Driver::apply_servo_profile()
     for (const auto & joint : calibrations_)
     {
       const auto id = joint.servo_id;
+      const auto profile_found = servo_profiles_.find(joint.name);
+      if (profile_found == servo_profiles_.end())
+      {
+        throw std::runtime_error("Missing STS3215 servo profile for " + joint.name + ".");
+      }
+      const auto & profile = profile_found->second;
+      if (profile.drive_mode != 0 && profile.drive_mode != 1)
+      {
+        throw std::runtime_error("STS3215 drive mode must be 0 or 1 for " + joint.name + ".");
+      }
       const auto queue_if_different =
         [this, id, &persistent_writes](Sts3215Register register_name, int desired) {
           if (transport_->read_register(id, register_name) != desired)
@@ -158,17 +189,19 @@ void Sts3215Driver::apply_servo_profile()
           }
         };
 
-      queue_if_different(Sts3215Register::RETURN_DELAY_TIME, 0);
-      queue_if_different(Sts3215Register::OPERATING_MODE, 0);
-      queue_if_different(Sts3215Register::P_COEFFICIENT, 16);
-      queue_if_different(Sts3215Register::I_COEFFICIENT, 0);
-      queue_if_different(Sts3215Register::D_COEFFICIENT, 32);
-      queue_if_different(Sts3215Register::MAXIMUM_ACCELERATION, 254);
+      queue_if_different(Sts3215Register::RETURN_DELAY_TIME, profile.return_delay_time);
+      queue_if_different(Sts3215Register::OPERATING_MODE, profile.operating_mode);
+      queue_if_different(Sts3215Register::P_COEFFICIENT, profile.p_coefficient);
+      queue_if_different(Sts3215Register::I_COEFFICIENT, profile.i_coefficient);
+      queue_if_different(Sts3215Register::D_COEFFICIENT, profile.d_coefficient);
+      queue_if_different(
+        Sts3215Register::MAXIMUM_ACCELERATION, profile.maximum_acceleration);
 
       const int phase = transport_->read_register(id, Sts3215Register::PHASE);
-      if ((phase & 0x10) != 0)
+      const int desired_phase = profile.drive_mode == 0 ? phase & ~0x10 : phase | 0x10;
+      if (phase != desired_phase)
       {
-        persistent_writes.emplace_back(id, Sts3215Register::PHASE, phase & ~0x10);
+        persistent_writes.emplace_back(id, Sts3215Register::PHASE, desired_phase);
       }
     }
 
@@ -203,11 +236,12 @@ void Sts3215Driver::apply_servo_profile()
     for (const auto & joint : calibrations_)
     {
       const auto id = joint.servo_id;
-      if (transport_->read_register(id, Sts3215Register::ACCELERATION) != 254)
+      const int acceleration = servo_profiles_.at(joint.name).acceleration;
+      if (transport_->read_register(id, Sts3215Register::ACCELERATION) != acceleration)
       {
-        transport_->write_register(id, Sts3215Register::ACCELERATION, 254);
+        transport_->write_register(id, Sts3215Register::ACCELERATION, acceleration);
       }
-      if (transport_->read_register(id, Sts3215Register::ACCELERATION) != 254)
+      if (transport_->read_register(id, Sts3215Register::ACCELERATION) != acceleration)
       {
         throw std::runtime_error("STS3215 runtime acceleration verification failed.");
       }

@@ -6,7 +6,7 @@ trajectories. Its responsibilities are narrower:
 
 - open the five-servo STS3215 bus;
 - validate the model, firmware, operating mode, and software calibration;
-- apply the LeRobot/LeLamp servo profile only where the live value differs;
+- apply Orion's per-joint servo profile only where the live value differs;
 - convert calibrated radians to and from circular 12-bit encoder values;
 - exchange synchronized position commands and state feedback; and
 - tie torque enable/disable to the ROS 2 hardware lifecycle.
@@ -33,7 +33,8 @@ read back before the EEPROM is relocked:
 - return delay `0`;
 - position mode `0`;
 - phase bit `0x10` cleared;
-- PID `P=16`, `I=0`, `D=32`; and
+- PID `P=16`, `I=0`, `D=32` by default;
+- elbow PID `P=32`, `I=0`, `D=32` as a measured holding-error trial; and
 - maximum acceleration `254`.
 
 Runtime acceleration is set to `254`. The driver deliberately does not write
@@ -41,6 +42,12 @@ Runtime acceleration is set to `254`. The driver deliberately does not write
 temperature limits. Position commands use a two-byte sync write beginning at
 `Goal_Position`, so those neighboring registers are not changed as a side
 effect.
+
+The profile is represented per joint in C++, so a tuning change can be isolated
+to one actuator. The elbow override restores its factory proportional gain after
+the assembled robot held `zero_reference` 51 encoder counts (about 4.5 degrees)
+away from its target at `P=16`. This value is an Orion experiment and is not
+claimed to come from LeLamp's repository.
 
 ## Vendor SDK
 

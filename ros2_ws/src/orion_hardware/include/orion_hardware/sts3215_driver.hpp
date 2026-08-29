@@ -38,10 +38,28 @@ struct JointState
   int status = 0;
 };
 
+struct JointServoProfile
+{
+  int return_delay_time = 0;
+  int operating_mode = 0;
+  int drive_mode = 0;
+  int p_coefficient = 16;
+  int i_coefficient = 0;
+  int d_coefficient = 32;
+  int maximum_acceleration = 254;
+  int acceleration = 254;
+};
+
+using ServoProfiles = std::map<std::string, JointServoProfile>;
+
+ServoProfiles make_orion_servo_profiles();
+
 class Sts3215Driver
 {
 public:
-  explicit Sts3215Driver(std::shared_ptr<Sts3215Transport> transport);
+  explicit Sts3215Driver(
+    std::shared_ptr<Sts3215Transport> transport,
+    ServoProfiles servo_profiles = make_orion_servo_profiles());
   ~Sts3215Driver();
 
   void connect(
@@ -71,6 +89,7 @@ private:
   double raw_to_radians(const JointCalibration & joint, int raw_position) const;
 
   std::shared_ptr<Sts3215Transport> transport_;
+  ServoProfiles servo_profiles_;
   std::vector<JointCalibration> calibrations_;
   bool configured_ = false;
   bool profile_applied_ = false;

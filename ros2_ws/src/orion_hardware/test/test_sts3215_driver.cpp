@@ -131,6 +131,15 @@ std::vector<JointCalibration> calibrations()
   };
 }
 
+std::vector<JointCalibration> calibrations_with_elbow()
+{
+  return {
+    {"base_yaw_joint", 1, 942, 1, -1004, 1004},
+    {"elbow_pitch_joint", 3, 789, 1, -739, 480},
+    {"head_pitch_joint", 5, 3476, 1, -385, 1145},
+  };
+}
+
 std::size_t call_index(const std::vector<std::string> & calls, const std::string & value)
 {
   const auto found = std::find(calls.begin(), calls.end(), value);
@@ -141,20 +150,24 @@ std::size_t call_index(const std::vector<std::string> & calls, const std::string
   return static_cast<std::size_t>(std::distance(calls.begin(), found));
 }
 
-TEST(Sts3215DriverTest, AppliesOnlyLeLampProfileDifferences)
+TEST(Sts3215DriverTest, AppliesOrionProfileWithElbowPGainOverride)
 {
   auto transport = std::make_shared<FakeTransport>();
   transport->add_servo(1, 904);
+  transport->add_servo(3, 1259);
   transport->add_servo(5, 3547);
   Sts3215Driver driver(transport);
 
-  driver.configure("/dev/fake", 1000000, calibrations());
+  driver.configure("/dev/fake", 1000000, calibrations_with_elbow());
 
   EXPECT_EQ(transport->registers.at({1, Sts3215Register::P_COEFFICIENT}), 16);
+  EXPECT_EQ(transport->registers.at({3, Sts3215Register::P_COEFFICIENT}), 32);
   EXPECT_EQ(transport->registers.at({5, Sts3215Register::P_COEFFICIENT}), 16);
   EXPECT_EQ(transport->registers.at({1, Sts3215Register::MAXIMUM_ACCELERATION}), 254);
+  EXPECT_EQ(transport->registers.at({3, Sts3215Register::MAXIMUM_ACCELERATION}), 254);
   EXPECT_EQ(transport->registers.at({5, Sts3215Register::MAXIMUM_ACCELERATION}), 254);
   EXPECT_EQ(transport->registers.at({1, Sts3215Register::ACCELERATION}), 254);
+  EXPECT_EQ(transport->registers.at({3, Sts3215Register::ACCELERATION}), 254);
   EXPECT_EQ(transport->registers.at({5, Sts3215Register::ACCELERATION}), 254);
 
   for (const auto & [id, register_name, value] : transport->register_writes)
@@ -167,6 +180,21 @@ TEST(Sts3215DriverTest, AppliesOnlyLeLampProfileDifferences)
   EXPECT_LT(
     call_index(transport->calls, "eeprom_unlock"),
     call_index(transport->calls, "eeprom_lock"));
+}
+
+TEST(Sts3215DriverTest, AcceptsAnInjectedPerJointServoProfile)
+{
+  auto transport = std::make_shared<FakeTransport>();
+  transport->add_servo(3, 1259);
+  auto profiles = make_orion_servo_profiles();
+  profiles.at("elbow_pitch_joint").p_coefficient = 48;
+  Sts3215Driver driver(transport, profiles);
+
+  driver.configure(
+    "/dev/fake", 1000000,
+    {{"elbow_pitch_joint", 3, 789, 1, -739, 480}});
+
+  EXPECT_EQ(transport->registers.at({3, Sts3215Register::P_COEFFICIENT}), 48);
 }
 
 TEST(Sts3215DriverTest, ConnectsAndReadsWithoutWritingServoState)
