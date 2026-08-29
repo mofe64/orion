@@ -138,7 +138,7 @@
       <!-- Link lamparm__elbow_wrist -->
       <body name="lamparm__elbow_wrist" pos="0.105806 -0.0129789 0.301237" quat="0.575614 0.423658 -0.566139 0.410693">
         <!-- Joint from lamparm__base_elbow to lamparm__elbow_wrist -->
-        <joint axis="0 0 1" name="elbow_pitch_joint" type="hinge" ref="0.331339850183298" range="-1.013961300792409 1.021631204731837" class="sts3215"/>
+        <joint axis="0 0 1" name="elbow_pitch_joint" type="hinge" ref="0.331339850183298" range="-1.013961300792409 1.038504993398579" class="sts3215"/>
         <inertial pos="-0.00212937 0.119295 0.0220282" mass="0.206448" fullinertia="0.000632713 4.80236e-05 0.000602863 -1.84707e-05 -1.72868e-06 -1.49987e-05"/>
         <!-- Part lamparm__elbow_wrist -->
         <geom type="mesh" class="visual" pos="-0.00618 0.08736 0.03925" quat="0.707107 -0.707107 0 -1.89876e-18" mesh="lamparm__elbow_wrist" material="lamparm__elbow_wrist_material"/>

@@ -30,6 +30,9 @@ YAW_REFERENCE_LIMIT_RAW = 1024  # 90 degrees from neutral.
 YAW_SAFE_LIMIT_RAW = YAW_REFERENCE_LIMIT_RAW - SAFE_MARGIN_RAW
 YAW_JOINTS = frozenset({"base_yaw_joint", "head_roll_joint"})
 SUPPORTED_REST_MINIMUM_JOINT = "shoulder_pitch_joint"
+SUPPORTED_REST_JOINTS = frozenset(
+    {SUPPORTED_REST_MINIMUM_JOINT, "elbow_pitch_joint"}
+)
 SUPPORTED_REST_MAX_EXTENSION_RAW = 128
 
 
@@ -72,19 +75,23 @@ class JointCalibration:
     lerobot_safe_range_max: int
 
 
-def accept_supported_rest_minimum(
+def accept_supported_rest_endpoint(
     document: Mapping[str, object],
     *,
+    joint_name: str,
     raw_position: int,
 ) -> dict[str, object]:
-    """Make Orion's base-supported shoulder rest a documented safe minimum.
+    """Make a measured, mechanically supported rest endpoint commandable.
 
-    This is deliberately limited to the shoulder's lower endpoint. Unlike a
-    free-space travel endpoint, the pose is mechanically supported by the
-    lamp base and is intentionally commandable without the usual inward
-    margin. All other calibration endpoints retain their existing margins.
+    Only Orion's shoulder and elbow pitch joints may use this exception. The
+    live position must extend one existing safe endpoint and remain close to
+    the measured range. The accepted endpoint intentionally has no inward
+    margin; all other endpoints retain their existing margins.
     """
 
+    if joint_name not in SUPPORTED_REST_JOINTS:
+        allowed = ", ".join(sorted(SUPPORTED_REST_JOINTS))
+        raise CalibrationError(f"Supported rest joint must be one of: {allowed}.")
     updated = deepcopy(dict(document))
     if (
         updated.get("schema_version") != 1
@@ -104,56 +111,85 @@ def accept_supported_rest_minimum(
     joints = updated.get("joints")
     if not isinstance(joints, dict):
         raise CalibrationError("Calibration joints must be a mapping.")
-    joint = joints.get(SUPPORTED_REST_MINIMUM_JOINT)
+    joint = joints.get(joint_name)
     if not isinstance(joint, dict):
-        raise CalibrationError(
-            f"Calibration is missing {SUPPORTED_REST_MINIMUM_JOINT}."
-        )
+        raise CalibrationError(f"Calibration is missing {joint_name}.")
     neutral = joint.get("neutral_raw")
     measured_min = joint.get("measured_min_delta_raw")
+    measured_max = joint.get("measured_max_delta_raw")
     safe_min = joint.get("safe_min_delta_raw")
     safe_max = joint.get("safe_max_delta_raw")
     for field_name, value in (
         ("neutral_raw", neutral),
         ("measured_min_delta_raw", measured_min),
+        ("measured_max_delta_raw", measured_max),
         ("safe_min_delta_raw", safe_min),
         ("safe_max_delta_raw", safe_max),
     ):
         if type(value) is not int:
-            raise CalibrationError(
-                f"{SUPPORTED_REST_MINIMUM_JOINT}.{field_name} must be an integer."
-            )
+            raise CalibrationError(f"{joint_name}.{field_name} must be an integer.")
 
     delta = circular_delta(raw_position, neutral)
     if neutral + delta != raw_position:
         raise CalibrationError(
-            "Supported shoulder rest crosses the raw encoder boundary; "
+            "Supported rest crosses the raw encoder boundary; "
             "a direct LeRobot range value cannot represent it."
         )
-    if delta >= 0:
-        raise CalibrationError("Supported shoulder rest must be below calibrated zero.")
-    if delta >= safe_min:
+    if safe_min <= delta <= safe_max:
         raise CalibrationError(
-            f"Supported shoulder rest {delta:+d} is already inside the safe range."
-        )
-    if delta < measured_min - SUPPORTED_REST_MAX_EXTENSION_RAW:
-        raise CalibrationError(
-            f"Supported shoulder rest {delta:+d} is more than "
-            f"{SUPPORTED_REST_MAX_EXTENSION_RAW} counts beyond the measured minimum "
-            f"{measured_min:+d}; repeat the main range calibration."
-        )
-    if delta <= -HALF_TURN_RAW or delta >= safe_max:
-        raise CalibrationError(
-            "Supported shoulder rest does not form a valid bounded range."
+            f"Supported rest {delta:+d} is already inside the safe range."
         )
 
-    joint["measured_min_delta_raw"] = min(measured_min, delta)
-    joint["safe_min_delta_raw"] = delta
-    joint["safe_min_degrees"] = delta * 360.0 / ENCODER_RESOLUTION
-    joint["lerobot_safe_range_min"] = LELAMP_HOMING_TARGET_RAW + delta
-    joint["supported_rest_minimum_raw"] = raw_position
-    joint["supported_rest_minimum_delta_raw"] = delta
-    joint["supported_rest_minimum_has_margin"] = False
+    if delta < safe_min:
+        if delta < measured_min - SUPPORTED_REST_MAX_EXTENSION_RAW:
+            raise CalibrationError(
+                f"Supported rest {delta:+d} is more than "
+                f"{SUPPORTED_REST_MAX_EXTENSION_RAW} counts beyond the measured minimum "
+                f"{measured_min:+d}; repeat the main range calibration."
+            )
+        if delta <= -HALF_TURN_RAW or delta >= safe_max:
+            raise CalibrationError("Supported rest does not form a valid bounded range.")
+        endpoint = "minimum"
+        joint["measured_min_delta_raw"] = min(measured_min, delta)
+        joint["safe_min_delta_raw"] = delta
+        joint["safe_min_degrees"] = delta * 360.0 / ENCODER_RESOLUTION
+        joint["lerobot_safe_range_min"] = LELAMP_HOMING_TARGET_RAW + delta
+    else:
+        if delta > measured_max + SUPPORTED_REST_MAX_EXTENSION_RAW:
+            raise CalibrationError(
+                f"Supported rest {delta:+d} is more than "
+                f"{SUPPORTED_REST_MAX_EXTENSION_RAW} counts beyond the measured maximum "
+                f"{measured_max:+d}; repeat the main range calibration."
+            )
+        if delta >= HALF_TURN_RAW or delta <= safe_min:
+            raise CalibrationError("Supported rest does not form a valid bounded range.")
+        endpoint = "maximum"
+        joint["measured_max_delta_raw"] = max(measured_max, delta)
+        joint["safe_max_delta_raw"] = delta
+        joint["safe_max_degrees"] = delta * 360.0 / ENCODER_RESOLUTION
+        joint["lerobot_safe_range_max"] = LELAMP_HOMING_TARGET_RAW + delta
+
+    joint[f"supported_rest_{endpoint}_raw"] = raw_position
+    joint[f"supported_rest_{endpoint}_delta_raw"] = delta
+    joint[f"supported_rest_{endpoint}_has_margin"] = False
+    return updated
+
+
+def accept_supported_rest_minimum(
+    document: Mapping[str, object],
+    *,
+    raw_position: int,
+) -> dict[str, object]:
+    """Backward-compatible shoulder-minimum wrapper."""
+
+    updated = accept_supported_rest_endpoint(
+        document,
+        joint_name=SUPPORTED_REST_MINIMUM_JOINT,
+        raw_position=raw_position,
+    )
+    shoulder = updated["joints"][SUPPORTED_REST_MINIMUM_JOINT]  # type: ignore[index]
+    if "supported_rest_minimum_delta_raw" not in shoulder:
+        raise CalibrationError("Supported shoulder rest must be below calibrated zero.")
     return updated
 
 

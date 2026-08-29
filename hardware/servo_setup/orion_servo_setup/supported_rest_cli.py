@@ -1,4 +1,4 @@
-"""Accept Orion's mechanically supported shoulder-rest calibration endpoint."""
+"""Accept a mechanically supported Orion rest calibration endpoint."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from .archived.motion_test import motion_test_plan, read_motion_preflight
 from .bus import create_lerobot_bus
 from .calibration import (
     ENCODER_RESOLUTION,
-    SUPPORTED_REST_MINIMUM_JOINT,
+    SUPPORTED_REST_JOINTS,
     CalibrationError,
-    accept_supported_rest_minimum,
+    accept_supported_rest_endpoint,
     circular_delta,
     write_calibration_file,
 )
@@ -25,9 +25,15 @@ DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Allow Orion's live, torque-off supported shoulder rest."
+        description="Allow a live, torque-off supported rest endpoint."
     )
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
+    parser.add_argument(
+        "--joint",
+        choices=sorted(SUPPORTED_REST_JOINTS),
+        default="shoulder_pitch_joint",
+        help="Supported joint endpoint to accept (default: shoulder_pitch_joint).",
+    )
     parser.add_argument(
         "--calibration",
         type=Path,
@@ -60,12 +66,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     calibration_path = args.calibration.expanduser()
     if args.dry_run:
         print(
-            f"Would read supported shoulder rest on {args.port}; "
+            f"Would read {args.joint} supported rest on {args.port}; "
             f"calibration: {calibration_path}"
         )
         return 0
 
-    print(f"Orion supported shoulder rest: {args.port}")
+    print(f"Orion supported rest: {args.port} {args.joint}")
     bus = None
     try:
         document = _load_document(calibration_path)
@@ -79,22 +85,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Present_Position", normalize=False, num_retry=5
             ).items()
         }
-        raw_position = positions[SUPPORTED_REST_MINIMUM_JOINT]
+        raw_position = positions[args.joint]
         joints = document.get("joints")
-        shoulder_current = (
-            joints.get(SUPPORTED_REST_MINIMUM_JOINT)
-            if isinstance(joints, dict)
-            else None
-        )
-        if not isinstance(shoulder_current, dict):
-            raise CalibrationError(
-                f"Calibration is missing {SUPPORTED_REST_MINIMUM_JOINT}."
-            )
-        neutral = shoulder_current.get("neutral_raw")
-        safe_min = shoulder_current.get("safe_min_delta_raw")
-        safe_max = shoulder_current.get("safe_max_delta_raw")
+        current = joints.get(args.joint) if isinstance(joints, dict) else None
+        if not isinstance(current, dict):
+            raise CalibrationError(f"Calibration is missing {args.joint}.")
+        neutral = current.get("neutral_raw")
+        safe_min = current.get("safe_min_delta_raw")
+        safe_max = current.get("safe_max_delta_raw")
         if type(neutral) is not int or type(safe_min) is not int or type(safe_max) is not int:
-            raise CalibrationError("Shoulder calibration limits must be integers.")
+            raise CalibrationError(f"{args.joint} calibration limits must be integers.")
         delta = circular_delta(raw_position, neutral)
         radians = delta * 2.0 * math.pi / ENCODER_RESOLUTION
         if safe_min <= delta <= safe_max:
@@ -104,14 +104,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
-        updated = accept_supported_rest_minimum(
+        endpoint = "minimum" if delta < safe_min else "maximum"
+        updated = accept_supported_rest_endpoint(
             document,
+            joint_name=args.joint,
             raw_position=raw_position,
         )
-        shoulder = updated["joints"][  # type: ignore[index]
-            SUPPORTED_REST_MINIMUM_JOINT
-        ]
-        delta = int(shoulder["supported_rest_minimum_delta_raw"])
+        joint = updated["joints"][args.joint]  # type: ignore[index]
+        delta = int(joint[f"supported_rest_{endpoint}_delta_raw"])
         radians = delta * 2.0 * math.pi / ENCODER_RESOLUTION
         print(
             f"Candidate: raw={raw_position} delta={delta:+d} "
@@ -131,7 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RuntimeError,
         ValueError,
     ) as error:
-        print(f"Supported-rest calibration failed: {error}")
+        print(f"Supported rest failed: {error}")
         return 1
     finally:
         if bus is not None and getattr(bus, "is_connected", False):

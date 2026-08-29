@@ -40,11 +40,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--poses", type=Path, default=DEFAULT_POSES)
     parser.add_argument("--limits", type=Path, default=DEFAULT_LIMITS)
     parser.add_argument(
-        "--replace",
-        action="store_true",
-        help="Replace an existing rest pose after another full stability check.",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the capture plan without opening hardware or changing poses.yaml.",
@@ -63,14 +58,11 @@ def _positions(bus) -> dict[str, int]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    print("Orion torque-free rest-pose capture:")
-    print(f"  Stability observation: {STABILITY_DURATION_SECONDS:.0f} seconds")
-    print("  Maximum permitted drift: 10 raw steps (~0.88 deg)")
-    print(f"  Pose library: {args.poses}")
-    print("  Servo EEPROM: unchanged")
     if args.dry_run:
-        print("Dry run only: no serial port was opened and poses.yaml was not changed.")
+        print(f"Would capture rest on {args.port}; poses: {args.poses}")
         return 0
+
+    print(f"Orion rest capture: {args.port}")
 
     try:
         calibration = load_hardware_calibration(args.calibration)
@@ -79,13 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Cannot prepare rest capture: {exc}")
         return 1
 
-    confirmation = input(
-        "\nPlace Orion over a clear padded area. Turn 6 V ON, keep all supports in place, "
-        "and type CAPTURE REST to connect with torque off: "
-    )
-    if confirmation.strip() != "CAPTURE REST":
-        print("Rest capture cancelled. No serial port was opened and no file was changed.")
-        return 2
+    input("6 V on and supports in place. Press ENTER to connect: ")
 
     bus = None
     try:
@@ -93,14 +79,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         bus = create_lerobot_bus(args.port, assignments)
         bus.connect(handshake=True)
         read_motion_preflight(bus, assignments)
-        print("\nPreflight passed: all five servos are healthy and torque is off.")
+        print("Preflight: 5 servos healthy, torque off.")
         input(
-            "Slowly arrange a low, balanced pose that supports itself. Remove every block and "
-            "keep hands completely clear. Wait for it to settle, then press ENTER to start the "
-            "five-second torque-off stability check: "
+            "Set stable unsupported rest, clear hands and blocks, then press ENTER: "
         )
 
         reference = _positions(bus)
+        print(f"Checking stability ({STABILITY_DURATION_SECONDS:.0f} s)...")
         samples: list[dict[str, int]] = []
         deadline = time.monotonic() + STABILITY_DURATION_SECONDS
         while time.monotonic() < deadline:
@@ -109,31 +94,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         maximum_drift = validate_rest_stability(reference, samples)
         angles = positions_to_rest_angles(reference, calibration, operational_ranges)
 
-        print("\nCandidate rest pose passed the torque-off stability and range checks:")
-        print("  joint                         raw   radians   max_drift_raw")
-        for assignment in assignments:
-            name = assignment.joint_name
-            print(
-                f"  {name:<29} {reference[name]:5d} "
-                f"{angles[name]:+9.5f} {maximum_drift[name]:15d}"
-            )
-        save_confirmation = input(
-            "Keep hands clear. Type SAVE REST to write this pose into poses.yaml: "
+        pose_values = " ".join(
+            f"{assignment.servo_id}:{angles[assignment.joint_name]:+.5f}"
+            for assignment in assignments
         )
-        if save_confirmation.strip() != "SAVE REST":
-            print("Rest capture cancelled. poses.yaml was not changed.")
+        print(f"Pose (rad): {pose_values}")
+        print(f"Max drift: {max(maximum_drift.values())} raw")
+        if input("Save rest pose? [y/N] ").strip().lower() != "y":
+            print("Cancelled.")
             return 2
 
         final_positions = _positions(bus)
         validate_rest_stability(reference, [final_positions])
         read_motion_preflight(bus, assignments)
-        write_rest_pose(args.poses, angles, replace=args.replace)
+        write_rest_pose(args.poses, angles, replace=True)
     except KeyboardInterrupt:
-        print("\nRest capture interrupted. Torque remains off; poses.yaml was not changed.")
+        print("\nCancelled; torque off.")
         return 130
     except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
-        print(f"\nRest capture stopped: {exc}")
-        print("Torque remains off. No new rest pose was accepted.")
+        print(f"\nRest capture failed: {exc}")
+        print("Torque: off")
         return 1
     finally:
         if bus is not None and getattr(bus, "is_connected", False):
@@ -142,9 +122,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             finally:
                 bus.disconnect(disable_torque=True)
 
-    print(f"\nRest pose saved to: {args.poses}")
-    print("All torque is off. The lamp should remain still; turn 6 V OFF now.")
-    print("If it moves at all, restore power over padding and capture a lower rest pose.")
+    print(f"Saved: {args.poses}")
+    print("Torque: off")
     return 0
 
 

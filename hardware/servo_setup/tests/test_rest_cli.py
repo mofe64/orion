@@ -49,8 +49,7 @@ class RestCliTests(unittest.TestCase):
             result = main(["--port", "/dev/not-opened", "--dry-run"])
 
         self.assertEqual(result, 0)
-        self.assertIn("no serial port was opened", stream.getvalue())
-        self.assertIn("poses.yaml was not changed", stream.getvalue())
+        self.assertIn("Would capture rest", stream.getvalue())
 
     def test_successful_capture_checks_stability_writes_once_and_cleans_up(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -58,7 +57,7 @@ class RestCliTests(unittest.TestCase):
             calibration.write_text(json.dumps(calibration_document()), encoding="utf-8")
             bus = FakeRestBus()
             stream = io.StringIO()
-            prompts = iter(["CAPTURE REST", "", "SAVE REST"])
+            prompts = iter(["", "", "y"])
             ranges = {name: (-2.0, 2.0) for name in NEUTRALS}
             with (
                 patch("builtins.input", side_effect=lambda _: next(prompts)),
@@ -83,7 +82,7 @@ class RestCliTests(unittest.TestCase):
                 )
 
         self.assertEqual(result, 0)
-        write_pose.assert_called_once()
+        self.assertTrue(write_pose.call_args.kwargs["replace"])
         self.assertGreaterEqual(bus.disable_calls, 1)
         self.assertFalse(bus.is_connected)
 

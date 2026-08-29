@@ -248,9 +248,16 @@ Orion into a low, balanced arrangement that remains upright without blocks or
 hands. The command observes all five encoders for five seconds, rejects more
 than 10 raw steps (about 0.88 degrees) of drift, checks the pose against both
 the measured hardware calibration and the shared ROS operational ranges, then
-requires the exact `SAVE REST` confirmation. A successful capture atomically
-adds `rest` to `orion_motion/config/poses.yaml`; use `--replace` only when
-deliberately recapturing an existing rest pose. Servo EEPROM is never changed.
+asks for a simple `y` confirmation. A successful capture atomically replaces
+`rest` in `orion_motion/config/poses.yaml`. Servo EEPROM is never changed.
+
+A supported rest may settle inside a measured endpoint but outside its normal
+20-count command margin. Accept only that observed endpoint before capturing:
+
+```bash
+uv run orion-accept-supported-rest --port /dev/ttyACM0 \
+  --joint elbow_pitch_joint
+```
 
 This test demonstrates short-term stability in the captured environment; it
 cannot certify stability after moving the base, changing payload or cable

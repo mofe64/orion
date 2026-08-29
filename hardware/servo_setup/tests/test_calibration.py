@@ -7,6 +7,7 @@ from pathlib import Path
 
 from orion_servo_setup.calibration import (
     CalibrationError,
+    accept_supported_rest_endpoint,
     accept_supported_rest_minimum,
     build_calibration_document,
     circular_delta,
@@ -19,6 +20,34 @@ from orion_servo_setup.provisioning import ORION_SERVO_ASSIGNMENTS
 
 
 class CalibrationTests(unittest.TestCase):
+    def test_supported_elbow_rest_updates_the_upper_endpoint(self) -> None:
+        neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
+        captures = initialize_captures(neutral)
+        captures = update_captures(
+            captures,
+            {item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS},
+        )
+        captures = update_captures(
+            captures,
+            {item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS},
+        )
+        document = build_calibration_document(captures, port="/dev/fake")
+
+        updated = accept_supported_rest_endpoint(
+            document,
+            joint_name="elbow_pitch_joint",
+            raw_position=2710,
+        )
+        elbow = updated["joints"]["elbow_pitch_joint"]  # type: ignore[index]
+
+        self.assertEqual(elbow["measured_max_delta_raw"], 662)
+        self.assertEqual(elbow["safe_max_delta_raw"], 662)
+        self.assertAlmostEqual(elbow["safe_max_degrees"], 58.18359375)
+        self.assertEqual(elbow["lerobot_safe_range_max"], 2709)
+        self.assertEqual(elbow["supported_rest_maximum_raw"], 2710)
+        self.assertEqual(elbow["supported_rest_maximum_delta_raw"], 662)
+        self.assertFalse(elbow["supported_rest_maximum_has_margin"])
+
     def test_supported_shoulder_rest_updates_every_dependent_limit(self) -> None:
         neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
         captures = initialize_captures(neutral)

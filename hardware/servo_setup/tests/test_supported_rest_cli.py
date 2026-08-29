@@ -18,10 +18,11 @@ from orion_servo_setup.supported_rest_cli import main
 
 
 class FakeSupportedRestBus:
-    def __init__(self, shoulder_raw: int = 1348) -> None:
+    def __init__(self, shoulder_raw: int = 1348, elbow_raw: int = 2048) -> None:
         self.is_connected = False
         self.disable_calls = 0
         self.shoulder_raw = shoulder_raw
+        self.elbow_raw = elbow_raw
 
     def connect(self, handshake: bool = True) -> None:
         self.is_connected = True
@@ -33,6 +34,7 @@ class FakeSupportedRestBus:
             item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS
         }
         positions["shoulder_pitch_joint"] = self.shoulder_raw
+        positions["elbow_pitch_joint"] = self.elbow_raw
         return positions
 
     def disable_torque(self, motors=None, num_retry=0) -> None:
@@ -55,7 +57,50 @@ class SupportedRestCliTests(unittest.TestCase):
             result = main(["--port", "/dev/not-opened", "--dry-run"])
 
         self.assertEqual(result, 0)
-        self.assertIn("Would read supported shoulder rest", stream.getvalue())
+        self.assertIn("Would read shoulder_pitch_joint supported rest", stream.getvalue())
+
+    def test_accepts_live_supported_elbow_maximum(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration_path = Path(directory) / "calibration.json"
+            neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
+            captures = initialize_captures(neutral)
+            captures = update_captures(
+                captures,
+                {item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS},
+            )
+            captures = update_captures(
+                captures,
+                {item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS},
+            )
+            document = build_calibration_document(captures, port="/dev/fake")
+            calibration_path.write_text(json.dumps(document), encoding="utf-8")
+            bus = FakeSupportedRestBus(elbow_raw=2710)
+            with (
+                patch(
+                    "orion_servo_setup.supported_rest_cli.create_lerobot_bus",
+                    return_value=bus,
+                ),
+                patch("orion_servo_setup.supported_rest_cli.read_motion_preflight"),
+                patch("builtins.input", return_value="y"),
+                redirect_stdout(io.StringIO()),
+            ):
+                result = main(
+                    [
+                        "--port",
+                        "/dev/fake",
+                        "--joint",
+                        "elbow_pitch_joint",
+                        "--calibration",
+                        str(calibration_path),
+                    ]
+                )
+
+            saved = json.loads(calibration_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        elbow = saved["joints"]["elbow_pitch_joint"]
+        self.assertEqual(elbow["safe_max_delta_raw"], 662)
+        self.assertEqual(elbow["supported_rest_maximum_raw"], 2710)
 
     def test_accepts_live_supported_endpoint_and_backs_up_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
