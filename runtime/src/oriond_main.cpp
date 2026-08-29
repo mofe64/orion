@@ -68,8 +68,8 @@ struct Options
   int baud_rate = kDefaultBaudRate;
   std::string calibration_file;
   std::string socket_path = kDefaultSocketPath;
-  std::string poses_file = "ros2_ws/src/orion_motion/config/poses.yaml";
-  std::string motions_directory = "ros2_ws/src/orion_motion/motions";
+  std::string poses_file = "motion/config/poses.yaml";
+  std::string motions_directory = "motion/motions";
   std::string pose_name;
   std::string motion_name;
   double duration_seconds = 3.0;

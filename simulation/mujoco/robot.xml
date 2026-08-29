@@ -2,7 +2,7 @@
 <!-- Generated using onshape-to-robot -->
 <!-- Onshape document_id: 16c9706360b5ad34f9c8db49 -->
 <mujoco model="simulation">
-  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <compiler angle="radian" meshdir="../../description/meshes" autolimits="true"/>
   <default>
     <default class="simulation">
       <joint frictionloss="0.1" armature="0.005"/>
@@ -219,8 +219,8 @@
   <asset>
     <mesh file="xg_ziji_16.stl"/>
     <mesh file="ge_27.stl"/>
-    <mesh file="金属舵盘_驱动__v2.stl"/>
-    <mesh file="金属舵盘_从动__v2.stl"/>
+    <mesh name="金属舵盘_驱动__v2" file="servo_horn_driving.stl"/>
+    <mesh name="金属舵盘_从动__v2" file="servo_horn_driven.stl"/>
     <mesh file="lamp_base_cover.stl"/>
     <mesh file="lamp_base.stl"/>
     <mesh file="lamparm__elbow_wrist.stl"/>

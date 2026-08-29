@@ -21,7 +21,7 @@ Open the editor and MuJoCo viewer:
 ```
 
 The default editable library is
-`ros2_ws/src/orion_motion/config/poses.yaml`. Use Previous/Next or the pose
+`motion/config/poses.yaml`. Use Previous/Next or the pose
 selector to browse, move the five sliders for live preview, and choose Save
 pose (or press Ctrl+S) to update the selected pose. Alt+Left and Alt+Right also
 cycle through poses. Unsaved edits trigger a save/discard prompt when changing

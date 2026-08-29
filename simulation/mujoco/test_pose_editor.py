@@ -26,7 +26,7 @@ SIMULATION_CALIBRATION = (
     MUJOCO_DIRECTORY / "config" / "servo_calibration.json"
 )
 POSE_LIBRARY = (
-    PROJECT_ROOT / "ros2_ws" / "src" / "orion_motion" / "config" / "poses.yaml"
+    PROJECT_ROOT / "motion" / "config" / "poses.yaml"
 )
 
 

@@ -22,9 +22,9 @@ from .rest_capture import (
 
 DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 ORION_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_POSES = ORION_ROOT / "ros2_ws" / "src" / "orion_motion" / "config" / "poses.yaml"
+DEFAULT_POSES = ORION_ROOT / "motion" / "config" / "poses.yaml"
 DEFAULT_LIMITS = (
-    ORION_ROOT / "ros2_ws" / "src" / "orion_motion" / "config" / "motion_limits.yaml"
+    ORION_ROOT / "motion" / "config" / "motion_limits.yaml"
 )
 SAMPLE_INTERVAL_SECONDS = 0.10
 

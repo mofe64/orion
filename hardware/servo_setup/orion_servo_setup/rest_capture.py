@@ -32,7 +32,7 @@ class RestCaptureError(RuntimeError):
 
 
 def load_operational_ranges(path: Path) -> dict[str, tuple[float, float]]:
-    """Load the shared ROS pose-library position contract."""
+    """Load the shared pose-library position contract."""
 
     path = path.expanduser()
     try:

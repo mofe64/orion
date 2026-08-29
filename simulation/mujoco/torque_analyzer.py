@@ -32,14 +32,14 @@ from mujoco_backend import (
 
 MUJOCO_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = MUJOCO_DIRECTORY.parents[1]
-MOTION_PACKAGE_SOURCE = PROJECT_ROOT / "ros2_ws/src/orion_motion"
-CONFIG_DIRECTORY = MOTION_PACKAGE_SOURCE / "config"
+MOTION_SOURCE = PROJECT_ROOT / "motion"
+CONFIG_DIRECTORY = MOTION_SOURCE / "config"
 DEFAULT_SCENE_PATH = MUJOCO_DIRECTORY / "scene.xml"
 DEFAULT_POSE_PATH = CONFIG_DIRECTORY / "poses.yaml"
 DEFAULT_POSE_NAMES = ("zero_reference", "home", "attentive")
 
-# Consume the motion package from this source tree, matching motion_player.py.
-sys.path.insert(0, str(MOTION_PACKAGE_SOURCE))
+# Consume the backend-independent motion library, matching motion_player.py.
+sys.path.insert(0, str(MOTION_SOURCE))
 
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
 from orion_motion.trajectory_builder import build_pose_trajectory  # noqa: E402
@@ -66,7 +66,7 @@ RATED_TORQUE_NM = 0.39
 STALL_TORQUE_NM = 1.62
 
 # Goal_Velocity=50 in the commissioning runner is approximately 4.4 degrees/s.
-# This comparison is intentionally separate from ROS motion limits.
+# This comparison is intentionally separate from shared motion limits.
 COMMISSIONING_VELOCITY_LIMIT_RAD_S = math.radians(4.4)
 
 

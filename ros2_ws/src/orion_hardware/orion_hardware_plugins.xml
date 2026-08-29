@@ -1,9 +1,0 @@
-<?xml version="1.0"?>
-<library path="orion_hardware">
-  <class
-    name="orion_hardware/STS3215System"
-    type="orion_hardware::STS3215System"
-    base_class_type="hardware_interface::SystemInterface">
-    <description>Physical five-joint Orion STS3215 system interface.</description>
-  </class>
-</library>

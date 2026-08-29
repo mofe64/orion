@@ -6,7 +6,7 @@ motors, sensors, and surroundings. MuJoCo's XML format is called MJCF.
 Orion's URDF and MJCF describe the same robot for different systems:
 
 ```text
-URDF = the robot description used by ROS
+URDF = the neutral kinematic and geometry description
 MJCF = the robot and physics description used by MuJoCo
 ```
 
@@ -57,7 +57,7 @@ simulation settings      = how MuJoCo should model motors, contact, and motion
 At the top of `robot.xml`:
 
 ```xml
-<compiler angle="radian" meshdir="assets" autolimits="true"/>
+<compiler angle="radian" meshdir="../../description/meshes" autolimits="true"/>
 ```
 
 ### `angle="radian"`
@@ -68,12 +68,11 @@ Joint angles and ranges are measured in radians.
 0.5 rad is about 28.6 degrees
 ```
 
-The same unit is used by Orion's ROS motion files.
+The same unit is used by Orion's shared motion files.
 
-### `meshdir="assets"`
+### `meshdir="../../description/meshes"`
 
-Mesh paths are resolved relative to the `assets` directory beside
-`robot.xml`.
+Mesh paths are resolved from Orion's shared `description/meshes` directory.
 
 For example:
 
@@ -84,7 +83,7 @@ For example:
 refers to:
 
 ```text
-simulation/mujoco/assets/lamphead.stl
+description/meshes/lamphead.stl
 ```
 
 If a mesh file is renamed, its XML reference must also be renamed.
@@ -222,7 +221,7 @@ For example:
 The bodies have different orientations, so the same local joint axis can point
 in a different world direction for each hinge.
 
-MuJoCo, ROS, and the motion package use the same five names:
+MuJoCo, the native runtime, and the motion library use the same five names:
 
 ```text
 base_yaw_joint
@@ -503,15 +502,13 @@ Orion has an `imu_site` with two MuJoCo sensors:
 As the body moves, the site moves with it. The accelerometer and gyroscope
 therefore measure motion at the IMU's location.
 
-The current ROS control description exposes joint interfaces only. These
-MuJoCo IMU sensors are part of the model but are not published by Orion's joint
-controllers.
+These MuJoCo IMU sensors are part of the model but are not yet exposed through
+Orion's native status interface.
 
 ## Joint and Actuator Lookup
 
-Each position actuator has the same semantic name as its joint. Both native
-and ROS-controlled MuJoCo use these names to connect commands to the correct
-joint.
+Each position actuator has the same semantic name as its joint. Native MuJoCo
+uses these names to connect commands to the correct joint.
 
 The actuator declarations happen to follow this order:
 
@@ -527,25 +524,19 @@ Native code still looks up joint and actuator IDs by name. It does not assume
 that XML array index zero will always mean base yaw. This prevents a reordered
 XML file from sending a command to the wrong joint.
 
-## Native and ROS-Controlled MuJoCo
+## Native MuJoCo control
 
-Orion can drive the same MJCF model in two ways:
+Orion drives the MJCF model through its native adapter:
 
 ```text
-native player
-    -> writes sampled position targets directly to MuJoCo actuators
-
-ROS motion player
-    -> FollowJointTrajectory
-    -> joint_trajectory_controller
-    -> mujoco_ros2_control
-    -> MuJoCo actuators
+shared motion YAML
+    -> backend-independent trajectory generator
+    -> native MuJoCo player
+    -> MuJoCo position actuators
 ```
 
-The native route is small and fast, which makes it useful for model and
-stability tests. The ROS-controlled route uses the same controller interface as
-Gazebo. Both routes keep the free root unactuated and use the same robot
-physics model.
+The adapter keeps the free root unactuated and uses measured simulated state
+for completion and stability checks.
 
 The shared movement path is explained in
 [How Orion Moves](orion_motion_system.md).

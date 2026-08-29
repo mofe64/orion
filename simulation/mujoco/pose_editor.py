@@ -26,7 +26,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 DEFAULT_POSE_LIBRARY = (
-    PROJECT_ROOT / "ros2_ws" / "src" / "orion_motion" / "config" / "poses.yaml"
+    PROJECT_ROOT / "motion" / "config" / "poses.yaml"
 )
 DEFAULT_CALIBRATION = (
     Path(__file__).resolve().parent / "config" / "servo_calibration.json"

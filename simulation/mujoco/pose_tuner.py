@@ -29,14 +29,13 @@ from mujoco_backend import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MOTION_PACKAGE_SOURCE = PROJECT_ROOT / "ros2_ws" / "src" / "orion_motion"
-CONFIG_DIRECTORY = MOTION_PACKAGE_SOURCE / "config"
+MOTION_SOURCE = PROJECT_ROOT / "motion"
+CONFIG_DIRECTORY = MOTION_SOURCE / "config"
 DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 
-# This tool runs directly from the source tree rather than through ROS launch.
-# Add only the orion_motion source package so we can reuse its loader and
-# validator without making that package depend on MuJoCo.
-sys.path.insert(0, str(MOTION_PACKAGE_SOURCE))
+# Add the backend-independent motion source so this MuJoCo tool can reuse its
+# loader and validator without coupling the motion library to the simulator.
+sys.path.insert(0, str(MOTION_SOURCE))
 
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
 from orion_motion.motion_validator import validate_pose_library  # noqa: E402

@@ -23,9 +23,7 @@ from .pose_execution import (
 DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 DEFAULT_POSES = (
     Path(__file__).resolve().parents[3]
-    / "ros2_ws"
-    / "src"
-    / "orion_motion"
+    / "motion"
     / "config"
     / "poses.yaml"
 )

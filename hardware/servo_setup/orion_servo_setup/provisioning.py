@@ -22,7 +22,7 @@ class ServoAssignment:
 
 
 # These IDs preserve the reference LeLamp bus layout while using Orion's
-# canonical ROS joint names.  Runtime hardware code must reuse this map rather
+# canonical Orion joint names. Runtime hardware code must reuse this map rather
 # than inventing a second set of IDs.
 ORION_SERVO_ASSIGNMENTS: tuple[ServoAssignment, ...] = (
     ServoAssignment("base_yaw_joint", 1, "base_yaw"),

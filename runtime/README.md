@@ -91,7 +91,7 @@ Unknown motions, malformed commands, and invalid targets return JSON errors
 without terminating the daemon.
 
 The native trajectory path does not use the provisional simulation-only
-velocity, acceleration, or jerk ceilings from `orion_motion`. The requested
+velocity, acceleration, or jerk ceilings from `motion/config/motion_limits.yaml`. The requested
 duration determines the motion rate. Physical calibrated joint-position bounds
 remain mandatory.
 
@@ -119,13 +119,11 @@ runtime/build/oriond --check \
   --calibration "$HOME/.config/orion/servo_calibration.json"
 ```
 
-## Current boundary
+## Runtime boundary
 
-The reusable driver sources temporarily remain in `ros2_ws/src/orion_hardware`
-so the new native build and the existing ROS adapter share one implementation.
-The ROS adapter is optional and is not part of the native build. Once the
-standalone daemon lifecycle is established, the reusable sources can move to a
-neutral package without changing their behavior.
+The reusable STS3215 driver and Feetech SDK live inside `runtime`; the build has
+no ROS dependency. Shared pose and motion definitions live in the root
+`motion` directory so the physical daemon and MuJoCo consume the same assets.
 
 The next runtime increment is the matching MuJoCo backend for this native
 motion interface. The physical daemon supports named poses and authored

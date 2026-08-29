@@ -6,8 +6,7 @@ milestone: assigning one persistent bus ID to each STS3215 servo.
 It is an Orion-native equivalent of LeLamp's `lelamp.setup_motors` workflow.
 The implementation uses LeRobot's supported `FeetechMotorsBus` API rather than
 copying LeLamp's follower robot class into Orion. This keeps one-time hardware
-provisioning separate from Orion's motion package and future `ros2_control`
-hardware adapter.
+provisioning separate from Orion's native runtime.
 
 ## Why setup is necessary
 
@@ -30,8 +29,8 @@ Setup is not calibration and does not command movement:
 - **Setup** identifies each physical servo on the shared bus.
 - **Calibration** later measures its zero offset, direction, and safe range in
   the assembled mechanism.
-- **Runtime control** later sends validated positions through Orion's
-  `ros2_control` hardware adapter.
+- **Runtime control** sends validated positions through Orion's native C++
+  daemon.
 
 ## Authoritative ID map
 
@@ -148,8 +147,8 @@ uv run orion-verify-servos --port /dev/not-opened --dry-run
 
 The first-motion nudge and direct named-pose commands were commissioning tools,
 not runtime control. Their installed entry points have been removed and their
-source now lives in `orion_servo_setup/archived/`. New physical movement will
-run through the C++ `ros2_control` hardware interface.
+source now lives in `orion_servo_setup/archived/`. New physical movement runs
+through the C++ `oriond` runtime.
 
 ## Calibrate all five joints in one session
 
@@ -223,10 +222,8 @@ Orion records the same measurements in a versioned JSON file without changing
 servo EEPROM. It calculates movement as a circular displacement from neutral,
 so a joint crossing raw encoder zero is not mistaken for an almost-complete
 turn. The stored `encoder_direction=1` preserves LeLamp's `drive_mode=0`
-convention for this mechanically compatible build. That sign still needs to be
-checked against Orion's URDF joint-positive convention when the physical
-`ros2_control` adapter is introduced; full trajectories must not run before
-that check.
+convention for this mechanically compatible build. The native runtime and
+MuJoCo use the accepted captured zero and joint-positive convention.
 
 To preview the complete plan without opening hardware or writing a file:
 
@@ -247,9 +244,9 @@ The capture runs with servo torque off. Over a clear padded area, manually put
 Orion into a low, balanced arrangement that remains upright without blocks or
 hands. The command observes all five encoders for five seconds, rejects more
 than 10 raw steps (about 0.88 degrees) of drift, checks the pose against both
-the measured hardware calibration and the shared ROS operational ranges, then
+the measured hardware calibration and the shared operational ranges, then
 asks for a simple `y` confirmation. A successful capture atomically replaces
-`rest` in `orion_motion/config/poses.yaml`. Servo EEPROM is never changed.
+`rest` in `motion/config/poses.yaml`. Servo EEPROM is never changed.
 
 A supported rest may settle inside a measured endpoint but outside its normal
 20-count command margin. Accept only that observed endpoint before capturing:
@@ -263,7 +260,7 @@ This test demonstrates short-term stability in the captured environment; it
 cannot certify stability after moving the base, changing payload or cable
 routing, or changing the lamp's surface or orientation. Recapture or retest
 after any such change. The former direct named-pose executor is archived and
-must not be used in place of `ros2_control`.
+must not be used in place of `oriond`.
 
 ## How the write works
 

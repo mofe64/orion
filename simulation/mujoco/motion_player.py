@@ -31,14 +31,14 @@ from stability_monitor import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MOTION_PACKAGE_SOURCE = PROJECT_ROOT / "ros2_ws" / "src" / "orion_motion"
-CONFIG_DIRECTORY = MOTION_PACKAGE_SOURCE / "config"
-MOTIONS_DIRECTORY = MOTION_PACKAGE_SOURCE / "motions"
+MOTION_SOURCE = PROJECT_ROOT / "motion"
+CONFIG_DIRECTORY = MOTION_SOURCE / "config"
+MOTIONS_DIRECTORY = MOTION_SOURCE / "motions"
 DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 
-# This simulator adapter consumes the package directly from the source tree.
-# The orion_motion package itself remains independent of MuJoCo.
-sys.path.insert(0, str(MOTION_PACKAGE_SOURCE))
+# This simulator adapter consumes the backend-independent motion library
+# directly from the source tree.
+sys.path.insert(0, str(MOTION_SOURCE))
 
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
 from orion_motion.execution_types import (  # noqa: E402

@@ -1,3 +1,0 @@
-[console_scripts]
-orion-setup-servos = orion_servo_setup.cli:main
-orion-verify-servos = orion_servo_setup.verify_cli:main

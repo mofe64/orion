@@ -39,7 +39,7 @@ A link may contain multiple visual elements when it consists of several rigid CA
     rpy="-5.09262e-15 -0.486539 2.83295"/>
 
   <geometry>
-    <mesh filename="package://orion_description/meshes/lamparm__base_elbow.stl"/>
+    <mesh filename="../meshes/lamparm__base_elbow.stl"/>
   </geometry>
 </visual>
 ```
@@ -73,7 +73,7 @@ Collision geometry defines the solid shape that a physics engine uses to detect 
     <origin xyz="0 0 0.1" rpy="0 0 0"/>
 
     <geometry>
-      <mesh filename="package://orion_description/meshes/arm.stl"/>
+      <mesh filename="../meshes/arm.stl"/>
     </geometry>
   </collision>
 </link>

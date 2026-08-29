@@ -4,7 +4,7 @@
 
 **Project:** Orion  
 **Document type:** High-level development roadmap  
-**Current position:** Motion foundation complete; motion quality and simulator parity next
+**Current position:** Native C++ motion runtime and MuJoCo parity complete; behaviour orchestration next
 **Long-term goal:** Build a safe, useful, expressive robotic lamp inspired by LeLamp, Watti, Ongo, and the ELEGNT movement-design framework.
 
 ---
@@ -36,6 +36,12 @@ It is **not** an implementation manual. Each milestone should eventually have it
 - Lessons learned.
 
 The purpose of this guidebook is to prevent Orion from becoming a collection of disconnected experiments. Every new feature should fit into a deliberate sequence.
+
+> **Architecture decision — 2026-08-29:** Orion now uses the native C++
+> `oriond` runtime for physical control and a native MuJoCo adapter. ROS 2 is no
+> longer part of the implementation. Later ROS-specific milestone text is
+> retained as historical planning context and is superseded by
+> `docs/orion_control_architecture.md`.
 
 ---
 
@@ -275,7 +281,6 @@ It must enforce:
 The backend decides where the validated movement is executed:
 
 ```text
-Gazebo Harmonic
 MuJoCo
 Physical STS3215 servos
 Future custom Orion actuators
@@ -315,7 +320,7 @@ Expression must operate inside a safe and functionally valid envelope.
 
 ## 6.1 Simulation-first, not simulation-only
 
-Gazebo and MuJoCo should be used to:
+MuJoCo should be used to:
 
 - Validate kinematics.
 - Test control interfaces.
@@ -377,7 +382,7 @@ Orion should use the same:
 - Target-point representations.
 - Behaviour names.
 
-across Gazebo, MuJoCo, and physical hardware.
+across MuJoCo and physical hardware.
 
 ---
 
@@ -457,12 +462,12 @@ Questions such as these should guide future hardware design:
                     timeouts, effort, emergency stop
                                   |
                                   v
-                    Standard trajectory interface
+                    Native motion interface
                                   |
-              ┌───────────────────┼───────────────────┐
-              v                   v                   v
-       Gazebo Harmonic          MuJoCo          Physical Orion
-        ros2_control          adapter/control     servo hardware
+                       ┌───────────┴───────────┐
+                       v                       v
+                    MuJoCo              Physical Orion
+                native adapter        C++ STS3215 runtime
               
               ┌───────────────────┴───────────────────┐
               v                                       v
@@ -495,8 +500,8 @@ Local Orion scene player
 | 4 | Task-space control and target pointing | **Next** |
 | 5 | Lighting and multimodal scene runtime | Planned |
 | 6 | Orion Studio motion-and-light editor | Planned |
-| 7 | Physical LeLamp-compatible prototype | Planned |
-| 8 | ROS 2 hardware interface and sim-to-real transfer | Planned |
+| 7 | Physical LeLamp-compatible prototype | **In progress** — calibrated motion validated |
+| 8 | Native hardware runtime and sim-to-real transfer | **In progress** — named poses and motions working |
 | 9 | Perception and world model | Planned |
 | 10 | Attention and adaptive task lighting | Planned |
 | 11 | Behaviour orchestration | Planned |
@@ -611,16 +616,11 @@ docs/personality/orion_character_guide.md
 
 Orion now has:
 
-- A semantic ROS 2 robot description.
+- A backend-neutral robot description and shared mesh library.
 - Five semantically named joints.
-- A valid TF tree.
 - A ground-contact `base_footprint`.
-- Working RViz visualisation.
-- Gazebo Harmonic support.
-- `gz_ros2_control`.
-- An active joint trajectory controller.
 - A native MuJoCo model.
-- Matching joint and actuator names across simulators.
+- Matching joint and actuator names across description and simulation.
 - Free-standing physics.
 - Joint feedback.
 - Valid trajectory execution.
@@ -630,21 +630,12 @@ Orion now has:
 
 This establishes a reliable digital body for Orion before the project develops a brain.
 
-RViz validates:
+The neutral URDF validates:
 
 - Geometry.
 - Joint relationships.
 - Axes.
 - Limits.
-- TF.
-
-Gazebo validates:
-
-- ROS 2 control architecture.
-- Gravity.
-- floor contact.
-- Controller integration.
-- Standard trajectory execution.
 
 MuJoCo validates:
 
@@ -659,10 +650,8 @@ Already satisfied:
 
 - All five joints behave correctly.
 - Meshes load.
-- TF is valid.
-- Controllers activate.
 - Commands execute.
-- MuJoCo and Gazebo models compile and run.
+- The native runtime builds and MuJoCo model loads.
 
 ---
 
@@ -725,10 +714,10 @@ are different.
 
 ---
 
-## Package
+## Source directory
 
 ```text
-ros2_ws/src/orion_motion/
+motion/
 ```
 
 Suggested initial structure:
@@ -815,12 +804,11 @@ At this stage, “look at target” may use a predefined joint-space target. Act
 ## Deliverables
 
 ```text
-orion_motion ROS 2 package
+backend-independent motion library
 named-pose library
 keyframe motion format
-trajectory action client
+native C++ motion player
 joint-limit validation
-Gazebo playback
 MuJoCo playback using the same motion files
 three functional/expressive A/B pairs
 unit tests
@@ -830,7 +818,7 @@ learning documentation
 ## Exit criteria
 
 - A named pose can be requested by name.
-- A multi-keyframe animation executes in Gazebo.
+- A multi-keyframe animation executes on the native C++ runtime.
 - The same animation definition executes in MuJoCo.
 - Invalid joint values are rejected.
 - All five joints are represented consistently.
@@ -875,13 +863,12 @@ measured trajectory
 
 These are not always identical.
 
-## Cross-simulator validation
+## Cross-backend validation
 
 The same motion file should produce meaningfully equivalent movement in:
 
-- Gazebo.
 - MuJoCo.
-- Later, physical hardware.
+- Physical hardware.
 
 The simulators do not need to have identical physics, but they must agree on:
 
@@ -910,7 +897,7 @@ motion validation report
 - No position discontinuity occurs at startup.
 - Motions can be stopped safely.
 - Unsafe or malformed motions are rejected.
-- Named motions remain portable between Gazebo and MuJoCo.
+- Named motions remain portable between MuJoCo and physical hardware.
 - Aggressive movements that risk tipping are detected or explicitly marked unsafe.
 
 ---
@@ -1098,7 +1085,7 @@ scene export and transfer
 ## Exit criteria
 
 - A scene can be created without editing YAML manually.
-- The same exported scene works in Gazebo and MuJoCo.
+- The same exported scene works in MuJoCo and physical hardware.
 - The runtime remains responsible for final validation.
 - Closing the browser does not interrupt local playback.
 
@@ -1177,18 +1164,19 @@ hardware safety checklist
 
 ---
 
-# 17. Milestone 8 — ROS 2 Hardware Interface and Sim-to-Real Transfer
+# 17. Milestone 8 — Native Hardware Runtime and Sim-to-Real Transfer
 
 ## Objective
 
-Make the physical lamp implement the same control contract as Gazebo.
+Make the physical lamp and MuJoCo consume the same motion semantics through
+native backend adapters.
 
 ## Work required
 
-Create an STS3215 `ros2_control` hardware interface that converts between:
+Create an STS3215 C++ runtime that converts between:
 
 ```text
-ROS joint radians
+Orion joint radians
 ```
 
 and:
@@ -1215,15 +1203,13 @@ The interface must manage:
 ## Core architecture
 
 ```text
-orion_motion
+shared motion YAML
     |
-FollowJointTrajectory
+native motion library
     |
-joint_trajectory_controller
+oriond 50 Hz control loop
     |
-ros2_control
-    |
-STS3215 hardware interface
+STS3215 driver and transport
     |
 physical servos
 ```
@@ -1233,9 +1219,9 @@ High-level motion software should not contain direct servo-register operations.
 ## Deliverables
 
 ```text
-orion_hardware_sts3215 package
+native C++ runtime
 joint calibration configuration
-hardware launch files
+local command/status socket
 watchdog
 hardware diagnostics
 simulation/hardware backend selector
@@ -1243,7 +1229,7 @@ simulation/hardware backend selector
 
 ## Exit criteria
 
-- The same ROS trajectory interface controls Gazebo and the physical lamp.
+- The same pose and motion definitions control MuJoCo and the physical lamp.
 - A named motion can run in simulation and hardware without rewriting it.
 - Calibration offsets are configuration, not hard-coded behaviour logic.
 - Communication failure disables or safely stops motion.
@@ -1746,7 +1732,6 @@ Update:
 - URDF/Xacro.
 - Collision geometry.
 - Inertial values.
-- Gazebo model.
 - MuJoCo model.
 - Servo or actuator model.
 - Stability tests.
@@ -2015,20 +2000,9 @@ A possible long-term structure is:
 
 ```text
 orion/
-├── ros2_ws/
-│   └── src/
-│       ├── orion_description/
-│       ├── orion_gazebo/
-│       ├── orion_motion/
-│       ├── orion_kinematics/
-│       ├── orion_lighting/
-│       ├── orion_perception/
-│       ├── orion_behavior/
-│       ├── orion_audio/
-│       ├── orion_hardware_sts3215/
-│       ├── orion_interfaces/
-│       └── orion_bringup/
-│
+├── runtime/
+├── motion/
+├── description/
 ├── simulation/
 │   └── mujoco/
 │
@@ -2039,12 +2013,6 @@ orion/
 │   ├── electronics/
 │   ├── bom/
 │   └── assembly/
-│
-├── motions/
-│   ├── poses/
-│   ├── functional/
-│   ├── expressive/
-│   └── scenes/
 │
 ├── tests/
 │
@@ -2077,9 +2045,8 @@ Everything else should be introduced deliberately.
 **Status: complete**
 
 - URDF.
-- Gazebo.
 - MuJoCo.
-- ROS 2 controllers.
+- Native C++ runtime.
 - Semantic joints.
 - Valid trajectory command.
 
@@ -2102,7 +2069,7 @@ Everything else should be introduced deliberately.
 ## Orion v0.4 — Physical reference platform
 
 - LeLamp-compatible hardware.
-- STS3215 ROS 2 interface.
+- Native STS3215 interface.
 - Calibration.
 - Emergency stop.
 - Sim-to-real motion.
