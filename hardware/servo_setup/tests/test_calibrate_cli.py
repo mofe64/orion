@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from orion_servo_setup.calibrate_cli import main
+from orion_servo_setup.calibrate_cli import _format_capture_line, main
 from orion_servo_setup.calibration import initialize_captures, update_captures
 from orion_servo_setup.provisioning import ORION_SERVO_ASSIGNMENTS
 
@@ -53,6 +53,31 @@ class FakeCalibrationBus:
 
 
 class CalibrateCliTests(unittest.TestCase):
+    def test_live_capture_line_fits_a_normal_terminal(self) -> None:
+        neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
+        captures = initialize_captures(neutral)
+        negative_positions = {
+            item.joint_name: 1098 for item in ORION_SERVO_ASSIGNMENTS
+        }
+        negative_positions["base_yaw_joint"] = 1020
+        negative_positions["head_roll_joint"] = 646
+        captures = update_captures(captures, negative_positions)
+        positive_positions = {
+            item.joint_name: 2731 for item in ORION_SERVO_ASSIGNMENTS
+        }
+        positive_positions["base_yaw_joint"] = 3098
+        positive_positions["head_roll_joint"] = 3090
+        captures = update_captures(captures, positive_positions)
+
+        line = _format_capture_line(captures)
+
+        self.assertEqual(
+            line,
+            "1:-1028/+1050 2:-950/+683 3:-950/+683 "
+            "4:-1402/+1042 5:-950/+683",
+        )
+        self.assertLess(len(line), 80)
+
     def test_dry_run_never_opens_hardware_or_writes_file(self) -> None:
         stream = io.StringIO()
         with (

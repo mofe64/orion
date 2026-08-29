@@ -77,10 +77,10 @@ def _format_capture_line(captures: Mapping[str, JointRangeCapture]) -> str:
     fields = []
     for capture in sorted(captures.values(), key=lambda item: item.assignment.servo_id):
         fields.append(
-            f"ID{capture.assignment.servo_id} "
+            f"{capture.assignment.servo_id}:"
             f"{capture.measured_min_delta_raw:+d}/{capture.measured_max_delta_raw:+d}"
         )
-    return "  ".join(fields)
+    return " ".join(fields)
 
 
 def _record_until_enter(bus, neutral_positions: Mapping[str, int]) -> dict[str, JointRangeCapture]:
@@ -92,7 +92,7 @@ def _record_until_enter(bus, neutral_positions: Mapping[str, int]) -> dict[str, 
         captures = update_captures(captures, positions)
         now = time.monotonic()
         if now - last_display >= 0.25:
-            print(f"\r{_format_capture_line(captures):<110}", end="", flush=True)
+            print(f"\r{_format_capture_line(captures)}", end="", flush=True)
             last_display = now
         if _enter_pressed():
             print()
