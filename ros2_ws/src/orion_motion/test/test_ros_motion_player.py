@@ -66,9 +66,24 @@ def test_functional_motion_includes_measured_start_arrival_and_hold():
     ] == pytest.approx([0.0, 1.5, 2.0])
 
 
-def test_expressive_motion_preserves_all_arrival_and_hold_times():
+@pytest.mark.parametrize(
+    ("motion_path", "expected_times"),
+    [
+        (
+            "expressive/look_at_left_expressive.yaml",
+            [0.0, 1.20, 1.40, 2.20, 2.35, 3.35, 3.50, 4.20, 5.00],
+        ),
+        (
+            "expressive/look_at_right_expressive.yaml",
+            [0.0, 2.00, 2.20, 3.00, 3.15, 4.15, 4.30, 5.00, 5.80],
+        ),
+    ],
+)
+def test_expressive_motion_preserves_all_arrival_and_hold_times(
+    motion_path, expected_times
+):
     trajectory = load_project_trajectory(
-        "expressive/look_at_left_expressive.yaml",
+        motion_path,
     )
     generated = trajectory.trajectory
 
@@ -77,9 +92,7 @@ def test_expressive_motion_preserves_all_arrival_and_hold_times():
     actual_times = [
         duration_seconds(point.time_from_start) for point in message.points
     ]
-    assert actual_times == pytest.approx(
-        [0.0, 0.65, 0.77, 1.34, 1.42, 2.17, 2.27, 2.67, 3.17]
-    )
+    assert actual_times == pytest.approx(expected_times)
     assert list(message.points[-1].positions) == list(
         generated.points[-1].positions
     )

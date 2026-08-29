@@ -62,7 +62,7 @@ TEST(MotionLibraryTest, LoadsNestedFunctionalAndExpressiveMotions)
   const auto & right = motions.motion("look_at_right_expressive");
   ASSERT_EQ(right.keyframes.size(), 4U);
   EXPECT_EQ(right.keyframes.front().pose_name, "look_right_anticipation");
-  EXPECT_DOUBLE_EQ(right.keyframes.front().duration_seconds, 1.60);
+  EXPECT_DOUBLE_EQ(right.keyframes.front().duration_seconds, 2.00);
   EXPECT_EQ(right.keyframes.back().pose_name, "look_right");
   EXPECT_THROW(motions.motion("missing"), std::invalid_argument);
 }

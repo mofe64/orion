@@ -125,4 +125,4 @@ def test_expressive_right_uses_mirrored_derived_poses(
         -0.65,
         -0.22,
     )
-    assert trajectory.total_duration == pytest.approx(4.12)
+    assert trajectory.total_duration == pytest.approx(5.80)
