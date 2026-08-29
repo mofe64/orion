@@ -7,7 +7,7 @@ These modules powered Orion's one-off first-motion and named-pose experiments:
 
 They are not part of Orion's runtime control architecture. Their installed CLI
 entry points were removed when the files were archived. Physical movement now
-belongs behind the native C++ `oriond` runtime.
+belongs behind the native Rust `oriond` runtime.
 
 Calibration and rest-capture code temporarily reuse read-only preflight and
 calibration-loading helpers from these modules. Before deleting this directory,

@@ -10,5 +10,5 @@ This directory is the backend-independent source of truth for Orion motion.
 - `orion_motion/` contains the Python validation and trajectory-generation
   library used by MuJoCo and offline tests.
 
-The physical C++ runtime reads the same pose and motion YAML files directly.
+The physical Rust runtime reads the same pose and motion YAML files directly.
 Neither the assets nor the Python validation library require ROS.

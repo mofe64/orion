@@ -39,11 +39,11 @@ The purpose of this guidebook is to prevent Orion from becoming a collection of 
 
 > **Architecture decision — 2026-08-29:** Orion uses the native Rust `oriond`
 > runtime for physical control and MuJoCo, with `rustypot` providing the
-> STS3215 protocol and serial boundary. The Rust runtime has completed
-> software, simulator, and physical feature-parity trials. ROS 2 is no longer
-> part of the implementation. Later ROS-specific milestone text is retained as
-> historical planning context and is superseded by
-> `docs/orion_control_architecture.md`.
+> STS3215 protocol and serial boundary. This Rust implementation is Orion's
+> sole active runtime and has been confirmed in software, MuJoCo, and on the
+> physical robot. ROS 2 is no longer part of the implementation. Later
+> ROS-specific milestone text is retained as historical planning context and
+> is superseded by `docs/orion_control_architecture.md`.
 
 ---
 
@@ -503,7 +503,7 @@ Local Orion scene player
 | 5 | Lighting and multimodal scene runtime | Planned |
 | 6 | Orion Studio motion-and-light editor | Planned |
 | 7 | Physical LeLamp-compatible prototype | **In progress** — calibrated motion validated |
-| 8 | Native hardware runtime and sim-to-real transfer | **In progress** — named poses and motions working |
+| 8 | Native hardware runtime and sim-to-real transfer | **In progress** — Rust runtime confirmed in MuJoCo and on hardware |
 | 9 | Perception and world model | Planned |
 | 10 | Attention and adaptive task lighting | Planned |
 | 11 | Behaviour orchestration | Planned |
@@ -1175,7 +1175,7 @@ native backend adapters.
 
 ## Work required
 
-Create an STS3215 Rust runtime that converts between:
+The implemented STS3215 Rust runtime converts between:
 
 ```text
 Orion joint radians

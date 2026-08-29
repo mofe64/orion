@@ -54,19 +54,101 @@ accumulates the shared base translation, tilt, height, and contact policy in
 ## Physical hardware
 
 The Rust transport has been validated on Orion's Raspberry Pi and five-servo
-STS3215 bus. Begin a new checkout or hardware change with a torque-off state
-snapshot:
+STS3215 bus. Run all commands directly from the source checkout; Orion is not
+installed as a system service.
+
+### Read hardware state without enabling torque
 
 ```bash
-runtime/target/debug/oriond --check \
+cd /home/mofe/dev/orion
+
+runtime/target/release/oriond --check \
   --port /dev/ttyACM0 \
-  --calibration "$HOME/.config/orion/servo_calibration.json"
+  --calibration /home/mofe/.config/orion/servo_calibration.json
 ```
 
-The hardware lifecycle is `--serve`, `--configure`, `--enable`, motion
-commands, then `--disable`.
-Neither daemon command is a physical emergency stop; an accessible hardware
-torque/power interruption remains required during physical trials.
+`--check` reads one direct state snapshot and exits. It does not enable torque
+or write servo registers.
+
+### Start the runtime
+
+In Terminal 1:
+
+```bash
+cd /home/mofe/dev/orion
+
+runtime/target/release/oriond --serve \
+  --backend hardware \
+  --port /dev/ttyACM0 \
+  --baud-rate 1000000 \
+  --calibration /home/mofe/.config/orion/servo_calibration.json
+```
+
+The expected startup message is:
+
+```text
+oriond: observing hardware at 50 Hz on /tmp/oriond.sock
+```
+
+Leave Terminal 1 running. The foreground daemon owns the serial connection and
+serves commands through `/tmp/oriond.sock`.
+
+### Control Orion
+
+Open Terminal 2:
+
+```bash
+cd /home/mofe/dev/orion
+
+runtime/target/release/oriond --status
+runtime/target/release/oriond --configure
+runtime/target/release/oriond --enable
+runtime/target/release/oriond --status
+```
+
+Run a named pose:
+
+```bash
+runtime/target/release/oriond --goto home --duration 3.0
+```
+
+Run an authored movement:
+
+```bash
+runtime/target/release/oriond --play look_at_left_expressive
+```
+
+Stop the current movement and hold its current commanded position:
+
+```bash
+runtime/target/release/oriond --stop
+```
+
+### Normal shutdown
+
+Move Orion to its captured mechanical rest pose before disabling torque:
+
+```bash
+runtime/target/release/oriond --goto rest --duration 3.0
+runtime/target/release/oriond --status
+```
+
+`--goto` starts an asynchronous trajectory. Repeat `--status` until its JSON
+reports `"mode":"holding"`; do not disable while it reports
+`"mode":"moving"`. Once Orion has reached rest and is holding there, disable
+torque:
+
+```bash
+runtime/target/release/oriond --disable
+```
+
+Then stop Terminal 1 with `Ctrl+C`.
+
+The normal hardware lifecycle is `--serve`, `--configure`, `--enable`, motion
+commands, `--goto rest`, confirmed holding, and finally `--disable`.
+Neither `--disable` nor stopping the daemon is a physical emergency stop; an
+accessible hardware torque/power interruption remains required during physical
+trials.
 
 ## Port structure
 

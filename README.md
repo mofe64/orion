@@ -25,8 +25,8 @@ cargo test --manifest-path runtime/Cargo.toml --all-targets
 PYTHONPATH=motion python3 -m pytest -q motion/test
 ```
 
-See [`runtime/README.md`](runtime/README.md) for the MuJoCo-first
-Rust workflow and the physical-hardware test gate.
+See [`runtime/README.md`](runtime/README.md) for the complete Rust build,
+simulation, and physical-hardware workflow.
 
 ## Demo motion sequence
 
