@@ -159,15 +159,13 @@ The torque-off calibration command remains available as a setup utility:
 uv run orion-calibrate-servos --port /dev/ttyACM0
 ```
 
-Start with the 6 V servo supply off and use padded blocks to support the arm and
-head. At the first prompt, turn 6 V on and type `CALIBRATE ALL`. The supply must
-be on for encoder communication, but torque stays off for the complete session;
-the command never sends a goal position.
+The command connects immediately and verifies that torque is off; it never
+sends a goal position. Arrange the desired zero pose and press Enter to capture
+it, then press Enter once to start the combined range recording.
 
 The workflow has one neutral capture and one combined recording window:
 
-1. Put the assembled lamp in the reference LeLamp zero/middle pose and capture
-   that position.
+1. Put the assembled lamp in the desired zero pose and capture that position.
 2. Start range recording.
 3. Move one joint at a time slowly through its usable travel while keeping the
    other links supported.
@@ -209,8 +207,9 @@ run:
 uv run orion-accept-supported-rest --port /dev/ttyACM0
 ```
 
-The command reads the live shoulder encoder, displays its raw delta and angle,
-and requires `ACCEPT SHOULDER REST` before updating the software calibration.
+The command reads the live shoulder encoder and displays its raw delta and
+angle. If the position is already allowed it exits without changing the file;
+otherwise, enter `y` at the single save prompt.
 It retains the usual margins everywhere else, records the zero-margin supported
 endpoint explicitly, backs up the previous JSON, and never writes servo EEPROM.
 

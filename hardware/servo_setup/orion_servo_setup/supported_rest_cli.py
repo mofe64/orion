@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 
 from .archived.motion_test import motion_test_plan, read_motion_preflight
 from .bus import create_lerobot_bus
 from .calibration import (
+    ENCODER_RESOLUTION,
     SUPPORTED_REST_MINIMUM_JOINT,
     CalibrationError,
     accept_supported_rest_minimum,
+    circular_delta,
     write_calibration_file,
 )
 
@@ -22,10 +25,7 @@ DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Capture the torque-off shoulder position resting on Orion's base "
-            "and make that documented endpoint commandable."
-        )
+        description="Allow Orion's live, torque-off supported shoulder rest."
     )
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
     parser.add_argument(
@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the operation without opening hardware or changing calibration.",
+        help="Show the selected port and calibration without opening hardware.",
     )
     return parser
 
@@ -58,14 +58,14 @@ def _load_document(path: Path) -> dict[str, object]:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     calibration_path = args.calibration.expanduser()
-    print("Orion supported shoulder-rest calibration:")
-    print(f"  Joint: {SUPPORTED_REST_MINIMUM_JOINT}")
-    print(f"  Calibration: {calibration_path}")
-    print("  Servo EEPROM: unchanged")
     if args.dry_run:
-        print("Dry run only: hardware was not opened and calibration was not changed.")
+        print(
+            f"Would read supported shoulder rest on {args.port}; "
+            f"calibration: {calibration_path}"
+        )
         return 0
 
+    print(f"Orion supported shoulder rest: {args.port}")
     bus = None
     try:
         document = _load_document(calibration_path)
@@ -80,6 +80,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             ).items()
         }
         raw_position = positions[SUPPORTED_REST_MINIMUM_JOINT]
+        joints = document.get("joints")
+        shoulder_current = (
+            joints.get(SUPPORTED_REST_MINIMUM_JOINT)
+            if isinstance(joints, dict)
+            else None
+        )
+        if not isinstance(shoulder_current, dict):
+            raise CalibrationError(
+                f"Calibration is missing {SUPPORTED_REST_MINIMUM_JOINT}."
+            )
+        neutral = shoulder_current.get("neutral_raw")
+        safe_min = shoulder_current.get("safe_min_delta_raw")
+        safe_max = shoulder_current.get("safe_max_delta_raw")
+        if type(neutral) is not int or type(safe_min) is not int or type(safe_max) is not int:
+            raise CalibrationError("Shoulder calibration limits must be integers.")
+        delta = circular_delta(raw_position, neutral)
+        radians = delta * 2.0 * math.pi / ENCODER_RESOLUTION
+        if safe_min <= delta <= safe_max:
+            print(
+                f"Already allowed: raw={raw_position} delta={delta:+d} "
+                f"angle={radians:+.6f} rad"
+            )
+            return 0
+
         updated = accept_supported_rest_minimum(
             document,
             raw_position=raw_position,
@@ -88,16 +112,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             SUPPORTED_REST_MINIMUM_JOINT
         ]
         delta = int(shoulder["supported_rest_minimum_delta_raw"])
-        radians = delta * 2.0 * 3.141592653589793 / 4096.0
+        radians = delta * 2.0 * math.pi / ENCODER_RESOLUTION
         print(
-            f"\nCaptured supported rest: raw={raw_position}, "
-            f"delta={delta:+d}, angle={radians:+.6f} rad"
+            f"Candidate: raw={raw_position} delta={delta:+d} "
+            f"angle={radians:+.6f} rad"
         )
-        confirmation = input(
-            "Type ACCEPT SHOULDER REST to update the software calibration: "
-        )
-        if confirmation.strip() != "ACCEPT SHOULDER REST":
-            print("Cancelled. Calibration was not changed.")
+        confirmation = input("Save? [y/N] ")
+        if confirmation.strip().lower() != "y":
+            print("Cancelled.")
             return 2
 
         read_motion_preflight(bus, assignments)
@@ -109,8 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RuntimeError,
         ValueError,
     ) as error:
-        print(f"\nSupported-rest calibration stopped: {error}")
-        print("Calibration was not changed.")
+        print(f"Supported-rest calibration failed: {error}")
         return 1
     finally:
         if bus is not None and getattr(bus, "is_connected", False):
@@ -119,13 +140,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             finally:
                 bus.disconnect(disable_torque=True)
 
-    print(f"\nUpdated: {calibration_path}")
+    print(f"Saved: {calibration_path}")
     if backup is not None:
-        print(f"Previous calibration backed up to: {backup}")
-    print(
-        "The shoulder supported-rest endpoint is now commandable; "
-        "servo EEPROM is unchanged."
-    )
+        print(f"Backup: {backup}")
+    print("Torque: off")
     return 0
 
 

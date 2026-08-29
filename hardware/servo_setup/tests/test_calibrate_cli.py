@@ -90,8 +90,7 @@ class CalibrateCliTests(unittest.TestCase):
             result = main(["--port", "/dev/not-opened", "--dry-run"])
 
         self.assertEqual(result, 0)
-        self.assertIn("ID 5: head_pitch_joint", stream.getvalue())
-        self.assertIn("no serial port was opened", stream.getvalue())
+        self.assertIn("Would calibrate IDs 1,2,3,4,5", stream.getvalue())
 
     def test_complete_session_saves_once_and_cleans_up(self) -> None:
         bus = FakeCalibrationBus()
@@ -112,7 +111,7 @@ class CalibrateCliTests(unittest.TestCase):
             with (
                 patch("orion_servo_setup.calibrate_cli.create_lerobot_bus", return_value=bus),
                 patch("orion_servo_setup.calibrate_cli._record_until_enter", return_value=captures),
-                patch("builtins.input", side_effect=["CALIBRATE ALL", "", ""]),
+                patch("builtins.input", side_effect=["", ""]),
                 redirect_stdout(stream),
             ):
                 result = main(
@@ -123,7 +122,8 @@ class CalibrateCliTests(unittest.TestCase):
             self.assertTrue(output_path.exists())
             self.assertEqual(bus.disable_calls, [(None, 2)])
             self.assertEqual(bus.disconnect_calls, [True])
-            self.assertIn("complete for all five joints", stream.getvalue())
+            self.assertIn("Saved:", stream.getvalue())
+            self.assertIn("Torque: off", stream.getvalue())
 
 
 if __name__ == "__main__":

@@ -18,9 +18,10 @@ from orion_servo_setup.supported_rest_cli import main
 
 
 class FakeSupportedRestBus:
-    def __init__(self) -> None:
+    def __init__(self, shoulder_raw: int = 1348) -> None:
         self.is_connected = False
         self.disable_calls = 0
+        self.shoulder_raw = shoulder_raw
 
     def connect(self, handshake: bool = True) -> None:
         self.is_connected = True
@@ -31,7 +32,7 @@ class FakeSupportedRestBus:
         positions = {
             item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS
         }
-        positions["shoulder_pitch_joint"] = 1348
+        positions["shoulder_pitch_joint"] = self.shoulder_raw
         return positions
 
     def disable_torque(self, motors=None, num_retry=0) -> None:
@@ -54,7 +55,7 @@ class SupportedRestCliTests(unittest.TestCase):
             result = main(["--port", "/dev/not-opened", "--dry-run"])
 
         self.assertEqual(result, 0)
-        self.assertIn("hardware was not opened", stream.getvalue())
+        self.assertIn("Would read supported shoulder rest", stream.getvalue())
 
     def test_accepts_live_supported_endpoint_and_backs_up_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -81,7 +82,7 @@ class SupportedRestCliTests(unittest.TestCase):
                     return_value=bus,
                 ),
                 patch("orion_servo_setup.supported_rest_cli.read_motion_preflight"),
-                patch("builtins.input", return_value="ACCEPT SHOULDER REST"),
+                patch("builtins.input", return_value="y"),
                 redirect_stdout(stream),
             ):
                 result = main(
@@ -108,6 +109,53 @@ class SupportedRestCliTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertGreaterEqual(bus.disable_calls, 1)
         self.assertFalse(bus.is_connected)
+
+    def test_position_already_inside_range_is_a_successful_no_op(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration_path = Path(directory) / "calibration.json"
+            neutral = {
+                item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS
+            }
+            captures = initialize_captures(neutral)
+            captures = update_captures(
+                captures,
+                {item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS},
+            )
+            captures = update_captures(
+                captures,
+                {item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS},
+            )
+            document = build_calibration_document(captures, port="/dev/fake")
+            original = json.dumps(document)
+            calibration_path.write_text(original, encoding="utf-8")
+            bus = FakeSupportedRestBus(shoulder_raw=1500)
+            stream = io.StringIO()
+            with (
+                patch(
+                    "orion_servo_setup.supported_rest_cli.create_lerobot_bus",
+                    return_value=bus,
+                ),
+                patch("orion_servo_setup.supported_rest_cli.read_motion_preflight"),
+                patch(
+                    "builtins.input",
+                    side_effect=AssertionError("no confirmation should be requested"),
+                ),
+                redirect_stdout(stream),
+            ):
+                result = main(
+                    [
+                        "--port",
+                        "/dev/fake",
+                        "--calibration",
+                        str(calibration_path),
+                    ]
+                )
+
+            saved = calibration_path.read_text(encoding="utf-8")
+
+        self.assertEqual(result, 0)
+        self.assertEqual(saved, original)
+        self.assertIn("Already allowed:", stream.getvalue())
 
 
 if __name__ == "__main__":
