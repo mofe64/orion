@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,8 @@ MAX_CAPTURE_SPAN_RAW = 2304  # 202.5 degrees; Orion joints are not continuous.
 YAW_REFERENCE_LIMIT_RAW = 1024  # 90 degrees from neutral.
 YAW_SAFE_LIMIT_RAW = YAW_REFERENCE_LIMIT_RAW - SAFE_MARGIN_RAW
 YAW_JOINTS = frozenset({"base_yaw_joint", "head_roll_joint"})
+SUPPORTED_REST_MINIMUM_JOINT = "shoulder_pitch_joint"
+SUPPORTED_REST_MAX_EXTENSION_RAW = 128
 
 
 class CalibrationError(RuntimeError):
@@ -67,6 +70,91 @@ class JointCalibration:
     lerobot_homing_offset: int
     lerobot_safe_range_min: int
     lerobot_safe_range_max: int
+
+
+def accept_supported_rest_minimum(
+    document: Mapping[str, object],
+    *,
+    raw_position: int,
+) -> dict[str, object]:
+    """Make Orion's base-supported shoulder rest a documented safe minimum.
+
+    This is deliberately limited to the shoulder's lower endpoint. Unlike a
+    free-space travel endpoint, the pose is mechanically supported by the
+    lamp base and is intentionally commandable without the usual inward
+    margin. All other calibration endpoints retain their existing margins.
+    """
+
+    updated = deepcopy(dict(document))
+    if (
+        updated.get("schema_version") != 1
+        or updated.get("robot") != "orion"
+        or updated.get("servo_model") != "sts3215"
+        or updated.get("encoder_resolution") != ENCODER_RESOLUTION
+        or updated.get("writes_servo_eeprom") is not False
+    ):
+        raise CalibrationError(
+            "Calibration is not an Orion STS3215 schema-version-1 file."
+        )
+    if type(raw_position) is not int or not 0 <= raw_position < ENCODER_RESOLUTION:
+        raise CalibrationError(
+            f"Supported rest raw position must be in 0..4095; got {raw_position!r}."
+        )
+
+    joints = updated.get("joints")
+    if not isinstance(joints, dict):
+        raise CalibrationError("Calibration joints must be a mapping.")
+    joint = joints.get(SUPPORTED_REST_MINIMUM_JOINT)
+    if not isinstance(joint, dict):
+        raise CalibrationError(
+            f"Calibration is missing {SUPPORTED_REST_MINIMUM_JOINT}."
+        )
+    neutral = joint.get("neutral_raw")
+    measured_min = joint.get("measured_min_delta_raw")
+    safe_min = joint.get("safe_min_delta_raw")
+    safe_max = joint.get("safe_max_delta_raw")
+    for field_name, value in (
+        ("neutral_raw", neutral),
+        ("measured_min_delta_raw", measured_min),
+        ("safe_min_delta_raw", safe_min),
+        ("safe_max_delta_raw", safe_max),
+    ):
+        if type(value) is not int:
+            raise CalibrationError(
+                f"{SUPPORTED_REST_MINIMUM_JOINT}.{field_name} must be an integer."
+            )
+
+    delta = circular_delta(raw_position, neutral)
+    if neutral + delta != raw_position:
+        raise CalibrationError(
+            "Supported shoulder rest crosses the raw encoder boundary; "
+            "a direct LeRobot range value cannot represent it."
+        )
+    if delta >= 0:
+        raise CalibrationError("Supported shoulder rest must be below calibrated zero.")
+    if delta >= safe_min:
+        raise CalibrationError(
+            f"Supported shoulder rest {delta:+d} is already inside the safe range."
+        )
+    if delta < measured_min - SUPPORTED_REST_MAX_EXTENSION_RAW:
+        raise CalibrationError(
+            f"Supported shoulder rest {delta:+d} is more than "
+            f"{SUPPORTED_REST_MAX_EXTENSION_RAW} counts beyond the measured minimum "
+            f"{measured_min:+d}; repeat the main range calibration."
+        )
+    if delta <= -HALF_TURN_RAW or delta >= safe_max:
+        raise CalibrationError(
+            "Supported shoulder rest does not form a valid bounded range."
+        )
+
+    joint["measured_min_delta_raw"] = min(measured_min, delta)
+    joint["safe_min_delta_raw"] = delta
+    joint["safe_min_degrees"] = delta * 360.0 / ENCODER_RESOLUTION
+    joint["lerobot_safe_range_min"] = LELAMP_HOMING_TARGET_RAW + delta
+    joint["supported_rest_minimum_raw"] = raw_position
+    joint["supported_rest_minimum_delta_raw"] = delta
+    joint["supported_rest_minimum_has_margin"] = False
+    return updated
 
 
 def circular_delta(raw_position: int, neutral_raw: int) -> int:

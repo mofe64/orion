@@ -18,4 +18,5 @@ dependencies = [
 orion-setup-servos = "orion_servo_setup.cli:main"
 orion-verify-servos = "orion_servo_setup.verify_cli:main"
 orion-calibrate-servos = "orion_servo_setup.calibrate_cli:main"
+orion-accept-supported-rest = "orion_servo_setup.supported_rest_cli:main"
 orion-capture-rest = "orion_servo_setup.rest_cli:main"

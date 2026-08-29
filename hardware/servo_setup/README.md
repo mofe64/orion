@@ -197,6 +197,23 @@ The file contains the neutral encoder value, measured range, reduced safe
 range, encoder direction, and equivalent LeRobot homing/range values for every
 joint. Existing output is preserved as a timestamped backup before replacement.
 
+### Accept the mechanically supported shoulder rest
+
+The normal 20-step margin remains appropriate for free-space endpoints. Orion's
+lower shoulder rest is different: the arm is mechanically supported by the
+lamp base and that exact stable endpoint is a useful pose. After completing the
+main calibration, place the torque-off shoulder in that supported position and
+run:
+
+```bash
+uv run orion-accept-supported-rest --port /dev/ttyACM0
+```
+
+The command reads the live shoulder encoder, displays its raw delta and angle,
+and requires `ACCEPT SHOULDER REST` before updating the software calibration.
+It retains the usual margins everywhere else, records the zero-margin supported
+endpoint explicitly, backs up the previous JSON, and never writes servo EEPROM.
+
 ### Original LeLamp behavior and Orion's deliberate deviation
 
 Original LeLamp calls LeRobot's `set_half_turn_homings()`, records encoder

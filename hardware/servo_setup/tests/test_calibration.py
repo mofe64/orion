@@ -7,6 +7,7 @@ from pathlib import Path
 
 from orion_servo_setup.calibration import (
     CalibrationError,
+    accept_supported_rest_minimum,
     build_calibration_document,
     circular_delta,
     initialize_captures,
@@ -18,6 +19,54 @@ from orion_servo_setup.provisioning import ORION_SERVO_ASSIGNMENTS
 
 
 class CalibrationTests(unittest.TestCase):
+    def test_supported_shoulder_rest_updates_every_dependent_limit(self) -> None:
+        neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
+        captures = initialize_captures(neutral)
+        captures = update_captures(
+            captures,
+            {item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS},
+        )
+        captures = update_captures(
+            captures,
+            {item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS},
+        )
+        document = build_calibration_document(captures, port="/dev/fake")
+
+        updated = accept_supported_rest_minimum(document, raw_position=1300)
+        shoulder = updated["joints"]["shoulder_pitch_joint"]  # type: ignore[index]
+
+        self.assertEqual(shoulder["measured_min_delta_raw"], -748)
+        self.assertEqual(shoulder["safe_min_delta_raw"], -748)
+        self.assertAlmostEqual(shoulder["safe_min_degrees"], -65.7421875)
+        self.assertEqual(shoulder["lerobot_safe_range_min"], 1299)
+        self.assertEqual(shoulder["supported_rest_minimum_raw"], 1300)
+        self.assertEqual(shoulder["supported_rest_minimum_delta_raw"], -748)
+        self.assertFalse(shoulder["supported_rest_minimum_has_margin"])
+
+        original_shoulder = document["joints"][  # type: ignore[index]
+            "shoulder_pitch_joint"
+        ]
+        self.assertEqual(original_shoulder["safe_min_delta_raw"], -628)
+
+    def test_supported_shoulder_rest_must_extend_the_existing_range(self) -> None:
+        neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
+        captures = initialize_captures(neutral)
+        captures = update_captures(
+            captures,
+            {item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS},
+        )
+        captures = update_captures(
+            captures,
+            {item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS},
+        )
+        document = build_calibration_document(captures, port="/dev/fake")
+
+        with self.assertRaisesRegex(CalibrationError, "already inside"):
+            accept_supported_rest_minimum(document, raw_position=1500)
+
+        with self.assertRaisesRegex(CalibrationError, "repeat the main range"):
+            accept_supported_rest_minimum(document, raw_position=1100)
+
     def test_circular_delta_handles_encoder_wraparound(self) -> None:
         self.assertEqual(circular_delta(10, 4090), 16)
         self.assertEqual(circular_delta(4090, 10), -16)
