@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -146,7 +147,8 @@ def write_rest_pose(
 
     pose_path = pose_path.expanduser()
     try:
-        root: Any = yaml.safe_load(pose_path.read_text(encoding="utf-8"))
+        source = pose_path.read_text(encoding="utf-8")
+        root: Any = yaml.safe_load(source)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise RestCaptureError(f"Could not read pose library '{pose_path}': {exc}") from exc
     if not isinstance(root, dict) or root.get("format_version") != 1:
@@ -159,15 +161,39 @@ def write_rest_pose(
     if REST_POSE_NAME in poses and not replace:
         raise RestCaptureError("Pose 'rest' already exists; rerun with --replace to overwrite it.")
 
-    poses[REST_POSE_NAME] = {
-        "description": REST_DESCRIPTION,
-        "positions": dict(positions_radians),
-    }
+    expected_joints = tuple(item.joint_name for item in ORION_SERVO_ASSIGNMENTS)
+    if set(positions_radians) != set(expected_joints):
+        raise RestCaptureError("Rest pose must contain Orion's five canonical joints.")
+    rest_lines = [
+        "  rest:",
+        f"    description: {REST_DESCRIPTION}",
+        "    positions:",
+    ]
+    for joint_name in expected_joints:
+        value = positions_radians[joint_name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RestCaptureError(f"Rest value for {joint_name} must be numeric.")
+        numeric_value = float(value)
+        if not math.isfinite(numeric_value):
+            raise RestCaptureError(f"Rest value for {joint_name} must be finite.")
+        rest_lines.append(f"      {joint_name}: {numeric_value!r}")
+    rest_block = "\n".join(rest_lines) + "\n\n"
+
+    rest_match = re.search(r"(?m)^  rest:\s*$", source)
+    if rest_match is not None:
+        next_pose = re.search(r"(?m)^  [A-Za-z][A-Za-z0-9_]*:\s*$", source[rest_match.end():])
+        end = len(source) if next_pose is None else rest_match.end() + next_pose.start()
+        updated_source = source[:rest_match.start()] + rest_block + source[end:]
+    else:
+        poses_match = re.search(r"(?m)^poses:\s*$", source)
+        if poses_match is None:
+            raise RestCaptureError("Pose library must contain a poses mapping.")
+        insertion = poses_match.end()
+        updated_source = source[:insertion] + "\n" + rest_block + source[insertion + 1:]
+
     temporary_path = pose_path.with_suffix(f"{pose_path.suffix}.tmp")
     try:
-        temporary_path.write_text(
-            yaml.safe_dump(root, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
+        temporary_path.write_text(updated_source, encoding="utf-8")
         os.replace(temporary_path, pose_path)
     except BaseException:
         temporary_path.unlink(missing_ok=True)

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "encoder_resolution": 4096,
   "calibration_file": "servo_calibration.json",
-  "source_calibration_sha256": "294286327ba0407ffb167b0ce114d3243941d500ec2e2bd991831f316e52842b",
+  "source_calibration_sha256": "f1194f8fca4525308144f1982d978fea4e89aac1a3d41f3c860fe69ad14385dd",
   "alignment_method": "The physical robot was held at its captured zero while the existing MJCF was visually aligned in the calibrated pose editor.",
   "alignment_qpos_radians": {
     "base_yaw_joint": -0.346,

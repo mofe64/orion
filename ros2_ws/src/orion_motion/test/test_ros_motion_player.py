@@ -78,7 +78,7 @@ def test_expressive_motion_preserves_all_arrival_and_hold_times():
         duration_seconds(point.time_from_start) for point in message.points
     ]
     assert actual_times == pytest.approx(
-        [0.0, 0.46, 0.58, 1.15, 1.23, 1.98, 2.08, 2.48, 2.98]
+        [0.0, 0.65, 0.77, 1.34, 1.42, 2.17, 2.27, 2.67, 3.17]
     )
     assert list(message.points[-1].positions) == list(
         generated.points[-1].positions

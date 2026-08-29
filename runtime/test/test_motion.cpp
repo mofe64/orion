@@ -43,7 +43,7 @@ TEST(PoseLibraryTest, LoadsOrionNamedPoses)
   const PoseLibrary poses(ORION_TEST_POSES_FILE, joints);
 
   EXPECT_EQ(poses.pose("rest").size(), 5U);
-  EXPECT_DOUBLE_EQ(poses.pose("home").at("shoulder_pitch_joint"), 0.30);
+  EXPECT_DOUBLE_EQ(poses.pose("home").at("shoulder_pitch_joint"), 0.0);
   EXPECT_THROW(poses.pose("missing"), std::invalid_argument);
 }
 

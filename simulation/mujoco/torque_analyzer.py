@@ -36,7 +36,7 @@ MOTION_PACKAGE_SOURCE = PROJECT_ROOT / "ros2_ws/src/orion_motion"
 CONFIG_DIRECTORY = MOTION_PACKAGE_SOURCE / "config"
 DEFAULT_SCENE_PATH = MUJOCO_DIRECTORY / "scene.xml"
 DEFAULT_POSE_PATH = CONFIG_DIRECTORY / "poses.yaml"
-DEFAULT_POSE_NAMES = ("rest", "zero_reference", "home", "attentive")
+DEFAULT_POSE_NAMES = ("zero_reference", "home", "attentive")
 
 # Consume the motion package from this source tree, matching motion_player.py.
 sys.path.insert(0, str(MOTION_PACKAGE_SOURCE))
@@ -423,6 +423,31 @@ def analyze_static_pose(
 
     data = mujoco.MjData(model)
     set_joint_state(model, data, mapping, values)
+    floor_geometry_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, "floor"
+    )
+    base_geometry_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, "base_floor_collision"
+    )
+    expected_contact = {floor_geometry_id, base_geometry_id}
+    external_contacts: set[str] = set()
+    for index in range(data.ncon):
+        contact = data.contact[index]
+        contact_geometries = {int(contact.geom1), int(contact.geom2)}
+        if contact_geometries == expected_contact:
+            continue
+        for geometry_id in contact_geometries - {floor_geometry_id}:
+            body_id = int(model.geom_bodyid[geometry_id])
+            body_name = mujoco.mj_id2name(
+                model, mujoco.mjtObj.mjOBJ_BODY, body_id
+            )
+            external_contacts.add(body_name or f"body#{body_id}")
+    if external_contacts:
+        details = ", ".join(sorted(external_contacts))
+        raise TorqueAnalysisError(
+            f"Pose '{pose_name}' uses external mechanical support at {details}; "
+            "base-only static torque analysis does not apply."
+        )
     data.qvel[:] = 0.0
     data.qacc[:] = 0.0
     data.ctrl[:] = 0.0

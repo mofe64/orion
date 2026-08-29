@@ -41,27 +41,16 @@ class StaticTorqueAnalysisTests(unittest.TestCase):
             tuple(report.pose_name for report in reports), DEFAULT_POSE_NAMES
         )
 
-    def test_rest_report_transfers_support_to_the_physical_base(self):
-        report = analyze_static_pose(
-            self.model,
-            "rest",
-            load_named_pose(DEFAULT_POSE_PATH, "rest"),
-        )
-        demands = {
-            demand.joint_name: demand for demand in report.joint_demands
-        }
-
-        self.assertAlmostEqual(report.base_support_force_n[2], 11.464916, places=5)
-        self.assertAlmostEqual(
-            demands["shoulder_pitch_joint"].torque_nm, -0.005367, places=5
-        )
-        self.assertAlmostEqual(
-            demands["elbow_pitch_joint"].torque_nm, -0.728365, places=5
-        )
-        self.assertGreater(
-            demands["elbow_pitch_joint"].absolute_torque_nm,
-            RATED_TORQUE_NM,
-        )
+    def test_supported_rest_is_not_reported_as_base_only_static_torque(self):
+        with self.assertRaisesRegex(
+            TorqueAnalysisError,
+            "external mechanical support",
+        ):
+            analyze_static_pose(
+                self.model,
+                "rest",
+                load_named_pose(DEFAULT_POSE_PATH, "rest"),
+            )
 
     def test_zero_pose_base_yaw_has_no_gravity_demand(self):
         report = analyze_static_pose(

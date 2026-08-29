@@ -79,6 +79,31 @@ class RestCaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(RestCaptureError, "--replace"):
                 write_rest_pose(path, angles)
 
+    def test_replacing_rest_preserves_unrelated_yaml_formatting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "poses.yaml"
+            path.write_text(
+                "format_version: 1\n"
+                "units: radians\n\n"
+                "poses:\n"
+                "  rest:\n"
+                "    description: old\n"
+                "    positions:\n"
+                "      base_yaw_joint: 0.0\n\n"
+                "  home:\n"
+                "    description: Keep this formatting.\n"
+                "    positions:\n"
+                "      base_yaw_joint: -0.30  # unchanged\n",
+                encoding="utf-8",
+            )
+            angles = {name: 0.0 for name in NEUTRALS}
+
+            write_rest_pose(path, angles, replace=True)
+            saved_text = path.read_text(encoding="utf-8")
+
+        self.assertIn("      base_yaw_joint: -0.30  # unchanged\n", saved_text)
+        self.assertIn("    description: Keep this formatting.\n", saved_text)
+
 
 if __name__ == "__main__":
     unittest.main()

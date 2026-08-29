@@ -127,7 +127,7 @@ class PoseTunerConfigurationTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             configuration.initial_targets["elbow_pitch_joint"],
-            0.0,
+            1.03697101,
         )
 
 
@@ -146,7 +146,7 @@ class SharedTrajectoryPlaybackTests(unittest.TestCase):
 
         midpoint, completed = sample_trajectory(generated, 0.75)
         self.assertFalse(completed)
-        self.assertAlmostEqual(midpoint.positions[0], -0.65, places=10)
+        self.assertAlmostEqual(midpoint.positions[0], -0.764, places=10)
         self.assertNotEqual(midpoint.positions, generated.points[-1].positions)
 
     def test_mujoco_execution_rejects_unvalidated_trajectory(self):

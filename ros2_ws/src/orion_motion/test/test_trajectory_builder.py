@@ -41,7 +41,7 @@ def test_builds_left_motion_in_canonical_joint_order(project_poses, project_limi
     assert len(trajectory.keyframes) == 1
     keyframe = trajectory.keyframes[0]
     assert keyframe.pose_name == "look_left"
-    assert keyframe.positions == (-1.0, -0.10, -0.28, -0.65, -0.22)
+    assert keyframe.positions == (-1.228, -0.10, -0.28, -0.65, -0.22)
     assert keyframe.start_time == pytest.approx(0.0)
     assert keyframe.arrival_time == pytest.approx(1.5)
     assert keyframe.hold_until == pytest.approx(2.0)
@@ -102,56 +102,27 @@ def test_does_not_mutate_source_data(project_poses, project_limits):
     assert project_limits == original_limits
 
 
-def test_expressive_acknowledgement_returns_to_attentive(
+def test_expressive_right_uses_mirrored_derived_poses(
     project_poses, project_limits
 ):
     motion = load_yaml_file(
-        MOTIONS_DIRECTORY / "expressive" / "acknowledge_expressive.yaml"
-    )
-
-    trajectory = build_trajectory(motion, project_poses, project_limits)
-
-    attentive_positions = tuple(
-        project_poses["poses"]["attentive"]["positions"][joint_name]
-        for joint_name in trajectory.joint_names
-    )
-    assert len(trajectory.keyframes) == 4
-    assert trajectory.keyframes[-1].pose_name == "attentive"
-    assert trajectory.keyframes[-1].positions == attentive_positions
-    assert trajectory.total_duration == pytest.approx(2.69)
-
-
-def test_functional_unreachable_response_remains_attentive(
-    project_poses, project_limits
-):
-    motion = load_yaml_file(
-        MOTIONS_DIRECTORY / "functional" / "target_unreachable.yaml"
-    )
-
-    trajectory = build_trajectory(motion, project_poses, project_limits)
-
-    assert [keyframe.pose_name for keyframe in trajectory.keyframes] == ["attentive"]
-    assert trajectory.total_duration == pytest.approx(1.00)
-
-
-def test_expressive_unreachable_response_has_no_gesture_and_safe_settle(
-    project_poses, project_limits
-):
-    motion = load_yaml_file(
-        MOTIONS_DIRECTORY / "expressive" / "target_unreachable_expressive.yaml"
+        MOTIONS_DIRECTORY / "expressive" / "look_at_right_expressive.yaml"
     )
 
     trajectory = build_trajectory(motion, project_poses, project_limits)
 
     assert [keyframe.pose_name for keyframe in trajectory.keyframes] == [
-        "attentive",
-        "unreachable_reach",
-        "unreachable_user",
-        "unreachable_shake_left",
-        "unreachable_shake_right",
-        "unreachable_shake_left",
-        "unreachable_user",
-        "attentive",
+        "look_right_anticipation",
+        "look_right_lean",
+        "look_right_overshoot",
+        "look_right",
     ]
-    assert trajectory.keyframes[-1].positions == trajectory.keyframes[0].positions
-    assert trajectory.total_duration == pytest.approx(5.80)
+    assert len(trajectory.keyframes) == 4
+    assert trajectory.keyframes[-1].positions == (
+        1.54,
+        -0.10,
+        -0.28,
+        -0.65,
+        -0.22,
+    )
+    assert trajectory.total_duration == pytest.approx(4.12)

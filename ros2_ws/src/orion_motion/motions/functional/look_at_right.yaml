@@ -5,5 +5,5 @@ motion:
   description: Turn directly toward the predefined target on Orion's right.
   keyframes:
     - pose: look_right
-      duration: 1.5
+      duration: 2.5
       hold: 0.5

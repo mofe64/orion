@@ -5,7 +5,7 @@ motion:
   description: Notice, lean toward, and settle on the predefined left target.
   keyframes:
     - pose: look_left_anticipation
-      duration: 0.46
+      duration: 0.65
       hold: 0.12
     - pose: look_left_lean
       duration: 0.57

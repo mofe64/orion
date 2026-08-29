@@ -154,18 +154,18 @@ def test_analytic_peak_dynamics_are_recorded(project_poses, project_limits):
         for peak in generated.peak_dynamics
         if peak.joint_name == "shoulder_pitch_joint"
     )
-    assert shoulder.velocity == pytest.approx(1.875 * 0.4 / 2.0)
+    assert shoulder.velocity == pytest.approx(1.875 * 0.1 / 2.0)
     assert shoulder.acceleration == pytest.approx(
-        (10.0 / 3.0**0.5) * 0.4 / 2.0**2
+        (10.0 / 3.0**0.5) * 0.1 / 2.0**2
     )
-    assert shoulder.jerk == pytest.approx(60.0 * 0.4 / 2.0**3)
+    assert shoulder.jerk == pytest.approx(60.0 * 0.1 / 2.0**3)
 
 
 def test_aggressive_requested_motion_remains_inspectable(
     project_poses, project_limits
 ):
     motion = load_yaml_file(
-        MOTIONS_DIRECTORY / "expressive/acknowledge_expressive.yaml"
+        MOTIONS_DIRECTORY / "expressive/look_at_left_expressive.yaml"
     )
     motion["motion"]["keyframes"][1]["duration"] = 0.10
     requested = build_trajectory(motion, project_poses, project_limits)
@@ -175,7 +175,7 @@ def test_aggressive_requested_motion_remains_inspectable(
         requested, start, (0.0,) * 5, project_limits
     )
 
-    assert generated.name == "acknowledge_expressive"
+    assert generated.name == "look_at_left_expressive"
     assert any(
         peak.velocity
         > project_limits["joints"][peak.joint_name]["max_velocity"]
@@ -186,11 +186,9 @@ def test_aggressive_requested_motion_remains_inspectable(
 @pytest.mark.parametrize(
     "motion_name",
     [
-        "acknowledge",
         "look_at_left",
         "look_at_right",
         "return_home",
-        "target_unreachable",
     ],
 )
 def test_functional_motion_library_passes_provisional_limits(

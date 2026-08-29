@@ -65,14 +65,14 @@ class PoseLibraryTests(unittest.TestCase):
         self.assertEqual(
             configuration.pose_names[0:3], ("zero_reference", "rest", "home")
         )
-        self.assertEqual(configuration.pose_names[-1], "unreachable_shake_right")
-        self.assertEqual(len(configuration.pose_names), 15)
+        self.assertEqual(configuration.pose_names[-1], "look_right_overshoot")
+        self.assertEqual(len(configuration.pose_names), 12)
 
     def test_rejects_pose_outside_physical_calibration(self):
         source = POSE_LIBRARY.read_text(encoding="utf-8")
         invalid = source.replace(
-            "      shoulder_pitch_joint: 0.30",
-            "      shoulder_pitch_joint: 0.90",
+            "      shoulder_pitch_joint: 0.00000000",
+            "      shoulder_pitch_joint: 0.90000000",
             1,
         )
         with tempfile.TemporaryDirectory() as directory:
