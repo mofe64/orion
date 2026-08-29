@@ -74,5 +74,19 @@ TEST(StateSnapshotTest, SerializesActiveMotion)
     std::string::npos);
 }
 
+TEST(StateSnapshotTest, SerializesMotionKeyframeProgress)
+{
+  const auto snapshot = make_state_snapshot(
+    RuntimeMode::MOVING, 9, 50.0, {}, "look_at_left_expressive", 0.4,
+    "look_left_lean", 1, 4);
+  const auto json = state_snapshot_to_json(snapshot);
+
+  EXPECT_NE(json.find("\"name\":\"look_at_left_expressive\""), std::string::npos);
+  EXPECT_NE(json.find("\"keyframe\":\"look_left_lean\""), std::string::npos);
+  EXPECT_NE(json.find("\"keyframe_index\":1"), std::string::npos);
+  EXPECT_NE(json.find("\"keyframe_count\":4"), std::string::npos);
+  EXPECT_NE(json.find("\"progress\":0.4"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace orion_runtime

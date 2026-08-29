@@ -23,6 +23,8 @@
 #include "orion_hardware/ftservo_transport.hpp"
 #include "orion_hardware/sts3215_driver.hpp"
 #include "orion_runtime/joint_trajectory.hpp"
+#include "orion_runtime/motion_library.hpp"
+#include "orion_runtime/motion_sequence.hpp"
 #include "orion_runtime/pose_library.hpp"
 #include "orion_runtime/state_snapshot.hpp"
 
@@ -54,6 +56,8 @@ enum class Operation
   ENABLE,
   DISABLE,
   GOTO,
+  PLAY,
+  STOP,
 };
 
 struct Options
@@ -65,7 +69,9 @@ struct Options
   std::string calibration_file;
   std::string socket_path = kDefaultSocketPath;
   std::string poses_file = "ros2_ws/src/orion_motion/config/poses.yaml";
+  std::string motions_directory = "ros2_ws/src/orion_motion/motions";
   std::string pose_name;
+  std::string motion_name;
   double duration_seconds = 3.0;
 };
 
@@ -246,6 +252,8 @@ void print_usage(std::ostream & output)
     "  oriond --enable    [--socket PATH]\n"
     "  oriond --disable   [--socket PATH]\n\n"
     "  oriond --goto POSE [--duration SECONDS] [--socket PATH]\n\n"
+    "  oriond --play MOTION [--socket PATH]\n"
+    "  oriond --stop        [--socket PATH]\n\n"
     "  --check             Print one direct hardware state snapshot and exit.\n"
     "  --serve             Sample hardware at 50 Hz and serve local status JSON.\n"
     "  --status            Request the latest JSON snapshot from the daemon.\n"
@@ -253,12 +261,15 @@ void print_usage(std::ostream & output)
     "  --enable            Seed measured positions, then enable holding torque.\n"
     "  --disable           Disable holding torque.\n"
     "  --goto POSE         Move all five joints to a named Orion pose.\n"
+    "  --play MOTION       Play an authored multi-keyframe Orion motion.\n"
+    "  --stop              Stop movement at the current commanded position.\n"
     "  --duration SECONDS  Quintic move duration (default: 3.0).\n"
     "  --port DEVICE       Servo serial device (default: /dev/ttyACM0).\n"
     "  --baud-rate RATE     Servo bus rate (default: 1000000).\n"
     "  --calibration FILE  Orion calibration JSON file.\n"
     "  --socket PATH       Local API socket (default: /tmp/oriond.sock).\n"
     "  --poses FILE        Pose library used by --serve.\n"
+    "  --motions DIR       Motion-library directory used by --serve.\n"
     "  --help               Show this help.\n\n"
     "Check and serve startup never enable torque or write servo registers.\n";
 }
@@ -316,6 +327,15 @@ Options parse_options(int argc, char ** argv)
       select_operation(options, Operation::GOTO, argument);
       options.pose_name = require_value(argc, argv, index, argument);
     }
+    else if (argument == "--play")
+    {
+      select_operation(options, Operation::PLAY, argument);
+      options.motion_name = require_value(argc, argv, index, argument);
+    }
+    else if (argument == "--stop")
+    {
+      select_operation(options, Operation::STOP, argument);
+    }
     else if (argument == "--help" || argument == "-h")
     {
       options.help = true;
@@ -339,6 +359,10 @@ Options parse_options(int argc, char ** argv)
     else if (argument == "--poses")
     {
       options.poses_file = require_value(argc, argv, index, argument);
+    }
+    else if (argument == "--motions")
+    {
+      options.motions_directory = require_value(argc, argv, index, argument);
     }
     else if (argument == "--duration")
     {
@@ -399,12 +423,31 @@ void request_stop(int)
   g_stop_requested = 1;
 }
 
+std::string json_string(const std::string & value)
+{
+  std::ostringstream output;
+  output << '"';
+  for (const char character : value)
+  {
+    if (character == '"' || character == '\\')
+    {
+      output << '\\';
+    }
+    output << character;
+  }
+  output << '"';
+  return output.str();
+}
+
 int serve(const Options & options)
 {
-  auto driver = connect_driver(options);
   const orion_runtime::PoseLibrary pose_library(options.poses_file, kOrionJointNames);
+  const orion_runtime::MotionLibrary motion_library(
+    options.motions_directory, pose_library);
+  auto driver = connect_driver(options);
   orion_runtime::RuntimeMode mode = orion_runtime::RuntimeMode::OBSERVE;
   std::optional<orion_runtime::JointTrajectory> trajectory;
+  std::optional<orion_runtime::MotionSequence> motion_sequence;
   std::chrono::steady_clock::time_point trajectory_started_at;
   std::uint64_t sequence = 1;
   auto snapshot = orion_runtime::make_state_snapshot(
@@ -422,7 +465,31 @@ int serve(const Options & options)
     const auto states = driver->read();
     std::string active_motion;
     double motion_progress = 0.0;
-    if (trajectory.has_value())
+    std::string active_keyframe;
+    std::size_t keyframe_index = 0;
+    std::size_t keyframe_count = 0;
+    if (motion_sequence.has_value())
+    {
+      const double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - trajectory_started_at).count();
+      driver->write(motion_sequence->sample(elapsed));
+      active_motion = motion_sequence->name();
+      motion_progress = motion_sequence->progress(elapsed);
+      active_keyframe = motion_sequence->keyframe_name(elapsed);
+      keyframe_index = motion_sequence->keyframe_index(elapsed);
+      keyframe_count = motion_sequence->keyframe_count();
+      if (motion_sequence->complete(elapsed))
+      {
+        motion_sequence.reset();
+        mode = orion_runtime::RuntimeMode::HOLDING;
+        active_motion.clear();
+        active_keyframe.clear();
+        motion_progress = 0.0;
+        keyframe_index = 0;
+        keyframe_count = 0;
+      }
+    }
+    else if (trajectory.has_value())
     {
       const double elapsed = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - trajectory_started_at).count();
@@ -438,9 +505,12 @@ int serve(const Options & options)
       }
     }
     snapshot = orion_runtime::make_state_snapshot(
-      mode, ++sequence, kObserveFrequencyHz, states, active_motion, motion_progress);
+      mode, ++sequence, kObserveFrequencyHz, states, active_motion, motion_progress,
+      active_keyframe, keyframe_index, keyframe_count);
     server.serve_pending(
       [&](const std::string & command) -> std::string {
+        try
+        {
         if (command == "status")
         {
           return orion_runtime::state_snapshot_to_json(snapshot);
@@ -479,6 +549,7 @@ int serve(const Options & options)
               "\"error\":\"torque is not enabled\"}";
           }
           trajectory.reset();
+          motion_sequence.reset();
           driver->deactivate();
           mode = orion_runtime::RuntimeMode::CONFIGURED;
           snapshot = orion_runtime::make_state_snapshot(
@@ -519,7 +590,62 @@ int serve(const Options & options)
             pose_name + "\",\"mode\":\"moving\",\"duration_seconds\":" +
             std::to_string(duration_seconds) + "}";
         }
+        if (command.rfind("play ", 0) == 0)
+        {
+          if (mode != orion_runtime::RuntimeMode::HOLDING)
+          {
+            return "{\"ok\":false,\"command\":\"play\","
+              "\"error\":\"enable holding torque before moving\"}";
+          }
+          std::istringstream request(command);
+          std::string verb;
+          std::string motion_name;
+          std::string trailing;
+          if (!(request >> verb >> motion_name) || request >> trailing)
+          {
+            return "{\"ok\":false,\"command\":\"play\","
+              "\"error\":\"expected play MOTION\"}";
+          }
+
+          const auto & definition = motion_library.motion(motion_name);
+          for (const auto & keyframe : definition.keyframes)
+          {
+            driver->validate_positions(keyframe.target);
+          }
+          orion_runtime::JointPositions start;
+          for (const auto & joint : snapshot.joints)
+          {
+            start.emplace(joint.name, joint.position);
+          }
+          motion_sequence.emplace(
+            definition, driver->clamp_positions_to_safe_range(start));
+          trajectory_started_at = std::chrono::steady_clock::now();
+          mode = orion_runtime::RuntimeMode::MOVING;
+          return "{\"ok\":true,\"command\":\"play\",\"motion\":\"" +
+            motion_name + "\",\"mode\":\"moving\",\"duration_seconds\":" +
+            std::to_string(motion_sequence->duration_seconds()) +
+            ",\"keyframes\":" + std::to_string(motion_sequence->keyframe_count()) + "}";
+        }
+        if (command == "stop")
+        {
+          if (mode != orion_runtime::RuntimeMode::MOVING)
+          {
+            return "{\"ok\":false,\"command\":\"stop\","
+              "\"error\":\"no movement is active\"}";
+          }
+          trajectory.reset();
+          motion_sequence.reset();
+          mode = orion_runtime::RuntimeMode::HOLDING;
+          snapshot = orion_runtime::make_state_snapshot(
+            mode, ++sequence, kObserveFrequencyHz, driver->read());
+          return "{\"ok\":true,\"command\":\"stop\",\"mode\":\"holding\"}";
+        }
         return "{\"ok\":false,\"error\":\"unknown Orion daemon command\"}";
+        }
+        catch (const std::exception & error)
+        {
+          return "{\"ok\":false,\"error\":" + json_string(error.what()) + "}";
+        }
       });
     std::this_thread::sleep_until(next_sample);
   }
@@ -620,6 +746,10 @@ int main(int argc, char ** argv)
         return request_daemon(
           options.socket_path,
           "goto " + options.pose_name + " " + std::to_string(options.duration_seconds));
+      case Operation::PLAY:
+        return request_daemon(options.socket_path, "play " + options.motion_name);
+      case Operation::STOP:
+        return request_daemon(options.socket_path, "stop");
       case Operation::NONE:
         print_usage(std::cerr);
         return 2;

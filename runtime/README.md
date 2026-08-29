@@ -68,6 +68,28 @@ While moving, `--status` reports `mode: "moving"`, the active pose name, and
 normalized progress. At completion it returns to `mode: "holding"`. Calling
 `--disable` during a move cancels the trajectory and turns torque off.
 
+Play an authored motion from the nested functional/expressive YAML library:
+
+```bash
+runtime/build/oriond --play look_at_left_expressive
+runtime/build/oriond --play look_at_right_expressive
+```
+
+The daemon validates every referenced pose against the physical calibration
+before starting. It then executes each quintic transition and hold without
+blocking the 50 Hz state loop. During playback, `--status` includes the motion
+name, current keyframe name, zero-based keyframe index, keyframe count, and
+overall progress. Stop at the latest commanded position while retaining
+holding torque with:
+
+```bash
+runtime/build/oriond --stop
+```
+
+`--disable` remains the command that cancels movement and turns torque off.
+Unknown motions, malformed commands, and invalid targets return JSON errors
+without terminating the daemon.
+
 The native trajectory path does not use the provisional simulation-only
 velocity, acceleration, or jerk ceilings from `orion_motion`. The requested
 duration determines the motion rate. Physical calibrated joint-position bounds
@@ -105,5 +127,6 @@ The ROS adapter is optional and is not part of the native build. Once the
 standalone daemon lifecycle is established, the reusable sources can move to a
 neutral package without changing their behavior.
 
-The next runtime increment is the matching MuJoCo backend and richer animation
-sequencing. The physical daemon already supports named-pose movement.
+The next runtime increment is the matching MuJoCo backend for this native
+motion interface. The physical daemon supports named poses and authored
+multi-keyframe motions without ROS.

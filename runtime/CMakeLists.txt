@@ -12,6 +12,8 @@ set(FTSERVO_ROOT "${ORION_HARDWARE_ROOT}/vendor/ftservo")
 
 add_library(orion_control STATIC
   src/joint_trajectory.cpp
+  src/motion_library.cpp
+  src/motion_sequence.cpp
   src/pose_library.cpp
   src/state_snapshot.cpp
   "${ORION_HARDWARE_ROOT}/src/calibration.cpp"
@@ -48,6 +50,7 @@ if(BUILD_TESTING)
   target_compile_definitions(
     test_motion PRIVATE
     ORION_TEST_POSES_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../ros2_ws/src/orion_motion/config/poses.yaml"
+    ORION_TEST_MOTIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../ros2_ws/src/orion_motion/motions"
   )
   target_link_libraries(test_motion PRIVATE orion_control GTest::gtest_main)
 

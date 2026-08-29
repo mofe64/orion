@@ -47,7 +47,9 @@ void require_finite(double value, const std::string & field)
 StateSnapshot make_state_snapshot(
   RuntimeMode mode, std::uint64_t sequence, double update_hz,
   std::vector<orion_hardware::JointState> joints,
-  std::string active_motion, double motion_progress)
+  std::string active_motion, double motion_progress,
+  std::string active_keyframe, std::size_t keyframe_index,
+  std::size_t keyframe_count)
 {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   return StateSnapshot{
@@ -58,6 +60,9 @@ StateSnapshot make_state_snapshot(
     std::move(joints),
     std::move(active_motion),
     motion_progress,
+    std::move(active_keyframe),
+    keyframe_index,
+    keyframe_count,
   };
 }
 
@@ -103,8 +108,14 @@ std::string state_snapshot_to_json(const StateSnapshot & snapshot)
   }
   else
   {
-    output << ",\"motion\":{\"name\":" << json_string(snapshot.active_motion)
-           << ",\"progress\":" << snapshot.motion_progress << '}';
+    output << ",\"motion\":{\"name\":" << json_string(snapshot.active_motion);
+    if (!snapshot.active_keyframe.empty())
+    {
+      output << ",\"keyframe\":" << json_string(snapshot.active_keyframe)
+             << ",\"keyframe_index\":" << snapshot.keyframe_index
+             << ",\"keyframe_count\":" << snapshot.keyframe_count;
+    }
+    output << ",\"progress\":" << snapshot.motion_progress << '}';
   }
   output << ",\"joints\":[";
 
