@@ -1,11 +1,13 @@
 # Orion
 
-Orion is an expressive robotic-lamp project with a ROS-independent C++
-hardware runtime and a native MuJoCo simulation backend.
+Orion is an expressive robotic-lamp project with ROS-independent C++ and Rust
+runtimes and a native MuJoCo simulation backend.
 
 ## Repository layout
 
 - `runtime/` — C++ daemon, STS3215 driver, Feetech transport, and native tests.
+- `runtime_rust/` — pure-Rust parity port using `rustypot`, with hardware and
+  MuJoCo backends behind the same daemon state machine.
 - `motion/` — shared poses, motions, limits, trajectory tools, and tests.
 - `description/` — neutral URDF and the shared mesh library.
 - `simulation/mujoco/` — MuJoCo model, playback tools, and simulator tests.
@@ -23,7 +25,12 @@ cmake --build runtime/build --parallel
 ctest --test-dir runtime/build --output-on-failure
 
 PYTHONPATH=motion python3 -m pytest -q motion/test
+
+cargo test --manifest-path runtime_rust/Cargo.toml --all-targets
 ```
+
+See [`runtime_rust/README.md`](runtime_rust/README.md) for the MuJoCo-first
+Rust workflow and the physical-hardware test gate.
 
 ## Demo motion sequence
 

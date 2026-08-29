@@ -125,6 +125,6 @@ The reusable STS3215 driver and Feetech SDK live inside `runtime`; the build has
 no ROS dependency. Shared pose and motion definitions live in the root
 `motion` directory so the physical daemon and MuJoCo consume the same assets.
 
-The next runtime increment is the matching MuJoCo backend for this native
-motion interface. The physical daemon supports named poses and authored
-multi-keyframe motions without ROS.
+The feature-parity Rust port and its matching MuJoCo backend now live in
+`runtime_rust/`. This C++ implementation remains the comparison oracle until
+the Rust transport completes physical hardware trials.

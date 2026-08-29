@@ -1,14 +1,20 @@
 # Orion native control architecture
 
-Orion uses a native C++ process for deterministic physical control and a
-native Python adapter for MuJoCo. ROS is not part of the runtime.
+Orion is moving deterministic physical control to a native Rust process. The
+existing C++ process remains the parity oracle until physical validation is
+complete. MuJoCo is owned by the existing Python adapter and connected to the
+same Rust state machine through a narrow JSON-lines process bridge. ROS is not
+part of the runtime.
 
 ```text
 motion/config + motion/motions
              |
-             +--> runtime/oriond --> STS3215 serial bus --> physical Orion
+             +--> runtime_rust/oriond --> rustypot --> physical Orion
+             |             |
+             |             +--> MuJoCo bridge --> simulated Orion
              |
-             +--> motion Python library --> MuJoCo adapter --> simulated Orion
+             +--> runtime/oriond (C++ comparison oracle)
+             +--> motion Python library --> established MuJoCo validation
 
 description/meshes --> description/urdf/orion.urdf
                    +--> simulation/mujoco/robot.xml
@@ -22,14 +28,16 @@ validates every target against the captured calibration file before writing a
 servo goal.
 
 The shared motion assets live under `motion/`. They do not know whether the
-consumer is hardware or MuJoCo. The native C++ runtime parses pose and motion
-YAML directly. MuJoCo reuses the backend-independent Python trajectory and
-validation library in `motion/orion_motion`.
+consumer is hardware or MuJoCo. Both native runtimes parse pose and motion YAML
+directly. The Rust daemon uses one state machine for `rustypot` hardware and
+MuJoCo. The established Python player continues to provide independent
+trajectory, settling, and stability validation through `motion/orion_motion`.
 
 ## Physical runtime
 
-`runtime/build/oriond --serve` owns the serial connection and runs a 50 Hz
-state/control loop. Local commands use `/tmp/oriond.sock`:
+`runtime_rust/target/debug/oriond --serve` owns the serial connection through
+`rustypot` and runs a 50 Hz state/control loop. Local commands use
+`/tmp/oriond.sock`:
 
 ```text
 configure -> configured servo profile, torque off
@@ -54,8 +62,10 @@ MuJoCo keeps simulator-specific actuators, contact, references, and physics in
 
 ## Safety boundary
 
-The C++ runtime always enforces captured physical position limits. Dynamic
-limits in `motion/config/motion_limits.yaml` remain validation evidence for
-offline tools and MuJoCo; the currently requested physical duration determines
-the daemon's trajectory rate. Motion timing must therefore be validated on the
-assembled lamp before it becomes a production behaviour.
+Both native runtimes enforce captured physical position limits. Dynamic limits
+in `motion/config/motion_limits.yaml` remain validation evidence for offline
+tools and MuJoCo; the currently requested physical duration determines the
+daemon's trajectory rate. Motion timing must therefore be validated on the
+assembled lamp before it becomes a production behaviour. The Rust port does
+not itself prove physical parity: torque-off telemetry comparison and staged
+low-speed hardware trials are still required.

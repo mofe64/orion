@@ -1,0 +1,26 @@
+[package]
+name = "orion-runtime"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+description = "Rust port of Orion's native motion and STS3215 runtime"
+license = "GPL-3.0-only"
+
+[lib]
+name = "orion_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oriond"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+rustypot = "=1.6.0"
+serialport = { version = "4", default-features = false }
+signal-hook = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

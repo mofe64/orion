@@ -4,7 +4,7 @@
 
 **Project:** Orion  
 **Document type:** High-level development roadmap  
-**Current position:** Native C++ motion runtime and MuJoCo parity complete; behaviour orchestration next
+**Current position:** Rust runtime software/MuJoCo parity implemented; physical Rust transport validation next
 **Long-term goal:** Build a safe, useful, expressive robotic lamp inspired by LeLamp, Watti, Ongo, and the ELEGNT movement-design framework.
 
 ---
@@ -42,6 +42,12 @@ The purpose of this guidebook is to prevent Orion from becoming a collection of 
 > longer part of the implementation. Later ROS-specific milestone text is
 > retained as historical planning context and is superseded by
 > `docs/orion_control_architecture.md`.
+
+> **Runtime-port decision — 2026-08-29:** Orion is porting `oriond` to pure
+> Rust, using `rustypot` for the STS3215 protocol and serial boundary. The C++
+> runtime remains the comparison oracle until torque-off telemetry and
+> controlled physical-motion trials prove parity. Behaviour orchestration,
+> lighting, and speaker work resume after that gate.
 
 ---
 
@@ -1173,7 +1179,8 @@ native backend adapters.
 
 ## Work required
 
-Create an STS3215 C++ runtime that converts between:
+Maintain the proven C++ runtime as a parity oracle and complete an STS3215
+Rust runtime that converts between:
 
 ```text
 Orion joint radians
@@ -1219,12 +1226,12 @@ High-level motion software should not contain direct servo-register operations.
 ## Deliverables
 
 ```text
-native C++ runtime
+native Rust runtime and retained C++ parity oracle
 joint calibration configuration
 local command/status socket
 watchdog
 hardware diagnostics
-simulation/hardware backend selector
+shared Rust simulation/hardware backend selector
 ```
 
 ## Exit criteria
