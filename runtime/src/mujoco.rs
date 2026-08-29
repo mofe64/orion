@@ -285,7 +285,7 @@ mod tests {
             PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
         let python = root.join(".venv/bin/python");
-        let bridge = root.join("runtime_rust/mujoco_bridge.py");
+        let bridge = root.join("runtime/mujoco_bridge.py");
         let scene = root.join("simulation/mujoco/scene.xml");
         let start = poses.pose("attentive").unwrap();
         let driver = MujocoDriver::launch(python, bridge, scene, start).unwrap();

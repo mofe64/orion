@@ -8,7 +8,7 @@ runtime.
 ```text
 motion/config + motion/motions
              |
-             +--> runtime_rust/oriond --> rustypot --> physical Orion
+             +--> runtime/oriond --> rustypot --> physical Orion
              |             |
              |             +--> MuJoCo bridge --> simulated Orion
              |
@@ -33,7 +33,7 @@ trajectory, settling, and stability validation through `motion/orion_motion`.
 
 ## Physical runtime
 
-`runtime_rust/target/debug/oriond --serve` owns the serial connection through
+`runtime/target/debug/oriond --serve` owns the serial connection through
 `rustypot` and runs a 50 Hz state/control loop. Local commands use
 `/tmp/oriond.sock`:
 

@@ -5,7 +5,7 @@ and a native MuJoCo simulation backend.
 
 ## Repository layout
 
-- `runtime_rust/` — native runtime using `rustypot`, with hardware and
+- `runtime/` — native Rust runtime using `rustypot`, with hardware and
   MuJoCo backends behind the same daemon state machine.
 - `motion/` — shared poses, motions, limits, trajectory tools, and tests.
 - `description/` — neutral URDF and the shared mesh library.
@@ -19,13 +19,13 @@ parts connect. Start physical bring-up with the
 ## Native build and test
 
 ```bash
-cargo build --manifest-path runtime_rust/Cargo.toml --release --locked
-cargo test --manifest-path runtime_rust/Cargo.toml --all-targets
+cargo build --manifest-path runtime/Cargo.toml --release --locked
+cargo test --manifest-path runtime/Cargo.toml --all-targets
 
 PYTHONPATH=motion python3 -m pytest -q motion/test
 ```
 
-See [`runtime_rust/README.md`](runtime_rust/README.md) for the MuJoCo-first
+See [`runtime/README.md`](runtime/README.md) for the MuJoCo-first
 Rust workflow and the physical-hardware test gate.
 
 ## Demo motion sequence
@@ -33,7 +33,7 @@ Rust workflow and the physical-hardware test gate.
 With the source-tree `oriond --serve` running in another terminal:
 
 ```bash
-ORIOND=runtime_rust/target/release/oriond
+ORIOND=runtime/target/release/oriond
 
 $ORIOND --configure
 $ORIOND --enable

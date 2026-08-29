@@ -1,6 +1,6 @@
 # Orion Rust runtime
 
-`runtime_rust` is Orion's ROS-independent native runtime. It implements the
+`runtime` is Orion's ROS-independent native Rust runtime. It implements the
 `oriond` command protocol, lifecycle, pose and motion loading, quintic
 interpolation, calibration contract, STS3215 profile, and 50 Hz state
 snapshots.
@@ -17,8 +17,8 @@ encoder/velocity conversions.
 Install a current Rust toolchain, then run from the repository root:
 
 ```bash
-cargo build --manifest-path runtime_rust/Cargo.toml
-cargo test --manifest-path runtime_rust/Cargo.toml --all-targets
+cargo build --manifest-path runtime/Cargo.toml
+cargo test --manifest-path runtime/Cargo.toml --all-targets
 ```
 
 The tests cover the complete runtime contract and launch Orion's native MuJoCo
@@ -30,20 +30,20 @@ MuJoCo tests expect the repository Python environment at `.venv/bin/python`.
 Run the daemon without opening a serial port:
 
 ```bash
-runtime_rust/target/debug/oriond --serve --backend mujoco \
+runtime/target/debug/oriond --serve --backend mujoco \
   --start-pose attentive
 ```
 
 In another terminal, use the normal client commands:
 
 ```bash
-runtime_rust/target/debug/oriond --status
-runtime_rust/target/debug/oriond --configure
-runtime_rust/target/debug/oriond --enable
-runtime_rust/target/debug/oriond --goto home --duration 3.0
-runtime_rust/target/debug/oriond --play look_at_left_expressive
-runtime_rust/target/debug/oriond --stop
-runtime_rust/target/debug/oriond --disable
+runtime/target/debug/oriond --status
+runtime/target/debug/oriond --configure
+runtime/target/debug/oriond --enable
+runtime/target/debug/oriond --goto home --duration 3.0
+runtime/target/debug/oriond --play look_at_left_expressive
+runtime/target/debug/oriond --stop
+runtime/target/debug/oriond --disable
 ```
 
 Use `--socket`, `--scene`, `--python`, or `--start-pose` to override the
@@ -58,7 +58,7 @@ STS3215 bus. Begin a new checkout or hardware change with a torque-off state
 snapshot:
 
 ```bash
-runtime_rust/target/debug/oriond --check \
+runtime/target/debug/oriond --check \
   --port /dev/ttyACM0 \
   --calibration "$HOME/.config/orion/servo_calibration.json"
 ```
