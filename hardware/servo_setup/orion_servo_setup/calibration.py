@@ -158,7 +158,15 @@ def validate_captures(
                 f"{assignment.joint_name} was not moved clearly to both sides of neutral. "
                 "Sweep it in both directions from the zero/middle pose."
             )
-        if capture.measured_span_raw > MAX_CAPTURE_SPAN_RAW:
+        # Base yaw and head roll have a stricter commandable envelope applied
+        # when the document is built below. Retain their measured endpoints
+        # even when the physical sweep exceeds the generic bounded-joint span;
+        # the dedicated cable-protection cap is the authoritative limit for
+        # those two joints. Uncapped joints must still look non-continuous.
+        if (
+            assignment.joint_name not in YAW_JOINTS
+            and capture.measured_span_raw > MAX_CAPTURE_SPAN_RAW
+        ):
             raise CalibrationError(
                 f"{assignment.joint_name} covered {capture.measured_span_raw} raw steps "
                 "(over 202.5 deg). Orion has no continuous joint; inspect the capture."

@@ -42,20 +42,48 @@ class CalibrationTests(unittest.TestCase):
     def test_document_caps_yaw_instead_of_rejecting_measured_overrun(self) -> None:
         neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
         captures = initialize_captures(neutral)
+        negative_positions = {
+            item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS
+        }
+        negative_positions["head_roll_joint"] = 646
         captures = update_captures(
             captures,
-            {item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS},
+            negative_positions,
         )
         positions = {item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS}
         positions["base_yaw_joint"] = 3200
+        positions["head_roll_joint"] = 3090
         captures = update_captures(captures, positions)
 
         document = build_calibration_document(captures, port="/dev/fake")
         base_yaw = document["joints"]["base_yaw_joint"]  # type: ignore[index]
+        head_roll = document["joints"]["head_roll_joint"]  # type: ignore[index]
 
         self.assertEqual(base_yaw["measured_max_delta_raw"], 1152)
         self.assertEqual(base_yaw["safe_max_delta_raw"], 1004)
         self.assertTrue(base_yaw["safety_cap_applied"])
+        self.assertEqual(head_roll["measured_min_delta_raw"], -1402)
+        self.assertEqual(head_roll["measured_max_delta_raw"], 1042)
+        self.assertEqual(head_roll["safe_min_delta_raw"], -1004)
+        self.assertEqual(head_roll["safe_max_delta_raw"], 1004)
+        self.assertTrue(head_roll["safety_cap_applied"])
+
+    def test_validation_still_rejects_wide_uncapped_joint(self) -> None:
+        neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
+        captures = initialize_captures(neutral)
+        negative_positions = {
+            item.joint_name: 1400 for item in ORION_SERVO_ASSIGNMENTS
+        }
+        negative_positions["elbow_pitch_joint"] = 646
+        captures = update_captures(captures, negative_positions)
+        positive_positions = {
+            item.joint_name: 2700 for item in ORION_SERVO_ASSIGNMENTS
+        }
+        positive_positions["elbow_pitch_joint"] = 3090
+        captures = update_captures(captures, positive_positions)
+
+        with self.assertRaisesRegex(CalibrationError, "elbow_pitch_joint covered 2444"):
+            validate_captures(captures)
 
     def test_validation_requires_all_five_canonical_joints(self) -> None:
         neutral = {item.joint_name: 2048 for item in ORION_SERVO_ASSIGNMENTS}
