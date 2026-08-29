@@ -3,7 +3,7 @@ units: radians
 
 poses:
   zero_reference:
-    description: CAD-defined zero configuration used as Orion's reference pose.
+    description: Physical zero captured and accepted on Orion on 2026-08-29.
     positions:
       base_yaw_joint: 0.0
       shoulder_pitch_joint: 0.0
@@ -12,13 +12,13 @@ poses:
       head_pitch_joint: 0.0
 
   rest:
-    description: Captured torque-free mechanical rest pose; verify stability again after hardware changes.
+    description: Safe placeholder at the captured zero; re-author the supported rest pose.
     positions:
-      base_yaw_joint: -0.01687379
-      shoulder_pitch_joint: -1.27167007
-      elbow_pitch_joint: 0.72250495
-      head_roll_joint: -0.04295146
-      head_pitch_joint: -0.01840777
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.0
+      elbow_pitch_joint: 0.0
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.0
 
   home:
     description: Compact powered rest pose with a lower centre of gravity.

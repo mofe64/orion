@@ -28,7 +28,9 @@ DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 DEFAULT_POSE_LIBRARY = (
     PROJECT_ROOT / "ros2_ws" / "src" / "orion_motion" / "config" / "poses.yaml"
 )
-DEFAULT_CALIBRATION = Path.home() / ".config" / "orion" / "servo_calibration.json"
+DEFAULT_CALIBRATION = (
+    Path(__file__).resolve().parent / "config" / "servo_calibration.json"
+)
 CANONICAL_JOINTS = (
     "base_yaw_joint",
     "shoulder_pitch_joint",

@@ -90,6 +90,31 @@ class SetJointStateTests(unittest.TestCase):
         )
         self.assertEqual(read_joint_velocities(self.data, self.mapping), (0.0,) * 5)
 
+    def test_zero_keyframe_preserves_the_default_base_transform(self):
+        mujoco.mj_forward(self.model, self.data)
+        base_position_before, base_rotation_before = body_transform(
+            self.model, self.data, DEFAULT_BASE_BODY_NAME
+        )
+        keyframe_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_KEY, "zero_reference"
+        )
+
+        mujoco.mj_resetDataKeyframe(self.model, self.data, keyframe_id)
+        mujoco.mj_forward(self.model, self.data)
+
+        base_position_after, base_rotation_after = body_transform(
+            self.model, self.data, DEFAULT_BASE_BODY_NAME
+        )
+        np.testing.assert_allclose(
+            base_position_after, base_position_before, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            base_rotation_after, base_rotation_before, atol=1e-12
+        )
+        self.assertEqual(
+            read_joint_positions(self.data, self.mapping), (0.0,) * len(JOINT_NAMES)
+        )
+
 
 class PoseTunerConfigurationTests(unittest.TestCase):
     def test_pose_tuner_reads_current_operational_limit_schema(self):
@@ -98,11 +123,11 @@ class PoseTunerConfigurationTests(unittest.TestCase):
         self.assertEqual(configuration.joint_order, JOINT_NAMES)
         self.assertEqual(
             configuration.limits["shoulder_pitch_joint"],
-            (-1.30388, 2.05734),
+            (-1.431204075097303, 0.805339913639962),
         )
         self.assertAlmostEqual(
             configuration.initial_targets["elbow_pitch_joint"],
-            0.72250495,
+            0.0,
         )
 
 

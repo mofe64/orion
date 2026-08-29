@@ -6,14 +6,15 @@ units:
   acceleration: radians_per_second_squared
   jerk: radians_per_second_cubed
 
-# These operational limits are deliberately conservative development
-# thresholds for Gazebo and MuJoCo. They are not validated hardware limits.
+# Position bounds mirror Orion's accepted physical calibration. Dynamic limits
+# remain provisional simulator-development thresholds.
 applicability: provisional_simulation_only
 
 source:
   mechanical_position:
-    package: orion_description
-    path: urdf/orion.urdf
+    package: orion_simulation
+    path: simulation/mujoco/config/servo_calibration.json
+    captured_at: "2026-08-29T07:53:33.644820+00:00"
   operational_dynamics:
     method: conservative_initial_thresholds
     evidence: pending_milestone_3_simulator_sweeps
@@ -34,11 +35,11 @@ start_state:
 joints:
   base_yaw_joint:
     mechanical_position:
-      lower: -5.02103
-      upper: 1.26215
+      lower: -1.540116711037184
+      upper: 1.540116711037184
     operational_position:
-      lower: -5.02103
-      upper: 1.26215
+      lower: -1.540116711037184
+      upper: 1.540116711037184
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0
@@ -46,11 +47,11 @@ joints:
 
   shoulder_pitch_joint:
     mechanical_position:
-      lower: -1.33456
-      upper: 2.05734
+      lower: -1.431204075097303
+      upper: 0.805339913639962
     operational_position:
-      lower: -1.30388
-      upper: 2.05734
+      lower: -1.431204075097303
+      upper: 0.805339913639962
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0
@@ -58,11 +59,11 @@ joints:
 
   elbow_pitch_joint:
     mechanical_position:
-      lower: -2.82002
-      upper: 0.76699
+      lower: -1.013961300792409
+      upper: 1.021631204731837
     operational_position:
-      lower: -2.82002
-      upper: 0.736311
+      lower: -1.013961300792409
+      upper: 1.021631204731837
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0
@@ -70,11 +71,11 @@ joints:
 
   head_roll_joint:
     mechanical_position:
-      lower: -3.78654
-      upper: 2.49665
+      lower: -1.540116711037184
+      upper: 1.474155537158101
     operational_position:
-      lower: -3.78654
-      upper: 2.49665
+      lower: -1.540116711037184
+      upper: 1.474155537158101
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0
@@ -82,11 +83,11 @@ joints:
 
   head_pitch_joint:
     mechanical_position:
-      lower: -0.853337
-      upper: 2.28826
+      lower: -0.533825314184203
+      upper: 0.705631162427395
     operational_position:
-      lower: -0.853337
-      upper: 2.28826
+      lower: -0.533825314184203
+      upper: 0.705631162427395
     max_velocity: 1.5
     max_acceleration: 8.0
     max_jerk: 80.0

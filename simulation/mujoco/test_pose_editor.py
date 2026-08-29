@@ -22,11 +22,8 @@ from pose_editor import (  # noqa: E402
 )
 
 
-BACKUP_CALIBRATION = (
-    PROJECT_ROOT.parent
-    / "orion-migration-backup"
-    / "orion"
-    / "servo_calibration.json"
+SIMULATION_CALIBRATION = (
+    MUJOCO_DIRECTORY / "config" / "servo_calibration.json"
 )
 POSE_LIBRARY = (
     PROJECT_ROOT / "ros2_ws" / "src" / "orion_motion" / "config" / "poses.yaml"
@@ -35,18 +32,18 @@ POSE_LIBRARY = (
 
 class CalibratedLimitsTests(unittest.TestCase):
     def test_converts_safe_encoder_deltas_to_radians(self):
-        limits = load_calibrated_limits(BACKUP_CALIBRATION)
+        limits = load_calibrated_limits(SIMULATION_CALIBRATION)
 
         self.assertEqual(tuple(limits), CANONICAL_JOINTS)
         self.assertAlmostEqual(
             limits["base_yaw_joint"][0], -1004 * 2 * math.pi / 4096
         )
         self.assertAlmostEqual(
-            limits["shoulder_pitch_joint"][1], 366 * 2 * math.pi / 4096
+            limits["shoulder_pitch_joint"][1], 525 * 2 * math.pi / 4096
         )
 
     def test_reversed_encoder_direction_reverses_and_sorts_angle_bounds(self):
-        calibration = json.loads(BACKUP_CALIBRATION.read_text(encoding="utf-8"))
+        calibration = json.loads(SIMULATION_CALIBRATION.read_text(encoding="utf-8"))
         calibration["joints"]["shoulder_pitch_joint"]["encoder_direction"] = -1
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "calibration.json"
@@ -54,16 +51,16 @@ class CalibratedLimitsTests(unittest.TestCase):
             limits = load_calibrated_limits(path)
 
         self.assertAlmostEqual(
-            limits["shoulder_pitch_joint"][0], -366 * 2 * math.pi / 4096
+            limits["shoulder_pitch_joint"][0], -525 * 2 * math.pi / 4096
         )
         self.assertAlmostEqual(
-            limits["shoulder_pitch_joint"][1], 850 * 2 * math.pi / 4096
+            limits["shoulder_pitch_joint"][1], 933 * 2 * math.pi / 4096
         )
 
 
 class PoseLibraryTests(unittest.TestCase):
     def test_loads_every_pose_in_yaml_order(self):
-        configuration = load_editor_configuration(BACKUP_CALIBRATION, POSE_LIBRARY)
+        configuration = load_editor_configuration(SIMULATION_CALIBRATION, POSE_LIBRARY)
 
         self.assertEqual(
             configuration.pose_names[0:3], ("zero_reference", "rest", "home")
@@ -75,18 +72,18 @@ class PoseLibraryTests(unittest.TestCase):
         source = POSE_LIBRARY.read_text(encoding="utf-8")
         invalid = source.replace(
             "      shoulder_pitch_joint: 0.30",
-            "      shoulder_pitch_joint: 0.80",
+            "      shoulder_pitch_joint: 0.90",
             1,
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "poses.yaml"
             path.write_text(invalid, encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "outside its calibrated range"):
-                load_editor_configuration(BACKUP_CALIBRATION, path)
+                load_editor_configuration(SIMULATION_CALIBRATION, path)
 
     def test_replaces_only_selected_pose_values(self):
         source = POSE_LIBRARY.read_text(encoding="utf-8")
-        configuration = load_editor_configuration(BACKUP_CALIBRATION, POSE_LIBRARY)
+        configuration = load_editor_configuration(SIMULATION_CALIBRATION, POSE_LIBRARY)
         targets = configuration.poses["home"].copy()
         targets["base_yaw_joint"] = -0.25
 
@@ -109,13 +106,13 @@ class PoseLibraryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "poses.yaml"
             path.write_text(POSE_LIBRARY.read_text(encoding="utf-8"), encoding="utf-8")
-            configuration = load_editor_configuration(BACKUP_CALIBRATION, path)
+            configuration = load_editor_configuration(SIMULATION_CALIBRATION, path)
             rest_before = copy.deepcopy(configuration.poses["rest"])
             targets = configuration.poses["home"].copy()
             targets["head_pitch_joint"] = 0.15
 
             save_pose(configuration, "home", targets)
-            reloaded = load_editor_configuration(BACKUP_CALIBRATION, path)
+            reloaded = load_editor_configuration(SIMULATION_CALIBRATION, path)
 
         self.assertEqual(reloaded.poses["rest"], rest_before)
         self.assertEqual(reloaded.poses["home"]["head_pitch_joint"], 0.15)

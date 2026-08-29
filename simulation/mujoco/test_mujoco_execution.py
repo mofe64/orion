@@ -55,11 +55,11 @@ def aggressive_trajectory():
     poses["poses"]["aggressive_test"] = {
         "description": "Intentionally aggressive simulator test pose.",
         "positions": {
-            "base_yaw_joint": -4.5,
-            "shoulder_pitch_joint": 1.8,
-            "elbow_pitch_joint": -2.6,
-            "head_roll_joint": 2.2,
-            "head_pitch_joint": 2.0,
+            "base_yaw_joint": -1.50,
+            "shoulder_pitch_joint": 0.75,
+            "elbow_pitch_joint": -0.95,
+            "head_roll_joint": 1.40,
+            "head_pitch_joint": 0.65,
         },
     }
     motion = {

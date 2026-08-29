@@ -61,6 +61,10 @@ def build_mujoco_robot_description(
     speed_parameter.text = "1.0"
     headless_parameter = ET.SubElement(hardware, "param", name="headless")
     headless_parameter.text = "true" if headless else "false"
+    keyframe_parameter = ET.SubElement(
+        hardware, "param", name="initial_keyframe"
+    )
+    keyframe_parameter.text = "zero_reference"
 
     # This plugin belongs to Gazebo itself. MuJoCo runs its own control node.
     for gazebo_element in root.findall("gazebo"):

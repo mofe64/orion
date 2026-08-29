@@ -53,14 +53,10 @@ class StaticTorqueAnalysisTests(unittest.TestCase):
 
         self.assertAlmostEqual(report.base_support_force_n[2], 11.464916, places=5)
         self.assertAlmostEqual(
-            demands["shoulder_pitch_joint"].torque_nm, 0.653753, places=5
+            demands["shoulder_pitch_joint"].torque_nm, -0.005367, places=5
         )
         self.assertAlmostEqual(
-            demands["elbow_pitch_joint"].torque_nm, -0.684701, places=5
-        )
-        self.assertGreater(
-            demands["shoulder_pitch_joint"].absolute_torque_nm,
-            RATED_TORQUE_NM,
+            demands["elbow_pitch_joint"].torque_nm, -0.728365, places=5
         )
         self.assertGreater(
             demands["elbow_pitch_joint"].absolute_torque_nm,
@@ -100,7 +96,7 @@ class StaticTorqueAnalysisTests(unittest.TestCase):
         )
         self.assertGreater(
             demands["elbow_pitch_joint"].commissioning_velocity_fraction,
-            4.0,
+            1.0,
         )
         self.assertGreater(
             demands["elbow_pitch_joint"].rms_torque_nm,
@@ -108,7 +104,7 @@ class StaticTorqueAnalysisTests(unittest.TestCase):
         )
         self.assertGreater(
             report.minimum_duration_for_velocity_setting_seconds,
-            28.0,
+            15.0,
         )
 
     def test_dynamic_analysis_rejects_non_positive_sample_period(self):
