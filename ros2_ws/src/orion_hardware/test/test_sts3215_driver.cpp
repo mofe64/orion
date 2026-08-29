@@ -308,6 +308,25 @@ TEST(Sts3215DriverTest, ValidatesTargetsWithoutWriting)
     std::out_of_range);
 }
 
+TEST(Sts3215DriverTest, ClampsMeasuredTrajectoryStartInsideCommandRange)
+{
+  auto transport = std::make_shared<FakeTransport>();
+  transport->add_servo(3, 1262);
+  Sts3215Driver driver(transport);
+  driver.connect(
+    "/dev/fake", 1000000,
+    {{"elbow_pitch_joint", 3, 573, 1, -661, 666}});
+
+  const auto clamped = driver.clamp_positions_to_safe_range(
+    {{"elbow_pitch_joint", 1.057}});
+
+  const double expected_maximum =
+    666.0 * 2.0 * 3.14159265358979323846 / kEncoderResolution;
+  EXPECT_NEAR(clamped.at("elbow_pitch_joint"), expected_maximum, 1e-12);
+  driver.validate_positions(clamped);
+  EXPECT_TRUE(transport->position_writes.empty());
+}
+
 TEST(Sts3215DriverTest, RefusesConfigurationWhileTorqueIsOn)
 {
   auto transport = std::make_shared<FakeTransport>();

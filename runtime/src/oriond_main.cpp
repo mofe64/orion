@@ -510,7 +510,9 @@ int serve(const Options & options)
           {
             start.emplace(joint.name, joint.position);
           }
-          trajectory.emplace(pose_name, std::move(start), target, duration_seconds);
+          trajectory.emplace(
+            pose_name, driver->clamp_positions_to_safe_range(start), target,
+            duration_seconds);
           trajectory_started_at = std::chrono::steady_clock::now();
           mode = orion_runtime::RuntimeMode::MOVING;
           return "{\"ok\":true,\"command\":\"goto\",\"pose\":\"" +

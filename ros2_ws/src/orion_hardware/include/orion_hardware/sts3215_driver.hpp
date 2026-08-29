@@ -74,6 +74,8 @@ public:
   void close() noexcept;
 
   std::vector<JointState> read();
+  std::map<std::string, double> clamp_positions_to_safe_range(
+    const std::map<std::string, double> & positions_radians) const;
   void validate_positions(const std::map<std::string, double> & positions_radians) const;
   void write(const std::map<std::string, double> & positions_radians);
 

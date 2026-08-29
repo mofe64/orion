@@ -59,6 +59,11 @@ runtime/build/oriond --goto rest --duration 2.0
 runtime/build/oriond --goto home --duration 4.0
 ```
 
+If torque-off settling leaves a joint just outside the inset command range, a
+move begins at the nearest safe command boundary and continues inward to the
+validated pose. This changes only the trajectory's starting command; it does
+not widen calibration limits or alter the requested pose.
+
 While moving, `--status` reports `mode: "moving"`, the active pose name, and
 normalized progress. At completion it returns to `mode: "holding"`. Calling
 `--disable` during a move cancels the trajectory and turns torque off.

@@ -360,6 +360,44 @@ void Sts3215Driver::write(const std::map<std::string, double> & positions_radian
   transport_->write_positions(encode_positions(positions_radians));
 }
 
+std::map<std::string, double> Sts3215Driver::clamp_positions_to_safe_range(
+  const std::map<std::string, double> & positions_radians) const
+{
+  if (!configured_)
+  {
+    throw std::logic_error("STS3215 driver is not configured.");
+  }
+  if (positions_radians.size() != calibrations_.size())
+  {
+    throw std::invalid_argument("A position is required for every Orion joint.");
+  }
+
+  const double radians_per_step =
+    2.0 * 3.14159265358979323846 / kEncoderResolution;
+  std::map<std::string, double> clamped;
+  for (const auto & joint : calibrations_)
+  {
+    const auto position = positions_radians.find(joint.name);
+    if (position == positions_radians.end())
+    {
+      throw std::invalid_argument("Missing position for " + joint.name + ".");
+    }
+    if (!std::isfinite(position->second))
+    {
+      throw std::invalid_argument(joint.name + " position must be finite.");
+    }
+
+    const double first_limit =
+      joint.safe_min_delta_raw * radians_per_step / joint.encoder_direction;
+    const double second_limit =
+      joint.safe_max_delta_raw * radians_per_step / joint.encoder_direction;
+    const double minimum = std::min(first_limit, second_limit);
+    const double maximum = std::max(first_limit, second_limit);
+    clamped.emplace(joint.name, std::clamp(position->second, minimum, maximum));
+  }
+  return clamped;
+}
+
 void Sts3215Driver::validate_positions(
   const std::map<std::string, double> & positions_radians) const
 {
