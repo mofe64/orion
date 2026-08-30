@@ -2,8 +2,8 @@
 
 `runtime` is Orion's ROS-independent native Rust runtime. It implements the
 `oriond` command protocol, lifecycle, pose and motion loading, quintic
-interpolation, calibration contract, STS3215 profile, and 50 Hz state
-snapshots.
+interpolation, calibration contract, STS3215 profile, 50 Hz state snapshots,
+the Pi 5 RGBW output backend, and hardware-independent audio/scene contracts.
 
 The physical transport uses
 [`rustypot`](https://github.com/pollen-robotics/rustypot) for protocol-v1 packet
@@ -40,8 +40,8 @@ In another terminal, use the normal client commands:
 runtime/target/debug/oriond --status
 runtime/target/debug/oriond --configure
 runtime/target/debug/oriond --enable
-runtime/target/debug/oriond --goto home --duration 3.0
-runtime/target/debug/oriond --play look_at_left_expressive
+runtime/target/debug/oriond --goto home --duration 3.0 --wait
+runtime/target/debug/oriond --play look_at_left_expressive --wait
 runtime/target/debug/oriond --stop
 runtime/target/debug/oriond --disable
 ```
@@ -109,14 +109,40 @@ runtime/target/release/oriond --status
 Run a named pose:
 
 ```bash
-runtime/target/release/oriond --goto home --duration 3.0
+runtime/target/release/oriond --goto home --duration 3.0 --wait
 ```
 
 Run an authored movement:
 
 ```bash
-runtime/target/release/oriond --play look_at_left_expressive
+runtime/target/release/oriond --play look_at_left_expressive --wait
 ```
+
+Movement submission is asynchronous unless `--wait` is present. Every accepted
+`goto` or `play` receives a daemon-local `run_id` and follows this functional
+lifecycle:
+
+```text
+executing -> settling -> completed
+                      \-> timed_out
+executing/settling ----> cancelled
+```
+
+`executing` means authored trajectory frames are still being sent. `settling`
+begins after the final target is sent and compares measured joint position and
+velocity against the completion tolerances. The measured state must remain
+within tolerance for the full settle duration. The current defaults are
+`0.05 rad`, `0.05 rad/s`, `0.25 s` settled, and a `2.0 s` settling timeout.
+
+Status JSON keeps only the active `motion` and the most recent terminal
+`last_motion`; there is no movement database or durable history. A future agent
+should submit semantic motion names, retain the returned `run_id`, and follow
+that ID through these fields. IDs reset when the daemon restarts.
+
+`--wait` is a thin client over the same status contract. It exits `0` for
+`completed`, `4` for `timed_out`, and `5` for `cancelled`. Daemon command
+rejection exits `3`, invalid CLI usage exits `2`, and transport/runtime errors
+exit `1`.
 
 Stop the current movement and hold its current commanded position:
 
@@ -129,14 +155,10 @@ runtime/target/release/oriond --stop
 Move Orion to its captured mechanical rest pose before disabling torque:
 
 ```bash
-runtime/target/release/oriond --goto rest --duration 3.0
-runtime/target/release/oriond --status
+runtime/target/release/oriond --goto rest --duration 3.0 --wait
 ```
 
-`--goto` starts an asynchronous trajectory. Repeat `--status` until its JSON
-reports `"mode":"holding"`; do not disable while it reports
-`"mode":"moving"`. Once Orion has reached rest and is holding there, disable
-torque:
+Once the rest run reports `completed`, disable torque:
 
 ```bash
 runtime/target/release/oriond --disable
@@ -145,13 +167,16 @@ runtime/target/release/oriond --disable
 Then stop Terminal 1 with `Ctrl+C`.
 
 The normal hardware lifecycle is `--serve`, `--configure`, `--enable`, motion
-commands, `--goto rest`, confirmed holding, and finally `--disable`.
+commands, `--goto rest --wait`, confirmed completion, and finally `--disable`.
 Neither `--disable` nor stopping the daemon is a physical emergency stop; an
 accessible hardware torque/power interruption remains required during physical
 trials.
 
 ## Port structure
 
+- `src/lighting.rs` — RGBW frames and the lighting-device boundary.
+- `src/audio.rs` — named local cues and the audio-device boundary.
+- `src/scene.rs` — versioned scene loading, validation, and monotonic playback.
 - `src/transport.rs` — raw `rustypot` STS3215 serial and packet boundary.
 - `src/driver.rs` — calibration conversions and servo safety sequence.
 - `src/daemon.rs` — backend-independent lifecycle and command state machine.
@@ -159,6 +184,39 @@ trials.
 - `src/pose.rs`, `motion.rs`, `trajectory.rs` — shared motion semantics.
 - `src/mujoco.rs` and `mujoco_bridge.py` — native simulation backend.
 - `src/main.rs` — `oriond` arguments and 50 Hz control loop.
+
+## Lighting and local scenes
+
+The physical light adapter targets Orion's 40-pixel Adafruit RGBW shield on
+Pi 5 BCM12. After loading the RP1 PWM kernel module as described in
+`hardware/lighting/README.md`, direct output is available without starting the
+servo daemon:
+
+```bash
+sudo runtime/target/release/oriond --light 8 3 0 20
+sudo runtime/target/release/oriond --light-pixel 0 0 0 0 8
+sudo runtime/target/release/oriond --lights-off
+```
+
+Arguments are logical `RED GREEN BLUE WHITE` bytes from 0 through 255. The
+adapter performs the physical GRBW ordering and 800 kHz symbol encoding.
+
+Portable scenes live under `scenes/`. Version 1 can play an existing motion,
+go to an existing pose, fade to a uniform 8-bit RGBW value, and dispatch a
+named audio cue. Scene files are validated against the pose and motion
+libraries before playback. All events use seconds from one supplied monotonic
+start time.
+
+The scene player implements `SceneMotionDevice` for `RuntimeCore`, so it starts
+motion through the existing `goto`/`play` command boundary and follows the
+returned movement `run_id`. A scene remains active while that movement is
+executing or settling, and propagates movement timeout or cancellation.
+
+The current slice includes deterministic recording backends plus physical Pi 5
+light output. Scene playback is not yet exposed through the daemon/CLI, and no
+physical audio cue is claimed. The next integration slice is daemon-owned scene
+playback, followed by the ReSpeaker playback adapter; both plug into the same
+interfaces without changing scene assets.
 
 During development, build and run `oriond` directly from this source tree. It
 is not installed as a system service.

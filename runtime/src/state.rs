@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-pub const STATE_SCHEMA_VERSION: u32 = 1;
+pub const STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -47,9 +47,37 @@ pub struct JointState {
     pub status: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MovementPhase {
+    Executing,
+    Settling,
+    Completed,
+    TimedOut,
+    Cancelled,
+}
+
+impl MovementPhase {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::TimedOut | Self::Cancelled)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Executing => "executing",
+            Self::Settling => "settling",
+            Self::Completed => "completed",
+            Self::TimedOut => "timed_out",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct MotionState {
+    pub run_id: u64,
     pub name: String,
+    pub state: MovementPhase,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyframe: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,6 +85,10 @@ pub struct MotionState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyframe_count: Option<usize>,
     pub progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_position_error_rad: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_velocity_rad_s: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -70,6 +102,7 @@ pub struct StateSnapshot {
     pub sampled_at_unix_ns: i64,
     pub update_hz: f64,
     pub motion: Option<MotionState>,
+    pub last_motion: Option<MotionState>,
     pub joints: Vec<JointState>,
 }
 
@@ -96,6 +129,7 @@ impl StateSnapshot {
             sampled_at_unix_ns,
             update_hz,
             motion: None,
+            last_motion: None,
             joints,
         })
     }
@@ -117,6 +151,23 @@ impl StateSnapshot {
             return Err(Error::Runtime(
                 "Cannot serialize non-finite Orion state field: motion_progress".into(),
             ));
+        }
+        for (field, motion) in [
+            ("motion", self.motion.as_ref()),
+            ("last_motion", self.last_motion.as_ref()),
+        ] {
+            if let Some(motion) = motion {
+                for (measurement, value) in [
+                    ("max_position_error_rad", motion.max_position_error_rad),
+                    ("max_velocity_rad_s", motion.max_velocity_rad_s),
+                ] {
+                    if value.is_some_and(|value| !value.is_finite()) {
+                        return Err(Error::Runtime(format!(
+                            "Cannot serialize non-finite Orion state field: {field}.{measurement}"
+                        )));
+                    }
+                }
+            }
         }
         for joint in &self.joints {
             for (field, value) in [
@@ -173,7 +224,7 @@ mod tests {
         snapshot.sampled_at_unix_ns = 123_456_789;
         let json = snapshot.to_json().unwrap();
 
-        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"schema_version\":2"));
         assert!(json.contains("\"robot\":\"orion\""));
         assert!(json.contains("\"mode\":\"observe\""));
         assert!(json.contains("\"profile_applied\":false"));
@@ -181,6 +232,7 @@ mod tests {
         assert!(json.contains("\"sequence\":42"));
         assert!(json.contains("\"sampled_at_unix_ns\":123456789"));
         assert!(json.contains("\"motion\":null"));
+        assert!(json.contains("\"last_motion\":null"));
         assert!(json.contains("\"name\":\"head_\\\"pitch_joint\""));
         assert!(json.contains("\"position_rad\":-0.078"));
         assert!(json.contains("\"status\":2"));
@@ -194,5 +246,14 @@ mod tests {
         assert!(!RuntimeMode::Configured.torque_is_enabled());
         assert!(RuntimeMode::Holding.torque_is_enabled());
         assert!(RuntimeMode::Moving.torque_is_enabled());
+    }
+
+    #[test]
+    fn identifies_terminal_movement_phases() {
+        assert!(!MovementPhase::Executing.is_terminal());
+        assert!(!MovementPhase::Settling.is_terminal());
+        assert!(MovementPhase::Completed.is_terminal());
+        assert!(MovementPhase::TimedOut.is_terminal());
+        assert!(MovementPhase::Cancelled.is_terminal());
     }
 }

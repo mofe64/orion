@@ -1,0 +1,26 @@
+format_version: 1
+
+scene:
+  name: acknowledge_left
+  description: Turn left while adding a restrained warm acknowledgement cue.
+  timeline:
+    - at: 0.0
+      type: light
+      red: 8
+      green: 3
+      blue: 0
+      white: 20
+      transition_seconds: 0.35
+    - at: 0.0
+      type: play_motion
+      motion: look_at_left_expressive
+    - at: 0.25
+      type: audio
+      cue: acknowledge
+    - at: 4.20
+      type: light
+      red: 0
+      green: 0
+      blue: 0
+      white: 28
+      transition_seconds: 0.50
