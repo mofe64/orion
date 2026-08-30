@@ -1,0 +1,2 @@
+# Load Orion's RP1 NeoPixel PWM driver during boot.
+rp1_ws281x_pwm

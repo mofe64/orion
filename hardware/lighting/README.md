@@ -18,8 +18,31 @@ Pi physical pin 32 / BCM12 -> shield D6 / DIN
 
 There is currently no 3.3 V-to-5 V data level shifter. The physical backend
 must therefore use BCM12, PWM channel 0, non-inverted output, 40 pixels, and an
-initial GRBW/800 kHz configuration. Pixel order and the physical matrix index
-direction remain commissioning observations rather than assumptions.
+initial GRBW/800 kHz configuration.
+
+Physical commissioning on Orion confirmed a non-serpentine, row-major 8 by 5
+matrix. Every row runs left to right, starting at the top:
+
+```text
+ 0  1  2  3  4  5  6  7
+ 8  9 10 11 12 13 14 15
+16 17 18 19 20 21 22 23
+24 25 26 27 28 29 30 31
+32 33 34 35 36 37 38 39
+```
+
+Therefore a zero-based `(row, column)` coordinate maps directly to
+`row * ORION_LIGHT_WIDTH + column`. Confirmed reference points are pixel 0 at
+top-left, 7 at top-right, 8 at the second row's left edge, and 39 at
+bottom-right.
+
+Commissioning also confirmed that Orion's logical channel arguments display as
+red, green, blue, and warm white respectively. The backend's GRBW wire-order
+translation is therefore correct for the installed shield.
+
+The complete 40-pixel frame was verified on the physical robot using the
+acknowledgement value `RGBW(8, 3, 0, 20)`, followed by a successful all-off
+frame. Physical lighting output is commissioned.
 
 The shield is powered from the Pi's 5 V header rather than an independent
 supply. The runtime does not impose a brightness ceiling: RGBW values are sent
@@ -41,32 +64,69 @@ incorrect colours, or intermittent updates, the hardware path requires a
 5 V-compatible logic-level shifter; scene or colour code should not compensate
 for signalling errors.
 
-## One-time Raspberry Pi 5 setup
+## Persistent Raspberry Pi 5 setup
 
 Raspberry Pi 5 support in `rpi_ws281x` uses the RP1 PWM kernel module from its
-`pi5` branch. On the Pi, install its build requirements, clone that branch,
-and build the driver and overlay:
+`pi5` branch. Orion keeps the upstream source outside this repository and owns
+the boot installation through `install-persistent.sh`.
+
+Install the exact headers for the running kernel and the remaining build
+requirements:
 
 ```bash
-sudo apt install linux-headers device-tree-compiler raspi-utils
-git clone --branch pi5 https://github.com/jgarff/rpi_ws281x.git
-cd rpi_ws281x/rp1_ws281x_pwm
+sudo apt install linux-headers-$(uname -r) device-tree-compiler raspi-utils
+```
+
+Clone and build the official Pi 5 branch:
+
+```bash
+cd ~/dev
+git clone --branch pi5 --single-branch \
+  https://github.com/jgarff/rpi_ws281x.git
+cd ~/dev/rpi_ws281x/rp1_ws281x_pwm
 make
 ./dts.sh
 ```
 
-For Orion's BCM12 connection, load PWM channel 0, apply the overlay, and route
-GPIO12 to RP1 PWM function `a0`:
+Install Orion's persistent configuration from the Orion checkout:
 
 ```bash
-sudo insmod ./rp1_ws281x_pwm.ko pwm_channel=0
-sudo dtoverlay -d . rp1_ws281x_pwm
-sudo pinctrl set 12 a0 pn
-ls -l /dev/ws281x_pwm
+cd ~/dev/orion
+sudo hardware/lighting/install-persistent.sh /home/mofe/dev/rpi_ws281x
+sudo reboot
 ```
 
-These load commands must be made persistent by the robot's service setup after
-commissioning; they do not survive a reboot as written.
+The installer performs five persistent operations:
+
+1. Installs the kernel-matched module under `/lib/modules/$(uname -r)/extra/`
+   and refreshes module dependencies.
+2. Installs `rp1_ws281x_pwm.dtbo` into the Pi boot overlay directory and adds
+   `dtoverlay=rp1_ws281x_pwm` to `config.txt`.
+3. Configures `rp1_ws281x_pwm` to use PWM channel 0 through
+   `/etc/modprobe.d/orion-neopixel.conf`.
+4. Loads the module at boot through
+   `/etc/modules-load.d/orion-neopixel.conf`.
+5. Enables `orion-neopixel-pin.service`, which assigns BCM12 to RP1 function
+   `a0` and verifies that `/dev/ws281x_pwm` exists.
+
+Before changing `config.txt`, the installer preserves its original contents as
+`config.txt.orion-backup`. The installer is idempotent and can be rerun.
+
+After the reboot, verify the complete boot contract:
+
+```bash
+cd ~/dev/orion
+hardware/lighting/verify-persistent.sh
+```
+
+The verifier requires `/dev/ws281x_pwm`, the loaded module with
+`pwm_channel=0`, BCM12 configured as `PWM0_CHAN0`, and an enabled and active pin
+service. It prints `PASS` only when the complete contract holds.
+
+The module is compiled for one kernel ABI. After booting a newly installed
+kernel, rebuild `rp1_ws281x_pwm.ko` against that running kernel's headers and
+rerun the installer. Lighting remains unavailable between that kernel change
+and the rebuild.
 
 ## Orion output checks
 

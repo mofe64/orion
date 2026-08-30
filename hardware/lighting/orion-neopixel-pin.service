@@ -1,0 +1,13 @@
+[Unit]
+Description=Configure Orion NeoPixel data pin on BCM12
+After=systemd-modules-load.service
+Before=oriond.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pinctrl set 12 a0 pn
+ExecStart=/usr/bin/test -c /dev/ws281x_pwm
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

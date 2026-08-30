@@ -188,9 +188,9 @@ trials.
 ## Lighting and local scenes
 
 The physical light adapter targets Orion's 40-pixel Adafruit RGBW shield on
-Pi 5 BCM12. After loading the RP1 PWM kernel module as described in
-`hardware/lighting/README.md`, direct output is available without starting the
-servo daemon:
+Pi 5 BCM12. After installing and reboot-verifying the persistent RP1 PWM setup
+described in `hardware/lighting/README.md`, direct output is available without
+starting the servo daemon:
 
 ```bash
 sudo runtime/target/release/oriond --light 8 3 0 20
@@ -199,7 +199,9 @@ sudo runtime/target/release/oriond --lights-off
 ```
 
 Arguments are logical `RED GREEN BLUE WHITE` bytes from 0 through 255. The
-adapter performs the physical GRBW ordering and 800 kHz symbol encoding.
+adapter performs the physical GRBW ordering and 800 kHz symbol encoding. This
+path has been commissioned on the physical robot, including all four channels,
+the full matrix, and all-off output.
 
 Portable scenes live under `scenes/`. Version 1 can play an existing motion,
 go to an existing pose, fade to a uniform 8-bit RGBW value, and dispatch a
