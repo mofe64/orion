@@ -1,19 +1,23 @@
 # Orion audio hardware
 
-Orion's current audio HAT is the Seeed Studio ReSpeaker 2-Mics Pi HAT V1,
-identified by its WM8960 codec. The HAT provides two microphones plus playback
-through its 3.5 mm jack and JST 2.0 speaker output.
+Orion's current audio HAT is the Seeed Studio ReSpeaker 2-Mics Pi HAT V2,
+identified electrically by its TLV320AIC3104 codec at I2C address `0x18`. The
+HAT provides two microphones plus playback through its 3.5 mm jack and JST 2.0
+speaker output.
 
-This distinction is important: the newer ReSpeaker V2 overlay targets a
-TLV320AIC3104 codec at I2C address `0x18`. Orion's WM8960 is the V1 path at
-address `0x1a`; the two overlays are not interchangeable.
+This distinction is important: the ReSpeaker V2 overlay targets a
+TLV320AIC3104 codec at I2C address `0x18`; the WM8960 is the V1 path at address
+`0x1a`. The two overlays are not interchangeable.
 
-The old `respeaker/seeed-voicecard` package builds out-of-tree kernel modules
-and does not list Raspberry Pi 5 as a supported platform. Orion instead uses
-the current Seeed device-tree overlay with the Raspberry Pi kernel's built-in
-`snd_soc_wm8960` and `snd_soc_simple_card` modules. The current V1 overlay
-explicitly supports `brcm,bcm2712`, selects the Pi 5 I2S clock-consumer block,
-and registers the stable ALSA card name `seeed2micvoicec`.
+The product listing described a WM8960, but Orion's boot diagnostics are the
+source of truth: the board acknowledged `0x18`, while a WM8960 probe at `0x1a`
+failed with I/O error `-121`. The V1 and V2 overlays are not interchangeable.
+
+Orion uses Seeed's V2 device-tree overlay with the Raspberry Pi kernel's
+`snd_soc_tlv320aic3x`, `snd_soc_tlv320aic3x_i2c`, and
+`snd_soc_simple_card` modules. The overlay selects the Pi 5 I2S
+clock-consumer block and registers the stable ALSA card name
+`seeed2micvoicec`. No custom audio kernel module is installed.
 
 ## GPIO integration
 
@@ -34,13 +38,13 @@ sudo apt install device-tree-compiler make alsa-utils i2c-tools
 ```
 
 Clone Seeed's maintained overlay repository outside Orion, then compile only
-the WM8960 V1 overlay as the normal development user:
+the TLV320AIC3104 V2 overlay as the normal development user:
 
 ```bash
 cd ~/dev
 git clone https://github.com/Seeed-Studio/seeed-linux-dtoverlays.git
 cd ~/dev/seeed-linux-dtoverlays
-make overlays/rpi/respeaker-2mic-v1_0-overlay.dtbo
+make overlays/rpi/respeaker-2mic-v2_0-overlay.dtbo
 ```
 
 Install Orion's persistent boot configuration:
@@ -52,11 +56,12 @@ sudo hardware/audio/install-persistent.sh \
 sudo reboot
 ```
 
-The installer requires a current Seeed overlay that declares Pi 5 and WM8960
-compatibility. It installs the compiled overlay, rejects known conflicting
-audio overlays, adds one idempotent `dtoverlay=respeaker-2mic-v1_0` entry, and
-preserves the current boot configuration as `config.txt.orion-audio-backup`
-before changing it. It does not install custom kernel modules.
+The installer requires Seeed's V2 overlay targeting the Pi 5 I2S
+clock-consumer and TLV320AIC3104 at `0x18`. It installs the compiled overlay,
+rejects known conflicting audio overlays, migrates Orion's previous V1 boot
+entry to one idempotent `dtoverlay=respeaker-2mic-v2_0` entry, and preserves
+the original boot configuration as `config.txt.orion-audio-backup`. It does
+not install custom kernel modules.
 
 After reboot, verify the codec, playback, capture, and NeoPixel integration:
 
@@ -66,8 +71,9 @@ hardware/audio/verify-persistent.sh
 ```
 
 The expected ALSA card name is `seeed2micvoicec`. The verifier also requires
-the WM8960 at I2C address `0x1a` to be bound to its kernel driver. When Orion's
-NeoPixel device is present, it confirms BCM12 remains assigned to PWM0.
+the TLV320AIC3104 at I2C address `0x18` to be bound to its kernel driver. When
+Orion's NeoPixel device is present, it confirms BCM12 remains assigned to
+PWM0.
 
 ## Mixer commissioning
 
@@ -91,5 +97,6 @@ speaker-test \
 ```
 
 Once the speaker path is confirmed, Orion will capture the minimal working
-WM8960 mixer state in this directory and add an automated playback verifier.
-The runtime WAV-cue backend comes after this hardware contract is commissioned.
+TLV320AIC3104 mixer state in this directory and add an automated playback
+verifier. The runtime WAV-cue backend comes after this hardware contract is
+commissioned.

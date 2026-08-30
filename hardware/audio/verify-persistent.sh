@@ -3,6 +3,7 @@
 set -euo pipefail
 
 card_name=seeed2micvoicec
+overlay_name=respeaker-2mic-v2_0
 
 for required_command in aplay arecord basename cat find grep readlink; do
     if ! command -v "${required_command}" >/dev/null 2>&1; then
@@ -22,18 +23,28 @@ else
     exit 1
 fi
 
-if [[ ! -f ${boot_overlay_directory}/respeaker-2mic-v1_0.dtbo ]]; then
-    echo "FAIL: respeaker-2mic-v1_0.dtbo is not installed." >&2
+if [[ ! -f ${boot_overlay_directory}/${overlay_name}.dtbo ]]; then
+    echo "FAIL: ${overlay_name}.dtbo is not installed." >&2
     exit 1
 fi
 
-if ! grep -Eq '^[[:space:]]*dtoverlay=respeaker-2mic-v1_0([,[:space:]]|$)' "${boot_config}"; then
-    echo "FAIL: respeaker-2mic-v1_0 is not enabled in ${boot_config}." >&2
+if ! grep -Eq "^[[:space:]]*dtoverlay=${overlay_name}([,[:space:]]|$)" "${boot_config}"; then
+    echo "FAIL: ${overlay_name} is not enabled in ${boot_config}." >&2
     exit 1
 fi
 
-if [[ ! -d /sys/module/snd_soc_wm8960 ]]; then
-    echo "FAIL: snd_soc_wm8960 is not loaded." >&2
+if grep -Eq '^[[:space:]]*dtoverlay=respeaker-2mic-v1_0([,[:space:]]|$)' "${boot_config}"; then
+    echo "FAIL: the obsolete ReSpeaker V1 overlay is still enabled in ${boot_config}." >&2
+    exit 1
+fi
+
+if [[ ! -d /sys/module/snd_soc_tlv320aic3x ]]; then
+    echo "FAIL: snd_soc_tlv320aic3x is not loaded." >&2
+    exit 1
+fi
+
+if [[ ! -d /sys/module/snd_soc_tlv320aic3x_i2c ]]; then
+    echo "FAIL: snd_soc_tlv320aic3x_i2c is not loaded." >&2
     exit 1
 fi
 
@@ -62,9 +73,9 @@ if [[ ${capture_devices} != *"${card_name}"* ]]; then
     exit 1
 fi
 
-codec_device=$(find /sys/bus/i2c/devices -maxdepth 1 -type l -name '*-001a' -print -quit)
+codec_device=$(find /sys/bus/i2c/devices -maxdepth 1 -type l -name '*-0018' -print -quit)
 if [[ -z ${codec_device} || ! -L ${codec_device}/driver ]]; then
-    echo "FAIL: the WM8960 codec at I2C address 0x1a is not bound to a driver." >&2
+    echo "FAIL: the TLV320AIC3104 codec at I2C address 0x18 is not bound to a driver." >&2
     exit 1
 fi
 
@@ -76,7 +87,7 @@ if [[ -c /dev/ws281x_pwm && -x /usr/bin/pinctrl ]]; then
     fi
 fi
 
-echo "PASS: persistent Orion ReSpeaker WM8960 boot configuration is active."
+echo "PASS: persistent Orion ReSpeaker V2 TLV320AIC3104 boot configuration is active."
 echo "Codec: $(basename "${codec_device}") -> $(basename "$(readlink -f "${codec_device}/driver")")"
 printf '%s\n' "${playback_devices}"
 printf '%s\n' "${capture_devices}"
