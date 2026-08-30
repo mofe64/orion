@@ -13,7 +13,7 @@ pub mod state;
 pub mod trajectory;
 pub mod transport;
 
-pub use audio::{AudioCommand, AudioDevice, RecordingAudioDevice};
+pub use audio::{AudioCommand, AudioDevice, RecordingAudioDevice, UnavailableAudioDevice};
 pub use calibration::{JointCalibration, load_calibration_file};
 pub use daemon::{CompletionCriteria, OBSERVE_FREQUENCY_HZ, RuntimeCore};
 pub use driver::{
@@ -29,8 +29,8 @@ pub use motion::{MotionDefinition, MotionKeyframe, MotionLibrary, MotionSequence
 pub use mujoco::{MujocoDriver, SimulationMetrics};
 pub use pose::{JointPositions, PoseLibrary};
 pub use scene::{
-    SCENE_FORMAT_VERSION, SceneAction, SceneDefinition, SceneEvent, SceneLibrary, SceneMotion,
-    SceneMotionDevice, ScenePhase, ScenePlayer, SceneStatus,
+    SCENE_FORMAT_VERSION, SceneAction, SceneCoordinator, SceneDefinition, SceneEvent, SceneLibrary,
+    SceneMotion, SceneMotionDevice, ScenePhase, ScenePlayer, SceneStatus,
 };
 pub use socket::{UnixCommandServer, request_daemon};
 pub use state::{JointState, MotionState, MovementPhase, RuntimeMode, StateSnapshot};

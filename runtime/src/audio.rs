@@ -5,6 +5,21 @@ pub trait AudioDevice {
     fn stop(&mut self) -> Result<()>;
 }
 
+#[derive(Debug, Default)]
+pub struct UnavailableAudioDevice;
+
+impl AudioDevice for UnavailableAudioDevice {
+    fn play(&mut self, cue: &str) -> Result<()> {
+        Err(Error::InvalidState(format!(
+            "Audio cue '{cue}' cannot play because Orion's audio backend is not configured."
+        )))
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioCommand {
     Play(String),
@@ -53,5 +68,13 @@ mod tests {
             &[AudioCommand::Play("acknowledge".into()), AudioCommand::Stop]
         );
         assert!(device.play(" ").is_err());
+    }
+
+    #[test]
+    fn unavailable_audio_fails_instead_of_claiming_playback() {
+        let mut device = UnavailableAudioDevice;
+        let error = device.play("acknowledge").unwrap_err().to_string();
+        assert!(error.contains("audio backend is not configured"));
+        device.stop().unwrap();
     }
 }

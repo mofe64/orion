@@ -1,0 +1,2 @@
+# Permit Orion development processes in the gpio group to own the RP1 device.
+SUBSYSTEM=="misc", KERNEL=="ws281x_pwm", GROUP="gpio", MODE="0660"

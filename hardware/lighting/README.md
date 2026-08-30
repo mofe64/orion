@@ -42,7 +42,9 @@ translation is therefore correct for the installed shield.
 
 The complete 40-pixel frame was verified on the physical robot using the
 acknowledgement value `RGBW(8, 3, 0, 20)`, followed by a successful all-off
-frame. Physical lighting output is commissioned.
+frame. The persistent module, overlay, PWM channel, and BCM12 pin service were
+then verified after a full robot reboot with `verify-persistent.sh`. Physical
+lighting output and its boot configuration are commissioned.
 
 The shield is powered from the Pi's 5 V header rather than an independent
 supply. The runtime does not impose a brightness ceiling: RGBW values are sent
@@ -96,7 +98,7 @@ sudo hardware/lighting/install-persistent.sh /home/mofe/dev/rpi_ws281x
 sudo reboot
 ```
 
-The installer performs five persistent operations:
+The installer performs six persistent operations:
 
 1. Installs the kernel-matched module under `/lib/modules/$(uname -r)/extra/`
    and refreshes module dependencies.
@@ -106,7 +108,10 @@ The installer performs five persistent operations:
    `/etc/modprobe.d/orion-neopixel.conf`.
 4. Loads the module at boot through
    `/etc/modules-load.d/orion-neopixel.conf`.
-5. Enables `orion-neopixel-pin.service`, which assigns BCM12 to RP1 function
+5. Installs a udev rule granting the Raspberry Pi `gpio` group read/write
+   access to `/dev/ws281x_pwm`, allowing source-run development without a root
+   daemon.
+6. Enables `orion-neopixel-pin.service`, which assigns BCM12 to RP1 function
    `a0` and verifies that `/dev/ws281x_pwm` exists.
 
 Before changing `config.txt`, the installer preserves its original contents as
@@ -119,9 +124,10 @@ cd ~/dev/orion
 hardware/lighting/verify-persistent.sh
 ```
 
-The verifier requires `/dev/ws281x_pwm`, the loaded module with
-`pwm_channel=0`, BCM12 configured as `PWM0_CHAN0`, and an enabled and active pin
-service. It prints `PASS` only when the complete contract holds.
+Run `id -nG` once to confirm the development user belongs to the `gpio` group.
+The verifier requires readable and writable `/dev/ws281x_pwm`, the loaded
+module with `pwm_channel=0`, BCM12 configured as `PWM0_CHAN0`, and an enabled
+and active pin service. It prints `PASS` only when the complete contract holds.
 
 The module is compiled for one kernel ABI. After booting a newly installed
 kernel, rebuild `rp1_ws281x_pwm.ko` against that running kernel's headers and
@@ -136,18 +142,19 @@ pixel 0 before lighting the full matrix:
 ```bash
 cargo build --release --manifest-path runtime/Cargo.toml
 
-sudo runtime/target/release/oriond --lights-off
-sudo runtime/target/release/oriond --light-pixel 0 8 0 0 0
-sudo runtime/target/release/oriond --light-pixel 0 0 8 0 0
-sudo runtime/target/release/oriond --light-pixel 0 0 0 8 0
-sudo runtime/target/release/oriond --light-pixel 0 0 0 0 8
-sudo runtime/target/release/oriond --light 0 0 0 8
-sudo runtime/target/release/oriond --lights-off
+runtime/target/release/oriond --lights-off
+runtime/target/release/oriond --light-pixel 0 8 0 0 0
+runtime/target/release/oriond --light-pixel 0 0 8 0 0
+runtime/target/release/oriond --light-pixel 0 0 0 8 0
+runtime/target/release/oriond --light-pixel 0 0 0 0 8
+runtime/target/release/oriond --light 0 0 0 8
+runtime/target/release/oriond --lights-off
 ```
 
 `Pi5NeoPixelDevice` is behind the portable `LightingDevice` interface. It
 encodes logical RGBW as the shield's GRBW wire order and writes the exact
 40-pixel RP1 PWM frame to `/dev/ws281x_pwm`. `--lighting-device PATH` can
 override that path for diagnostics. These direct commands do not require the
-servo daemon and currently provide the physical-light commissioning surface;
-daemon-owned scene playback is the next integration boundary.
+servo daemon and provide the physical-light commissioning surface. When the
+source-run daemon is active, it owns the device exclusively and scenes become
+the normal semantic lighting interface.

@@ -368,6 +368,7 @@ pub enum ScenePhase {
     Completed,
     TimedOut,
     Cancelled,
+    Failed,
 }
 
 impl ScenePhase {
@@ -385,6 +386,8 @@ pub struct SceneStatus {
     pub event_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_motion_run_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -428,6 +431,7 @@ impl ScenePlayer {
                 dispatched_events: 0,
                 event_count,
                 active_motion_run_id: None,
+                error: None,
             },
             definition,
             started_at,
@@ -439,7 +443,7 @@ impl ScenePlayer {
         })
     }
 
-    pub fn tick<M: SceneMotionDevice, L: LightingDevice, A: AudioDevice>(
+    pub fn tick<M: SceneMotionDevice, L: LightingDevice + ?Sized, A: AudioDevice + ?Sized>(
         &mut self,
         now_seconds: f64,
         motion: &mut M,
@@ -514,7 +518,7 @@ impl ScenePlayer {
         Ok(())
     }
 
-    pub fn cancel<M: SceneMotionDevice, A: AudioDevice>(
+    pub fn cancel<M: SceneMotionDevice, A: AudioDevice + ?Sized>(
         &mut self,
         now_seconds: f64,
         motion: &mut M,
@@ -544,6 +548,23 @@ impl ScenePlayer {
 
     pub fn light(&self) -> Rgbw8 {
         self.light
+    }
+
+    fn fail<M: SceneMotionDevice, A: AudioDevice + ?Sized>(
+        &mut self,
+        now_seconds: f64,
+        motion: &mut M,
+        audio: &mut A,
+        error: String,
+    ) {
+        if self.status.active_motion_run_id.is_some() {
+            let _ = motion.cancel(now_seconds);
+        }
+        let _ = audio.stop();
+        self.transition = None;
+        self.status.active_motion_run_id = None;
+        self.status.state = ScenePhase::Failed;
+        self.status.error = Some(error);
     }
 
     fn update_motion_phase<M: SceneMotionDevice>(&mut self, motion: &M) -> Result<()> {
@@ -586,6 +607,110 @@ impl ScenePlayer {
     }
 }
 
+#[derive(Debug)]
+pub struct SceneCoordinator {
+    library: SceneLibrary,
+    next_run_id: u64,
+    active: Option<ScenePlayer>,
+    last: Option<SceneStatus>,
+    light: Rgbw8,
+}
+
+impl SceneCoordinator {
+    pub fn new(library: SceneLibrary, initial_light: Rgbw8) -> Self {
+        Self {
+            library,
+            next_run_id: 1,
+            active: None,
+            last: None,
+            light: initial_light,
+        }
+    }
+
+    pub fn start(&mut self, name: &str, now_seconds: f64) -> Result<SceneStatus> {
+        if let Some(active) = self.active.as_ref() {
+            return Err(Error::InvalidState(format!(
+                "Scene '{}' is already active as run {}.",
+                active.status().name,
+                active.status().run_id
+            )));
+        }
+        let definition = self.library.scene(name)?.clone();
+        let run_id = self.next_run_id;
+        self.next_run_id = self
+            .next_run_id
+            .checked_add(1)
+            .ok_or_else(|| Error::Runtime("Orion scene run ID overflowed.".into()))?;
+        let player = ScenePlayer::new(run_id, definition, now_seconds, self.light)?;
+        let status = player.status().clone();
+        self.active = Some(player);
+        Ok(status)
+    }
+
+    pub fn tick<M: SceneMotionDevice, L: LightingDevice + ?Sized, A: AudioDevice + ?Sized>(
+        &mut self,
+        now_seconds: f64,
+        motion: &mut M,
+        lighting: &mut L,
+        audio: &mut A,
+    ) -> Result<()> {
+        let Some(player) = self.active.as_mut() else {
+            return Ok(());
+        };
+        if let Err(error) = player.tick(now_seconds, motion, lighting, audio) {
+            player.fail(now_seconds, motion, audio, error.to_string());
+        }
+        self.archive_terminal();
+        Ok(())
+    }
+
+    pub fn cancel<M: SceneMotionDevice, A: AudioDevice + ?Sized>(
+        &mut self,
+        now_seconds: f64,
+        motion: &mut M,
+        audio: &mut A,
+    ) -> Result<SceneStatus> {
+        let player = self
+            .active
+            .as_mut()
+            .ok_or_else(|| Error::InvalidState("No scene is active.".into()))?;
+        player.cancel(now_seconds, motion, audio)?;
+        self.archive_terminal();
+        self.last
+            .clone()
+            .ok_or_else(|| Error::Runtime("Cancelled scene result was not retained.".into()))
+    }
+
+    pub fn active_status(&self) -> Option<&SceneStatus> {
+        self.active.as_ref().map(ScenePlayer::status)
+    }
+
+    pub fn last_status(&self) -> Option<&SceneStatus> {
+        self.last.as_ref()
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        self.library.names()
+    }
+
+    fn archive_terminal(&mut self) {
+        if !self
+            .active
+            .as_ref()
+            .is_some_and(|player| player.status().state.is_terminal())
+        {
+            return;
+        }
+        let player = self.active.take().expect("terminal scene must be active");
+        self.light = player.light();
+        self.last = Some(player.status().clone());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -593,7 +718,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::audio::{AudioCommand, RecordingAudioDevice};
+    use crate::audio::{AudioCommand, RecordingAudioDevice, UnavailableAudioDevice};
     use crate::daemon::CompletionCriteria;
     use crate::driver::RuntimeDriver;
     use crate::lighting::RecordingLightingDevice;
@@ -746,6 +871,12 @@ mod tests {
         }
     }
 
+    fn scene_library(scene: SceneDefinition) -> SceneLibrary {
+        SceneLibrary {
+            scenes: [(scene.name.clone(), scene)].into_iter().collect(),
+        }
+    }
+
     #[test]
     fn coordinates_motion_light_and_audio_with_one_clock() {
         let mut player = ScenePlayer::new(9, example_scene(), 10.0, Rgbw8::OFF).unwrap();
@@ -801,6 +932,56 @@ mod tests {
         assert_eq!(second.status().state, ScenePhase::Cancelled);
         assert_eq!(motion.cancel_count, 1);
         assert_eq!(audio.commands().last(), Some(&AudioCommand::Stop));
+    }
+
+    #[test]
+    fn coordinator_assigns_ids_rejects_busy_and_retains_completion() {
+        let mut coordinator = SceneCoordinator::new(scene_library(example_scene()), Rgbw8::OFF);
+        let first = coordinator.start("acknowledge", 10.0).unwrap();
+        assert_eq!(first.run_id, 1);
+        assert!(coordinator.start("acknowledge", 10.0).is_err());
+
+        let mut motion = FakeMotionDevice::new();
+        let mut lighting = RecordingLightingDevice::new(2).unwrap();
+        let mut audio = RecordingAudioDevice::default();
+        coordinator
+            .tick(10.0, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        motion.finish(1, MovementPhase::Completed);
+        coordinator
+            .tick(11.0, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+
+        assert!(!coordinator.is_active());
+        let completed = coordinator.last_status().unwrap();
+        assert_eq!(completed.run_id, 1);
+        assert_eq!(completed.state, ScenePhase::Completed);
+        assert_eq!(completed.dispatched_events, completed.event_count);
+
+        let second = coordinator.start("acknowledge", 12.0).unwrap();
+        assert_eq!(second.run_id, 2);
+    }
+
+    #[test]
+    fn coordinator_records_device_failure_without_propagating_it() {
+        let mut coordinator = SceneCoordinator::new(scene_library(example_scene()), Rgbw8::OFF);
+        coordinator.start("acknowledge", 0.0).unwrap();
+        let mut motion = FakeMotionDevice::new();
+        let mut lighting = RecordingLightingDevice::new(1).unwrap();
+        let mut audio = UnavailableAudioDevice;
+
+        coordinator
+            .tick(0.0, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        coordinator
+            .tick(0.5, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+
+        assert!(!coordinator.is_active());
+        let failed = coordinator.last_status().unwrap();
+        assert_eq!(failed.state, ScenePhase::Failed);
+        assert!(failed.error.as_deref().unwrap().contains("not configured"));
+        assert_eq!(motion.cancel_count, 1);
     }
 
     #[test]
@@ -887,9 +1068,14 @@ scene:
         let scenes = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
 
         let scene = scenes.scene("acknowledge_left").unwrap();
-        assert_eq!(scene.events.len(), 4);
+        assert_eq!(scene.events.len(), 3);
         assert_eq!(scene.events[0].at_seconds, 0.0);
-        assert_eq!(scene.events[3].at_seconds, 4.2);
+        assert_eq!(scene.events[2].at_seconds, 4.2);
+        let scene = scenes.scene("acknowledge_right").unwrap();
+        assert_eq!(scene.events.len(), 3);
+        assert_eq!(scene.events[0].at_seconds, 0.0);
+        assert_eq!(scene.events[2].at_seconds, 4.2);
+        assert!(scenes.scene("lighting_acknowledge").is_ok());
     }
 
     #[test]

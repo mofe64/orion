@@ -193,9 +193,9 @@ described in `hardware/lighting/README.md`, direct output is available without
 starting the servo daemon:
 
 ```bash
-sudo runtime/target/release/oriond --light 8 3 0 20
-sudo runtime/target/release/oriond --light-pixel 0 0 0 0 8
-sudo runtime/target/release/oriond --lights-off
+runtime/target/release/oriond --light 8 3 0 20
+runtime/target/release/oriond --light-pixel 0 0 0 0 8
+runtime/target/release/oriond --lights-off
 ```
 
 Arguments are logical `RED GREEN BLUE WHITE` bytes from 0 through 255. The
@@ -214,11 +214,34 @@ motion through the existing `goto`/`play` command boundary and follows the
 returned movement `run_id`. A scene remains active while that movement is
 executing or settling, and propagates movement timeout or cancellation.
 
-The current slice includes deterministic recording backends plus physical Pi 5
-light output. Scene playback is not yet exposed through the daemon/CLI, and no
-physical audio cue is claimed. The next integration slice is daemon-owned scene
-playback, followed by the ReSpeaker playback adapter; both plug into the same
-interfaces without changing scene assets.
+Hardware `--serve` opens `/dev/ws281x_pwm`, clears it to establish a known
+initial state, and exclusively owns lighting until the process exits. Direct
+`--light` commissioning commands therefore cannot run concurrently with the
+daemon. MuJoCo uses a recording lighting backend with the identical scene
+clock and lifecycle.
+
+Run the lighting-only scene without enabling torque:
+
+```bash
+runtime/target/release/oriond --run-scene lighting_acknowledge --wait
+runtime/target/release/oriond --scene-status
+```
+
+After `--configure` and `--enable`, run the coordinated motion-and-light scene:
+
+```bash
+runtime/target/release/oriond --run-scene acknowledge_left --wait
+```
+
+Every accepted scene receives a daemon-local `run_id`. `--scene-status` keeps
+only the active `scene` and most recent terminal `last_scene`; IDs and results
+reset when the source-run daemon restarts. Scene states are `executing`,
+`completed`, `timed_out`, `cancelled`, and `failed`. `--stop-scene` cancels the
+scene and its active movement. `--wait` exits `0`, `4`, `5`, or `6` for
+completed, timed out, cancelled, or failed respectively.
+
+Physical audio is not yet claimed. An authored `audio` event explicitly makes
+the scene `failed` until the ReSpeaker playback adapter is implemented.
 
 During development, build and run `oriond` directly from this source tree. It
 is not installed as a system service.

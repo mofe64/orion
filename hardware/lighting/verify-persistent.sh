@@ -9,6 +9,12 @@ if [[ ! -c ${device} ]]; then
     exit 1
 fi
 
+if [[ ! -r ${device} || ! -w ${device} ]]; then
+    echo "FAIL: the current user cannot read and write ${device}." >&2
+    echo "Ensure the user belongs to the gpio group, then start a new login session." >&2
+    exit 1
+fi
+
 if ! grep -q '^rp1_ws281x_pwm ' /proc/modules; then
     echo "FAIL: rp1_ws281x_pwm is not loaded." >&2
     exit 1

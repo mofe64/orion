@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 use orion_runtime::{
     LightingDevice, MotionLibrary, MujocoDriver, ORION_JOINT_NAMES, PI5_NEOPIXEL_DEVICE_PATH,
-    Pi5NeoPixelDevice, PoseLibrary, Rgbw8, RuntimeCore, RuntimeDriver, RustypotTransport,
-    Sts3215Driver, UnixCommandServer, load_calibration_file, request_daemon,
+    Pi5NeoPixelDevice, PoseLibrary, RecordingLightingDevice, Rgbw8, RuntimeCore, RuntimeDriver,
+    RustypotTransport, SceneCoordinator, SceneLibrary, Sts3215Driver, UnavailableAudioDevice,
+    UnixCommandServer, load_calibration_file, request_daemon,
 };
 
 const DEFAULT_BAUD_RATE: i32 = 1_000_000;
@@ -18,6 +19,7 @@ const OBSERVE_PERIOD: Duration = Duration::from_millis(20);
 const EXIT_DAEMON_REJECTED: i32 = 3;
 const EXIT_MOVEMENT_TIMED_OUT: i32 = 4;
 const EXIT_MOVEMENT_CANCELLED: i32 = 5;
+const EXIT_SCENE_FAILED: i32 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Operation {
@@ -34,6 +36,9 @@ enum Operation {
     Light,
     LightPixel,
     LightsOff,
+    RunScene,
+    SceneStatus,
+    StopScene,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,6 +67,8 @@ struct Options {
     lighting_device: PathBuf,
     light_color: Rgbw8,
     light_pixel: usize,
+    scenes_directory: PathBuf,
+    scene_name: String,
 }
 
 impl Default for Options {
@@ -86,6 +93,8 @@ impl Default for Options {
             lighting_device: PI5_NEOPIXEL_DEVICE_PATH.into(),
             light_color: Rgbw8::OFF,
             light_pixel: 0,
+            scenes_directory: "scenes".into(),
+            scene_name: String::new(),
         }
     }
 }
@@ -104,6 +113,9 @@ fn usage() -> &'static str {
   oriond --light RED GREEN BLUE WHITE [--lighting-device PATH]\n\
   oriond --light-pixel INDEX RED GREEN BLUE WHITE [--lighting-device PATH]\n\
   oriond --lights-off [--lighting-device PATH]\n\n\
+  oriond --run-scene SCENE [--wait] [--socket PATH]\n\
+  oriond --scene-status [--socket PATH]\n\
+  oriond --stop-scene [--socket PATH]\n\n\
   --check             Print one direct hardware state snapshot and exit.\n\
   --serve             Sample the selected backend at 50 Hz and serve status JSON.\n\
   --backend NAME      Use hardware (default) or the native MuJoCo bridge.\n\
@@ -118,6 +130,10 @@ fn usage() -> &'static str {
   --light-pixel ...   Light one zero-based pixel and turn the other 39 off.\n\
   --lights-off        Immediately turn all 40 shield pixels off.\n\
   --lighting-device   Pi 5 RP1 PWM device (default: /dev/ws281x_pwm).\n\
+  --run-scene SCENE  Submit a named lighting/motion scene to the daemon.\n\
+  --scene-status     Show the active and most recent terminal scene.\n\
+  --stop-scene       Cancel the active scene and its movement.\n\
+  --scenes DIR       Scene library used by --serve (default: scenes).\n\
   --duration SECONDS  Quintic move duration (default: 3.0).\n\
   --wait              Follow the submitted run ID through completion.\n\
   --port DEVICE       Servo serial device (default: /dev/ttyACM0).\n\
@@ -170,10 +186,89 @@ fn run() -> orion_runtime::Result<i32> {
         Operation::Light => render_light(&options, None),
         Operation::LightPixel => render_light(&options, Some(options.light_pixel)),
         Operation::LightsOff => render_light(&options, None),
+        Operation::RunScene => request_scene(&options),
+        Operation::SceneStatus => {
+            print_response(request_daemon(&options.socket_path, "scene status")?)
+        }
+        Operation::StopScene => print_response(request_daemon(&options.socket_path, "scene stop")?),
         Operation::None => {
             eprint!("{}", usage());
             Ok(2)
         }
+    }
+}
+
+fn request_scene(options: &Options) -> orion_runtime::Result<i32> {
+    let response = request_daemon(
+        &options.socket_path,
+        &format!("scene start {}", options.scene_name),
+    )?;
+    let value: serde_json::Value = serde_json::from_str(response.trim())?;
+    let exit_code = daemon_value_exit_code(&value);
+    print!("{response}");
+    io::stdout().flush()?;
+    if exit_code != 0 || !options.wait {
+        return Ok(exit_code);
+    }
+    let run_id = value
+        .get("run_id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            orion_runtime::Error::Runtime(
+                "Accepted Orion scene response did not include a run_id.".into(),
+            )
+        })?;
+    wait_for_scene(&options.socket_path, run_id)
+}
+
+fn wait_for_scene(socket_path: &std::path::Path, run_id: u64) -> orion_runtime::Result<i32> {
+    loop {
+        thread::sleep(OBSERVE_PERIOD);
+        let response = request_daemon(socket_path, "scene status")?;
+        let status: serde_json::Value = serde_json::from_str(response.trim())?;
+        let mut found = false;
+        for field in ["scene", "last_scene"] {
+            let Some(scene) = status.get(field).filter(|value| !value.is_null()) else {
+                continue;
+            };
+            if scene.get("run_id").and_then(serde_json::Value::as_u64) != Some(run_id) {
+                continue;
+            }
+            found = true;
+            let state = scene
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    orion_runtime::Error::Runtime(
+                        "Orion scene status did not include a state.".into(),
+                    )
+                })?;
+            match scene_state_exit_code(state)? {
+                None => break,
+                Some(exit_code) => {
+                    println!("{}", serde_json::to_string(scene)?);
+                    return Ok(exit_code);
+                }
+            }
+        }
+        if !found {
+            return Err(orion_runtime::Error::Runtime(format!(
+                "Orion scene run {run_id} is no longer the active or most recent result."
+            )));
+        }
+    }
+}
+
+fn scene_state_exit_code(state: &str) -> orion_runtime::Result<Option<i32>> {
+    match state {
+        "executing" => Ok(None),
+        "completed" => Ok(Some(0)),
+        "timed_out" => Ok(Some(EXIT_MOVEMENT_TIMED_OUT)),
+        "cancelled" => Ok(Some(EXIT_MOVEMENT_CANCELLED)),
+        "failed" => Ok(Some(EXIT_SCENE_FAILED)),
+        value => Err(orion_runtime::Error::Runtime(format!(
+            "Unknown Orion scene state: {value}"
+        ))),
     }
 }
 
@@ -289,6 +384,12 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             "--enable" => select_operation(&mut options, Operation::Enable, &argument)?,
             "--disable" => select_operation(&mut options, Operation::Disable, &argument)?,
             "--stop" => select_operation(&mut options, Operation::Stop, &argument)?,
+            "--run-scene" => {
+                select_operation(&mut options, Operation::RunScene, &argument)?;
+                options.scene_name = require_value(&mut arguments, &argument)?;
+            }
+            "--scene-status" => select_operation(&mut options, Operation::SceneStatus, &argument)?,
+            "--stop-scene" => select_operation(&mut options, Operation::StopScene, &argument)?,
             "--lights-off" => {
                 select_operation(&mut options, Operation::LightsOff, &argument)?;
                 options.light_color = Rgbw8::OFF;
@@ -349,6 +450,9 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             "--motions" => {
                 options.motions_directory = require_value(&mut arguments, &argument)?.into()
             }
+            "--scenes" => {
+                options.scenes_directory = require_value(&mut arguments, &argument)?.into()
+            }
             "--scene" => options.scene_file = require_value(&mut arguments, &argument)?.into(),
             "--python" => options.python = require_value(&mut arguments, &argument)?.into(),
             "--start-pose" => options.start_pose = require_value(&mut arguments, &argument)?,
@@ -376,9 +480,14 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             "--check is a direct-hardware operation; use --serve --backend mujoco.".into(),
         ));
     }
-    if options.wait && !matches!(options.operation, Operation::Goto | Operation::Play) {
+    if options.wait
+        && !matches!(
+            options.operation,
+            Operation::Goto | Operation::Play | Operation::RunScene
+        )
+    {
         return Err(orion_runtime::Error::InvalidArgument(
-            "--wait is only valid with --goto or --play.".into(),
+            "--wait is only valid with --goto, --play, or --run-scene.".into(),
         ));
     }
     if options.operation == Operation::LightPixel
@@ -481,16 +590,24 @@ fn connect_driver(options: &Options) -> orion_runtime::Result<Sts3215Driver<Rust
 fn serve(options: Options) -> orion_runtime::Result<i32> {
     let poses = PoseLibrary::load(&options.poses_file, &ORION_JOINT_NAMES)?;
     let motions = MotionLibrary::load(&options.motions_directory, &poses)?;
+    let scenes = SceneLibrary::load(&options.scenes_directory, &poses, &motions)?;
     match options.backend {
         Backend::Hardware => {
             let driver = connect_driver(&options)?;
-            serve_driver(driver, poses, motions, &options, "hardware")
+            let lighting = Box::new(Pi5NeoPixelDevice::open(
+                &options.lighting_device,
+                orion_runtime::ORION_LIGHT_PIXEL_COUNT,
+            )?);
+            serve_driver(
+                driver, poses, motions, scenes, lighting, &options, "hardware",
+            )
         }
         Backend::Mujoco => {
             let start = poses.pose(&options.start_pose)?;
             let bridge = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mujoco_bridge.py");
             let driver = MujocoDriver::launch(&options.python, bridge, &options.scene_file, start)?;
-            serve_driver(driver, poses, motions, &options, "mujoco")
+            let lighting = Box::new(RecordingLightingDevice::orion());
+            serve_driver(driver, poses, motions, scenes, lighting, &options, "mujoco")
         }
     }
 }
@@ -499,10 +616,15 @@ fn serve_driver<D: RuntimeDriver>(
     driver: D,
     poses: PoseLibrary,
     motions: MotionLibrary,
+    scene_library: SceneLibrary,
+    mut lighting: Box<dyn LightingDevice>,
     options: &Options,
     backend: &str,
 ) -> orion_runtime::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
+    lighting.clear()?;
+    let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
+    let mut audio = UnavailableAudioDevice;
     let server = UnixCommandServer::bind(&options.socket_path)?;
     let stopping = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stopping))?;
@@ -516,13 +638,103 @@ fn serve_driver<D: RuntimeDriver>(
     let mut next_sample = started_at;
     while !stopping.load(Ordering::Relaxed) {
         next_sample += OBSERVE_PERIOD;
-        core.tick(started_at.elapsed().as_secs_f64())?;
+        let now_seconds = started_at.elapsed().as_secs_f64();
+        core.tick(now_seconds)?;
+        scenes.tick(now_seconds, &mut core, lighting.as_mut(), &mut audio)?;
         server.serve_pending(|command| {
-            core.handle_command(command, started_at.elapsed().as_secs_f64())
+            handle_daemon_command(
+                command,
+                started_at.elapsed().as_secs_f64(),
+                &mut core,
+                &mut scenes,
+                &mut audio,
+            )
         })?;
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }
     Ok(0)
+}
+
+fn handle_daemon_command<D: RuntimeDriver>(
+    command: &str,
+    now_seconds: f64,
+    core: &mut RuntimeCore<D>,
+    scenes: &mut SceneCoordinator,
+    audio: &mut UnavailableAudioDevice,
+) -> String {
+    match handle_daemon_command_inner(command, now_seconds, core, scenes, audio) {
+        Ok(response) => response,
+        Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
+    }
+}
+
+fn handle_daemon_command_inner<D: RuntimeDriver>(
+    command: &str,
+    now_seconds: f64,
+    core: &mut RuntimeCore<D>,
+    scenes: &mut SceneCoordinator,
+    audio: &mut UnavailableAudioDevice,
+) -> orion_runtime::Result<String> {
+    if command == "scene status" {
+        return Ok(serde_json::json!({
+            "ok": true,
+            "scene": scenes.active_status(),
+            "last_scene": scenes.last_status(),
+        })
+        .to_string());
+    }
+    if command == "scene list" {
+        return Ok(serde_json::json!({"ok": true, "scenes": scenes.names()}).to_string());
+    }
+    if let Some(name) = command.strip_prefix("scene start ") {
+        let name = name.trim();
+        if name.is_empty() || name.split_whitespace().count() != 1 {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "command": "scene_start",
+                "error": "expected scene start SCENE",
+            })
+            .to_string());
+        }
+        if let Some(motion) = core.snapshot().motion.as_ref() {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "command": "scene_start",
+                "error": "motion already active",
+                "active_run_id": motion.run_id,
+            })
+            .to_string());
+        }
+        let status = scenes.start(name, now_seconds)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "command": "scene_start",
+            "run_id": status.run_id,
+            "scene": status.name,
+            "state": status.state,
+            "event_count": status.event_count,
+        })
+        .to_string());
+    }
+    if command == "scene stop" || (command == "stop" && scenes.is_active()) {
+        let status = scenes.cancel(now_seconds, core, audio)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "command": "scene_stop",
+            "last_scene": status,
+        })
+        .to_string());
+    }
+    if scenes.is_active() && (command.starts_with("goto ") || command.starts_with("play ")) {
+        return Ok(serde_json::json!({
+            "ok": false,
+            "command": command.split_whitespace().next().unwrap_or("motion"),
+            "error": "scene already active",
+            "active_scene_run_id": scenes.active_status().map(|status| status.run_id),
+        })
+        .to_string());
+    }
+    Ok(core.handle_command(command, now_seconds))
 }
 
 fn print_states(states: &[orion_runtime::JointState]) {
@@ -546,7 +758,64 @@ fn print_states(states: &[orion_runtime::JointState]) {
 
 #[cfg(test)]
 mod tests {
+    use orion_runtime::{JointPositions, JointState};
+
     use super::*;
+
+    struct TestDriver;
+
+    impl TestDriver {
+        fn states() -> Vec<JointState> {
+            ORION_JOINT_NAMES
+                .iter()
+                .map(|name| JointState {
+                    name: (*name).to_owned(),
+                    position: 0.0,
+                    velocity: 0.0,
+                    current_ma: 0.0,
+                    voltage_v: 5.0,
+                    temperature_c: 25.0,
+                    status: 0,
+                })
+                .collect()
+        }
+    }
+
+    impl RuntimeDriver for TestDriver {
+        fn apply_servo_profile(&mut self) -> orion_runtime::Result<()> {
+            Ok(())
+        }
+
+        fn activate(&mut self) -> orion_runtime::Result<Vec<JointState>> {
+            Ok(Self::states())
+        }
+
+        fn deactivate(&mut self) -> orion_runtime::Result<()> {
+            Ok(())
+        }
+
+        fn read(&mut self) -> orion_runtime::Result<Vec<JointState>> {
+            Ok(Self::states())
+        }
+
+        fn write(&mut self, _positions_radians: &JointPositions) -> orion_runtime::Result<()> {
+            Ok(())
+        }
+
+        fn validate_positions(
+            &self,
+            _positions_radians: &JointPositions,
+        ) -> orion_runtime::Result<()> {
+            Ok(())
+        }
+
+        fn clamp_positions_to_safe_range(
+            &self,
+            positions_radians: &JointPositions,
+        ) -> orion_runtime::Result<JointPositions> {
+            Ok(positions_radians.clone())
+        }
+    }
 
     fn parse(values: &[&str]) -> orion_runtime::Result<Options> {
         parse_options(values.iter().map(|value| (*value).to_owned()))
@@ -600,6 +869,116 @@ mod tests {
 
         assert!(parse(&["--light", "256", "0", "0", "0"]).is_err());
         assert!(parse(&["--light-pixel", "40", "0", "0", "0", "1"]).is_err());
+    }
+
+    #[test]
+    fn parses_scene_clients_and_wait() {
+        let options = parse(&[
+            "--run-scene",
+            "acknowledge_left",
+            "--wait",
+            "--socket",
+            "/tmp/orion-test.sock",
+        ])
+        .unwrap();
+        assert_eq!(options.operation, Operation::RunScene);
+        assert_eq!(options.scene_name, "acknowledge_left");
+        assert!(options.wait);
+
+        assert_eq!(
+            parse(&["--scene-status"]).unwrap().operation,
+            Operation::SceneStatus
+        );
+        assert_eq!(
+            parse(&["--stop-scene"]).unwrap().operation,
+            Operation::StopScene
+        );
+        assert!(parse(&["--scene-status", "--wait"]).is_err());
+    }
+
+    #[test]
+    fn maps_scene_terminal_states_to_exit_codes() {
+        assert_eq!(scene_state_exit_code("executing").unwrap(), None);
+        assert_eq!(scene_state_exit_code("completed").unwrap(), Some(0));
+        assert_eq!(
+            scene_state_exit_code("timed_out").unwrap(),
+            Some(EXIT_MOVEMENT_TIMED_OUT)
+        );
+        assert_eq!(
+            scene_state_exit_code("cancelled").unwrap(),
+            Some(EXIT_MOVEMENT_CANCELLED)
+        );
+        assert_eq!(
+            scene_state_exit_code("failed").unwrap(),
+            Some(EXIT_SCENE_FAILED)
+        );
+        assert!(scene_state_exit_code("mystery").is_err());
+    }
+
+    #[test]
+    fn daemon_scene_commands_assign_status_and_retain_cancellation() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let poses =
+            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
+        let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
+        let mut audio = UnavailableAudioDevice;
+
+        let accepted: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+            "scene start acknowledge_left",
+            0.0,
+            &mut core,
+            &mut scenes,
+            &mut audio,
+        ))
+        .unwrap();
+        assert_eq!(accepted["ok"], true);
+        assert_eq!(accepted["run_id"], 1);
+
+        let busy: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+            "scene start acknowledge_left",
+            0.0,
+            &mut core,
+            &mut scenes,
+            &mut audio,
+        ))
+        .unwrap();
+        assert_eq!(busy["ok"], false);
+
+        let status: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+            "scene status",
+            0.0,
+            &mut core,
+            &mut scenes,
+            &mut audio,
+        ))
+        .unwrap();
+        assert_eq!(status["scene"]["run_id"], 1);
+
+        let stopped: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+            "scene stop",
+            0.1,
+            &mut core,
+            &mut scenes,
+            &mut audio,
+        ))
+        .unwrap();
+        assert_eq!(stopped["last_scene"]["state"], "cancelled");
+
+        let status: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+            "scene status",
+            0.2,
+            &mut core,
+            &mut scenes,
+            &mut audio,
+        ))
+        .unwrap();
+        assert!(status["scene"].is_null());
+        assert_eq!(status["last_scene"]["run_id"], 1);
     }
 
     #[test]

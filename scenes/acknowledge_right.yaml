@@ -1,8 +1,8 @@
 format_version: 1
 
 scene:
-  name: acknowledge_left
-  description: Turn left with a restrained warm acknowledgement light.
+  name: acknowledge_right
+  description: Turn right with a restrained warm acknowledgement light.
   timeline:
     - at: 0.0
       type: light
@@ -13,7 +13,7 @@ scene:
       transition_seconds: 0.35
     - at: 0.0
       type: play_motion
-      motion: look_at_left_expressive
+      motion: look_at_right_expressive
     - at: 4.20
       type: light
       red: 0

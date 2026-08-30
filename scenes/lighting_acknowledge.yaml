@@ -1,8 +1,8 @@
 format_version: 1
 
 scene:
-  name: acknowledge_left
-  description: Turn left with a restrained warm acknowledgement light.
+  name: lighting_acknowledge
+  description: Show a short warm acknowledgement and return to warm-white idle.
   timeline:
     - at: 0.0
       type: light
@@ -11,10 +11,7 @@ scene:
       blue: 0
       white: 20
       transition_seconds: 0.35
-    - at: 0.0
-      type: play_motion
-      motion: look_at_left_expressive
-    - at: 4.20
+    - at: 1.5
       type: light
       red: 0
       green: 0

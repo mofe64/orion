@@ -74,12 +74,16 @@ declaring completion.
 
 Lighting and audio are narrow device traits. Recording implementations make
 scene timing deterministic on a development machine. The physical Pi 5
-NeoPixel and ReSpeaker implementations remain separate adapters, so neither a
-scene nor the future agent can write GPIO, ALSA, or servo registers directly.
-The scene player remains library-level and is not yet exposed as an `oriond`
-scene command. Physical Pi 5 RGBW output is available through the direct
-`--light`, `--light-pixel`, and `--lights-off` commissioning commands; daemon
-ownership is the next integration boundary.
+NeoPixel adapter implements the lighting trait; the ReSpeaker adapter remains
+future work. Neither a scene nor the future agent writes GPIO, ALSA, or servo
+registers directly.
+
+The source-run daemon owns lighting and the scene coordinator. A client submits
+`--run-scene NAME`, retains the returned ephemeral scene `run_id`, and follows
+the active or most recent terminal result with `--scene-status` or `--wait`.
+Scene completion waits for all scheduled light transitions plus the same
+measured movement settling lifecycle used by direct motion commands. Only one
+active and one terminal scene result are retained; there is no scene database.
 
 The authoritative physical calibration remains outside the repository at
 `~/.config/orion/servo_calibration.json`. The tracked copy under

@@ -12,7 +12,7 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-for required_command in modinfo depmod install grep systemctl; do
+for required_command in modinfo depmod install grep systemctl udevadm getent; do
     if ! command -v "${required_command}" >/dev/null 2>&1; then
         echo "Required command is not installed: ${required_command}" >&2
         exit 1
@@ -21,6 +21,11 @@ done
 
 if [[ ! -x /usr/bin/pinctrl ]]; then
     echo "Required Raspberry Pi utility is missing: /usr/bin/pinctrl" >&2
+    exit 1
+fi
+
+if ! getent group gpio >/dev/null; then
+    echo "Required Raspberry Pi group does not exist: gpio" >&2
     exit 1
 fi
 
@@ -71,6 +76,8 @@ install -m 0644 "${script_directory}/orion-neopixel.modules" \
     /etc/modules-load.d/orion-neopixel.conf
 install -m 0644 "${script_directory}/orion-neopixel-pin.service" \
     /etc/systemd/system/orion-neopixel-pin.service
+install -m 0644 "${script_directory}/70-orion-neopixel.rules" \
+    /etc/udev/rules.d/70-orion-neopixel.rules
 
 if ! grep -Eq '^[[:space:]]*dtoverlay=rp1_ws281x_pwm([[:space:]]|$)' "${boot_config}"; then
     if [[ ! -e ${boot_config}.orion-backup ]]; then
@@ -84,6 +91,10 @@ fi
 
 systemctl daemon-reload
 systemctl enable orion-neopixel-pin.service
+udevadm control --reload-rules
+if [[ -e /sys/class/misc/ws281x_pwm ]]; then
+    udevadm trigger --action=add /sys/class/misc/ws281x_pwm
+fi
 
 echo "Installed persistent Orion NeoPixel support for kernel ${kernel_release}."
 echo "Boot configuration: ${boot_config}"
