@@ -13,7 +13,11 @@ pub mod state;
 pub mod trajectory;
 pub mod transport;
 
-pub use audio::{AudioCommand, AudioDevice, RecordingAudioDevice, UnavailableAudioDevice};
+pub use audio::{
+    AlsaAudioDevice, AudioCommand, AudioDevice, CueLibrary, ORION_AMIXER_PATH, ORION_APLAY_PATH,
+    ORION_AUDIO_CARD, ORION_AUDIO_PCM_DEVICE, RecordingAudioDevice, UnavailableAudioDevice,
+    configure_respeaker_v2_mixer,
+};
 pub use calibration::{JointCalibration, load_calibration_file};
 pub use daemon::{CompletionCriteria, OBSERVE_FREQUENCY_HZ, RuntimeCore};
 pub use driver::{

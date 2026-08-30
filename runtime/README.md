@@ -3,7 +3,8 @@
 `runtime` is Orion's ROS-independent native Rust runtime. It implements the
 `oriond` command protocol, lifecycle, pose and motion loading, quintic
 interpolation, calibration contract, STS3215 profile, 50 Hz state snapshots,
-the Pi 5 RGBW output backend, and hardware-independent audio/scene contracts.
+the Pi 5 RGBW output backend, ReSpeaker V2 WAV playback, and multimodal scene
+coordination.
 
 The physical transport uses
 [`rustypot`](https://github.com/pollen-robotics/rustypot) for protocol-v1 packet
@@ -185,7 +186,7 @@ trials.
 - `src/mujoco.rs` and `mujoco_bridge.py` — native simulation backend.
 - `src/main.rs` — `oriond` arguments and 50 Hz control loop.
 
-## Lighting and local scenes
+## Lighting, audio, and local scenes
 
 The physical light adapter targets Orion's 40-pixel Adafruit RGBW shield on
 Pi 5 BCM12. After installing and reboot-verifying the persistent RP1 PWM setup
@@ -203,22 +204,38 @@ adapter performs the physical GRBW ordering and 800 kHz symbol encoding. This
 path has been commissioned on the physical robot, including all four channels,
 the full matrix, and all-off output.
 
+The physical audio adapter uses the stable ALSA PCM
+`plughw:CARD=seeed2micvoicec,DEV=0`. It applies the confirmed ReSpeaker V2 JST
+mixer route whenever the hardware daemon starts. Named, local, stereo WAV
+cues live under `audio/cues/` and can be commissioned without starting the
+servo daemon:
+
+```bash
+runtime/target/release/oriond --play-cue acknowledge
+```
+
+The direct command blocks until `aplay` exits and returns nonzero if playback
+fails. Do not run it concurrently with a hardware daemon that may also own the
+ALSA PCM.
+
 Portable scenes live under `scenes/`. Version 1 can play an existing motion,
 go to an existing pose, fade to a uniform 8-bit RGBW value, and dispatch a
-named audio cue. Scene files are validated against the pose and motion
+named audio cue. Scene files are validated against the pose, motion, and cue
 libraries before playback. All events use seconds from one supplied monotonic
 start time.
 
 The scene player implements `SceneMotionDevice` for `RuntimeCore`, so it starts
 motion through the existing `goto`/`play` command boundary and follows the
-returned movement `run_id`. A scene remains active while that movement is
-executing or settling, and propagates movement timeout or cancellation.
+returned movement `run_id`. A scene remains active while movement is executing
+or settling, while an audio cue is playing, or while a light transition is in
+progress. It propagates movement timeout, cancellation, and failed WAV player
+exit status.
 
 Hardware `--serve` opens `/dev/ws281x_pwm`, clears it to establish a known
-initial state, and exclusively owns lighting until the process exits. Direct
-`--light` commissioning commands therefore cannot run concurrently with the
-daemon. MuJoCo uses a recording lighting backend with the identical scene
-clock and lifecycle.
+initial state, configures the ReSpeaker mixer, and owns both devices until the
+process exits. Direct lighting and cue commissioning commands therefore should
+not run concurrently with the daemon. MuJoCo uses recording lighting and audio
+backends with the identical scene clock and lifecycle.
 
 Run the lighting-only scene without enabling torque:
 
@@ -227,7 +244,8 @@ runtime/target/release/oriond --run-scene lighting_acknowledge --wait
 runtime/target/release/oriond --scene-status
 ```
 
-After `--configure` and `--enable`, run the coordinated motion-and-light scene:
+After `--configure` and `--enable`, run the coordinated motion, light, and
+audio scene:
 
 ```bash
 runtime/target/release/oriond --run-scene acknowledge_left --wait
@@ -239,9 +257,6 @@ reset when the source-run daemon restarts. Scene states are `executing`,
 `completed`, `timed_out`, `cancelled`, and `failed`. `--stop-scene` cancels the
 scene and its active movement. `--wait` exits `0`, `4`, `5`, or `6` for
 completed, timed out, cancelled, or failed respectively.
-
-Physical audio is not yet claimed. An authored `audio` event explicitly makes
-the scene `failed` until the ReSpeaker playback adapter is implemented.
 
 During development, build and run `oriond` directly from this source tree. It
 is not installed as a system service.

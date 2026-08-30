@@ -33,18 +33,23 @@ scene:
     - at: 0.0
       type: play_motion
       motion: look_at_left_expressive
+    - at: 0.12
+      type: audio
+      cue: acknowledge
 ```
 
 `at` values use seconds from the scene's local monotonic start time. Events
 must be ordered. A later motion event waits if the previous scene movement is
 still executing or settling, while due light and audio events continue on the
 timeline. A scene completes only after all events are dispatched, its final
-light transition is complete, and its movement has completed and settled.
+light transition is complete, its movement has completed and settled, and its
+last audio cue has exited successfully.
 
-The `audio` action remains part of format version 1 for the next milestone, but
-the physical backend is not implemented. If an authored scene contains an
-audio event, its daemon run becomes `failed` with an explicit error; Orion does
-not report silent placeholder playback as success.
+Audio cue names resolve to WAV filename stems under `audio/cues/`. The library
+is validated when the daemon starts. One cue may play at a time; a later due
+audio event waits until the current cue completes. Cancellation stops active
+playback, and an `aplay` failure makes the scene `failed` rather than reporting
+silent success.
 
 `lighting_acknowledge` is the physical lighting-only commissioning scene. It
 fades to `RGBW(8, 3, 0, 20)` and then returns to the warm-white idle value
@@ -57,9 +62,10 @@ runtime/target/release/oriond --run-scene lighting_acknowledge --wait
 runtime/target/release/oriond --scene-status
 ```
 
-`acknowledge_left` additionally starts `look_at_left_expressive`, so the daemon
-must be configured and holding before submission. Its scene run remains
-`executing` while the underlying movement is executing or settling.
+`acknowledge_left` and `acknowledge_right` coordinate their expressive motion,
+warm acknowledgement light, and the local `acknowledge` cue. The daemon must
+be configured and holding before submission. The scene run remains `executing`
+while its movement is executing or settling or its cue is still playing.
 
 `return_to_rest` moves Orion to the captured mechanical `rest` pose over three
 seconds while fading every pixel to `RGBW(0, 0, 0, 0)`. Use this scene instead

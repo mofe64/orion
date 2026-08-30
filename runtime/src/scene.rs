@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::audio::AudioDevice;
+use crate::audio::{AudioDevice, CueLibrary};
 use crate::daemon::RuntimeCore;
 use crate::driver::RuntimeDriver;
 use crate::lighting::{LightingDevice, Rgbw8};
@@ -95,6 +95,22 @@ impl SceneLibrary {
 
     pub fn names(&self) -> Vec<String> {
         self.scenes.keys().cloned().collect()
+    }
+
+    pub fn validate_audio_cues(&self, cues: &CueLibrary) -> Result<()> {
+        for scene in self.scenes.values() {
+            for event in &scene.events {
+                if let SceneAction::Audio { cue } = &event.action {
+                    if !cues.contains(cue) {
+                        return Err(Error::Runtime(format!(
+                            "Scene '{}' references unknown Orion audio cue '{}'.",
+                            scene.name, cue
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -387,6 +403,8 @@ pub struct SceneStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_motion_run_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_audio_cue: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -431,6 +449,7 @@ impl ScenePlayer {
                 dispatched_events: 0,
                 event_count,
                 active_motion_run_id: None,
+                active_audio_cue: None,
                 error: None,
             },
             definition,
@@ -460,8 +479,11 @@ impl ScenePlayer {
             return Ok(());
         }
 
+        self.update_audio_phase(audio)?;
         self.update_motion_phase(motion)?;
         if self.status.state.is_terminal() {
+            let _ = audio.stop();
+            self.status.active_audio_cue = None;
             return Ok(());
         }
 
@@ -496,7 +518,13 @@ impl ScenePlayer {
                         });
                     }
                 }
-                SceneAction::Audio { cue } => audio.play(&cue)?,
+                SceneAction::Audio { cue } => {
+                    if self.status.active_audio_cue.is_some() {
+                        continue;
+                    }
+                    audio.play(&cue)?;
+                    self.status.active_audio_cue = Some(cue);
+                }
             }
             self.dispatched[index] = true;
             self.status.dispatched_events += 1;
@@ -508,9 +536,16 @@ impl ScenePlayer {
             self.last_rendered = Some(self.light);
         }
 
+        self.update_audio_phase(audio)?;
         self.update_motion_phase(motion)?;
+        if self.status.state.is_terminal() {
+            let _ = audio.stop();
+            self.status.active_audio_cue = None;
+            return Ok(());
+        }
         if self.status.dispatched_events == self.status.event_count
             && self.status.active_motion_run_id.is_none()
+            && self.status.active_audio_cue.is_none()
             && self.transition.is_none()
         {
             self.status.state = ScenePhase::Completed;
@@ -538,6 +573,7 @@ impl ScenePlayer {
         audio.stop()?;
         self.transition = None;
         self.status.active_motion_run_id = None;
+        self.status.active_audio_cue = None;
         self.status.state = ScenePhase::Cancelled;
         Ok(())
     }
@@ -563,6 +599,7 @@ impl ScenePlayer {
         let _ = audio.stop();
         self.transition = None;
         self.status.active_motion_run_id = None;
+        self.status.active_audio_cue = None;
         self.status.state = ScenePhase::Failed;
         self.status.error = Some(error);
     }
@@ -588,6 +625,14 @@ impl ScenePlayer {
                 self.status.active_motion_run_id = None;
                 self.status.state = ScenePhase::Cancelled;
             }
+        }
+        Ok(())
+    }
+
+    fn update_audio_phase<A: AudioDevice + ?Sized>(&mut self, audio: &mut A) -> Result<()> {
+        audio.update()?;
+        if self.status.active_audio_cue.is_some() && !audio.is_playing() {
+            self.status.active_audio_cue = None;
         }
         Ok(())
     }
@@ -910,6 +955,45 @@ mod tests {
     }
 
     #[test]
+    fn waits_for_audio_playback_before_completing() {
+        let scene = SceneDefinition {
+            name: "audio_only".into(),
+            description: "Wait for one cue.".into(),
+            events: vec![SceneEvent {
+                at_seconds: 0.0,
+                action: SceneAction::Audio {
+                    cue: "acknowledge".into(),
+                },
+            }],
+        };
+        let mut player = ScenePlayer::new(4, scene, 2.0, Rgbw8::OFF).unwrap();
+        let mut motion = FakeMotionDevice::new();
+        let mut lighting = RecordingLightingDevice::new(1).unwrap();
+        let mut audio = RecordingAudioDevice::blocking();
+
+        player
+            .tick(2.0, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        assert_eq!(player.status().state, ScenePhase::Executing);
+        assert_eq!(
+            player.status().active_audio_cue.as_deref(),
+            Some("acknowledge")
+        );
+
+        player
+            .tick(2.1, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        assert_eq!(player.status().state, ScenePhase::Executing);
+
+        audio.finish();
+        player
+            .tick(2.2, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        assert_eq!(player.status().state, ScenePhase::Completed);
+        assert!(player.status().active_audio_cue.is_none());
+    }
+
+    #[test]
     fn propagates_motion_timeout_and_cancels_devices() {
         let mut player = ScenePlayer::new(1, example_scene(), 0.0, Rgbw8::OFF).unwrap();
         let mut motion = FakeMotionDevice::new();
@@ -1066,15 +1150,25 @@ scene:
         .unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
         let scenes = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let cues = CueLibrary::load(root.join("audio/cues")).unwrap();
+        scenes.validate_audio_cues(&cues).unwrap();
 
         let scene = scenes.scene("acknowledge_left").unwrap();
-        assert_eq!(scene.events.len(), 3);
+        assert_eq!(scene.events.len(), 4);
         assert_eq!(scene.events[0].at_seconds, 0.0);
-        assert_eq!(scene.events[2].at_seconds, 4.2);
+        assert!(matches!(
+            &scene.events[2].action,
+            SceneAction::Audio { cue } if cue == "acknowledge"
+        ));
+        assert_eq!(scene.events[3].at_seconds, 4.2);
         let scene = scenes.scene("acknowledge_right").unwrap();
-        assert_eq!(scene.events.len(), 3);
+        assert_eq!(scene.events.len(), 4);
         assert_eq!(scene.events[0].at_seconds, 0.0);
-        assert_eq!(scene.events[2].at_seconds, 4.2);
+        assert!(matches!(
+            &scene.events[2].action,
+            SceneAction::Audio { cue } if cue == "acknowledge"
+        ));
+        assert_eq!(scene.events[3].at_seconds, 4.2);
         let scene = scenes.scene("return_to_rest").unwrap();
         assert_eq!(scene.events.len(), 2);
         assert!(matches!(

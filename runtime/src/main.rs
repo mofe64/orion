@@ -7,10 +7,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use orion_runtime::{
-    LightingDevice, MotionLibrary, MujocoDriver, ORION_JOINT_NAMES, PI5_NEOPIXEL_DEVICE_PATH,
-    Pi5NeoPixelDevice, PoseLibrary, RecordingLightingDevice, Rgbw8, RuntimeCore, RuntimeDriver,
-    RustypotTransport, SceneCoordinator, SceneLibrary, Sts3215Driver, UnavailableAudioDevice,
-    UnixCommandServer, load_calibration_file, request_daemon,
+    AlsaAudioDevice, AudioDevice, CueLibrary, LightingDevice, MotionLibrary, MujocoDriver,
+    ORION_APLAY_PATH, ORION_AUDIO_CARD, ORION_AUDIO_PCM_DEVICE, ORION_JOINT_NAMES,
+    PI5_NEOPIXEL_DEVICE_PATH, Pi5NeoPixelDevice, PoseLibrary, RecordingAudioDevice,
+    RecordingLightingDevice, Rgbw8, RuntimeCore, RuntimeDriver, RustypotTransport,
+    SceneCoordinator, SceneLibrary, Sts3215Driver, UnixCommandServer,
+    configure_respeaker_v2_mixer, load_calibration_file, request_daemon,
 };
 
 const DEFAULT_BAUD_RATE: i32 = 1_000_000;
@@ -32,6 +34,7 @@ enum Operation {
     Disable,
     Goto,
     Play,
+    PlayCue,
     Stop,
     Light,
     LightPixel,
@@ -58,6 +61,10 @@ struct Options {
     socket_path: PathBuf,
     poses_file: PathBuf,
     motions_directory: PathBuf,
+    audio_cues_directory: PathBuf,
+    audio_card: String,
+    audio_pcm_device: String,
+    cue_name: String,
     pose_name: String,
     motion_name: String,
     duration_seconds: f64,
@@ -84,6 +91,10 @@ impl Default for Options {
             socket_path: DEFAULT_SOCKET_PATH.into(),
             poses_file: "motion/config/poses.yaml".into(),
             motions_directory: "motion/motions".into(),
+            audio_cues_directory: "audio/cues".into(),
+            audio_card: ORION_AUDIO_CARD.into(),
+            audio_pcm_device: ORION_AUDIO_PCM_DEVICE.into(),
+            cue_name: String::new(),
             pose_name: String::new(),
             motion_name: String::new(),
             duration_seconds: 3.0,
@@ -110,6 +121,7 @@ fn usage() -> &'static str {
   oriond --goto POSE [--duration SECONDS] [--wait] [--socket PATH]\n\n\
   oriond --play MOTION [--wait] [--socket PATH]\n\
   oriond --stop        [--socket PATH]\n\n\
+  oriond --play-cue CUE [--cues DIR] [--audio-device DEVICE]\n\n\
   oriond --light RED GREEN BLUE WHITE [--lighting-device PATH]\n\
   oriond --light-pixel INDEX RED GREEN BLUE WHITE [--lighting-device PATH]\n\
   oriond --lights-off [--lighting-device PATH]\n\n\
@@ -125,6 +137,7 @@ fn usage() -> &'static str {
   --disable           Disable holding torque.\n\
   --goto POSE         Move all five joints to a named Orion pose.\n\
   --play MOTION       Play an authored multi-keyframe Orion motion.\n\
+  --play-cue CUE      Play one named local WAV cue and wait for completion.\n\
   --stop              Stop movement at the current commanded position.\n\
   --light RGBW        Immediately set all 40 shield pixels (four values, 0-255).\n\
   --light-pixel ...   Light one zero-based pixel and turn the other 39 off.\n\
@@ -134,6 +147,9 @@ fn usage() -> &'static str {
   --scene-status     Show the active and most recent terminal scene.\n\
   --stop-scene       Cancel the active scene and its movement.\n\
   --scenes DIR       Scene library used by --serve (default: scenes).\n\
+  --cues DIR         WAV cue library used by --serve and --play-cue (default: audio/cues).\n\
+  --audio-card CARD  ALSA mixer card (default: seeed2micvoicec).\n\
+  --audio-device PCM ALSA playback PCM (default: plughw:CARD=seeed2micvoicec,DEV=0).\n\
   --duration SECONDS  Quintic move duration (default: 3.0).\n\
   --wait              Follow the submitted run ID through completion.\n\
   --port DEVICE       Servo serial device (default: /dev/ttyACM0).\n\
@@ -177,6 +193,7 @@ fn run() -> orion_runtime::Result<i32> {
         Operation::Configure => print_response(request_daemon(&options.socket_path, "configure")?),
         Operation::Enable => print_response(request_daemon(&options.socket_path, "enable")?),
         Operation::Disable => print_response(request_daemon(&options.socket_path, "disable")?),
+        Operation::PlayCue => play_cue(&options),
         Operation::Goto => request_movement(
             &options,
             &format!("goto {} {:.6}", options.pose_name, options.duration_seconds),
@@ -418,6 +435,10 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
                 select_operation(&mut options, Operation::Play, &argument)?;
                 options.motion_name = require_value(&mut arguments, &argument)?;
             }
+            "--play-cue" => {
+                select_operation(&mut options, Operation::PlayCue, &argument)?;
+                options.cue_name = require_value(&mut arguments, &argument)?;
+            }
             "--help" | "-h" => options.help = true,
             "--wait" => options.wait = true,
             "--backend" => {
@@ -449,6 +470,13 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             "--poses" => options.poses_file = require_value(&mut arguments, &argument)?.into(),
             "--motions" => {
                 options.motions_directory = require_value(&mut arguments, &argument)?.into()
+            }
+            "--cues" => {
+                options.audio_cues_directory = require_value(&mut arguments, &argument)?.into()
+            }
+            "--audio-card" => options.audio_card = require_value(&mut arguments, &argument)?,
+            "--audio-device" => {
+                options.audio_pcm_device = require_value(&mut arguments, &argument)?
             }
             "--scenes" => {
                 options.scenes_directory = require_value(&mut arguments, &argument)?.into()
@@ -587,10 +615,37 @@ fn connect_driver(options: &Options) -> orion_runtime::Result<Sts3215Driver<Rust
     Ok(driver)
 }
 
+fn play_cue(options: &Options) -> orion_runtime::Result<i32> {
+    let cues = CueLibrary::load(&options.audio_cues_directory)?;
+    configure_respeaker_v2_mixer(&options.audio_card)?;
+    let mut audio = AlsaAudioDevice::new(
+        cues,
+        &options.audio_pcm_device,
+        PathBuf::from(ORION_APLAY_PATH),
+    )?;
+    audio.play(&options.cue_name)?;
+    while audio.is_playing() {
+        thread::sleep(Duration::from_millis(10));
+        audio.update()?;
+    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "ok": true,
+            "command": "play_cue",
+            "cue": options.cue_name,
+            "state": "completed",
+        })
+    );
+    Ok(0)
+}
+
 fn serve(options: Options) -> orion_runtime::Result<i32> {
     let poses = PoseLibrary::load(&options.poses_file, &ORION_JOINT_NAMES)?;
     let motions = MotionLibrary::load(&options.motions_directory, &poses)?;
     let scenes = SceneLibrary::load(&options.scenes_directory, &poses, &motions)?;
+    let cues = CueLibrary::load(&options.audio_cues_directory)?;
+    scenes.validate_audio_cues(&cues)?;
     match options.backend {
         Backend::Hardware => {
             let driver = connect_driver(&options)?;
@@ -598,8 +653,14 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
                 &options.lighting_device,
                 orion_runtime::ORION_LIGHT_PIXEL_COUNT,
             )?);
+            configure_respeaker_v2_mixer(&options.audio_card)?;
+            let audio = Box::new(AlsaAudioDevice::new(
+                cues,
+                &options.audio_pcm_device,
+                PathBuf::from(ORION_APLAY_PATH),
+            )?);
             serve_driver(
-                driver, poses, motions, scenes, lighting, &options, "hardware",
+                driver, poses, motions, scenes, lighting, audio, &options, "hardware",
             )
         }
         Backend::Mujoco => {
@@ -607,7 +668,10 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
             let bridge = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mujoco_bridge.py");
             let driver = MujocoDriver::launch(&options.python, bridge, &options.scene_file, start)?;
             let lighting = Box::new(RecordingLightingDevice::orion());
-            serve_driver(driver, poses, motions, scenes, lighting, &options, "mujoco")
+            let audio = Box::new(RecordingAudioDevice::default());
+            serve_driver(
+                driver, poses, motions, scenes, lighting, audio, &options, "mujoco",
+            )
         }
     }
 }
@@ -618,13 +682,13 @@ fn serve_driver<D: RuntimeDriver>(
     motions: MotionLibrary,
     scene_library: SceneLibrary,
     mut lighting: Box<dyn LightingDevice>,
+    mut audio: Box<dyn AudioDevice>,
     options: &Options,
     backend: &str,
 ) -> orion_runtime::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
     lighting.clear()?;
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
-    let mut audio = UnavailableAudioDevice;
     let server = UnixCommandServer::bind(&options.socket_path)?;
     let stopping = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stopping))?;
@@ -640,14 +704,14 @@ fn serve_driver<D: RuntimeDriver>(
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
-        scenes.tick(now_seconds, &mut core, lighting.as_mut(), &mut audio)?;
+        scenes.tick(now_seconds, &mut core, lighting.as_mut(), audio.as_mut())?;
         server.serve_pending(|command| {
             handle_daemon_command(
                 command,
                 started_at.elapsed().as_secs_f64(),
                 &mut core,
                 &mut scenes,
-                &mut audio,
+                audio.as_mut(),
             )
         })?;
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
@@ -655,12 +719,12 @@ fn serve_driver<D: RuntimeDriver>(
     Ok(0)
 }
 
-fn handle_daemon_command<D: RuntimeDriver>(
+fn handle_daemon_command<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     command: &str,
     now_seconds: f64,
     core: &mut RuntimeCore<D>,
     scenes: &mut SceneCoordinator,
-    audio: &mut UnavailableAudioDevice,
+    audio: &mut A,
 ) -> String {
     match handle_daemon_command_inner(command, now_seconds, core, scenes, audio) {
         Ok(response) => response,
@@ -668,12 +732,12 @@ fn handle_daemon_command<D: RuntimeDriver>(
     }
 }
 
-fn handle_daemon_command_inner<D: RuntimeDriver>(
+fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     command: &str,
     now_seconds: f64,
     core: &mut RuntimeCore<D>,
     scenes: &mut SceneCoordinator,
-    audio: &mut UnavailableAudioDevice,
+    audio: &mut A,
 ) -> orion_runtime::Result<String> {
     if command == "scene status" {
         return Ok(serde_json::json!({
@@ -758,7 +822,7 @@ fn print_states(states: &[orion_runtime::JointState]) {
 
 #[cfg(test)]
 mod tests {
-    use orion_runtime::{JointPositions, JointState};
+    use orion_runtime::{JointPositions, JointState, UnavailableAudioDevice};
 
     use super::*;
 
@@ -894,6 +958,24 @@ mod tests {
             Operation::StopScene
         );
         assert!(parse(&["--scene-status", "--wait"]).is_err());
+    }
+
+    #[test]
+    fn parses_direct_named_audio_cue() {
+        let options = parse(&[
+            "--play-cue",
+            "acknowledge",
+            "--cues",
+            "/tmp/orion-cues",
+            "--audio-device",
+            "plughw:CARD=test,DEV=0",
+        ])
+        .unwrap();
+        assert_eq!(options.operation, Operation::PlayCue);
+        assert_eq!(options.cue_name, "acknowledge");
+        assert_eq!(options.audio_cues_directory, PathBuf::from("/tmp/orion-cues"));
+        assert_eq!(options.audio_pcm_device, "plughw:CARD=test,DEV=0");
+        assert!(parse(&["--play-cue", "acknowledge", "--wait"]).is_err());
     }
 
     #[test]

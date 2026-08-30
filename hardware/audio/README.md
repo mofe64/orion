@@ -77,26 +77,28 @@ PWM0.
 
 ## Mixer commissioning
 
-Do not install a guessed global ALSA state. First inspect the controls exposed
-by the running kernel:
+Orion keeps the confirmed JST-speaker mixer route as a repeatable command
+rather than depending on whatever mixer state happened to survive the last
+session:
 
 ```bash
-amixer -c seeed2micvoicec scontrols
-amixer -c seeed2micvoicec contents
+hardware/audio/configure-playback.sh
 ```
 
-The first physical playback check will use the stable ALSA name rather than a
-numeric card index. Start with a low mixer level, then play one left-channel
-test tone through the HAT:
+The script selects `DAC_R1`, sends it through the right line mixer, keeps both
+analogue stages at unity gain, and sets PCM to `-20 dB`. The right differential
+line output feeds the V2 HAT's mono amplifier and JST connector; the `HP`
+controls instead serve the 3.5 mm jack.
+
+The physical playback check uses the stable ALSA name rather than a numeric
+card index and sends the tone to the right channel:
 
 ```bash
-alsamixer -c seeed2micvoicec
 speaker-test \
   -D plughw:CARD=seeed2micvoicec,DEV=0 \
-  -c 2 -s 1 -t sine -f 440 -l 1
+  -c 2 -s 2 -t sine -f 440 -l 1
 ```
 
-Once the speaker path is confirmed, Orion will capture the minimal working
-TLV320AIC3104 mixer state in this directory and add an automated playback
-verifier. The runtime WAV-cue backend comes after this hardware contract is
-commissioned.
+The runtime applies the same mixer contract when its physical WAV backend is
+opened, so source-run development does not depend on a system boot service or
+a globally stored ALSA snapshot.
