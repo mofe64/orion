@@ -12,15 +12,32 @@ JST route keep one physical audio owner.
 
 ## Python environment
 
-Chatterbox documents Python 3.11 as its tested environment. Keep this
-environment separate from the repository-level MuJoCo environment:
+Chatterbox documents Python 3.11 as its tested environment. Debian 13 ships a
+newer system Python, so use `uv` to install a user-owned CPython 3.11 and keep
+it separate from both Debian and the repository-level MuJoCo environment:
 
 ```bash
 cd /home/mofe/dev/orion
 
-python3.11 -m venv voice/.venv
-voice/.venv/bin/python -m pip install --upgrade pip
-voice/.venv/bin/python -m pip install -e voice
+curl -LsSf https://astral.sh/uv/install.sh | sh
+/home/mofe/.local/bin/uv python install 3.11
+/home/mofe/.local/bin/uv sync --project voice --python 3.11
+
+voice/.venv/bin/python --version
+```
+
+The final command must report Python `3.11.x`. Do not use `sudo` for these
+commands and do not replace `/usr/bin/python3`; Orion's voice environment is
+entirely local to `voice/.venv`.
+
+Orion pins Chatterbox to the official source revision that introduced Nano.
+The current PyPI release contains the older Turbo-only loader even though its
+package version matches the source project. After pulling a dependency change,
+refresh the voice environment with:
+
+```bash
+/home/mofe/.local/bin/uv sync --project voice --python 3.11 \
+  --refresh-package chatterbox-tts
 ```
 
 The first model load downloads the `ResembleAI/chatterbox-nano` checkpoint and

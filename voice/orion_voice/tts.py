@@ -12,6 +12,20 @@ import time
 ORION_PLAYBACK_SAMPLE_RATE = 48_000
 
 
+def _load_nano_model(model_type: type, device: str):
+    """Load Nano and explain the known stale-package failure clearly."""
+    try:
+        return model_type.from_pretrained(device=device, nano=True)
+    except TypeError as error:
+        if "unexpected keyword argument 'nano'" not in str(error):
+            raise
+        raise RuntimeError(
+            "installed Chatterbox code does not support Nano; run "
+            "`uv sync --project voice --python 3.11 "
+            "--refresh-package chatterbox-tts` from the Orion repository"
+        ) from error
+
+
 class ChatterboxNanoSynthesizer:
     """Load Nano once and synthesize with its checkpoint's built-in voice."""
 
@@ -20,7 +34,7 @@ class ChatterboxNanoSynthesizer:
         from chatterbox.tts_turbo import ChatterboxTurboTTS
 
         self._torchaudio = torchaudio
-        self._model = ChatterboxTurboTTS.from_pretrained(device=device, nano=True)
+        self._model = _load_nano_model(ChatterboxTurboTTS, device)
 
     def synthesize(self, text: str, output_path: Path) -> float:
         """Generate a 48 kHz stereo PCM WAV and return its duration."""

@@ -8,7 +8,10 @@ version = "0.1.0"
 description = "Local speech workers for the Orion robot"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-  "chatterbox-tts",
+  # Nano support landed after the latest PyPI package was published. Pin the
+  # official source revision that introduced the Nano loader so Pi installs
+  # cannot silently resolve to the older Turbo-only API.
+  "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2",
 ]
 
 [project.scripts]
