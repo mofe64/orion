@@ -1075,6 +1075,22 @@ scene:
         assert_eq!(scene.events.len(), 3);
         assert_eq!(scene.events[0].at_seconds, 0.0);
         assert_eq!(scene.events[2].at_seconds, 4.2);
+        let scene = scenes.scene("return_to_rest").unwrap();
+        assert_eq!(scene.events.len(), 2);
+        assert!(matches!(
+            &scene.events[0].action,
+            SceneAction::Motion(SceneMotion::Goto {
+                pose,
+                duration_seconds,
+            }) if pose == "rest" && *duration_seconds == 3.0
+        ));
+        assert!(matches!(
+            &scene.events[1].action,
+            SceneAction::Light {
+                color,
+                transition_seconds,
+            } if *color == Rgbw8::OFF && *transition_seconds == 0.5
+        ));
         assert!(scenes.scene("lighting_acknowledge").is_ok());
     }
 

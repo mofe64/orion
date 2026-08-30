@@ -60,3 +60,15 @@ runtime/target/release/oriond --scene-status
 `acknowledge_left` additionally starts `look_at_left_expressive`, so the daemon
 must be configured and holding before submission. Its scene run remains
 `executing` while the underlying movement is executing or settling.
+
+`return_to_rest` moves Orion to the captured mechanical `rest` pose over three
+seconds while fading every pixel to `RGBW(0, 0, 0, 0)`. Use this scene instead
+of the standalone `--lights-off` command while the source-run daemon owns the
+NeoPixel device:
+
+```bash
+runtime/target/release/oriond --run-scene return_to_rest --wait
+runtime/target/release/oriond --disable
+```
+
+Only disable torque after the scene reports `completed`.
