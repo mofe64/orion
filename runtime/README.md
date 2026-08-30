@@ -218,6 +218,10 @@ The direct command blocks until `aplay` exits and returns nonzero if playback
 fails. Do not run it concurrently with a hardware daemon that may also own the
 ALSA PCM.
 
+Direct `acknowledge` playback and the complete `acknowledge_left` and
+`acknowledge_right` motion/light/audio scenes have been commissioned on the
+assembled robot through the source-run release daemon.
+
 Portable scenes live under `scenes/`. Version 1 can play an existing motion,
 go to an existing pose, fade to a uniform 8-bit RGBW value, and dispatch a
 named audio cue. Scene files are validated against the pose, motion, and cue
@@ -260,3 +264,24 @@ completed, timed out, cancelled, or failed respectively.
 
 During development, build and run `oriond` directly from this source tree. It
 is not installed as a system service.
+
+## Generated speech
+
+The optional persistent Chatterbox Nano worker under `voice/` generates speech
+without loading PyTorch in Orion's 50 Hz Rust control loop. Follow
+`voice/README.md` to create its Python 3.11 environment, benchmark the Pi, and
+start `/tmp/orion-tts.sock`.
+
+With the worker and hardware daemon running, submit dynamic speech through the
+daemon-owned ReSpeaker playback backend:
+
+```bash
+runtime/target/release/oriond --speak "Hello. I am Orion." --wait
+runtime/target/release/oriond --speech-status
+runtime/target/release/oriond --stop-speech
+```
+
+Speech states are `synthesizing`, `playing`, `completed`, `failed`, and
+`cancelled`. Only the active run and most recent terminal result are retained.
+The generated WAV is temporary and removed after playback. A failed `--wait`
+returns exit code `7`; cancellation returns `5`.

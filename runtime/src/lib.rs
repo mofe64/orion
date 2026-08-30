@@ -9,6 +9,7 @@ pub mod mujoco;
 pub mod pose;
 pub mod scene;
 pub mod socket;
+pub mod speech;
 pub mod state;
 pub mod trajectory;
 pub mod transport;
@@ -37,6 +38,9 @@ pub use scene::{
     SceneMotion, SceneMotionDevice, ScenePhase, ScenePlayer, SceneStatus,
 };
 pub use socket::{UnixCommandServer, request_daemon};
+pub use speech::{
+    DEFAULT_TTS_SOCKET_PATH, MAX_SPEECH_TEXT_BYTES, SpeechCoordinator, SpeechPhase, SpeechStatus,
+};
 pub use state::{JointState, MotionState, MovementPhase, RuntimeMode, StateSnapshot};
 pub use trajectory::JointTrajectory;
 pub use transport::{Register, RustypotTransport, Sts3215RawState, Sts3215Transport};

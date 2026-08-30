@@ -13,6 +13,7 @@ pub const ORION_APLAY_PATH: &str = "/usr/bin/aplay";
 
 pub trait AudioDevice {
     fn play(&mut self, cue: &str) -> Result<()>;
+    fn play_file(&mut self, label: &str, path: &Path) -> Result<()>;
     fn update(&mut self) -> Result<()> {
         Ok(())
     }
@@ -174,7 +175,7 @@ pub struct AlsaAudioDevice {
     pcm_device: String,
     player_path: PathBuf,
     child: Option<Child>,
-    active_cue: Option<String>,
+    active_label: Option<String>,
 }
 
 impl AlsaAudioDevice {
@@ -201,24 +202,27 @@ impl AlsaAudioDevice {
             pcm_device,
             player_path,
             child: None,
-            active_cue: None,
+            active_label: None,
         })
     }
 
-    pub fn active_cue(&self) -> Option<&str> {
-        self.active_cue.as_deref()
+    pub fn active_label(&self) -> Option<&str> {
+        self.active_label.as_deref()
     }
-}
 
-impl AudioDevice for AlsaAudioDevice {
-    fn play(&mut self, cue: &str) -> Result<()> {
+    fn start_playback(&mut self, label: &str, path: &Path) -> Result<()> {
         self.update()?;
-        if let Some(active) = self.active_cue() {
+        if let Some(active) = self.active_label() {
             return Err(Error::InvalidState(format!(
-                "Audio cue '{active}' is still playing."
+                "Audio source '{active}' is still playing."
             )));
         }
-        let path = self.cues.cue(cue)?;
+        if label.trim().is_empty() {
+            return Err(Error::InvalidArgument(
+                "Audio playback label cannot be empty.".into(),
+            ));
+        }
+        validate_wav_header(path)?;
         let child = Command::new(&self.player_path)
             .args(["-q", "-D", &self.pcm_device])
             .arg(path)
@@ -228,13 +232,24 @@ impl AudioDevice for AlsaAudioDevice {
             .spawn()
             .map_err(|error| {
                 Error::Runtime(format!(
-                    "Could not start audio cue '{cue}' with '{}': {error}",
+                    "Could not start audio source '{label}' with '{}': {error}",
                     self.player_path.display()
                 ))
             })?;
         self.child = Some(child);
-        self.active_cue = Some(cue.to_owned());
+        self.active_label = Some(label.to_owned());
         Ok(())
+    }
+}
+
+impl AudioDevice for AlsaAudioDevice {
+    fn play(&mut self, cue: &str) -> Result<()> {
+        let path = self.cues.cue(cue)?.to_owned();
+        self.start_playback(cue, &path)
+    }
+
+    fn play_file(&mut self, label: &str, path: &Path) -> Result<()> {
+        self.start_playback(label, path)
     }
 
     fn update(&mut self) -> Result<()> {
@@ -244,11 +259,11 @@ impl AudioDevice for AlsaAudioDevice {
         let Some(status) = child.try_wait()? else {
             return Ok(());
         };
-        let cue = self.active_cue.take().unwrap_or_else(|| "unknown".into());
+        let label = self.active_label.take().unwrap_or_else(|| "unknown".into());
         self.child = None;
         if !status.success() {
             return Err(Error::Runtime(format!(
-                "Audio cue '{cue}' failed with {status}."
+                "Audio source '{label}' failed with {status}."
             )));
         }
         Ok(())
@@ -260,14 +275,14 @@ impl AudioDevice for AlsaAudioDevice {
 
     fn stop(&mut self) -> Result<()> {
         let Some(mut child) = self.child.take() else {
-            self.active_cue = None;
+            self.active_label = None;
             return Ok(());
         };
         if child.try_wait()?.is_none() {
             child.kill()?;
         }
         child.wait()?;
-        self.active_cue = None;
+        self.active_label = None;
         Ok(())
     }
 }
@@ -291,6 +306,12 @@ impl AudioDevice for UnavailableAudioDevice {
         )))
     }
 
+    fn play_file(&mut self, label: &str, _path: &Path) -> Result<()> {
+        Err(Error::InvalidState(format!(
+            "Audio source '{label}' cannot play because Orion's audio backend is not configured."
+        )))
+    }
+
     fn stop(&mut self) -> Result<()> {
         Ok(())
     }
@@ -299,6 +320,7 @@ impl AudioDevice for UnavailableAudioDevice {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioCommand {
     Play(String),
+    PlayFile { label: String, path: PathBuf },
     Stop,
 }
 
@@ -349,6 +371,26 @@ impl AudioDevice for RecordingAudioDevice {
         Ok(())
     }
 
+    fn play_file(&mut self, label: &str, path: &Path) -> Result<()> {
+        if label.trim().is_empty() {
+            return Err(Error::InvalidArgument(
+                "Audio playback label cannot be empty.".into(),
+            ));
+        }
+        validate_wav_header(path)?;
+        if self.playing {
+            return Err(Error::InvalidState(
+                "A recorded audio source is already playing.".into(),
+            ));
+        }
+        self.commands.push(AudioCommand::PlayFile {
+            label: label.to_owned(),
+            path: path.to_owned(),
+        });
+        self.playing = !self.auto_complete;
+        Ok(())
+    }
+
     fn is_playing(&self) -> bool {
         self.playing
     }
@@ -377,7 +419,11 @@ mod tests {
 
         let cues = CueLibrary::load(directory.path()).unwrap();
         assert_eq!(cues.names(), vec!["acknowledge"]);
-        assert!(cues.cue("acknowledge").unwrap().ends_with("acknowledge.wav"));
+        assert!(
+            cues.cue("acknowledge")
+                .unwrap()
+                .ends_with("acknowledge.wav")
+        );
         assert!(cues.cue("../acknowledge").is_err());
         assert!(cues.cue("missing").is_err());
     }

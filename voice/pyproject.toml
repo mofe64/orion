@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orion-voice"
+version = "0.1.0"
+description = "Local speech workers for the Orion robot"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "chatterbox-tts",
+]
+
+[project.scripts]
+orion-voice = "orion_voice.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["orion_voice*"]

@@ -102,3 +102,11 @@ speaker-test \
 The runtime applies the same mixer contract when its physical WAV backend is
 opened, so source-run development does not depend on a system boot service or
 a globally stored ALSA snapshot.
+
+## Commissioning result
+
+The assembled Pi 5 passed the persistent V2 verification with playback and
+capture registered as `seeed2micvoicec`, while BCM12 remained assigned to the
+NeoPixel PWM output. The JST route produced the 440 Hz right-channel test tone,
+the direct `--play-cue acknowledge` command played Orion's local chime, and
+both expressive acknowledgement scenes played the chime successfully.

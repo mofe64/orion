@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::{Error, Result};
 
 const UNIX_PATH_CAPACITY: usize = 108;
+const COMMAND_CAPACITY: usize = 4_096;
 
 pub struct UnixCommandServer {
     listener: UnixListener,
@@ -71,7 +72,7 @@ impl UnixCommandServer {
                     // Match C++ accept4(SOCK_NONBLOCK): a client that connects
                     // without sending a command must not stall the 50 Hz loop.
                     stream.set_nonblocking(true)?;
-                    let mut buffer = [0_u8; 256];
+                    let mut buffer = [0_u8; COMMAND_CAPACITY];
                     let received = stream.read(&mut buffer).unwrap_or(0);
                     let command = String::from_utf8_lossy(&buffer[..received]);
                     let response = handler(command.trim()) + "\n";
