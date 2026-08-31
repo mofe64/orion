@@ -23,7 +23,7 @@ amixer -q -c "${card_name}" -- sset 'Left Line1L Mux' 'single-ended'
 amixer -q -c "${card_name}" -- sset 'Right Line1R Mux' 'single-ended'
 amixer -q -c "${card_name}" -- sset 'Left PGA Mixer Line1L' on
 amixer -q -c "${card_name}" -- sset 'Right PGA Mixer Line1R' on
-amixer -q -c "${card_name}" -- sset 'PGA' 59.5dB unmute
+amixer -q -c "${card_name}" -- sset 'PGA' 50dB unmute
 
 echo "Configured Orion ReSpeaker V2 microphone capture on ALSA card ${card_name}."
 amixer -c "${card_name}" sget 'PGA'

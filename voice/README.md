@@ -5,17 +5,18 @@ boundaries:
 
 ```text
 agent/oriond -> /tmp/orion-tts.sock -> Piper Ryan Medium -> temporary WAV
-microphones -> Sherpa keyword spotter -> /tmp/orion-wake.sock -> wake event
+microphones -> Sherpa wake/VAD/Moonshine -> /tmp/orion-wake.sock -> voice events
 ```
 
 Piper owns text-to-speech model inference. `oriond` remains the only owner of
 physical playback, so generated speech keeps the same speech IDs, status,
 `--wait`, cancellation, and ALSA lifecycle as cues and scenes.
 
-The wake worker owns transient 16 kHz mono microphone capture and detects the
-phrase `HELLO WORLD` locally. It publishes JSON-line events and never writes
-microphone audio to disk. The future agent runtime will subscribe to those
-events. Speech-to-text is the next voice slice and is not implemented here.
+The normal listener owns transient 16 kHz mono microphone capture, detects the
+phrase `HELLO WORLD`, segments the following command with Silero VAD, and
+transcribes it locally with Moonshine Tiny English INT8. It publishes ordered
+JSON-line events and never writes microphone audio to disk. The future agent
+runtime will subscribe to those events.
 
 ## Install the Python environment
 
@@ -43,12 +44,14 @@ Run the repeatable model installer:
 voice/install-models.sh
 ```
 
-It performs four bounded operations:
+It performs six bounded operations:
 
 1. Downloads `en_US-ryan-medium`, Orion's selected production voice.
 2. Downloads Sherpa's English 3.3-million-parameter GigaSpeech keyword model.
 3. Generates the model-specific BPE tokens for `HELLO WORLD`.
-4. Removes other top-level Piper voice files while retaining the wake model.
+4. Downloads the quantized Moonshine Tiny English speech-recognition model.
+5. Downloads the Silero VAD model used to delimit commands.
+6. Removes other top-level Piper voice files while retaining nested voice models.
 
 The resulting runtime data is ignored by Git:
 
@@ -56,6 +59,8 @@ The resulting runtime data is ignored by Git:
 voice/models/en_US-ryan-medium.onnx
 voice/models/en_US-ryan-medium.onnx.json
 voice/models/wake/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/
+voice/models/asr/sherpa-onnx-moonshine-tiny-en-int8/
+voice/models/vad/silero_vad.onnx
 ```
 
 To repeat only the selected-voice cleanup:
@@ -129,7 +134,7 @@ voice/.venv/bin/orion-voice wake-worker
 ```
 
 The worker first applies Orion's ReSpeaker V2 capture contract: the two
-single-ended microphone routes, fixed 59.5 dB PGA gain, and codec AGC disabled.
+single-ended microphone routes, fixed 50 dB PGA gain, and codec AGC disabled.
 It then opens the stable ALSA capture device at 16 kHz mono.
 
 Wait for:
@@ -182,18 +187,57 @@ A lower threshold or higher score is easier to trigger and can increase false
 positives. Keep the commissioned defaults unless repeated physical trials
 justify changing them.
 
-## Current voice-loop boundary
+## Run wake and speech-to-text together
 
-The wake worker and future speech recognizer must not open independent capture
-streams indefinitely. The STT slice will create one microphone owner that
-switches between:
+Do not run `wake-worker` at the same time. The normal listener is the single
+microphone owner and switches between:
 
 ```text
-wake listening -> command capture/transcription -> wake listening
+wake listening -> command capture -> transcription -> wake listening
 ```
 
-For now, the wake event proves activation only. It does not capture the words
-after `HELLO WORLD`, route an intent, move Orion, or synthesize a response.
+Terminal 1 loads the wake, VAD, and ASR models once:
+
+```bash
+cd /home/mofe/dev/orion
+voice/.venv/bin/orion-voice listen-worker
+```
+
+Wait for:
+
+```text
+orion-listener: waiting for HELLO WORLD
+```
+
+In terminal 2, subscribe before speaking:
+
+```bash
+cd /home/mofe/dev/orion
+voice/.venv/bin/orion-voice wait-command
+```
+
+Say **“Hello world”**, pause briefly, then say a command such as **“Return
+home.”** The event stream contains the activation followed by a terminal command
+result; `wait-command` prints the result:
+
+```json
+{"event_id":2,"event":"command","state":"transcribed","text":"Return home.","audio_seconds":1.25,"inference_seconds":0.2,"error":null}
+```
+
+The command states and CLI exit codes are:
+
+| State | Meaning | Exit code |
+| --- | --- | ---: |
+| `transcribed` | Moonshine produced non-empty text | `0` |
+| `timed_out` | No complete utterance arrived within 8 seconds | `2` |
+| `failed` | VAD/ASR processing failed or returned empty text | `1` |
+
+Silero requires 0.8 seconds of trailing silence to close the command and limits
+one speech segment to 10 seconds. Completed samples are released after
+transcription; no WAV or transcript history is stored by the worker.
+
+This slice stops at transcript publication. It does not yet interpret the text,
+invoke Orion capabilities, move Orion, or synthesize a response.
 
 ## Tests
 
@@ -207,4 +251,5 @@ PYTHONPATH=voice python3 -m unittest discover -s voice/tests -v
 
 The tests cover request validation, 48 kHz stereo speech conversion, ephemeral
 WAV cleanup, selected-voice identity, wake-model validation, streaming keyword
-decoding, ALSA capture arguments, event ordering, and stale-socket cleanup.
+decoding, Silero segmentation, Moonshine transcription, fake-clock command
+timeouts, ALSA capture arguments, ordered voice events, and stale-socket cleanup.

@@ -90,14 +90,17 @@ active and one terminal scene result are retained; there is no scene database.
 Python model processes remain outside the deterministic Rust control loop.
 The persistent Piper worker loads Orion's selected Ryan Medium voice and
 returns temporary WAV paths over `/tmp/orion-tts.sock`; `oriond` retains
-physical playback ownership and the speech lifecycle. A separate Sherpa ONNX
-worker captures transient 16 kHz microphone PCM and publishes `HELLO WORLD`
-events over `/tmp/orion-wake.sock` for the future agent runtime. It stores no
-microphone audio.
+physical playback ownership and the speech lifecycle. A separate single-owner
+Sherpa ONNX listener captures transient 16 kHz microphone PCM, detects `HELLO
+WORLD`, segments the following utterance with Silero VAD, and transcribes it
+with Moonshine Tiny English INT8. It publishes ordered wake and terminal command
+events over `/tmp/orion-wake.sock` and stores no microphone audio or transcript
+history.
 
-Wake detection is an activation boundary, not speech understanding. The next
-voice slice must give wake detection and speech-to-text one microphone owner
-that switches between wake listening and command transcription.
+Wake detection and command transcription are two states of the same microphone
+owner. Transcript publication is not intent interpretation: the next voice
+slice maps text into validated Orion capabilities or forwards it to the future
+agent runtime.
 
 The authoritative physical calibration remains outside the repository at
 `~/.config/orion/servo_calibration.json`. The tracked copy under

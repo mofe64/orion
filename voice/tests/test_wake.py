@@ -13,9 +13,11 @@ from orion_voice.wake import (
     DEFAULT_CAPTURE_DEVICE,
     WAKE_SAMPLE_RATE,
     AlsaPcmCapture,
+    CommandEvent,
     SherpaWakeDetector,
     WakeEvent,
     WakeEventPublisher,
+    wait_for_command,
     wait_for_wake,
 )
 
@@ -176,6 +178,33 @@ class WakeEventPublisherTests(unittest.TestCase):
                 publisher.close()
             self.assertFalse(socket_path.exists())
 
+    def test_publishes_wake_and_command_with_ordered_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            socket_path = Path(directory) / "wake.sock"
+            publisher = WakeEventPublisher(socket_path)
+            publisher.open()
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as subscriber:
+                    subscriber.connect(str(socket_path))
+                    publisher.accept_pending()
+                    publisher.publish("HELLO WORLD")
+                    publisher.publish_command(
+                        "transcribed",
+                        text="Return home.",
+                        audio_seconds=1.2,
+                        inference_seconds=0.3,
+                    )
+                    stream = subscriber.makefile("rb")
+                    wake = json.loads(stream.readline())
+                    command = json.loads(stream.readline())
+
+                self.assertEqual(wake["event_id"], 1)
+                self.assertEqual(command["event_id"], 2)
+                self.assertEqual(command["state"], "transcribed")
+                self.assertEqual(command["text"], "Return home.")
+            finally:
+                publisher.close()
+
     def test_wait_for_wake_reads_one_event(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             socket_path = Path(directory) / "wake.sock"
@@ -195,6 +224,40 @@ class WakeEventPublisherTests(unittest.TestCase):
             try:
                 event = wait_for_wake(socket_path)
                 self.assertEqual(event, WakeEvent(9, "wake_word", "HEY ORION"))
+            finally:
+                server.join(timeout=1)
+                listener.close()
+
+    def test_wait_for_command_skips_wake_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            socket_path = Path(directory) / "wake.sock"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(str(socket_path))
+            listener.listen(1)
+
+            def serve_events() -> None:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.sendall(
+                        WakeEvent(1, "wake_word", "HELLO WORLD").to_json_line()
+                    )
+                    connection.sendall(
+                        CommandEvent(
+                            2,
+                            "command",
+                            "transcribed",
+                            text="Return home.",
+                            audio_seconds=1.2,
+                            inference_seconds=0.3,
+                        ).to_json_line()
+                    )
+
+            server = threading.Thread(target=serve_events)
+            server.start()
+            try:
+                event = wait_for_command(socket_path)
+                self.assertEqual(event.state, "transcribed")
+                self.assertEqual(event.text, "Return home.")
             finally:
                 server.join(timeout=1)
                 listener.close()

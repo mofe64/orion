@@ -42,6 +42,20 @@ class WakeEvent:
         return (json.dumps(asdict(self), separators=(",", ":")) + "\n").encode()
 
 
+@dataclass(frozen=True)
+class CommandEvent:
+    event_id: int
+    event: str
+    state: str
+    text: str | None = None
+    audio_seconds: float | None = None
+    inference_seconds: float | None = None
+    error: str | None = None
+
+    def to_json_line(self) -> bytes:
+        return (json.dumps(asdict(self), separators=(",", ":")) + "\n").encode()
+
+
 class SherpaWakeDetector:
     """Decode arbitrary configured keywords with Sherpa's streaming KWS model."""
 
@@ -207,7 +221,7 @@ class AlsaPcmCapture:
 
 
 class WakeEventPublisher:
-    """Publish wake events to local subscribers over one Unix socket."""
+    """Publish ordered wake and command events over one Unix socket."""
 
     def __init__(self, socket_path: Path = DEFAULT_WAKE_SOCKET_PATH) -> None:
         self._socket_path = Path(socket_path)
@@ -247,10 +261,35 @@ class WakeEventPublisher:
             self._subscribers.append(subscriber)
 
     def publish(self, phrase: str) -> WakeEvent:
-        self.accept_pending()
         event = WakeEvent(self._next_event_id, "wake_word", phrase)
-        self._next_event_id += 1
-        payload = event.to_json_line()
+        self._publish_payload(event.to_json_line())
+        return event
+
+    def publish_command(
+        self,
+        state: str,
+        *,
+        text: str | None = None,
+        audio_seconds: float | None = None,
+        inference_seconds: float | None = None,
+        error: str | None = None,
+    ) -> CommandEvent:
+        if state not in {"transcribed", "timed_out", "failed"}:
+            raise ValueError(f"invalid command event state: {state}")
+        event = CommandEvent(
+            event_id=self._next_event_id,
+            event="command",
+            state=state,
+            text=text,
+            audio_seconds=audio_seconds,
+            inference_seconds=inference_seconds,
+            error=error,
+        )
+        self._publish_payload(event.to_json_line())
+        return event
+
+    def _publish_payload(self, payload: bytes) -> None:
+        self.accept_pending()
         connected: list[socket.socket] = []
         for subscriber in self._subscribers:
             try:
@@ -261,7 +300,7 @@ class WakeEventPublisher:
                 connected.append(subscriber)
         self._subscribers = connected
         print(payload.decode().rstrip(), flush=True)
-        return event
+        self._next_event_id += 1
 
     def close(self) -> None:
         for subscriber in self._subscribers:
@@ -318,4 +357,28 @@ def wait_for_wake(socket_path: Path = DEFAULT_WAKE_SOCKET_PATH) -> WakeEvent:
     event = WakeEvent(**value)
     if event.event != "wake_word" or event.event_id <= 0 or not event.phrase:
         raise RuntimeError("wake worker published an invalid event")
+    return event
+
+
+def wait_for_command(socket_path: Path = DEFAULT_WAKE_SOCKET_PATH) -> CommandEvent:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as subscriber:
+        subscriber.connect(str(socket_path))
+        stream = subscriber.makefile("rb")
+        while True:
+            line = stream.readline(4_096)
+            if not line.endswith(b"\n"):
+                raise RuntimeError("voice worker closed without a command result")
+            value = json.loads(line)
+            if value.get("event") == "command":
+                break
+
+    event = CommandEvent(**value)
+    if event.event_id <= 0 or event.state not in {
+        "transcribed",
+        "timed_out",
+        "failed",
+    }:
+        raise RuntimeError("voice worker published an invalid command event")
+    if event.state == "transcribed" and not event.text:
+        raise RuntimeError("transcribed command event contains no text")
     return event

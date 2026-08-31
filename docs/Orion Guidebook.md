@@ -507,7 +507,7 @@ Local Orion scene player
 | 9 | Perception and world model | Planned |
 | 10 | Attention and adaptive task lighting | Planned |
 | 11 | Behaviour orchestration | Planned |
-| 12 | Voice and agent integration | **In progress** — local TTS and wake-word detection implemented; speech-to-text, intent routing, and agent integration remain |
+| 12 | Voice and agent integration | **In progress** — local TTS, wake-word detection, and speech-to-text implemented; intent routing and agent integration remain |
 | 13 | Context-aware ELEGNT expression engine | Planned |
 | 14 | Custom Orion mechanical and electrical design | Planned |
 | 15 | Product hardening, evaluation, and release | Planned |
