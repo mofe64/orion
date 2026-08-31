@@ -13,7 +13,7 @@ physical playback, so generated speech keeps the same speech IDs, status,
 `--wait`, cancellation, and ALSA lifecycle as cues and scenes.
 
 The wake worker owns transient 16 kHz mono microphone capture and detects the
-phrase `HEY ORION` locally. It publishes JSON-line events and never writes
+phrase `HELLO WORLD` locally. It publishes JSON-line events and never writes
 microphone audio to disk. The future agent runtime will subscribe to those
 events. Speech-to-text is the next voice slice and is not implemented here.
 
@@ -47,7 +47,7 @@ It performs four bounded operations:
 
 1. Downloads `en_US-ryan-medium`, Orion's selected production voice.
 2. Downloads Sherpa's English 3.3-million-parameter GigaSpeech keyword model.
-3. Generates the model-specific BPE tokens for `HEY ORION`.
+3. Generates the model-specific BPE tokens for `HELLO WORLD`.
 4. Removes other top-level Piper voice files while retaining the wake model.
 
 The resulting runtime data is ignored by Git:
@@ -135,7 +135,7 @@ It then opens the stable ALSA capture device at 16 kHz mono.
 Wait for:
 
 ```text
-orion-wake: listening for HEY ORION
+orion-wake: listening for HELLO WORLD
 ```
 
 In terminal 2, subscribe before speaking:
@@ -145,10 +145,10 @@ cd /home/mofe/dev/orion
 voice/.venv/bin/orion-voice wait-wake
 ```
 
-Say **“Hey Orion.”** A successful detection returns:
+Say **“Hello world.”** A successful detection returns:
 
 ```json
-{"event_id":1,"event":"wake_word","phrase":"HEY ORION"}
+{"event_id":1,"event":"wake_word","phrase":"HELLO WORLD"}
 ```
 
 The worker continues listening and increments `event_id`. A subscriber receives
@@ -158,28 +158,29 @@ To commission a different phrase without reinstalling the model, stop the wake
 worker and regenerate its small BPE keyword file:
 
 ```bash
-voice/configure-wake-word.sh "HELLO WORLD"
-```
-
-Restart the worker after changing the phrase; it reads the keyword file when it
-starts. `HELLO WORLD` is Orion's generic diagnostic phrase because it is also
-used in Sherpa's English GigaSpeech keyword-customization documentation. Restore
-Orion's intended product phrase with:
-
-```bash
 voice/configure-wake-word.sh "HEY ORION"
 ```
 
-The defaults are a `0.25` trigger threshold, `1.5` keyword score, and two CPU
-threads. If physical testing misses clear utterances, lower the threshold in a
-small step:
+Restart the worker after changing the phrase; it reads the keyword file when it
+starts. `HELLO WORLD` is Orion's selected phrase because it is used in Sherpa's
+English GigaSpeech keyword-customization documentation and passed Orion's
+physical microphone test. Restore the selected phrase with:
 
 ```bash
-voice/.venv/bin/orion-voice wake-worker --threshold 0.20
+voice/configure-wake-word.sh "HELLO WORLD"
 ```
 
-A lower threshold is easier to trigger and can increase false positives. Keep
-the default unless repeated physical trials justify changing it.
+The physically commissioned defaults are a `0.10` trigger threshold, `3.0`
+keyword score, and two CPU threads. These can still be overridden for controlled
+experiments:
+
+```bash
+voice/.venv/bin/orion-voice wake-worker --score 2.5 --threshold 0.15
+```
+
+A lower threshold or higher score is easier to trigger and can increase false
+positives. Keep the commissioned defaults unless repeated physical trials
+justify changing them.
 
 ## Current voice-loop boundary
 
@@ -192,7 +193,7 @@ wake listening -> command capture/transcription -> wake listening
 ```
 
 For now, the wake event proves activation only. It does not capture the words
-after `HEY ORION`, route an intent, move Orion, or synthesize a response.
+after `HELLO WORLD`, route an intent, move Orion, or synthesize a response.
 
 ## Tests
 

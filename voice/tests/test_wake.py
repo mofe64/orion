@@ -26,6 +26,7 @@ MODEL_FILES = [
     "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
     "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
     "orion_keywords.txt",
+    "orion_keywords_raw.txt",
 ]
 
 
@@ -65,7 +66,8 @@ class FakeSpotter:
 
 def write_fake_model(directory: Path) -> None:
     for filename in MODEL_FILES:
-        (directory / filename).write_bytes(b"test")
+        contents = b"HELLO WORLD\n" if filename == "orion_keywords_raw.txt" else b"test"
+        (directory / filename).write_bytes(contents)
 
 
 class SherpaWakeDetectorTests(unittest.TestCase):
@@ -89,6 +91,7 @@ class SherpaWakeDetectorTests(unittest.TestCase):
             )
 
             self.assertEqual(detector.accept_samples([0.0, 0.25]), ["HEY ORION"])
+            self.assertEqual(detector.configured_phrase, "HELLO WORLD")
             self.assertEqual(fake_spotter.stream.waveforms[0][0], WAKE_SAMPLE_RATE)
             self.assertEqual(fake_spotter.decode_count, 1)
             self.assertEqual(fake_spotter.reset_count, 1)

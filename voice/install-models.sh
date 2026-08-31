@@ -29,7 +29,7 @@ if [[ ! -d ${wake_directory} ]]; then
     tar -xjf "${archive_path}" -C "${wake_parent}"
 fi
 
-"${repository_root}/voice/configure-wake-word.sh" "HEY ORION"
+"${repository_root}/voice/configure-wake-word.sh" "HELLO WORLD"
 
 "${repository_root}/voice/cleanup-voices.sh"
-echo "Installed Ryan Medium and the local HEY ORION wake-word model."
+echo "Installed Ryan Medium and the local HELLO WORLD wake-word model."

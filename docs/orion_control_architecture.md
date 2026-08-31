@@ -91,7 +91,7 @@ Python model processes remain outside the deterministic Rust control loop.
 The persistent Piper worker loads Orion's selected Ryan Medium voice and
 returns temporary WAV paths over `/tmp/orion-tts.sock`; `oriond` retains
 physical playback ownership and the speech lifecycle. A separate Sherpa ONNX
-worker captures transient 16 kHz microphone PCM and publishes `HEY ORION`
+worker captures transient 16 kHz microphone PCM and publishes `HELLO WORLD`
 events over `/tmp/orion-wake.sock` for the future agent runtime. It stores no
 microphone audio.
 

@@ -50,11 +50,12 @@ class SherpaWakeDetector:
         model_directory: Path = DEFAULT_WAKE_MODEL_DIRECTORY,
         *,
         num_threads: int = 2,
-        keywords_score: float = 1.5,
-        keywords_threshold: float = 0.25,
+        keywords_score: float = 3.0,
+        keywords_threshold: float = 0.10,
         spotter_factory=None,
     ) -> None:
         model_directory = Path(model_directory)
+        phrase_path = model_directory / "orion_keywords_raw.txt"
         paths = {
             "tokens": model_directory / "tokens.txt",
             "encoder": model_directory
@@ -65,7 +66,11 @@ class SherpaWakeDetector:
             / "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
             "keywords_file": model_directory / "orion_keywords.txt",
         }
-        missing = [str(path) for path in paths.values() if not path.is_file()]
+        missing = [
+            str(path)
+            for path in [*paths.values(), phrase_path]
+            if not path.is_file()
+        ]
         if missing:
             raise FileNotFoundError(
                 "Wake-word model is incomplete. Run voice/install-models.sh. "
@@ -77,6 +82,16 @@ class SherpaWakeDetector:
             raise ValueError("wake-word keyword score must be positive")
         if not 0 < keywords_threshold < 1:
             raise ValueError("wake-word threshold must be between zero and one")
+
+        configured_phrases = [
+            line.strip() for line in phrase_path.read_text().splitlines() if line.strip()
+        ]
+        if len(configured_phrases) != 1:
+            raise ValueError(
+                "Orion requires exactly one configured wake phrase; run "
+                "voice/configure-wake-word.sh."
+            )
+        self.configured_phrase = configured_phrases[0]
 
         if spotter_factory is None:
             import sherpa_onnx
@@ -277,7 +292,10 @@ class WakeWorker:
         self._publisher.open()
         try:
             self._capture.open()
-            print("orion-wake: listening for HEY ORION", flush=True)
+            print(
+                f"orion-wake: listening for {self._detector.configured_phrase}",
+                flush=True,
+            )
             while True:
                 self._publisher.accept_pending()
                 for phrase in self._detector.accept_pcm16(self._capture.read()):

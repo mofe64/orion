@@ -30,14 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     wake = commands.add_parser(
-        "wake-worker", help="listen locally for the HEY ORION wake phrase"
+        "wake-worker", help="listen locally for Orion's configured wake phrase"
     )
     wake.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
     wake.add_argument("--model-dir", type=Path, default=DEFAULT_WAKE_MODEL_DIRECTORY)
     wake.add_argument("--socket", type=Path, default=DEFAULT_WAKE_SOCKET_PATH)
     wake.add_argument("--threads", type=int, default=2)
-    wake.add_argument("--score", type=float, default=1.5)
-    wake.add_argument("--threshold", type=float, default=0.25)
+    wake.add_argument("--score", type=float, default=3.0)
+    wake.add_argument("--threshold", type=float, default=0.10)
 
     wait = commands.add_parser(
         "wait-wake", help="wait for one event from the wake-word worker"

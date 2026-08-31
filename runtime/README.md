@@ -288,6 +288,6 @@ The generated WAV is temporary and removed after playback. A failed `--wait`
 returns exit code `7`; cancellation returns `5`.
 
 The separate local wake worker captures transient microphone PCM and publishes
-`HEY ORION` detections through `/tmp/orion-wake.sock` for the future agent
+`HELLO WORLD` detections through `/tmp/orion-wake.sock` for the future agent
 runtime. It does not yet perform speech-to-text or intent routing. See
 `voice/README.md` for the physical test sequence.
