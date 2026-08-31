@@ -154,6 +154,22 @@ Say **“Hey Orion.”** A successful detection returns:
 The worker continues listening and increments `event_id`. A subscriber receives
 future events only; the socket is an event stream, not a history database.
 
+To commission a different phrase without reinstalling the model, stop the wake
+worker and regenerate its small BPE keyword file:
+
+```bash
+voice/configure-wake-word.sh "HELLO WORLD"
+```
+
+Restart the worker after changing the phrase; it reads the keyword file when it
+starts. `HELLO WORLD` is Orion's generic diagnostic phrase because it is also
+used in Sherpa's English GigaSpeech keyword-customization documentation. Restore
+Orion's intended product phrase with:
+
+```bash
+voice/configure-wake-word.sh "HEY ORION"
+```
+
 The defaults are a `0.25` trigger threshold, `1.5` keyword score, and two CPU
 threads. If physical testing misses clear utterances, lower the threshold in a
 small step:

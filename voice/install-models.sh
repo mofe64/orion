@@ -29,13 +29,7 @@ if [[ ! -d ${wake_directory} ]]; then
     tar -xjf "${archive_path}" -C "${wake_parent}"
 fi
 
-printf 'HEY ORION\n' > "${wake_directory}/orion_keywords_raw.txt"
-"${sherpa_cli}" text2token \
-    --tokens "${wake_directory}/tokens.txt" \
-    --tokens-type bpe \
-    --bpe-model "${wake_directory}/bpe.model" \
-    "${wake_directory}/orion_keywords_raw.txt" \
-    "${wake_directory}/orion_keywords.txt"
+"${repository_root}/voice/configure-wake-word.sh" "HEY ORION"
 
 "${repository_root}/voice/cleanup-voices.sh"
 echo "Installed Ryan Medium and the local HEY ORION wake-word model."
