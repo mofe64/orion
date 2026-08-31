@@ -153,6 +153,12 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     }
 
     fn handle_command_inner(&mut self, command: &str, now_seconds: f64) -> Result<String> {
+        if command == "pose list" {
+            return Ok(json!({"ok": true, "poses": self.poses.names()}).to_string());
+        }
+        if command == "motion list" {
+            return Ok(json!({"ok": true, "motions": self.motions.names()}).to_string());
+        }
         if command == "status" {
             return self.snapshot.to_json();
         }
@@ -615,6 +621,30 @@ mod tests {
         );
         assert!(core.handle_command("disable", 0.0).contains("\"ok\":true"));
         assert_eq!(core.mode(), RuntimeMode::Configured);
+    }
+
+    #[test]
+    fn lists_the_loaded_semantic_motion_assets() {
+        let mut core = core();
+        let poses: serde_json::Value =
+            serde_json::from_str(&core.handle_command("pose list", 0.0)).unwrap();
+        let motions: serde_json::Value =
+            serde_json::from_str(&core.handle_command("motion list", 0.0)).unwrap();
+
+        assert_eq!(poses["ok"], true);
+        assert!(
+            poses["poses"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::Value::String("home".into()))
+        );
+        assert_eq!(motions["ok"], true);
+        assert!(
+            motions["motions"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::Value::String("look_at_left".into()))
+        );
     }
 
     #[test]

@@ -84,6 +84,22 @@ struct Options {
     tts_socket_path: PathBuf,
 }
 
+#[derive(Clone)]
+struct SceneReloadContext {
+    directory: PathBuf,
+    poses: PoseLibrary,
+    motions: MotionLibrary,
+    cues: CueLibrary,
+}
+
+impl SceneReloadContext {
+    fn load(&self) -> orion_runtime::Result<SceneLibrary> {
+        let library = SceneLibrary::load(&self.directory, &self.poses, &self.motions)?;
+        library.validate_audio_cues(&self.cues)?;
+        Ok(library)
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -766,6 +782,12 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
     let scenes = SceneLibrary::load(&options.scenes_directory, &poses, &motions)?;
     let cues = CueLibrary::load(&options.audio_cues_directory)?;
     scenes.validate_audio_cues(&cues)?;
+    let scene_reload = SceneReloadContext {
+        directory: options.scenes_directory.clone(),
+        poses: poses.clone(),
+        motions: motions.clone(),
+        cues: cues.clone(),
+    };
     match options.backend {
         Backend::Hardware => {
             let driver = connect_driver(&options)?;
@@ -780,7 +802,15 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
                 PathBuf::from(ORION_APLAY_PATH),
             )?);
             serve_driver(
-                driver, poses, motions, scenes, lighting, audio, &options, "hardware",
+                driver,
+                poses,
+                motions,
+                scenes,
+                scene_reload,
+                lighting,
+                audio,
+                &options,
+                "hardware",
             )
         }
         Backend::Mujoco => {
@@ -790,7 +820,15 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
             let lighting = Box::new(RecordingLightingDevice::orion());
             let audio = Box::new(RecordingAudioDevice::default());
             serve_driver(
-                driver, poses, motions, scenes, lighting, audio, &options, "mujoco",
+                driver,
+                poses,
+                motions,
+                scenes,
+                scene_reload,
+                lighting,
+                audio,
+                &options,
+                "mujoco",
             )
         }
     }
@@ -801,6 +839,7 @@ fn serve_driver<D: RuntimeDriver>(
     poses: PoseLibrary,
     motions: MotionLibrary,
     scene_library: SceneLibrary,
+    scene_reload: SceneReloadContext,
     mut lighting: Box<dyn LightingDevice>,
     mut audio: Box<dyn AudioDevice>,
     options: &Options,
@@ -828,13 +867,14 @@ fn serve_driver<D: RuntimeDriver>(
         scenes.tick(now_seconds, &mut core, lighting.as_mut(), audio.as_mut())?;
         speech.tick(audio.as_mut());
         server.serve_pending(|command| {
-            handle_daemon_command(
+            handle_daemon_command_with_reload(
                 command,
                 started_at.elapsed().as_secs_f64(),
                 &mut core,
                 &mut scenes,
                 &mut speech,
                 audio.as_mut(),
+                Some(&scene_reload),
             )
         })?;
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
@@ -842,6 +882,7 @@ fn serve_driver<D: RuntimeDriver>(
     Ok(0)
 }
 
+#[cfg(test)]
 fn handle_daemon_command<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     command: &str,
     now_seconds: f64,
@@ -850,7 +891,27 @@ fn handle_daemon_command<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     speech: &mut SpeechCoordinator,
     audio: &mut A,
 ) -> String {
-    match handle_daemon_command_inner(command, now_seconds, core, scenes, speech, audio) {
+    handle_daemon_command_with_reload(command, now_seconds, core, scenes, speech, audio, None)
+}
+
+fn handle_daemon_command_with_reload<D: RuntimeDriver, A: AudioDevice + ?Sized>(
+    command: &str,
+    now_seconds: f64,
+    core: &mut RuntimeCore<D>,
+    scenes: &mut SceneCoordinator,
+    speech: &mut SpeechCoordinator,
+    audio: &mut A,
+    scene_reload: Option<&SceneReloadContext>,
+) -> String {
+    match handle_daemon_command_inner(
+        command,
+        now_seconds,
+        core,
+        scenes,
+        speech,
+        audio,
+        scene_reload,
+    ) {
         Ok(response) => response,
         Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
     }
@@ -863,6 +924,7 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     scenes: &mut SceneCoordinator,
     speech: &mut SpeechCoordinator,
     audio: &mut A,
+    scene_reload: Option<&SceneReloadContext>,
 ) -> orion_runtime::Result<String> {
     if command == "speech status" {
         return Ok(serde_json::json!({
@@ -905,6 +967,19 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
             "ok": true,
             "scene": scenes.active_status(),
             "last_scene": scenes.last_status(),
+        })
+        .to_string());
+    }
+    if command == "scene reload" {
+        let context = scene_reload.ok_or_else(|| {
+            orion_runtime::Error::InvalidState("Scene reload is not configured.".into())
+        })?;
+        let library = context.load()?;
+        let names = scenes.replace_library(library)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "command": "scene_reload",
+            "scenes": names,
         })
         .to_string());
     }
@@ -1220,6 +1295,12 @@ mod tests {
             PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
         let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let reload = SceneReloadContext {
+            directory: root.join("scenes"),
+            poses: poses.clone(),
+            motions: motions.clone(),
+            cues: CueLibrary::load(root.join("audio/cues")).unwrap(),
+        };
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
         let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
         let mut speech = SpeechCoordinator::new("/tmp/orion-test-tts.sock").unwrap();
@@ -1281,6 +1362,23 @@ mod tests {
         .unwrap();
         assert!(status["scene"].is_null());
         assert_eq!(status["last_scene"]["run_id"], 1);
+
+        let reloaded: serde_json::Value = serde_json::from_str(&handle_daemon_command_with_reload(
+            "scene reload",
+            0.3,
+            &mut core,
+            &mut scenes,
+            &mut speech,
+            &mut audio,
+            Some(&reload),
+        ))
+        .unwrap();
+        assert_eq!(reloaded["ok"], true);
+        assert!(
+            reloaded["scenes"]
+                .as_array()
+                .is_some_and(|names| names.iter().any(|name| name == "acknowledge_left"))
+        );
     }
 
     #[test]

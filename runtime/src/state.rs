@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-pub const STATE_SCHEMA_VERSION: u32 = 2;
+pub const STATE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -95,6 +95,7 @@ pub struct MotionState {
 pub struct StateSnapshot {
     pub schema_version: u32,
     pub robot: &'static str,
+    pub build_revision: &'static str,
     pub mode: RuntimeMode,
     pub profile_applied: bool,
     pub torque_enabled: bool,
@@ -122,6 +123,7 @@ impl StateSnapshot {
         Ok(Self {
             schema_version: STATE_SCHEMA_VERSION,
             robot: "orion",
+            build_revision: crate::BUILD_REVISION,
             mode,
             profile_applied: mode.profile_is_applied(),
             torque_enabled: mode.torque_is_enabled(),
@@ -224,8 +226,9 @@ mod tests {
         snapshot.sampled_at_unix_ns = 123_456_789;
         let json = snapshot.to_json().unwrap();
 
-        assert!(json.contains("\"schema_version\":2"));
+        assert!(json.contains("\"schema_version\":3"));
         assert!(json.contains("\"robot\":\"orion\""));
+        assert!(json.contains(&format!("\"build_revision\":\"{}\"", crate::BUILD_REVISION)));
         assert!(json.contains("\"mode\":\"observe\""));
         assert!(json.contains("\"profile_applied\":false"));
         assert!(json.contains("\"torque_enabled\":false"));

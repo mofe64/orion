@@ -45,6 +45,8 @@ pub use state::{JointState, MotionState, MovementPhase, RuntimeMode, StateSnapsh
 pub use trajectory::JointTrajectory;
 pub use transport::{Register, RustypotTransport, Sts3215RawState, Sts3215Transport};
 
+pub const BUILD_REVISION: &str = env!("ORION_BUILD_REVISION");
+
 pub const ORION_JOINT_NAMES: [&str; 5] = [
     "base_yaw_joint",
     "shoulder_pitch_joint",

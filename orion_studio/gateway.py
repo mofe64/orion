@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""Small authenticated HTTP adapter for Orion's private Unix command socket."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import re
+import secrets
+import socket
+import stat
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+
+API_VERSION = 1
+DEFAULT_SOCKET = "/tmp/oriond.sock"
+MAX_BODY_BYTES = 262_144
+MAX_RESPONSE_BYTES = 1_048_576
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+DEFAULT_ALLOWED_ORIGINS = (
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+)
+
+
+class GatewayError(Exception):
+    def __init__(self, status: HTTPStatus, code: str, message: str):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
+class UnixOrionClient:
+    """One-command/one-response client for the Pi-local oriond socket."""
+
+    def __init__(self, socket_path: str = DEFAULT_SOCKET, timeout_seconds: float = 2.0):
+        self.socket_path = socket_path
+        self.timeout_seconds = timeout_seconds
+
+    def request(self, command: str) -> dict[str, Any]:
+        if not command or "\n" in command or "\r" in command or "\0" in command:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_command", "Invalid local command.")
+
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(self.timeout_seconds)
+                client.connect(self.socket_path)
+                client.sendall(command.encode("utf-8") + b"\n")
+                client.shutdown(socket.SHUT_WR)
+                chunks: list[bytes] = []
+                received = 0
+                while True:
+                    chunk = client.recv(65_536)
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    if received > MAX_RESPONSE_BYTES:
+                        raise GatewayError(
+                            HTTPStatus.BAD_GATEWAY,
+                            "runtime_response_too_large",
+                            "oriond returned an unexpectedly large response.",
+                        )
+                    chunks.append(chunk)
+        except GatewayError:
+            raise
+        except OSError as error:
+            raise GatewayError(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "runtime_unavailable",
+                f"Could not reach oriond: {error}",
+            ) from error
+
+        try:
+            value = json.loads(b"".join(chunks).decode("utf-8").strip())
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise GatewayError(
+                HTTPStatus.BAD_GATEWAY,
+                "invalid_runtime_response",
+                "oriond returned invalid JSON.",
+            ) from error
+        if not isinstance(value, dict):
+            raise GatewayError(
+                HTTPStatus.BAD_GATEWAY,
+                "invalid_runtime_response",
+                "oriond returned a non-object response.",
+            )
+        return value
+
+
+class OrionGateway:
+    """Allowlisted semantic translation; this class never controls hardware."""
+
+    def __init__(self, client: Any, project_root: Path | None = None):
+        self.client = client
+        self.project_root = project_root
+
+    def status(self) -> dict[str, Any]:
+        runtime = self.client.request("status")
+        scenes = self._checked("scene status")
+        speech = self._checked("speech status")
+        return {
+            "api_version": API_VERSION,
+            "runtime": runtime,
+            "scene": {
+                "active": scenes.get("scene"),
+                "last": scenes.get("last_scene"),
+            },
+            "speech": {
+                "active": speech.get("speech"),
+                "last": speech.get("last_speech"),
+            },
+        }
+
+    def capabilities(self) -> dict[str, Any]:
+        poses = self._checked("pose list")
+        motions = self._checked("motion list")
+        scenes = self._checked("scene list")
+        return {
+            "api_version": API_VERSION,
+            "capabilities": {
+                "goto": poses.get("poses", []),
+                "motion": motions.get("motions", []),
+                "scene": scenes.get("scenes", []),
+                "scene_publish": {"format_version": 1, "max_body_bytes": MAX_BODY_BYTES},
+                "speech": {"max_text_bytes": 2_000},
+                "cancel": ["movement", "scene", "speech"],
+            },
+        }
+
+    def submit(self, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        if not isinstance(payload, dict):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
+        operation = payload.get("operation")
+        if operation == "goto":
+            name = self._name(payload.get("name"), "pose")
+            duration = payload.get("duration_seconds", 3.0)
+            if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+                raise GatewayError(
+                    HTTPStatus.BAD_REQUEST, "invalid_duration", "duration_seconds must be a number."
+                )
+            duration = float(duration)
+            if not 0.1 <= duration <= 60.0:
+                raise GatewayError(
+                    HTTPStatus.BAD_REQUEST,
+                    "invalid_duration",
+                    "duration_seconds must be between 0.1 and 60.0.",
+                )
+            response = self._checked(f"goto {name} {duration:.6f}")
+        elif operation == "motion":
+            name = self._name(payload.get("name"), "motion")
+            response = self._checked(f"play {name}")
+        elif operation == "scene":
+            name = self._name(payload.get("name"), "scene")
+            response = self._checked(f"scene start {name}")
+        elif operation == "speech":
+            text = payload.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_speech", "Speech text is required.")
+            text = text.strip()
+            if len(text.encode("utf-8")) > 2_000 or any(char in text for char in "\r\n\0"):
+                raise GatewayError(
+                    HTTPStatus.BAD_REQUEST,
+                    "invalid_speech",
+                    "Speech must be one line and no more than 2000 UTF-8 bytes.",
+                )
+            response = self._checked(f"speech start {text}")
+        elif operation == "cancel":
+            response = self._cancel(payload)
+        else:
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                "unsupported_operation",
+                "Supported operations are goto, motion, scene, speech, and cancel.",
+            )
+
+        return HTTPStatus.ACCEPTED, {
+            "api_version": API_VERSION,
+            "accepted": True,
+            "operation": operation,
+            "result": response,
+        }
+
+    def publish_scene(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        if self.project_root is None:
+            raise GatewayError(
+                HTTPStatus.NOT_IMPLEMENTED,
+                "scene_publish_unavailable",
+                "The gateway was not configured with an Orion project root.",
+            )
+        name = self._validate_scene_document(document)
+        scenes_directory = self.project_root / "scenes"
+        for extension in ("yaml", "yml"):
+            if (scenes_directory / f"{name}.{extension}").exists():
+                raise GatewayError(
+                    HTTPStatus.CONFLICT,
+                    "built_in_scene",
+                    f"'{name}' is a built-in scene and cannot be replaced.",
+                )
+
+        user_directory = scenes_directory / "user"
+        try:
+            user_directory.mkdir(parents=True, exist_ok=True)
+            encoded = (json.dumps(document, indent=2, allow_nan=False) + "\n").encode("utf-8")
+        except (OSError, ValueError) as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "scene_write_failed",
+                f"Could not prepare the user scene: {error}",
+            ) from error
+
+        path = user_directory / f"{name}.yaml"
+        if path.exists():
+            try:
+                identical = path.read_bytes() == encoded
+            except OSError as error:
+                raise GatewayError(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    "scene_read_failed",
+                    f"Could not read existing user scene '{name}': {error}",
+                ) from error
+            if not identical:
+                raise GatewayError(
+                    HTTPStatus.CONFLICT,
+                    "user_scene_exists",
+                    f"A different user scene named '{name}' already exists; choose a new name.",
+                )
+            reload_result = self._checked("scene reload")
+            return HTTPStatus.OK, {
+                "api_version": API_VERSION,
+                "published": True,
+                "already_present": True,
+                "name": name,
+                "relative_path": f"scenes/user/{name}.yaml",
+                "reload": reload_result,
+            }
+
+        created = False
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            created = True
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(encoded)
+                output.flush()
+                os.fsync(output.fileno())
+            reload_result = self._checked("scene reload")
+        except GatewayError:
+            if created:
+                path.unlink(missing_ok=True)
+            raise
+        except OSError as error:
+            if created:
+                path.unlink(missing_ok=True)
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "scene_write_failed",
+                f"Could not publish user scene '{name}': {error}",
+            ) from error
+
+        return HTTPStatus.CREATED, {
+            "api_version": API_VERSION,
+            "published": True,
+            "already_present": False,
+            "name": name,
+            "relative_path": f"scenes/user/{name}.yaml",
+            "reload": reload_result,
+        }
+
+    @classmethod
+    def _validate_scene_document(cls, document: Any) -> str:
+        if not isinstance(document, dict) or set(document) != {"format_version", "scene"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Expected a versioned scene document.")
+        if document.get("format_version") != 1 or not isinstance(document.get("scene"), dict):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene format_version must be 1.")
+        scene = document["scene"]
+        if set(scene) != {"name", "description", "timeline"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene fields must be name, description, and timeline.")
+        name = cls._name(scene.get("name"), "scene")
+        if not isinstance(scene.get("description"), str):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene description must be text.")
+        timeline = scene.get("timeline")
+        if not isinstance(timeline, list) or not timeline:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene timeline must contain events.")
+
+        previous_at = 0.0
+        for index, event in enumerate(timeline):
+            if not isinstance(event, dict):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Each timeline event must be an object.")
+            at = event.get("at")
+            if isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at) or at < previous_at:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Timeline times must be finite, non-negative, and ordered.")
+            previous_at = float(at)
+            kind = event.get("type")
+            if kind == "play_motion":
+                if set(event) != {"at", "type", "motion"}:
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid play_motion event fields.")
+                cls._name(event.get("motion"), "motion")
+            elif kind == "goto_pose":
+                if set(event) != {"at", "type", "pose", "duration_seconds"}:
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid goto_pose event fields.")
+                cls._name(event.get("pose"), "pose")
+                cls._number(event.get("duration_seconds"), "Pose duration", minimum=0.000001)
+            elif kind == "light":
+                if set(event) != {"at", "type", "red", "green", "blue", "white", "transition_seconds"}:
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid light event fields.")
+                for channel in ("red", "green", "blue", "white"):
+                    value = event.get(channel)
+                    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+                        raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", f"Light {channel} must be an integer from 0 to 255.")
+                cls._number(event.get("transition_seconds"), "Light transition", minimum=0.0)
+            elif kind == "audio":
+                if set(event) != {"at", "type", "cue"}:
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid audio event fields.")
+                cls._name(event.get("cue"), "audio cue")
+            else:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", f"Unsupported scene event type at index {index}.")
+        return name
+
+    @staticmethod
+    def _number(value: Any, label: str, minimum: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < minimum:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", f"{label} is invalid.")
+        return float(value)
+
+    def _cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
+        kind = payload.get("kind")
+        run_id = payload.get("run_id")
+        if kind not in {"movement", "scene", "speech"}:
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_cancel_kind",
+                "Cancel kind must be movement, scene, or speech.",
+            )
+        if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST, "invalid_run_id", "Cancel requires a positive run_id."
+            )
+
+        snapshot = self.status()
+        if kind == "movement":
+            if snapshot["scene"]["active"] is not None:
+                raise GatewayError(
+                    HTTPStatus.CONFLICT,
+                    "scene_owns_movement",
+                    "Cancel the active scene instead of its internal movement.",
+                )
+            active = snapshot["runtime"].get("motion")
+            command = "stop"
+        else:
+            active = snapshot[kind]["active"]
+            command = f"{kind} stop"
+        if not isinstance(active, dict) or active.get("run_id") != run_id:
+            raise GatewayError(
+                HTTPStatus.CONFLICT,
+                "run_not_active",
+                f"{kind} run {run_id} is not active; no cancellation was sent.",
+            )
+        return self._checked(command)
+
+    def _checked(self, command: str) -> dict[str, Any]:
+        response = self.client.request(command)
+        if response.get("ok") is False:
+            raise GatewayError(
+                HTTPStatus.CONFLICT,
+                "runtime_rejected",
+                str(response.get("error", "oriond rejected the operation.")),
+            )
+        return response
+
+    @staticmethod
+    def _name(value: Any, label: str) -> str:
+        if not isinstance(value, str) or not NAME_PATTERN.fullmatch(value):
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                f"invalid_{label}_name",
+                f"A valid named Orion {label} is required.",
+            )
+        return value
+
+
+def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[str] | tuple[str, ...]):
+    origin_allowlist = {allowed_origins} if isinstance(allowed_origins, str) else set(allowed_origins)
+
+    class GatewayHandler(BaseHTTPRequestHandler):
+        server_version = "OrionStudioGateway/0.1"
+
+        def do_OPTIONS(self) -> None:
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self._cors_headers()
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.end_headers()
+
+        def do_GET(self) -> None:
+            self._handle(self._get)
+
+        def do_POST(self) -> None:
+            self._handle(self._post)
+
+        def _get(self) -> tuple[HTTPStatus, dict[str, Any]]:
+            path = urlparse(self.path).path
+            if path == "/api/v1/status":
+                return HTTPStatus.OK, gateway.status()
+            if path == "/api/v1/capabilities":
+                return HTTPStatus.OK, gateway.capabilities()
+            raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
+
+        def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
+            path = urlparse(self.path).path
+            if path not in {"/api/v1/operations", "/api/v1/scenes"}:
+                raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
+            length_text = self.headers.get("Content-Length")
+            try:
+                length = int(length_text or "")
+            except ValueError as error:
+                raise GatewayError(HTTPStatus.LENGTH_REQUIRED, "missing_length", "Content-Length is required.") from error
+            if not 0 < length <= MAX_BODY_BYTES:
+                raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "invalid_body_size", "Request body is empty or too large.")
+            try:
+                payload = json.loads(self.rfile.read(length))
+            except json.JSONDecodeError as error:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_json", "Request body is not valid JSON.") from error
+            if path == "/api/v1/scenes":
+                return gateway.publish_scene(payload)
+            return gateway.submit(payload)
+
+        def _handle(self, action) -> None:
+            try:
+                authorization = self.headers.get("Authorization", "")
+                supplied = authorization[7:] if authorization.startswith("Bearer ") else ""
+                if not secrets.compare_digest(supplied, token):
+                    raise GatewayError(HTTPStatus.UNAUTHORIZED, "unauthorized", "A valid Studio token is required.")
+                status, body = action()
+            except GatewayError as error:
+                status = error.status
+                body = {
+                    "api_version": API_VERSION,
+                    "error": {"code": error.code, "message": str(error)},
+                }
+            self._write_json(status, body)
+
+        def _write_json(self, status: HTTPStatus, body: dict[str, Any]) -> None:
+            encoded = json.dumps(body, separators=(",", ":")).encode("utf-8")
+            self.send_response(status)
+            self._cors_headers()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _cors_headers(self) -> None:
+            origin = self.headers.get("Origin")
+            if origin in origin_allowlist:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+
+        def log_message(self, message: str, *args: Any) -> None:
+            print(f"orion-studio-gateway: {self.address_string()} - {message % args}")
+
+    return GatewayHandler
+
+
+def read_token(path: Path) -> str:
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        token = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise SystemExit(f"Could not read Studio token file '{path}': {error}") from error
+    if mode & 0o077:
+        raise SystemExit(f"Studio token file '{path}' must not be accessible by group or others.")
+    if len(token) < 32:
+        raise SystemExit("Studio token must contain at least 32 characters.")
+    return token
+
+
+def create_token(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(token + "\n")
+    except FileExistsError as error:
+        raise SystemExit(f"Refusing to replace existing token file '{path}'.") from error
+    print(token)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    token = commands.add_parser("create-token", help="Create a development bearer token.")
+    token.add_argument("--token-file", type=Path, required=True)
+    serve = commands.add_parser("serve", help="Run the source-tree Studio gateway.")
+    serve.add_argument("--socket", default=DEFAULT_SOCKET)
+    serve.add_argument("--bind", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=7447)
+    serve.add_argument("--token-file", type=Path, required=True)
+    serve.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent,
+        help="Orion source checkout containing scenes/ (default: inferred from gateway.py).",
+    )
+    serve.add_argument(
+        "--allow-origin",
+        action="append",
+        dest="allowed_origins",
+        default=list(DEFAULT_ALLOWED_ORIGINS),
+        help="Allowed Studio web origin; may be repeated.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.command == "create-token":
+        create_token(args.token_file)
+        return
+    token = read_token(args.token_file)
+    project_root = args.project_root.resolve()
+    if not (project_root / "AGENTS.md").is_file() or not (project_root / "scenes").is_dir():
+        raise SystemExit(f"Not an Orion project root: '{project_root}'.")
+    gateway = OrionGateway(UnixOrionClient(args.socket), project_root)
+    server = ThreadingHTTPServer(
+        (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)
+    )
+    print(f"orion-studio-gateway: serving http://{args.bind}:{args.port} -> {args.socket}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

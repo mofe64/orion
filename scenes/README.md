@@ -55,6 +55,12 @@ silent success.
 fades to `RGBW(8, 3, 0, 20)` and then returns to the warm-white idle value
 `RGBW(0, 0, 0, 28)` without requiring torque or starting a movement.
 
+`deployment_smoke` is a diagnostic-only scene used by `scripts/deploy_pi.sh`.
+It exercises a restrained warm RGBW transition and the local `acknowledge` WAV
+cue without commanding servo movement, then turns every pixel off. The
+deployment script runs it only after the separate `zero_reference` movement
+has completed.
+
 With the source-run daemon active, submit and follow it with:
 
 ```bash
@@ -78,3 +84,10 @@ runtime/target/release/oriond --disable
 ```
 
 Only disable torque after the scene reports `completed`.
+
+Commissioned scenes remain directly in this directory. Studio-created copies
+live under `scenes/user/`, and the runtime discovers both recursively. The
+authenticated Studio gateway may create a new user file and request the private
+Pi-local `scene reload` command. `oriond` rebuilds and validates the entire
+catalog before swapping it in, refuses reload during an active scene, and never
+changes the definition already owned by an executing run.

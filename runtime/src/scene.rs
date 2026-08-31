@@ -742,6 +742,19 @@ impl SceneCoordinator {
         self.library.names()
     }
 
+    pub fn replace_library(&mut self, library: SceneLibrary) -> Result<Vec<String>> {
+        if let Some(active) = self.active.as_ref() {
+            return Err(Error::InvalidState(format!(
+                "Cannot reload scenes while '{}' is active as run {}.",
+                active.status().name,
+                active.status().run_id
+            )));
+        }
+        let names = library.names();
+        self.library = library;
+        Ok(names)
+    }
+
     fn archive_terminal(&mut self) {
         if !self
             .active

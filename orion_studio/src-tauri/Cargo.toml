@@ -1,0 +1,18 @@
+[package]
+name = "orion-studio"
+version = "0.1.0"
+description = "Cross-platform scene authoring and robot control for Orion"
+authors = ["Orion contributors"]
+edition = "2024"
+license = "GPL-3.0-only"
+
+[lib]
+name = "orion_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+orion-studio-scene-store = { path = "scene-store" }
+tauri = { version = "2", features = [] }

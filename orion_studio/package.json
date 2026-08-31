@@ -1,0 +1,36 @@
+{
+  "name": "orion-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "js-yaml": "5.4.1",
+    "lucide-react": "^0.544.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "three": "0.185.1",
+    "urdf-loader": "0.13.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@types/three": "^0.185.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "esbuild": "^0.27.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "^4.0.0"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

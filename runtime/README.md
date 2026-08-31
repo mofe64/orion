@@ -26,6 +26,38 @@ The tests cover the complete runtime contract and launch Orion's native MuJoCo
 model through the same Rust daemon state machine used by hardware.
 MuJoCo tests expect the repository Python environment at `.venv/bin/python`.
 
+## Deploy an update to the Raspberry Pi
+
+During source-run development, Git is Orion's deployment package. Commit and
+push the intended `main` revision, then run this from the development
+workstation:
+
+```bash
+scripts/deploy_pi.sh
+```
+
+The command connects to `mofe@orion.local` over SSH and streams the remote
+deployment logic; it installs no system service. Override the target when
+needed with `--host`, `--root`, or `--branch`. SSH host identity and key access
+must already be trusted normally; the script never disables host-key checking.
+
+On the Pi, deployment requires the selected branch to already be checked out,
+then fetches and fast-forwards it. It never switches branches, stashes, resets,
+or cleans the Pi checkout. Deployment returns
+the currently running Orion to `rest`, disables torque, stops the old process,
+runs gateway tests and the Pi-compatible Rust suite, and release-builds
+`oriond`. The simulator-only MuJoCo integration test remains a workstation
+pre-push gate. Deployment then starts the new source-run daemon, verifies its
+embedded `build_revision`, configures and enables Orion, moves to
+`zero_reference`, and runs the no-motion
+`deployment_smoke` RGBW/audio scene. A successful trial returns to `rest`,
+fades lights off, disables torque, and starts the authenticated Studio gateway
+on port 7447. Any post-start failure attempts the same resting shutdown.
+
+Runtime and gateway logs and PID files live under
+`~/.local/state/orion/`. Calibration and the Studio pairing token remain under
+`~/.config/orion/` and are never replaced during ordinary updates.
+
 ## MuJoCo-first daemon
 
 Run the daemon without opening a serial port:
@@ -55,8 +87,9 @@ accumulates the shared base translation, tilt, height, and contact policy in
 ## Physical hardware
 
 The Rust transport has been validated on Orion's Raspberry Pi and five-servo
-STS3215 bus. Run all commands directly from the source checkout; Orion is not
-installed as a system service.
+STS3215 bus. Run all commands from the source checkout; Orion is not installed
+as a system service. The deployment script may keep the source-built process
+running in the background after its bounded smoke test.
 
 ### Read hardware state without enabling torque
 
@@ -261,6 +294,13 @@ reset when the source-run daemon restarts. Scene states are `executing`,
 `completed`, `timed_out`, `cancelled`, and `failed`. `--stop-scene` cancels the
 scene and its active movement. `--wait` exits `0`, `4`, `5`, or `6` for
 completed, timed out, cancelled, or failed respectively.
+
+The scene library is recursive, including `scenes/user/`. The private Unix
+protocol also supports `scene reload` for the authenticated Studio gateway.
+Reload re-reads the daemon's configured scene directory, validates all pose,
+motion, and audio-cue references, and atomically replaces the in-memory catalog
+only when no scene is active. It does not accept a path or scene body over the
+local command socket.
 
 During development, build and run `oriond` directly from this source tree. It
 is not installed as a system service.
