@@ -2,8 +2,8 @@
 
 > This index is the retrieval layer for Orion handovers. Reports are ordered newest first; use the topic and status sections to find the authoritative context for the work in front of you.
 
-**Last Updated:** 2026-08-29
-**Total Reports:** 3
+**Last Updated:** 2026-08-31
+**Total Reports:** 4
 
 ---
 
@@ -18,6 +18,8 @@
 - [Documentation](#documentation)
 - [Hardware](#hardware)
 - [Native Runtime](#native-runtime)
+- [Lighting, Audio, and Scenes](#lighting-audio-and-scenes)
+- [Voice and Orion Studio](#voice-and-orion-studio)
 - [Simulation](#simulation)
 - [ROS 2 History](#ros-2-history)
 
@@ -30,6 +32,26 @@
 ---
 
 ## All Reports (Reverse Chronological)
+
+### 2026-08-31 - Movement lifecycle, multimodal runtime, and local voice foundation complete ⏳
+
+**File:** [handover-2026-08-31-multimodal-voice.md](./handover-2026-08-31-multimodal-voice.md)
+
+**Primary Task:** Add trustworthy movement acknowledgement, commission physical RGBW lighting and ReSpeaker V2 audio, implement local multimodal scenes and Piper speech, prove Pi-local wake/transcription, and define the Orion Studio continuation boundary.
+
+**Tags:** `orion`, `movement-lifecycle`, `settling`, `neopixel`, `respeaker-v2`, `audio`, `scenes`, `piper`, `wake-word`, `speech-to-text`, `orion-studio`, `raspberry-pi`
+
+**Key Deliverables:**
+
+- Ephemeral movement IDs, measured settling, terminal results, `--wait`, meaningful exit codes, and corrected busy-motion errors
+- Commissioned 40-pixel RGBW lighting, ReSpeaker V2 playback/capture, persistent hardware prerequisites, local cues, and four versioned scenes
+- Piper Ryan Medium speech lifecycle plus a physically proven Sherpa/Silero/Moonshine wake-and-transcription pipeline
+
+**Bugs Fixed:** 10
+
+**Files Changed:** Rust runtime lifecycle/device/scene/speech modules, lighting and audio hardware setup, portable scene/cue assets, Python voice runtime/tests, documentation, plus this report/index update
+
+**Next Steps:** Define the network-facing semantic capability protocol, scaffold Orion Studio, prove Mac push-to-talk plus larger-model transcription, then add wake detection and agent routing while retaining the Pi voice path as fallback/diagnostics.
 
 ### 2026-08-29 - Rust runtime port and physical parity complete ✅
 
@@ -97,18 +119,21 @@
 
 ### Testing
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Records the 239-test matrix, deterministic lifecycle/scene/voice coverage, physical light/audio/scene evidence, and successful but imperfect Pi transcription samples.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Records 182 passing workstation tests, the optional Pi MuJoCo/Python distinction, and successful Rust hardware pose, motion, stop, rest, and disable evidence.
 - [2026-08-29](./handover-2026-08-29.md) - Records 174 passing tests, a ROS-free native build, a valid MuJoCo load, and the successful post-cleanup physical smoke sequence.
 - [2026-08-28](./handover-2026-08-28.md) - Records 46 commissioning tests, strict nudge results, and the original elbow/pose tracking failures.
 
 ### Bug Fixes
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Fixes busy-motion reporting, persistent NeoPixel setup, wrong ReSpeaker generation, unstable mixer state, Chatterbox performance, Sherpa dependencies, ALSA microphone ownership, and overdriven capture gain.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Resolves the parallel runtime tree, old MuJoCo bridge path, stale C++ ownership documentation, shutdown ordering, and optional Python-environment diagnosis.
 - [2026-08-29](./handover-2026-08-29.md) - Fixes calibration display/range handling, supported endpoints, margin starts, simulation reference alignment, stale pose families, command errors, Pi Git divergence, and backend paths.
 - [2026-08-28](./handover-2026-08-28.md) - Fixes early yaw calibration rejection, rest shutdown behaviour, shared rest ranges, Ctrl+C parking, and temperature diagnostics.
 
 ### Features
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Adds movement acknowledgement, RGBW control, WAV playback, local multimodal scenes, Piper speech, wake detection, VAD, and command transcription.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Rust daemon, `rustypot` hardware transport, shared hardware/MuJoCo boundary, source-tree Pi workflow, and verified physical feature parity.
 - [2026-08-29](./handover-2026-08-29.md) - Native daemon, physical pose/motion playback, constrained MuJoCo pose editor, supported-rest capture, and rebuilt expressive motions.
 - [2026-08-28](./handover-2026-08-28.md) - Servo provisioning, verification, guarded motion, initial calibration, rest capture, and physical pose commissioning.
@@ -120,20 +145,31 @@
 
 ### Documentation
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Current source of truth for movement completion, lighting/audio hardware, scenes, local voice, physical evidence, known limitations, and the Studio continuation.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Current source of truth for the Rust-only architecture, Pi source workflow, optional MuJoCo Python dependency, shutdown, and continuation order.
 - [2026-08-29](./handover-2026-08-29.md) - Records the accepted hardware contract, native architecture, current commands, migration evidence, risks, and next runtime milestone.
 - [2026-08-28](./handover-2026-08-28.md) - Consolidates original assembly, wiring, calibration, safety, and planned control-backend context.
 
 ### Hardware
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Records commissioned RGBW matrix mapping, persistent RP1 PWM setup, ReSpeaker V2 identity, JST playback, microphone capture, and physical multimodal scenes.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Records Rust Pi telemetry parity and the physical configure, enable, pose, motion, stop, rest, and disable sequence.
 - [2026-08-29](./handover-2026-08-29.md) - Authoritative calibration, supported endpoints, 120 g head correction, captured rest, servo profile, and real motion evidence.
 - [2026-08-28](./handover-2026-08-28.md) - Initial five-servo assembly, wiring, bus detection, and bring-up constraints.
 
 ### Native Runtime
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Extends the Rust runtime source of truth with movement run IDs, measured settling, lighting/audio ownership, scenes, and generated-speech lifecycles.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Current source of truth for the sole Rust `oriond`, `rustypot` STS3215 ownership, physical parity, source-tree operation, and known gaps.
 - [2026-08-29](./handover-2026-08-29.md) - Historical source for the superseded implementation, calibration, daemon semantics, and the baseline used by the Rust port.
+
+### Lighting, Audio, and Scenes
+
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Authoritative wiring, codec, mixer, device ownership, scene schema, physical commissioning, and source-run operational context.
+
+### Voice and Orion Studio
+
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Records Chatterbox rejection, Piper Ryan Medium selection, Pi wake/STT implementation and limitations, and the proposed Mac-hosted Studio voice/agent architecture.
 
 ### Simulation
 
@@ -152,11 +188,13 @@
 
 ### Complete
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Movement acknowledgement, physical lighting/audio, local scenes, Piper speech, and the functional Pi wake/transcription path are complete.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Rust migration, MuJoCo and physical parity, C++ removal, canonical runtime rename, and current documentation are complete.
 - [2026-08-29](./handover-2026-08-29.md) - Recalibration, shared-motion rebuild, native runtime, MuJoCo alignment, physical proof, and ROS removal are complete for this phase.
 
 ### In Progress
 
+- [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Conversational reliability remains in progress; Studio transport, Mac transcription/wake detection, intent routing, and agent integration are not implemented.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Product continuation is unselected; lighting/audio integration, scene playback, and Orion Studio remain planned.
 - [2026-08-28](./handover-2026-08-28.md) - Historical snapshot of an in-progress ROS control plan; its open architecture work was superseded by the 2026-08-29 report.
 
