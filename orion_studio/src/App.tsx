@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { load as loadYaml } from "js-yaml";
 import {
   CircleStop,
   CloudCog,
@@ -22,12 +23,16 @@ import { projectCatalog } from "./lib/catalog";
 import {
   cancelRun,
   getCapabilities,
+  getUserScene,
   getStatus,
   gotoPose,
+  listUserScenes,
   publishScene,
   runMotion,
   runScene,
+  updateUserScene,
   type GatewayConnection,
+  type UserSceneSource,
 } from "./lib/gateway";
 import { sampleSceneLight, sampleScenePose, sceneDuration } from "./lib/preview";
 import type {
@@ -59,17 +64,32 @@ function sceneDocument(scene: SceneDefinition, name: string) {
   };
 }
 
-function storedScene(document: StoredSceneDocument): SceneDefinition {
+function storedScene(document: StoredSceneDocument, remoteRevision?: string): SceneDefinition {
   return {
     format_version: 1,
     name: document.scene.name,
     description: document.scene.description,
     source: "user",
+    remote_revision: remoteRevision,
     timeline: document.scene.timeline.map((event) => ({
       ...event,
       id: crypto.randomUUID(),
     })) as SceneEvent[],
   };
+}
+
+function remoteScene(source: UserSceneSource): SceneDefinition {
+  const document = loadYaml(source.yaml) as StoredSceneDocument;
+  if (
+    !document
+    || document.format_version !== 1
+    || !document.scene
+    || document.scene.name !== source.name
+    || !Array.isArray(document.scene.timeline)
+  ) {
+    throw new Error(`Pi user scene '${source.name}' does not match its library metadata.`);
+  }
+  return storedScene(document, source.revision);
 }
 
 function createEvent(type: SceneEvent["type"], at: number, catalog = projectCatalog): SceneEvent {
@@ -288,7 +308,9 @@ export default function App() {
     setSaveAsName(`${name}_studio`);
     setNotice(next.source === "built_in"
       ? `Loaded built-in scene “${name}” as a read-only source. Save As creates a user copy.`
-      : `Loaded user scene “${name}”. Editing it requires Save As with a new name.`);
+      : next.remote_revision
+        ? `Loaded Pi user scene “${name}”. Save changes uses revision checking; Save As creates a copy.`
+        : `Loaded local user scene “${name}”. Save As creates another local or Pi copy.`);
   };
 
   const previewPose = (name: string) => {
@@ -407,34 +429,80 @@ export default function App() {
     }
     const document = sceneDocument(scene, name);
     try {
-      const result = await invoke<{ name: string; relative_path: string }>("save_user_scene", {
-        projectRoot,
-        document,
-      });
+      const result = connected
+        ? await publishScene(connection, document)
+        : await invoke<{ name: string; relative_path: string }>("save_user_scene", {
+          projectRoot,
+          document,
+        });
       const savedScene: SceneDefinition = {
         ...copyScene(scene),
         name: result.name,
         source: "user",
+        remote_revision: "revision" in result && typeof result.revision === "string"
+          ? result.revision
+          : undefined,
       };
       setScene(savedScene);
       setSceneCatalog((current) => ({ ...current, [savedScene.name]: savedScene }));
       setSelectedLibraryScene(savedScene.name);
       setDirty(false);
-      setNotice(`Saved ${result.relative_path}. Studio did not modify any built-in scene.`);
+      setSaveAsName(`${savedScene.name}_copy`);
+      setNotice(
+        `Saved ${result.relative_path}${connected ? " on Orion" : " in the local project"}. Studio did not modify any built-in scene.`,
+      );
     } catch (error) {
       setNotice(`Could not save scene: ${String(error)}`);
     }
   };
 
+  const saveSceneChanges = async () => {
+    if (!connected || !scene.remote_revision) {
+      setNotice("Connect to Orion and load a Pi user scene before saving changes in place.");
+      return;
+    }
+    try {
+      const result = await updateUserScene(
+        connection,
+        scene.name,
+        scene.remote_revision,
+        sceneDocument(scene, scene.name),
+      );
+      const savedScene: SceneDefinition = {
+        ...copyScene(scene),
+        source: "user",
+        remote_revision: result.revision,
+      };
+      setScene(savedScene);
+      setSceneCatalog((current) => ({ ...current, [savedScene.name]: savedScene }));
+      setDirty(false);
+      setNotice(`Saved revision-checked changes to ${result.relative_path} and reloaded Orion's scene catalog.`);
+    } catch (error) {
+      setNotice(`Could not save changes: ${String(error)}`);
+    }
+  };
+
   const connectRobot = async () => {
     try {
-      const [status, capabilities] = await Promise.all([
+      const [status, capabilities, remoteLibrary] = await Promise.all([
         getStatus(connection),
         getCapabilities(connection),
+        listUserScenes(connection),
       ]);
-      if (status.api_version !== 1 || capabilities.api_version !== 1) {
+      if (status.api_version !== 1 || capabilities.api_version !== 1 || remoteLibrary.api_version !== 1) {
         throw new Error("Studio requires Orion gateway protocol version 1.");
       }
+      const remoteSources = await Promise.all(
+        remoteLibrary.scenes.map((item) => getUserScene(connection, item.name)),
+      );
+      const remoteScenes = remoteSources.map(remoteScene);
+      setSceneCatalog((current) => {
+        const next = { ...current };
+        for (const remote of remoteScenes) {
+          if (next[remote.name]?.source !== "built_in") next[remote.name] = remote;
+        }
+        return next;
+      });
       setRobotStatus(status);
       setRobotCapabilities(capabilities);
       setConnected(true);
@@ -442,7 +510,7 @@ export default function App() {
       localStorage.setItem("orionStudioGateway", gatewayUrl);
       sessionStorage.setItem("orionStudioToken", gatewayToken);
       setNotice(
-        `Connected to Orion in ${status.runtime.mode} mode · ${capabilities.capabilities.scene.length} scenes · ${capabilities.capabilities.motion.length} motions · ${capabilities.capabilities.goto.length} poses.`,
+        `Connected to Orion in ${status.runtime.mode} mode · loaded ${remoteScenes.length} Pi user scenes · ${capabilities.capabilities.scene.length} runnable scenes · ${capabilities.capabilities.motion.length} motions · ${capabilities.capabilities.goto.length} poses.`,
       );
     } catch (error) {
       setConnected(false);
@@ -468,8 +536,11 @@ export default function App() {
         if (dirty || scene.source === "draft") {
           throw new Error("Save As before hardware playback so Studio and Orion use the same scene document.");
         }
-        if (scene.source === "user") {
-          await publishScene(connection, sceneDocument(scene, scene.name));
+        if (scene.source === "user" && !scene.remote_revision) {
+          const published = await publishScene(connection, sceneDocument(scene, scene.name));
+          const synchronized = { ...scene, remote_revision: published.revision };
+          setScene(synchronized);
+          setSceneCatalog((current) => ({ ...current, [scene.name]: synchronized }));
         }
         await runScene(connection, scene.name);
       }
@@ -508,8 +579,9 @@ export default function App() {
             {connected ? <Radio size={16} /> : <Unplug size={16} />}
             {connected ? robotStatus?.runtime.mode ?? "Connected" : "Connect robot"}
           </button>
+          {scene.remote_revision && dirty && <button className="secondary-button" onClick={saveSceneChanges}><Save size={16} />Save changes</button>}
           <button className="secondary-button" onClick={saveUserScene}><Save size={16} />Save As</button>
-          <button className="primary-button" onClick={runOnRobot}><Link2 size={16} />{scene.source === "user" && !dirty ? "Publish & Run" : "Run on Orion"}</button>
+          <button className="primary-button" onClick={runOnRobot}><Link2 size={16} />{scene.source === "user" && !scene.remote_revision && !dirty ? "Publish & Run" : "Run on Orion"}</button>
           <button className="stop-button" onClick={stopRobot} disabled={!robotStatus?.scene.active && !robotStatus?.runtime.motion}><CircleStop size={16} />Stop</button>
         </div>
       </header>
@@ -585,7 +657,7 @@ export default function App() {
             <p className="panel-kicker">SAFE SAVE</p>
             <label>Save As name<input value={saveAsName} onChange={(event) => setSaveAsName(event.target.value)} /></label>
             <label>Scene description<textarea rows={3} value={scene.description} onChange={(event) => updateSceneDescription(event.target.value)} /></label>
-            <p>New files only · <code>scenes/user/</code></p>
+            <p>{connected ? "Pi-authoritative" : "Offline local staging"} · <code>scenes/user/</code></p>
           </section>
           <EventInspector catalog={catalog} event={selectedEvent} onChange={updateEvent} onDelete={deleteEvent} />
           <section className="robot-status-card">

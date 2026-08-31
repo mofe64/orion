@@ -64,6 +64,7 @@ export interface SceneDefinition {
   name: string;
   description: string;
   source: "built_in" | "user" | "draft";
+  remote_revision?: string;
   timeline: SceneEvent[];
 }
 
@@ -125,5 +126,6 @@ export interface GatewayCapabilities {
     speech: { max_text_bytes: number };
     cancel: string[];
     scene_publish: { format_version: number; max_body_bytes: number };
+    scene_library: { read: boolean; create: boolean; update: "revision" };
   };
 }

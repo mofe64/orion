@@ -10,6 +10,35 @@ export interface PublishedScene {
   published: true;
   already_present: boolean;
   name: string;
+  revision: string;
+  relative_path: string;
+}
+
+export interface UserSceneSummary {
+  name: string;
+  revision: string;
+  bytes: number;
+  relative_path: string;
+}
+
+export interface UserSceneLibrary {
+  api_version: number;
+  scenes: UserSceneSummary[];
+}
+
+export interface UserSceneSource {
+  api_version: number;
+  name: string;
+  revision: string;
+  relative_path: string;
+  yaml: string;
+}
+
+export interface UpdatedScene {
+  api_version: number;
+  updated: boolean;
+  name: string;
+  revision: string;
   relative_path: string;
 }
 
@@ -49,6 +78,29 @@ export function publishScene(
   return request(connection, "/api/v1/scenes", {
     method: "POST",
     body: JSON.stringify(document),
+  });
+}
+
+export function listUserScenes(connection: GatewayConnection): Promise<UserSceneLibrary> {
+  return request(connection, "/api/v1/scenes");
+}
+
+export function getUserScene(
+  connection: GatewayConnection,
+  name: string,
+): Promise<UserSceneSource> {
+  return request(connection, `/api/v1/scenes/${encodeURIComponent(name)}`);
+}
+
+export function updateUserScene(
+  connection: GatewayConnection,
+  name: string,
+  expectedRevision: string,
+  document: unknown,
+): Promise<UpdatedScene> {
+  return request(connection, `/api/v1/scenes/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: JSON.stringify({ expected_revision: expectedRevision, document }),
   });
 }
 

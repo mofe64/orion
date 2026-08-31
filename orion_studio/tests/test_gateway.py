@@ -23,6 +23,7 @@ class FakeOrionClient:
         self.scene = None
         self.speech = None
         self.reject_reload = False
+        self.reject_reload_count = 0
 
     def request(self, command: str):
         self.commands.append(command)
@@ -48,7 +49,9 @@ class FakeOrionClient:
         if command == "scene list":
             return {"ok": True, "scenes": ["acknowledge_left"]}
         if command == "scene reload":
-            if self.reject_reload:
+            if self.reject_reload or self.reject_reload_count > 0:
+                if self.reject_reload_count > 0:
+                    self.reject_reload_count -= 1
                 return {"ok": False, "error": "invalid scene catalog"}
             return {"ok": True, "command": "scene_reload", "scenes": ["acknowledge_left"]}
         if command.startswith("goto "):
@@ -140,6 +143,95 @@ class GatewayTests(unittest.TestCase):
                 gateway.publish_scene(changed)
             self.assertEqual(context.exception.code, "user_scene_exists")
 
+    def test_lists_reads_and_revision_updates_user_scenes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scenes").mkdir()
+            gateway = OrionGateway(self.client, root)
+            document = {
+                "format_version": 1,
+                "scene": {
+                    "name": "studio_wave",
+                    "description": "First version.",
+                    "timeline": [
+                        {"at": 0, "type": "play_motion", "motion": "look_at_left"}
+                    ],
+                },
+            }
+            _, published = gateway.publish_scene(document)
+
+            library = gateway.list_user_scenes()
+            self.assertEqual(len(library["scenes"]), 1)
+            self.assertEqual(library["scenes"][0]["name"], "studio_wave")
+            self.assertEqual(library["scenes"][0]["revision"], published["revision"])
+
+            loaded = gateway.read_user_scene("studio_wave")
+            self.assertEqual(json.loads(loaded["yaml"]), document)
+            self.assertEqual(loaded["revision"], published["revision"])
+
+            changed = json.loads(json.dumps(document))
+            changed["scene"]["description"] = "Second version."
+            status, updated = gateway.update_user_scene(
+                "studio_wave",
+                {"expected_revision": loaded["revision"], "document": changed},
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(updated["updated"])
+            self.assertNotEqual(updated["revision"], loaded["revision"])
+            self.assertEqual(
+                json.loads(gateway.read_user_scene("studio_wave")["yaml"]),
+                changed,
+            )
+
+            with self.assertRaises(GatewayError) as context:
+                gateway.update_user_scene(
+                    "studio_wave",
+                    {"expected_revision": loaded["revision"], "document": document},
+                )
+            self.assertEqual(context.exception.code, "scene_revision_conflict")
+
+    def test_user_scene_library_refuses_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            user = root / "scenes/user"
+            user.mkdir(parents=True)
+            outside = root / "outside.yaml"
+            outside.write_text("not a scene", encoding="utf-8")
+            (user / "linked.yaml").symlink_to(outside)
+            gateway = OrionGateway(self.client, root)
+            with self.assertRaises(GatewayError) as context:
+                gateway.list_user_scenes()
+            self.assertEqual(context.exception.code, "unsafe_scene_file")
+
+    def test_revision_update_restores_previous_scene_when_reload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scenes").mkdir()
+            gateway = OrionGateway(self.client, root)
+            document = {
+                "format_version": 1,
+                "scene": {
+                    "name": "rollback_scene",
+                    "description": "Known good.",
+                    "timeline": [{"at": 0, "type": "audio", "cue": "acknowledge"}],
+                },
+            }
+            _, published = gateway.publish_scene(document)
+            path = root / "scenes/user/rollback_scene.yaml"
+            previous = path.read_bytes()
+            changed = json.loads(json.dumps(document))
+            changed["scene"]["timeline"][0]["cue"] = "missing_cue"
+            self.client.reject_reload_count = 1
+
+            with self.assertRaises(GatewayError) as context:
+                gateway.update_user_scene(
+                    "rollback_scene",
+                    {"expected_revision": published["revision"], "document": changed},
+                )
+            self.assertEqual(context.exception.code, "runtime_rejected")
+            self.assertEqual(path.read_bytes(), previous)
+            self.assertEqual(self.client.commands[-1], "scene reload")
+
     def test_rejects_invalid_scene_documents_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -180,10 +272,13 @@ class GatewayTests(unittest.TestCase):
 class HttpAuthenticationTests(unittest.TestCase):
     def setUp(self):
         self.fake = FakeOrionClient()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.project_root = Path(self.temporary.name)
+        (self.project_root / "scenes").mkdir()
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
             make_handler(
-                OrionGateway(self.fake),
+                OrionGateway(self.fake, self.project_root),
                 "a" * 32,
                 ["http://localhost:1420", "tauri://localhost"],
             ),
@@ -196,6 +291,7 @@ class HttpAuthenticationTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        self.temporary.cleanup()
 
     def test_requires_bearer_token(self):
         with self.assertRaises(urllib.error.HTTPError) as context:
@@ -217,6 +313,57 @@ class HttpAuthenticationTests(unittest.TestCase):
             self.assertEqual(response.headers["Access-Control-Allow-Origin"], "tauri://localhost")
         self.assertEqual(body["api_version"], 1)
         self.assertEqual(body["runtime"]["mode"], "holding")
+
+    def test_serves_authenticated_scene_create_read_and_revision_update(self):
+        authorization = {"Authorization": f"Bearer {'a' * 32}"}
+        document = {
+            "format_version": 1,
+            "scene": {
+                "name": "http_scene",
+                "description": "Created through HTTP.",
+                "timeline": [{"at": 0, "type": "audio", "cue": "acknowledge"}],
+            },
+        }
+        create = urllib.request.Request(
+            f"{self.base_url}/api/v1/scenes",
+            data=json.dumps(document).encode(),
+            headers={**authorization, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(create) as response:
+            created = json.load(response)
+        self.assertEqual(response.status, 201)
+
+        listing = urllib.request.Request(
+            f"{self.base_url}/api/v1/scenes",
+            headers=authorization,
+        )
+        with urllib.request.urlopen(listing) as response:
+            library = json.load(response)
+        self.assertEqual(library["scenes"][0]["revision"], created["revision"])
+
+        read = urllib.request.Request(
+            f"{self.base_url}/api/v1/scenes/http_scene",
+            headers=authorization,
+        )
+        with urllib.request.urlopen(read) as response:
+            loaded = json.load(response)
+        self.assertEqual(json.loads(loaded["yaml"]), document)
+
+        changed = json.loads(json.dumps(document))
+        changed["scene"]["description"] = "Updated through HTTP."
+        update = urllib.request.Request(
+            f"{self.base_url}/api/v1/scenes/http_scene",
+            data=json.dumps({
+                "expected_revision": loaded["revision"],
+                "document": changed,
+            }).encode(),
+            headers={**authorization, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urllib.request.urlopen(update) as response:
+            updated = json.load(response)
+        self.assertTrue(updated["updated"])
+        self.assertNotEqual(updated["revision"], loaded["revision"])
 
 
 if __name__ == "__main__":

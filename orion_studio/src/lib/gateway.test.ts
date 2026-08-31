@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getCapabilities, publishScene } from "./gateway";
+import {
+  getCapabilities,
+  getUserScene,
+  listUserScenes,
+  publishScene,
+  updateUserScene,
+} from "./gateway";
 
 describe("Studio gateway client", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -15,6 +21,7 @@ describe("Studio gateway client", () => {
         speech: { max_text_bytes: 1024 },
         cancel: ["movement", "scene", "speech"],
         scene_publish: { format_version: 1, max_body_bytes: 262144 },
+        scene_library: { read: true, create: true, update: "revision" },
       },
     };
     const fetchMock = vi.fn().mockResolvedValue({
@@ -76,5 +83,69 @@ describe("Studio gateway client", () => {
       { url: "http://orion.local:7447", token: "secret" },
       {},
     )).rejects.toThrow("A different user scene already exists.");
+  });
+
+  it("loads and revision-updates the Pi user scene library", async () => {
+    const revision = "a".repeat(64);
+    const changedRevision = "b".repeat(64);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          api_version: 1,
+          scenes: [{
+            name: "studio_scene",
+            revision,
+            bytes: 123,
+            relative_path: "scenes/user/studio_scene.yaml",
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          api_version: 1,
+          name: "studio_scene",
+          revision,
+          relative_path: "scenes/user/studio_scene.yaml",
+          yaml: "format_version: 1\nscene:\n  name: studio_scene\n",
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          api_version: 1,
+          updated: true,
+          name: "studio_scene",
+          revision: changedRevision,
+          relative_path: "scenes/user/studio_scene.yaml",
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = { url: "http://orion.local:7447", token: "secret" };
+
+    await listUserScenes(connection);
+    await getUserScene(connection, "studio_scene");
+    const document = { format_version: 1, scene: { name: "studio_scene" } };
+    await updateUserScene(connection, "studio_scene", revision, document);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://orion.local:7447/api/v1/scenes",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer secret" }) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://orion.local:7447/api/v1/scenes/studio_scene",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer secret" }) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://orion.local:7447/api/v1/scenes/studio_scene",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ expected_revision: revision, document }),
+      }),
+    );
   });
 });

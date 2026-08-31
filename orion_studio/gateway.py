@@ -12,6 +12,7 @@ import re
 import secrets
 import socket
 import stat
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -103,6 +104,7 @@ class OrionGateway:
     def __init__(self, client: Any, project_root: Path | None = None):
         self.client = client
         self.project_root = project_root
+        self.scene_write_lock = threading.Lock()
 
     def status(self) -> dict[str, Any]:
         runtime = self.client.request("status")
@@ -192,6 +194,10 @@ class OrionGateway:
         }
 
     def publish_scene(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        with self.scene_write_lock:
+            return self._publish_scene_locked(document)
+
+    def _publish_scene_locked(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         if self.project_root is None:
             raise GatewayError(
                 HTTPStatus.NOT_IMPLEMENTED,
@@ -328,6 +334,10 @@ class OrionGateway:
         }
 
     def update_user_scene(self, name: Any, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        with self.scene_write_lock:
+            return self._update_user_scene_locked(name, payload)
+
+    def _update_user_scene_locked(self, name: Any, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         name = self._name(name, "scene")
         if not isinstance(payload, dict) or set(payload) != {"expected_revision", "document"}:
             raise GatewayError(

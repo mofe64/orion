@@ -7,7 +7,7 @@ authoring Orion scenes, then submitting named work to the robot.
 Tauri + React Studio                    Raspberry Pi
 ┌─────────────────────────┐  HTTP v1   ┌──────────────────────────┐
 │ URDF preview + timeline │───────────▶│ gateway.py               │
-│ local YAML asset catalog│  token     │ semantic allowlist       │
+│ project + Pi scene views│  token     │ semantic + scene adapter │
 └─────────────────────────┘            └────────────┬─────────────┘
                                                    │ private Unix socket
                                                    ▼
@@ -74,23 +74,34 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
   queued local audio cues.
 - Add, select, drag to retime, edit, and delete scene events, and edit the
   scene description.
-- Save a scene as a new YAML file under `scenes/user/`.
+- Save a scene as a new YAML file under `scenes/user/`; while connected the
+  Pi copy is authoritative, while offline the desktop checkout is staging.
 - Connect to the Pi, read lifecycle and terminal results, run named
   scenes/motions/poses, and cancel the active run by its run ID.
-- Publish a saved user scene to the Pi, ask `oriond` to reload its validated
-  catalog, and run it on hardware without restarting the daemon.
+- Load the Pi's user-scene library on connection, create new Pi scenes, and
+  revision-update an existing Pi user scene without losing concurrent edits.
+- Ask `oriond` to reload its validated catalog after every Pi write, then run
+  the named scene on hardware without restarting the daemon.
 
 Built-in scenes and poses are source material and are never overwritten. The
-native save command validates the scene and uses create-new file semantics, so
-an existing user scene is not overwritten either. See `scenes/user/README.md`.
-Studio reloads validated files from `scenes/user/` into the Library when the
-desktop app starts, and a newly saved scene appears there immediately.
+native offline save command validates the scene and uses create-new file
+semantics. Studio loads validated local files from `scenes/user/` at desktop
+startup, then merges the Pi's user library when it connects. A Pi scene wins
+over an offline staging copy with the same user-scene name; neither may shadow
+a built-in. See `scenes/user/README.md`.
 
-An edited scene remains a draft until **Save As** creates its local user copy.
-For a clean user scene the hardware action becomes **Publish & Run**. Publishing
-creates `scenes/user/<name>.yaml` on the Pi, never replaces different content,
-asks `oriond` to reload and validate the complete catalog, then submits the
-scene by name. A failed reload removes the newly published file.
+An edited scene remains a draft. **Save As** always creates a distinct user
+scene: directly on the Pi when connected, or in the desktop checkout while
+offline. A scene loaded from the Pi also offers **Save changes**. That operation
+includes the file revision Studio loaded; a stale save is rejected and must be
+reloaded instead of silently replacing newer work. Every accepted create or
+update asks `oriond` to reload and validate the complete catalog. A failed
+create is removed, and a failed update restores the previous file before the
+old catalog is reloaded.
+
+The authenticated gateway API keeps the raw Unix socket private and exposes
+only scene-library metadata, one named scene document at a time, create-new
+publishing, and revision-checked updates. It never accepts arbitrary paths.
 
 ## Connect Studio to the Pi
 

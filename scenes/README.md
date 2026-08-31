@@ -87,7 +87,9 @@ Only disable torque after the scene reports `completed`.
 
 Commissioned scenes remain directly in this directory. Studio-created copies
 live under `scenes/user/`, and the runtime discovers both recursively. The
-authenticated Studio gateway may create a new user file and request the private
-Pi-local `scene reload` command. `oriond` rebuilds and validates the entire
-catalog before swapping it in, refuses reload during an active scene, and never
-changes the definition already owned by an executing run.
+authenticated Studio gateway may list and read the Pi user library, create a
+new user file, or revision-update an existing user file before requesting the
+private Pi-local `scene reload` command. `oriond` rebuilds and validates the
+entire catalog before swapping it in, refuses reload during an active scene,
+and never changes the definition already owned by an executing run. A rejected
+write is rolled back before the previous catalog is reloaded.
