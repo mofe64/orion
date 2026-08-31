@@ -1,5 +1,6 @@
 import {
   ChevronDown,
+  Copy,
   MonitorPlay,
   Pause,
   Pencil,
@@ -21,11 +22,12 @@ interface TimelineProps {
   duration: number;
   currentTime: number;
   playing: boolean;
-  selectedEventId: string | null;
+  selectedEventIds: string[];
   hardwarePreviewEnabled: boolean;
-  onSelectEvent: (id: string) => void;
+  onSelectEvent: (id: string, mode: TimelineSelectionMode) => void;
   onMoveEvent: (id: string, at: number) => void;
   onDeleteEvent: (id: string) => void;
+  onDuplicateEvents: (ids: string[]) => void;
   onEditPose: (id: string) => void;
   onSplitEvent: (id: string) => void;
   onInsertDelay: (id: string, seconds: number) => void;
@@ -34,6 +36,8 @@ interface TimelineProps {
   onPreviewHardware: () => void;
   onRewind: () => void;
 }
+
+export type TimelineSelectionMode = "replace" | "toggle" | "range" | "preserve";
 
 const LANES = [
   { id: "movement", label: "Movement", types: ["play_motion", "goto_pose", "scene"] },
@@ -76,8 +80,9 @@ interface ContextMenuState {
 
 export function Timeline(props: TimelineProps) {
   const {
-    catalog, scene, duration, currentTime, playing, selectedEventId,
-    hardwarePreviewEnabled, onSelectEvent, onMoveEvent, onDeleteEvent,
+    catalog, scene, duration, currentTime, playing,
+    selectedEventIds, hardwarePreviewEnabled, onSelectEvent, onMoveEvent, onDeleteEvent,
+    onDuplicateEvents,
     onEditPose, onSplitEvent, onInsertDelay, onSeek, onTogglePlay,
     onPreviewHardware, onRewind,
   } = props;
@@ -145,7 +150,9 @@ export function Timeline(props: TimelineProps) {
       track,
     };
     track.setPointerCapture(pointer.pointerId);
-    onSelectEvent(event.id);
+    if (!pointer.ctrlKey && !pointer.metaKey && !pointer.shiftKey) {
+      onSelectEvent(event.id, selectedEventIds.includes(event.id) ? "preserve" : "replace");
+    }
     setContextMenu(null);
     pointer.preventDefault();
   };
@@ -170,14 +177,20 @@ export function Timeline(props: TimelineProps) {
   const openContextMenu = (mouse: React.MouseEvent, event: SceneEvent) => {
     mouse.preventDefault();
     mouse.stopPropagation();
-    onSelectEvent(event.id);
+    if (!selectedEventIds.includes(event.id)) onSelectEvent(event.id, "replace");
     setDelaySeconds(0.5);
     setContextMenu({
       id: event.id,
       x: Math.min(mouse.clientX, window.innerWidth - 238),
-      y: Math.min(mouse.clientY, window.innerHeight - 245),
+      y: Math.min(mouse.clientY, window.innerHeight - 285),
     });
   };
+
+  const contextSelection = contextEvent && selectedEventIds.includes(contextEvent.id)
+    ? selectedEventIds
+    : contextEvent
+      ? [contextEvent.id]
+      : [];
 
   const performContextAction = (action: () => void) => {
     action();
@@ -212,7 +225,7 @@ export function Timeline(props: TimelineProps) {
           </div>
           <span className="timecode">{currentTime.toFixed(2)}s / {duration.toFixed(2)}s</span>
         </div>
-        <p>Orion keeps smooth quintic motion between every pose.</p>
+        <p>Ctrl/Cmd-click selects multiple clips on one track; Shift-click selects a range.</p>
       </header>
 
       <div className="timeline-grid">
@@ -252,9 +265,15 @@ export function Timeline(props: TimelineProps) {
                   return (
                     <button
                       key={event.id}
-                      className={`timeline-clip ${eventClass(event)} ${selectedEventId === event.id ? "selected" : ""}`}
+                      className={`timeline-clip ${eventClass(event)} ${selectedEventIds.includes(event.id) ? "selected" : ""}`}
                       style={{ left: `${(event.at / duration) * 100}%`, width: `${width}%` }}
-                      onClick={(click) => { click.stopPropagation(); onSelectEvent(event.id); }}
+                      onClick={(click) => {
+                        click.stopPropagation();
+                        onSelectEvent(
+                          event.id,
+                          click.shiftKey ? "range" : click.metaKey || click.ctrlKey ? "toggle" : "replace",
+                        );
+                      }}
                       onContextMenu={(mouse) => openContextMenu(mouse, event)}
                       onPointerDown={(pointer) => beginClipDrag(pointer, event)}
                       title={`${eventLabel(event, catalog)} at ${event.at.toFixed(2)} seconds`}
@@ -277,18 +296,27 @@ export function Timeline(props: TimelineProps) {
           onPointerDown={(event) => event.stopPropagation()}
           role="menu"
         >
-          <strong>{eventLabel(contextEvent, catalog).replaceAll("_", " ")}</strong>
-          {contextEvent.type === "goto_pose" && !isDelayEvent(contextEvent) && (
+          <strong>{contextSelection.length > 1
+            ? `${contextSelection.length} selected clips`
+            : eventLabel(contextEvent, catalog).replaceAll("_", " ")}</strong>
+          <button onClick={() => performContextAction(() => onDuplicateEvents(contextSelection))}>
+            <Copy size={14} />Duplicate{contextSelection.length > 1 ? ` ${contextSelection.length} clips` : " clip"}
+          </button>
+          {contextSelection.length === 1 && contextEvent.type === "goto_pose" && !isDelayEvent(contextEvent) && (
             <button onClick={() => performContextAction(() => onEditPose(contextEvent.id))}><Pencil size={14} />Edit as a new pose</button>
           )}
-          {(contextEvent.type === "play_motion" || contextEvent.type === "scene") && (
+          {contextSelection.length === 1 && (contextEvent.type === "play_motion" || contextEvent.type === "scene") && (
             <button onClick={() => performContextAction(() => onSplitEvent(contextEvent.id))}><Scissors size={14} />Split into individual parts</button>
           )}
-          <div className="delay-control">
-            <label>Delay after<input type="number" min="0.01" max="60" step="0.05" value={delaySeconds} onChange={(event) => setDelaySeconds(Number(event.target.value))} /></label>
-            <button disabled={!Number.isFinite(delaySeconds) || delaySeconds <= 0} onClick={() => performContextAction(() => onInsertDelay(contextEvent.id, delaySeconds))}><TimerReset size={14} />Add</button>
-          </div>
-          <button className="danger" onClick={() => performContextAction(() => onDeleteEvent(contextEvent.id))}><Trash2 size={14} />Delete clip</button>
+          {contextSelection.length === 1 && (
+            <>
+              <div className="delay-control">
+                <label>Delay after<input type="number" min="0.01" max="60" step="0.05" value={delaySeconds} onChange={(event) => setDelaySeconds(Number(event.target.value))} /></label>
+                <button disabled={!Number.isFinite(delaySeconds) || delaySeconds <= 0} onClick={() => performContextAction(() => onInsertDelay(contextEvent.id, delaySeconds))}><TimerReset size={14} />Add</button>
+              </div>
+              <button className="danger" onClick={() => performContextAction(() => onDeleteEvent(contextEvent.id))}><Trash2 size={14} />Delete clip</button>
+            </>
+          )}
         </div>
       )}
     </section>

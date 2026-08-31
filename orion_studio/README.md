@@ -93,6 +93,11 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
 - Append every new clip to the end of its lane, right-click clips for delete
   and delay actions, and split motions or nested scene clips into editable
   pose/light/audio parts. Motion holds remain visible as editable Delay clips.
+- Right-click a clip to duplicate it with the same settings. Ctrl/Cmd-click
+  selects multiple clips on one track and Shift-click selects a same-track
+  range; duplicating the selection appends the copied group after the selected
+  group while retaining its relative timing. A duplicated scene-local edited
+  pose keeps the same joint values but receives an independent draft copy.
 - Treat a timeline pose as a baseline: **Edit as a new pose** clones its named
   source, previews bounded joint changes locally, and **Complete edit** returns
   immediately to scene authoring without writing a pose file. Completed pose
@@ -107,11 +112,15 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
   scenes/motions/poses, and cancel the active run by its run ID.
 - Load the Pi's user-scene library on connection, create new Pi scenes, and
   revision-update an existing Pi user scene without losing concurrent edits.
+- Select a Pi user scene from the library, edit its timeline or description,
+  and use **Save changes** in the scene inspector to update that same scene.
 - Ask `oriond` to reload its validated catalog after every Pi write, then run
   the named pose, motion, or scene on hardware without restarting the daemon.
 - Preview the current unsaved scene on connected hardware from the Preview
   dropdown. The gateway size-caps the temporary document, and `oriond`
   validates its named assets before running it without writing a scene file.
+- Follow Orion's scene lifecycle in the status bar, including dispatched versus
+  total events and the final completed, timed-out, cancelled, or failed result.
 
 Built-in scenes, poses, and motions are source material and are never
 overwritten. New user assets use create-only semantics and live under

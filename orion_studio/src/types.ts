@@ -143,6 +143,9 @@ export interface RunStatus {
   name?: string;
   text?: string;
   state: string;
+  dispatched_events?: number;
+  event_count?: number;
+  active_motion_run_id?: number;
   error?: string;
 }
 
