@@ -112,10 +112,11 @@ hardware/audio/configure-capture.sh
 
 The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
 routes, disables the codec's automatic gain controller, and applies a fixed
-40 dB PGA capture gain. The wake worker runs this script automatically before
+59.5 dB PGA capture gain. The wake worker runs this script automatically before
 opening `arecord`; direct recording tests can run it explicitly. This prevents
 wake-word behavior from depending on whatever capture level a previous process
-left in the codec.
+left in the codec. The assembled robot required the codec's maximum fixed PGA
+gain for useful wake-word distance; codec AGC remains disabled.
 
 ## Commissioning result
 
