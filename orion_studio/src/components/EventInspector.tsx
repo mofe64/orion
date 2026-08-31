@@ -93,7 +93,11 @@ export function EventInspector({ catalog, currentSceneName, event, onChange, onD
             <label>
               Named pose
               <select value={event.pose} onChange={(change) => patch({ pose: change.target.value })}>
-                {Object.keys(catalog.poses).map((name) => <option key={name}>{name}</option>)}
+                {Object.entries(catalog.poses).map(([name, pose]) => (
+                  <option key={name} value={name}>
+                    {pose.source === "draft" ? `${pose.draftLabel ?? "Edited pose"} (edited)` : name}
+                  </option>
+                ))}
               </select>
             </label>
             <NumberField label="Move duration" value={event.duration_seconds} min={0.1} max={60} onChange={(duration_seconds) => patch({ duration_seconds })} />

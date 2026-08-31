@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { load as loadYaml } from "js-yaml";
 import {
+  Check,
   CircleStop,
   Film,
   Lightbulb,
@@ -24,6 +25,7 @@ import { RobotViewport } from "./components/RobotViewport";
 import { Timeline } from "./components/Timeline";
 import { projectCatalog } from "./lib/catalog";
 import { createLightingEffect, type LightingEffectKind } from "./lib/lightingEffects";
+import { materializeSceneDraft, usedDraftPoseNames } from "./lib/sceneDraft";
 import {
   cancelRun,
   getCapabilities,
@@ -282,15 +284,19 @@ export default function App() {
     }),
     [sceneCatalog, poseCatalog, motionCatalog, jointLimits],
   );
+  const scenePreviewCatalog = useMemo(() => ({
+    ...catalog,
+    poses: { ...catalog.poses, ...(scene.draftPoses ?? {}) },
+  }), [catalog, scene.draftPoses]);
   const previewCatalog = useMemo(() => {
-    if (previewKind !== "motion" || !motionDraft) return catalog;
+    if (previewKind !== "motion" || !motionDraft) return scenePreviewCatalog;
     const event = scene.timeline.find((item) => item.type === "play_motion");
-    if (event?.type !== "play_motion") return catalog;
+    if (event?.type !== "play_motion") return scenePreviewCatalog;
     return {
-      ...catalog,
-      motions: { ...catalog.motions, [event.motion]: motionDraft },
+      ...scenePreviewCatalog,
+      motions: { ...scenePreviewCatalog.motions, [event.motion]: motionDraft },
     };
-  }, [catalog, motionDraft, previewKind, scene.timeline]);
+  }, [scenePreviewCatalog, motionDraft, previewKind, scene.timeline]);
   const expandedTimeline = useMemo(
     () => expandSceneTimeline(scene, previewCatalog),
     [scene, previewCatalog],
@@ -754,7 +760,7 @@ export default function App() {
   const editTimelinePose = (eventId: string) => {
     const event = scene.timeline.find((item) => item.id === eventId);
     if (event?.type !== "goto_pose") return;
-    const baseline = catalog.poses[event.pose];
+    const baseline = previewCatalog.poses[event.pose];
     if (!baseline) {
       setNotice(`The baseline pose “${event.pose}” is not available.`);
       return;
@@ -766,7 +772,40 @@ export default function App() {
     setSelectedEventId(eventId);
     setCurrentTime(event.at + event.duration_seconds);
     setPlaying(false);
-    setNotice(`Editing a copy of “${baseline.name}”. Saving creates a new pose and changes only this clip.`);
+    setNotice(`Editing a scene-local copy of “${baseline.draftLabel ?? baseline.name}”. Complete edit to return to the timeline.`);
+  };
+
+  const completeTimelinePoseEdit = () => {
+    if (!poseDraft || !editingTimelinePoseId) return;
+    const draftId = `studio_draft_${crypto.randomUUID().replaceAll("-", "_")}`;
+    setScene((current) => {
+      const event = current.timeline.find((item) => item.id === editingTimelinePoseId);
+      if (event?.type !== "goto_pose") return current;
+      const existingDraft = current.draftPoses?.[event.pose];
+      const poseName = existingDraft ? event.pose : draftId;
+      const completedPose: PoseDefinition = {
+        ...structuredClone(poseDraft),
+        name: poseName,
+        source: "draft",
+        draftLabel: existingDraft?.draftLabel ?? poseDraft.draftLabel ?? poseDraft.name,
+        remote_revision: undefined,
+      };
+      return {
+        ...current,
+        source: "draft",
+        draftPoses: { ...current.draftPoses, [poseName]: completedPose },
+        timeline: current.timeline.map((item) => (
+          item.id === editingTimelinePoseId && item.type === "goto_pose"
+            ? { ...item, pose: poseName }
+            : item
+        )),
+      };
+    });
+    setPoseDraft(null);
+    setPoseDirty(false);
+    setEditingTimelinePoseId(null);
+    setDirty(true);
+    setNotice("Pose edit completed in memory. Studio will name and save it with the scene.");
   };
 
   const splitTimelineEvent = (eventId: string) => {
@@ -861,23 +900,6 @@ export default function App() {
           : undefined,
       };
       setPoseCatalog((current) => ({ ...current, [saved.name]: saved }));
-      if (editingTimelinePoseId) {
-        setScene((current) => ({
-          ...current,
-          source: "draft",
-          timeline: current.timeline.map((event) => (
-            event.id === editingTimelinePoseId && event.type === "goto_pose"
-              ? { ...event, pose: saved.name }
-              : event
-          )),
-        }));
-        setPoseDraft(null);
-        setPoseDirty(false);
-        setEditingTimelinePoseId(null);
-        setDirty(true);
-        setNotice(`Created the new pose “${saved.name}” and assigned it only to this timeline clip.`);
-        return;
-      }
       const preview: SceneDefinition = {
         format_version: 1,
         name: `${saved.name}_pose_preview`,
@@ -963,6 +985,28 @@ export default function App() {
     }
   };
 
+  const persistSceneDraftPoses = async (poses: PoseDefinition[]): Promise<PoseDefinition[]> => {
+    const saved: PoseDefinition[] = [];
+    for (const pose of poses) {
+      const document = poseDocument(pose, pose.name);
+      const result = connected
+        ? await publishPose(connection, document)
+        : await invoke<{ name: string; relative_path: string }>("save_user_pose", {
+          projectRoot,
+          document,
+        });
+      saved.push({
+        ...structuredClone(pose),
+        name: result.name,
+        source: "user",
+        remote_revision: "revision" in result && typeof result.revision === "string"
+          ? result.revision
+          : undefined,
+      });
+    }
+    return saved;
+  };
+
   const saveUserScene = async () => {
     if (!connected && !projectRoot) {
       setNotice("Connect to Orion to save, or configure an offline project for local work.");
@@ -973,8 +1017,16 @@ export default function App() {
       setNotice("Save As name may contain only letters, numbers, underscores, and hyphens.");
       return;
     }
-    const document = sceneDocument(scene, name, previewCatalog);
     try {
+      const materialized = materializeSceneDraft(scene, name, catalog);
+      const savedPoses = await persistSceneDraftPoses(materialized.poses);
+      const document = sceneDocument(materialized.scene, name, {
+        ...catalog,
+        poses: {
+          ...catalog.poses,
+          ...Object.fromEntries(savedPoses.map((pose) => [pose.name, pose])),
+        },
+      });
       const result = connected
         ? await publishScene(connection, document)
         : await invoke<{ name: string; relative_path: string }>("save_user_scene", {
@@ -982,20 +1034,24 @@ export default function App() {
           document,
         });
       const savedScene: SceneDefinition = {
-        ...copyScene(scene),
+        ...copyScene(materialized.scene),
         name: result.name,
         source: "user",
         remote_revision: "revision" in result && typeof result.revision === "string"
           ? result.revision
           : undefined,
       };
+      setPoseCatalog((current) => ({
+        ...current,
+        ...Object.fromEntries(savedPoses.map((pose) => [pose.name, pose])),
+      }));
       setScene(savedScene);
       setSceneCatalog((current) => ({ ...current, [savedScene.name]: savedScene }));
       setSelectedLibraryScene(savedScene.name);
       setDirty(false);
       setSaveAsName(`${savedScene.name}_copy`);
       setNotice(
-        `Saved the new scene “${savedScene.name}”${connected ? " on Orion" : " in your offline project"}. The original scene is unchanged.`,
+        `Saved the new scene “${savedScene.name}”${savedPoses.length ? ` with ${savedPoses.length} scene pose${savedPoses.length === 1 ? "" : "s"}` : ""}${connected ? " on Orion" : " in your offline project"}. The original scene is unchanged.`,
       );
     } catch (error) {
       setNotice(`Could not save scene: ${String(error)}`);
@@ -1008,17 +1064,29 @@ export default function App() {
       return;
     }
     try {
+      const materialized = materializeSceneDraft(scene, scene.name, catalog);
+      const savedPoses = await persistSceneDraftPoses(materialized.poses);
       const result = await updateUserScene(
         connection,
         scene.name,
         scene.remote_revision,
-        sceneDocument(scene, scene.name, previewCatalog),
+        sceneDocument(materialized.scene, scene.name, {
+          ...catalog,
+          poses: {
+            ...catalog.poses,
+            ...Object.fromEntries(savedPoses.map((pose) => [pose.name, pose])),
+          },
+        }),
       );
       const savedScene: SceneDefinition = {
-        ...copyScene(scene),
+        ...copyScene(materialized.scene),
         source: "user",
         remote_revision: result.revision,
       };
+      setPoseCatalog((current) => ({
+        ...current,
+        ...Object.fromEntries(savedPoses.map((pose) => [pose.name, pose])),
+      }));
       setScene(savedScene);
       setSceneCatalog((current) => ({ ...current, [savedScene.name]: savedScene }));
       setDirty(false);
@@ -1099,6 +1167,7 @@ export default function App() {
       return;
     }
     try {
+      if (editingTimelinePoseId) throw new Error("Complete the current pose edit before running Orion.");
       if (previewKind === "pose") {
         if (poseDirty) throw new Error("Save the keyframe pose before hardware playback.");
         if (poseDraft?.source === "user" && !poseDraft.remote_revision) {
@@ -1145,6 +1214,14 @@ export default function App() {
     }
     if (!robotCapabilities?.capabilities.scene_preview) {
       setNotice("Orion needs the latest software update before hardware preview is available.");
+      return;
+    }
+    if (editingTimelinePoseId) {
+      setNotice("Complete the current pose edit before previewing on Orion.");
+      return;
+    }
+    if (usedDraftPoseNames(scene).length > 0) {
+      setNotice("Save the scene before hardware preview so Orion receives its newly created poses.");
       return;
     }
     try {
@@ -1198,12 +1275,13 @@ export default function App() {
             {connected ? <Radio size={16} /> : <Unplug size={16} />}
             {connected ? robotStatus?.runtime.mode ?? "Connected" : "Connect robot"}
           </button>
-          {previewKind === "scene" && scene.remote_revision && dirty && <button className="secondary-button" onClick={saveSceneChanges}><Save size={16} />Save changes</button>}
+          {previewKind === "scene" && scene.remote_revision && dirty && !editingTimelinePoseId && <button className="secondary-button" onClick={saveSceneChanges}><Save size={16} />Save changes</button>}
           <button
             className="secondary-button"
-            onClick={editingTimelinePoseId || previewKind === "pose" ? savePoseDraft : previewKind === "motion" ? saveMotionDraft : saveUserScene}
+            onClick={editingTimelinePoseId ? completeTimelinePoseEdit : previewKind === "pose" ? savePoseDraft : previewKind === "motion" ? saveMotionDraft : saveUserScene}
           >
-            <Save size={16} />{editingTimelinePoseId ? "Save new pose" : previewKind === "pose" ? "Save pose" : previewKind === "motion" ? "Save motion" : "Save As"}
+            {editingTimelinePoseId ? <Check size={16} /> : <Save size={16} />}
+            {editingTimelinePoseId ? "Complete edit" : previewKind === "pose" ? "Save pose" : previewKind === "motion" ? "Save motion" : "Save As"}
           </button>
           <button className="primary-button" onClick={runOnRobot}><Link2 size={16} />{scene.source === "user" && !scene.remote_revision && !dirty ? "Publish & Run" : "Run on Orion"}</button>
           <button className="stop-button" onClick={stopRobot} disabled={!robotStatus?.scene.active && !robotStatus?.runtime.motion}><CircleStop size={16} />Stop</button>
@@ -1303,13 +1381,14 @@ export default function App() {
               limits={jointLimits}
               saveAsName={poseSaveAsName}
               dirty={poseDirty}
+              sceneDraft={Boolean(editingTimelinePoseId)}
               onSaveAsNameChange={setPoseSaveAsName}
               onDescriptionChange={(description) => {
                 setPoseDraft((current) => current ? { ...current, description } : current);
                 setPoseDirty(true);
               }}
               onPositionChange={updatePosePosition}
-              onSave={savePoseDraft}
+              onSave={editingTimelinePoseId ? completeTimelinePoseEdit : savePoseDraft}
             />
           ) : previewKind === "motion" && motionDraft ? (
             <MotionEditor

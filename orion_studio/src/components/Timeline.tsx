@@ -41,11 +41,16 @@ const LANES = [
   { id: "audio", label: "Cues", types: ["audio"] },
 ] as const;
 
-function eventLabel(event: SceneEvent): string {
+function eventLabel(event: SceneEvent, catalog: ProjectCatalog): string {
   if (isDelayEvent(event)) return "Delay";
   switch (event.type) {
     case "play_motion": return event.motion;
-    case "goto_pose": return event.pose;
+    case "goto_pose": {
+      const pose = catalog.poses[event.pose];
+      return pose?.source === "draft"
+        ? `${pose.draftLabel ?? "Edited pose"} (edited)`
+        : event.pose;
+    }
     case "scene": return event.scene;
     case "light": return `RGBW ${event.red}/${event.green}/${event.blue}/${event.white}`;
     case "audio": return event.cue;
@@ -252,9 +257,9 @@ export function Timeline(props: TimelineProps) {
                       onClick={(click) => { click.stopPropagation(); onSelectEvent(event.id); }}
                       onContextMenu={(mouse) => openContextMenu(mouse, event)}
                       onPointerDown={(pointer) => beginClipDrag(pointer, event)}
-                      title={`${eventLabel(event)} at ${event.at.toFixed(2)} seconds`}
+                      title={`${eventLabel(event, catalog)} at ${event.at.toFixed(2)} seconds`}
                     >
-                      <span>{eventLabel(event)}</span>
+                      <span>{eventLabel(event, catalog)}</span>
                       <small>{clipDuration.toFixed(2)}s</small>
                     </button>
                   );
@@ -272,7 +277,7 @@ export function Timeline(props: TimelineProps) {
           onPointerDown={(event) => event.stopPropagation()}
           role="menu"
         >
-          <strong>{eventLabel(contextEvent).replaceAll("_", " ")}</strong>
+          <strong>{eventLabel(contextEvent, catalog).replaceAll("_", " ")}</strong>
           {contextEvent.type === "goto_pose" && !isDelayEvent(contextEvent) && (
             <button onClick={() => performContextAction(() => onEditPose(contextEvent.id))}><Pencil size={14} />Edit as a new pose</button>
           )}

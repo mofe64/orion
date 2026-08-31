@@ -1,4 +1,4 @@
-import { Save } from "lucide-react";
+import { Check, Save } from "lucide-react";
 
 import { JOINT_NAMES } from "../types";
 import type { JointLimit, PoseDefinition } from "../types";
@@ -8,6 +8,7 @@ interface PoseEditorProps {
   limits: JointLimit[];
   saveAsName: string;
   dirty: boolean;
+  sceneDraft?: boolean;
   onSaveAsNameChange: (name: string) => void;
   onDescriptionChange: (description: string) => void;
   onPositionChange: (joint: JointLimit["name"], value: number) => void;
@@ -23,6 +24,7 @@ export function PoseEditor({
   limits,
   saveAsName,
   dirty,
+  sceneDraft = false,
   onSaveAsNameChange,
   onDescriptionChange,
   onPositionChange,
@@ -38,16 +40,18 @@ export function PoseEditor({
       <div className="inspector-heading">
         <div>
           <p className="panel-kicker">KEYFRAME POSE</p>
-          <h2>{pose.name.replaceAll("_", " ")}</h2>
+          <h2>{sceneDraft ? "Scene pose" : pose.name.replaceAll("_", " ")}</h2>
         </div>
         {dirty && <span className="dirty-badge">Unsaved</span>}
       </div>
 
       <div className="inspector-fields">
-        <label>
-          Save As name
-          <input value={saveAsName} onChange={(event) => onSaveAsNameChange(event.target.value)} />
-        </label>
+        {!sceneDraft && (
+          <label>
+            Save As name
+            <input value={saveAsName} onChange={(event) => onSaveAsNameChange(event.target.value)} />
+          </label>
+        )}
         <label>
           Description
           <textarea
@@ -96,9 +100,12 @@ export function PoseEditor({
         </div>
 
         <button className="primary-button" onClick={onSave}>
-          <Save size={15} />Save as new pose
+          {sceneDraft ? <Check size={15} /> : <Save size={15} />}
+          {sceneDraft ? "Complete edit" : "Save as new pose"}
         </button>
-        <p className="field-help">Saving creates a named keyframe. Slider changes never move Orion.</p>
+        <p className="field-help">{sceneDraft
+          ? "Complete edit keeps this pose inside the scene draft. It is named and saved with the scene later."
+          : "Saving creates a named keyframe. Slider changes never move Orion."}</p>
       </div>
     </aside>
   );

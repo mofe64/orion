@@ -94,8 +94,10 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
   and delay actions, and split motions or nested scene clips into editable
   pose/light/audio parts. Motion holds remain visible as editable Delay clips.
 - Treat a timeline pose as a baseline: **Edit as a new pose** clones its named
-  source, previews bounded joint changes locally, and on save creates a new
-  immutable pose assigned only to that clip.
+  source, previews bounded joint changes locally, and **Complete edit** returns
+  immediately to scene authoring without writing a pose file. Completed pose
+  edits stay inside the in-memory scene draft and can be reopened from the
+  timeline.
 - Use scene clips as a Studio composition aid. Before save or hardware preview,
   Studio recursively flattens them into the existing version-1 semantic events;
   no new persisted scene action is introduced.
@@ -126,6 +128,14 @@ reloaded instead of silently replacing newer work. Every accepted create or
 update asks `oriond` to reload and validate the complete catalog. A failed
 create is removed, and a failed update restores the previous file before the
 old catalog is reloaded.
+
+When the draft contains completed timeline-pose edits, saving the scene first
+materializes only the temporary poses that its timeline uses. Studio names them
+from the final scene name in timeline order (`scene_name_01`,
+`scene_name_02`, ...), saves those named poses, and rewrites the scene events to
+reference them. Until that scene save succeeds, the poses exist only in Studio:
+local preview can use them, but hardware preview is disabled because Orion has
+not received the named assets yet.
 
 The authenticated gateway API keeps the raw Unix socket private and exposes
 only named semantic libraries and operations. It accepts create-new pose and

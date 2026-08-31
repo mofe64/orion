@@ -19,7 +19,9 @@ export interface PoseDefinition {
   name: string;
   description: string;
   positions: JointPositions;
-  source: "built_in" | "user";
+  source: "built_in" | "user" | "draft";
+  /** Human-readable Studio label for an in-memory scene pose. */
+  draftLabel?: string;
   remote_revision?: string;
 }
 
@@ -103,6 +105,8 @@ export interface SceneDefinition {
   description: string;
   source: "built_in" | "user" | "draft";
   remote_revision?: string;
+  /** Studio-only poses retained in memory until the scene is saved. */
+  draftPoses?: Record<string, PoseDefinition>;
   timeline: SceneEvent[];
 }
 
