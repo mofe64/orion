@@ -16,6 +16,13 @@ from typing import Sequence
 WAKE_SAMPLE_RATE = 16_000
 WAKE_CHUNK_MILLISECONDS = 100
 DEFAULT_CAPTURE_DEVICE = "plughw:CARD=seeed2micvoicec,DEV=0"
+DEFAULT_CAPTURE_CARD = "seeed2micvoicec"
+DEFAULT_CAPTURE_CONFIGURATOR = (
+    Path(__file__).resolve().parents[2]
+    / "hardware"
+    / "audio"
+    / "configure-capture.sh"
+)
 DEFAULT_WAKE_SOCKET_PATH = Path("/tmp/orion-wake.sock")
 DEFAULT_WAKE_MODEL_NAME = (
     "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
@@ -110,12 +117,25 @@ class SherpaWakeDetector:
 class AlsaPcmCapture:
     """Read transient mono PCM from Orion's stable ALSA capture device."""
 
-    def __init__(self, device: str = DEFAULT_CAPTURE_DEVICE) -> None:
+    def __init__(
+        self,
+        device: str = DEFAULT_CAPTURE_DEVICE,
+        *,
+        card_name: str = DEFAULT_CAPTURE_CARD,
+        configurator: Path = DEFAULT_CAPTURE_CONFIGURATOR,
+    ) -> None:
         if not device.strip():
             raise ValueError("ALSA capture device cannot be empty")
+        if not card_name.strip():
+            raise ValueError("ALSA capture card cannot be empty")
         self._device = device
+        self._card_name = card_name
+        self._configurator = Path(configurator)
         self._process: subprocess.Popen[bytes] | None = None
         self._chunk_bytes = WAKE_SAMPLE_RATE * 2 * WAKE_CHUNK_MILLISECONDS // 1_000
+
+    def configure_command(self) -> list[str]:
+        return [str(self._configurator), self._card_name]
 
     def command(self) -> list[str]:
         return [
@@ -136,6 +156,15 @@ class AlsaPcmCapture:
     def open(self) -> None:
         if self._process is not None:
             raise RuntimeError("microphone capture is already open")
+        if not self._configurator.is_file():
+            raise FileNotFoundError(
+                f"microphone configurator does not exist: {self._configurator}"
+            )
+        subprocess.run(
+            self.configure_command(),
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
         self._process = subprocess.Popen(self.command(), stdout=subprocess.PIPE)
 
     def read(self) -> bytes:

@@ -128,6 +128,10 @@ cd /home/mofe/dev/orion
 voice/.venv/bin/orion-voice wake-worker
 ```
 
+The worker first applies Orion's ReSpeaker V2 capture contract: the two
+single-ended microphone routes, fixed 40 dB PGA gain, and codec AGC disabled.
+It then opens the stable ALSA capture device at 16 kHz mono.
+
 Wait for:
 
 ```text

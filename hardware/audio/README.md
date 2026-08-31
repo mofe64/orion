@@ -103,6 +103,20 @@ The runtime applies the same mixer contract when its physical WAV backend is
 opened, so source-run development does not depend on a system boot service or
 a globally stored ALSA snapshot.
 
+Orion also keeps the confirmed dual-microphone capture route as a repeatable
+command:
+
+```bash
+hardware/audio/configure-capture.sh
+```
+
+The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
+routes, disables the codec's automatic gain controller, and applies a fixed
+40 dB PGA capture gain. The wake worker runs this script automatically before
+opening `arecord`; direct recording tests can run it explicitly. This prevents
+wake-word behavior from depending on whatever capture level a previous process
+left in the codec.
+
 ## Commissioning result
 
 The assembled Pi 5 passed the persistent V2 verification with playback and
