@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -131,6 +132,7 @@ class OrionGateway:
                 "motion": motions.get("motions", []),
                 "scene": scenes.get("scenes", []),
                 "scene_publish": {"format_version": 1, "max_body_bytes": MAX_BODY_BYTES},
+                "scene_library": {"read": True, "create": True, "update": "revision"},
                 "speech": {"max_text_bytes": 2_000},
                 "cancel": ["movement", "scene", "speech"],
             },
@@ -209,7 +211,7 @@ class OrionGateway:
         user_directory = scenes_directory / "user"
         try:
             user_directory.mkdir(parents=True, exist_ok=True)
-            encoded = (json.dumps(document, indent=2, allow_nan=False) + "\n").encode("utf-8")
+            encoded = self._encode_scene_document(document)
         except (OSError, ValueError) as error:
             raise GatewayError(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -239,6 +241,7 @@ class OrionGateway:
                 "published": True,
                 "already_present": True,
                 "name": name,
+                "revision": self._revision(encoded),
                 "relative_path": f"scenes/user/{name}.yaml",
                 "reload": reload_result,
             }
@@ -270,9 +273,216 @@ class OrionGateway:
             "published": True,
             "already_present": False,
             "name": name,
+            "revision": self._revision(encoded),
             "relative_path": f"scenes/user/{name}.yaml",
             "reload": reload_result,
         }
+
+    def list_user_scenes(self) -> dict[str, Any]:
+        directory = self._user_scene_directory()
+        if not directory.exists():
+            return {"api_version": API_VERSION, "scenes": []}
+
+        entries: list[dict[str, Any]] = []
+        try:
+            paths = sorted(
+                path for path in directory.iterdir()
+                if path.suffix in {".yaml", ".yml"}
+            )
+        except OSError as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "scene_library_read_failed",
+                f"Could not read the Pi user scene library: {error}",
+            ) from error
+
+        for path in paths:
+            data = self._read_user_scene_file(path)
+            name = self._name(path.stem, "scene")
+            entries.append({
+                "name": name,
+                "revision": self._revision(data),
+                "bytes": len(data),
+                "relative_path": f"scenes/user/{path.name}",
+            })
+        return {"api_version": API_VERSION, "scenes": entries}
+
+    def read_user_scene(self, name: Any) -> dict[str, Any]:
+        name = self._name(name, "scene")
+        path = self._existing_user_scene_path(name)
+        data = self._read_user_scene_file(path)
+        try:
+            yaml = data.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "invalid_scene_encoding",
+                f"User scene '{name}' is not valid UTF-8.",
+            ) from error
+        return {
+            "api_version": API_VERSION,
+            "name": name,
+            "revision": self._revision(data),
+            "relative_path": f"scenes/user/{path.name}",
+            "yaml": yaml,
+        }
+
+    def update_user_scene(self, name: Any, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        name = self._name(name, "scene")
+        if not isinstance(payload, dict) or set(payload) != {"expected_revision", "document"}:
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_scene_update",
+                "Expected expected_revision and document fields.",
+            )
+        expected = payload.get("expected_revision")
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_scene_revision",
+                "A valid scene revision is required.",
+            )
+        document = payload.get("document")
+        document_name = self._validate_scene_document(document)
+        if document_name != name:
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                "scene_name_mismatch",
+                "The URL scene name must match the document scene name.",
+            )
+
+        path = self._existing_user_scene_path(name)
+        previous = self._read_user_scene_file(path)
+        actual = self._revision(previous)
+        if actual != expected:
+            raise GatewayError(
+                HTTPStatus.CONFLICT,
+                "scene_revision_conflict",
+                f"User scene '{name}' changed on the Pi; reload it before saving.",
+            )
+        encoded = self._encode_scene_document(document)
+        if encoded == previous:
+            return HTTPStatus.OK, {
+                "api_version": API_VERSION,
+                "updated": False,
+                "name": name,
+                "revision": actual,
+                "relative_path": f"scenes/user/{path.name}",
+            }
+
+        try:
+            self._atomic_replace(path, encoded)
+            reload_result = self._checked("scene reload")
+        except GatewayError as publish_error:
+            try:
+                self._atomic_replace(path, previous)
+                self._checked("scene reload")
+            except (GatewayError, OSError) as rollback_error:
+                raise GatewayError(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    "scene_rollback_failed",
+                    f"Could not restore user scene '{name}' after a rejected update: {rollback_error}",
+                ) from rollback_error
+            raise publish_error
+        except OSError as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "scene_write_failed",
+                f"Could not update user scene '{name}': {error}",
+            ) from error
+
+        return HTTPStatus.OK, {
+            "api_version": API_VERSION,
+            "updated": True,
+            "name": name,
+            "revision": self._revision(encoded),
+            "relative_path": f"scenes/user/{path.name}",
+            "reload": reload_result,
+        }
+
+    def _user_scene_directory(self) -> Path:
+        if self.project_root is None:
+            raise GatewayError(
+                HTTPStatus.NOT_IMPLEMENTED,
+                "scene_library_unavailable",
+                "The gateway was not configured with an Orion project root.",
+            )
+        return self.project_root / "scenes" / "user"
+
+    def _existing_user_scene_path(self, name: str) -> Path:
+        directory = self._user_scene_directory()
+        matches = [directory / f"{name}.{extension}" for extension in ("yaml", "yml")]
+        matches = [path for path in matches if path.exists()]
+        if not matches:
+            raise GatewayError(
+                HTTPStatus.NOT_FOUND,
+                "user_scene_not_found",
+                f"User scene '{name}' does not exist on the Pi.",
+            )
+        if len(matches) != 1:
+            raise GatewayError(
+                HTTPStatus.CONFLICT,
+                "duplicate_user_scene",
+                f"User scene '{name}' has duplicate YAML files on the Pi.",
+            )
+        return matches[0]
+
+    @staticmethod
+    def _read_user_scene_file(path: Path) -> bytes:
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise GatewayError(
+                    HTTPStatus.CONFLICT,
+                    "unsafe_scene_file",
+                    f"User scene '{path.name}' must be a regular file.",
+                )
+            if path.stat().st_size > MAX_BODY_BYTES:
+                raise GatewayError(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    "scene_file_too_large",
+                    f"User scene '{path.name}' is too large.",
+                )
+            return path.read_bytes()
+        except GatewayError:
+            raise
+        except OSError as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "scene_read_failed",
+                f"Could not read user scene '{path.name}': {error}",
+            ) from error
+
+    @staticmethod
+    def _encode_scene_document(document: Any) -> bytes:
+        try:
+            return (json.dumps(document, indent=2, allow_nan=False) + "\n").encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise GatewayError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_scene",
+                f"Could not encode the scene document: {error}",
+            ) from error
+
+    @staticmethod
+    def _revision(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    @staticmethod
+    def _atomic_replace(path: Path, data: bytes) -> None:
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as output:
+                descriptor = None
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
 
     @classmethod
     def _validate_scene_document(cls, document: Any) -> str:
@@ -396,7 +606,7 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
             self.send_response(HTTPStatus.NO_CONTENT)
             self._cors_headers()
             self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
             self.end_headers()
 
         def do_GET(self) -> None:
@@ -405,18 +615,38 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
         def do_POST(self) -> None:
             self._handle(self._post)
 
+        def do_PUT(self) -> None:
+            self._handle(self._put)
+
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
             if path == "/api/v1/status":
                 return HTTPStatus.OK, gateway.status()
             if path == "/api/v1/capabilities":
                 return HTTPStatus.OK, gateway.capabilities()
+            if path == "/api/v1/scenes":
+                return HTTPStatus.OK, gateway.list_user_scenes()
+            if path.startswith("/api/v1/scenes/"):
+                return HTTPStatus.OK, gateway.read_user_scene(path.removeprefix("/api/v1/scenes/"))
             raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
             if path not in {"/api/v1/operations", "/api/v1/scenes"}:
                 raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
+            payload = self._read_json()
+            if path == "/api/v1/scenes":
+                return gateway.publish_scene(payload)
+            return gateway.submit(payload)
+
+        def _put(self) -> tuple[HTTPStatus, dict[str, Any]]:
+            path = urlparse(self.path).path
+            if not path.startswith("/api/v1/scenes/"):
+                raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
+            name = path.removeprefix("/api/v1/scenes/")
+            return gateway.update_user_scene(name, self._read_json())
+
+        def _read_json(self) -> Any:
             length_text = self.headers.get("Content-Length")
             try:
                 length = int(length_text or "")
@@ -425,12 +655,9 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
             if not 0 < length <= MAX_BODY_BYTES:
                 raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "invalid_body_size", "Request body is empty or too large.")
             try:
-                payload = json.loads(self.rfile.read(length))
+                return json.loads(self.rfile.read(length))
             except json.JSONDecodeError as error:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_json", "Request body is not valid JSON.") from error
-            if path == "/api/v1/scenes":
-                return gateway.publish_scene(payload)
-            return gateway.submit(payload)
 
         def _handle(self, action) -> None:
             try:
