@@ -4,3 +4,4 @@ __pycache__/
 *.egg-info/
 docs/milestones/
 runtime/target/
+voice/models/

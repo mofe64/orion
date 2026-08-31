@@ -1,4 +1,4 @@
-"""Persistent Unix-socket worker for Chatterbox Nano synthesis."""
+"""Persistent Unix-socket worker for local speech synthesis."""
 
 from __future__ import annotations
 

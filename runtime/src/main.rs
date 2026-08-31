@@ -160,7 +160,7 @@ fn usage() -> &'static str {
   --speak TEXT       Synthesize and play text through the persistent TTS worker.\n\
   --speech-status    Show the active and most recent terminal speech run.\n\
   --stop-speech      Cancel the active speech run or playback.\n\
-  --tts-socket PATH  Chatterbox worker socket used by --serve (default: /tmp/orion-tts.sock).\n\
+  --tts-socket PATH  TTS worker socket used by --serve (default: /tmp/orion-tts.sock).\n\
   --scenes DIR       Scene library used by --serve (default: scenes).\n\
   --cues DIR         WAV cue library used by --serve and --play-cue (default: audio/cues).\n\
   --audio-card CARD  ALSA mixer card (default: seeed2micvoicec).\n\

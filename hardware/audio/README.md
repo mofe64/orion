@@ -86,9 +86,9 @@ hardware/audio/configure-playback.sh
 ```
 
 The script selects `DAC_R1`, sends it through the right line mixer, keeps both
-analogue stages at unity gain, and sets PCM to `-20 dB`. The right differential
-line output feeds the V2 HAT's mono amplifier and JST connector; the `HP`
-controls instead serve the 3.5 mm jack.
+analogue stages at unity gain, and sets PCM to the commissioned `-6 dB` level.
+The right differential line output feeds the V2 HAT's mono amplifier and JST
+connector; the `HP` controls instead serve the 3.5 mm jack.
 
 The physical playback check uses the stable ALSA name rather than a numeric
 card index and sends the tone to the right channel:
@@ -110,3 +110,4 @@ capture registered as `seeed2micvoicec`, while BCM12 remained assigned to the
 NeoPixel PWM output. The JST route produced the 440 Hz right-channel test tone,
 the direct `--play-cue acknowledge` command played Orion's local chime, and
 both expressive acknowledgement scenes played the chime successfully.
+Physical listening established `-6 dB` as Orion's default PCM playback level.

@@ -15,9 +15,9 @@ if ! amixer -q -c "${card_name}" info >/dev/null 2>&1; then
 fi
 
 # The V2 HAT's JST speaker amplifier is fed by the codec's differential right
-# line output. PCM is deliberately attenuated while the analogue route remains
-# at unity gain.
-amixer -q -c "${card_name}" -- sset 'PCM' -20dB
+# line output. -6 dB is the commissioned Orion speaker level; the analogue
+# route remains at unity gain.
+amixer -q -c "${card_name}" -- sset 'PCM' -6dB
 amixer -q -c "${card_name}" -- sset 'Right DAC Mux' 'DAC_R1'
 amixer -q -c "${card_name}" -- sset 'Right Line Mixer DACR1' on
 amixer -q -c "${card_name}" -- sset 'Line DAC' 0dB

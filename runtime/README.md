@@ -267,8 +267,8 @@ is not installed as a system service.
 
 ## Generated speech
 
-The optional persistent Chatterbox Nano worker under `voice/` generates speech
-without loading PyTorch in Orion's 50 Hz Rust control loop. Follow
+The optional persistent Piper worker under `voice/` generates speech without
+loading its ONNX model in Orion's 50 Hz Rust control loop. Follow
 `voice/README.md` to create its Python 3.11 environment, benchmark the Pi, and
 start `/tmp/orion-tts.sock`.
 
