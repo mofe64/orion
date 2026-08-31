@@ -11,6 +11,9 @@ dependencies = [
   # sherpa-onnx exposes sherpa-onnx-cli through Click but does not declare it.
   "click>=8.1,<9",
   "piper-tts==1.7.0",
+  # Sherpa imports both helpers unconditionally in its text2token utility.
+  "pypinyin>=0.55,<1",
+  "sentencepiece>=0.2,<0.3",
   "sherpa-onnx==1.13.6",
   "sherpa-onnx-bin==1.13.6",
 ]

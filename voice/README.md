@@ -31,9 +31,9 @@ cd /home/mofe/dev/orion
 ```
 
 The pinned model runtimes are Piper 1.7.0 and Sherpa ONNX 1.13.6. Orion also
-declares Click directly because Sherpa's `sherpa-onnx-cli` imports it without
-declaring that dependency itself. `uv sync` removes packages that are no
-longer declared.
+declares Click, SentencePiece, and pypinyin directly because Sherpa's keyword
+tokenization path imports them without declaring them itself. `uv sync`
+removes packages that are no longer declared.
 
 ## Install the selected models
 
