@@ -30,8 +30,10 @@ cd /home/mofe/dev/orion
   --python 3.11
 ```
 
-The pinned runtime dependencies are Piper 1.7.0 and Sherpa ONNX 1.13.6. `uv
-sync` removes packages that are no longer declared.
+The pinned model runtimes are Piper 1.7.0 and Sherpa ONNX 1.13.6. Orion also
+declares Click directly because Sherpa's `sherpa-onnx-cli` imports it without
+declaring that dependency itself. `uv sync` removes packages that are no
+longer declared.
 
 ## Install the selected models
 

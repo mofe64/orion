@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Local speech workers for the Orion robot"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  # sherpa-onnx exposes sherpa-onnx-cli through Click but does not declare it.
+  "click>=8.1,<9",
   "piper-tts==1.7.0",
   "sherpa-onnx==1.13.6",
   "sherpa-onnx-bin==1.13.6",
