@@ -11,8 +11,10 @@ Deploy and physically smoke-test Orion through SSH. Defaults:
   branch: main
 
 The Pi must already trust the workstation's SSH key, and the workstation must
-trust the Pi's SSH host key. The remote script is streamed over SSH; no system
-service is installed.
+trust the Pi's SSH host key. The remote script installs and enables the oriond
+and Orion Studio gateway systemd services as part of the supervised physical
+smoke test. The Pi user must have passwordless sudo for service installation
+and control.
 EOF
 }
 

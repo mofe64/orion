@@ -45,6 +45,12 @@ timeline. A scene completes only after all events are dispatched, its final
 light transition is complete, its movement has completed and settled, and its
 last audio cue has exited successfully.
 
+Studio's **Pulse** and **Breathe** controls are authoring templates rather than
+new scene actions. Pulse expands into a short rise and return; breathe expands
+into two slower rise/return cycles. Each generated keyframe is an ordinary
+`light` event that can be retimed or recolored individually, and the last event
+returns to the RGBW state sampled when the template was inserted.
+
 Audio cue names resolve to WAV filename stems under `audio/cues/`. The library
 is validated when the daemon starts. One cue may play at a time; a later due
 audio event waits until the current cue completes. Cancellation stops active

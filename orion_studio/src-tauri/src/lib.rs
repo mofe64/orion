@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use orion_studio_scene_store::{SavedScene, SceneDocument};
+use orion_studio_scene_store::{MotionDocument, PoseDocument, SavedScene, SceneDocument};
 
 #[tauri::command]
 fn default_project_root() -> Result<String, String> {
@@ -26,13 +26,37 @@ fn load_user_scenes(project_root: String) -> Result<Vec<SceneDocument>, String> 
     orion_studio_scene_store::load_user_scenes(project_root)
 }
 
+#[tauri::command]
+fn save_user_pose(project_root: String, document: PoseDocument) -> Result<SavedScene, String> {
+    orion_studio_scene_store::save_user_pose(project_root, &document)
+}
+
+#[tauri::command]
+fn load_user_poses(project_root: String) -> Result<Vec<PoseDocument>, String> {
+    orion_studio_scene_store::load_user_poses(project_root)
+}
+
+#[tauri::command]
+fn save_user_motion(project_root: String, document: MotionDocument) -> Result<SavedScene, String> {
+    orion_studio_scene_store::save_user_motion(project_root, &document)
+}
+
+#[tauri::command]
+fn load_user_motions(project_root: String) -> Result<Vec<MotionDocument>, String> {
+    orion_studio_scene_store::load_user_motions(project_root)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             default_project_root,
             save_user_scene,
-            load_user_scenes
+            load_user_scenes,
+            save_user_pose,
+            load_user_poses,
+            save_user_motion,
+            load_user_motions
         ])
         .run(tauri::generate_context!())
         .expect("error while running Orion Studio");

@@ -4,18 +4,27 @@ set -euo pipefail
 project_root="${1:?Pi project root is required}"
 branch="${2:?Git branch is required}"
 runtime_socket="/tmp/oriond.sock"
-calibration_file="${HOME}/.config/orion/servo_calibration.json"
-token_file="${HOME}/.config/orion/studio-token"
-state_directory="${HOME}/.local/state/orion"
-daemon_pid_file="${state_directory}/oriond.pid"
-gateway_pid_file="${state_directory}/studio-gateway.pid"
-daemon_log="${state_directory}/oriond.log"
-gateway_log="${state_directory}/studio-gateway.log"
+orion_user="$(id -un)"
+user_home="${HOME}"
+calibration_file="${user_home}/.config/orion/servo_calibration.json"
+token_file="${user_home}/.config/orion/studio-token"
+
+if [[ ! "${project_root}" =~ ^/[A-Za-z0-9._/-]+$ || "${project_root}" == *".."* ]]; then
+  echo "Refusing unsafe Pi project path: ${project_root}" >&2
+  exit 2
+fi
+if [[ ! "${branch}" =~ ^[A-Za-z0-9._/-]+$ || "${branch}" == -* || "${branch}" == *".."* ]]; then
+  echo "Refusing unsafe Git branch: ${branch}" >&2
+  exit 2
+fi
+
+# Non-interactive SSH shells may not load the profile that adds Rustup tools.
+export PATH="${user_home}/.cargo/bin:${PATH}"
 
 cd "${project_root}"
-mkdir -p "${state_directory}" "$(dirname "${token_file}")"
+mkdir -p "$(dirname "${token_file}")"
 
-for command in git cargo python3 nohup pgrep pkill ps; do
+for command in git cargo python3 pgrep pkill ps systemctl sudo id; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "Required Pi command is unavailable: ${command}" >&2
     exit 1
@@ -25,24 +34,29 @@ if [[ ! -f "${calibration_file}" ]]; then
   echo "Missing Orion calibration: ${calibration_file}" >&2
   exit 1
 fi
+if ! sudo -n true; then
+  echo "Pi deployment requires passwordless sudo for systemd installation and control." >&2
+  exit 1
+fi
 
 old_binary="${project_root}/runtime/target/release/oriond"
 active_binary="${old_binary}"
 daemon_available=false
 
-start_source_daemon() {
+unit_exists() {
+  systemctl cat "$1" >/dev/null 2>&1
+}
+
+start_temporary_daemon() {
   local binary=$1
-  local log_file=$2
-  local pid_file=$3
 
   nohup "${binary}" --serve \
     --backend hardware \
     --port /dev/ttyACM0 \
     --baud-rate 1000000 \
     --calibration "${calibration_file}" \
-    >"${log_file}" 2>&1 </dev/null &
-  daemon_pid=$!
-  echo "${daemon_pid}" > "${pid_file}"
+    >"${user_home}/oriond-deploy.log" 2>&1 </dev/null &
+  temporary_daemon_pid=$!
 
   daemon_available=false
   for _ in {1..100}; do
@@ -50,13 +64,13 @@ start_source_daemon() {
       daemon_available=true
       return 0
     fi
-    if ! kill -0 "${daemon_pid}" 2>/dev/null; then
-      echo "oriond exited while starting; see ${log_file}." >&2
+    if ! kill -0 "${temporary_daemon_pid}" 2>/dev/null; then
+      echo "Temporary oriond exited while starting; see ${user_home}/oriond-deploy.log." >&2
       return 1
     fi
     sleep 0.1
   done
-  echo "oriond did not become ready; see ${log_file}." >&2
+  echo "Temporary oriond did not become ready; see ${user_home}/oriond-deploy.log." >&2
   return 1
 }
 
@@ -74,7 +88,7 @@ safe_shutdown() {
       if "${active_binary}" --run-scene return_to_rest --wait --socket "${runtime_socket}" >/dev/null 2>&1; then
         "${active_binary}" --disable --socket "${runtime_socket}" >/dev/null 2>&1
       else
-        echo "Rest could not be confirmed; Orion remains holding. Do not disable torque until its posture is physically safe." >&2
+        echo "Rest could not be confirmed; Orion remains holding. Support it physically before stopping the service." >&2
       fi
     fi
   fi
@@ -97,9 +111,15 @@ if [[ ! -x "${old_binary}" ]]; then
   echo "An existing source-built oriond release is required for the pre-update rest sequence." >&2
   exit 1
 fi
+
+if unit_exists orion-studio-gateway.service; then
+  sudo -n systemctl stop orion-studio-gateway.service
+fi
+pkill -TERM -f 'orion_studio/gateway.py serve' 2>/dev/null || true
+
 if ! "${old_binary}" --status --socket "${runtime_socket}" >/dev/null 2>&1; then
-  echo "No daemon is running; starting the existing release in observe mode..."
-  start_source_daemon "${old_binary}" "${daemon_log}" "${daemon_pid_file}"
+  echo "No daemon is running; starting the existing release temporarily in observe mode..."
+  start_temporary_daemon "${old_binary}"
 else
   daemon_available=true
 fi
@@ -119,12 +139,17 @@ fi
 "${old_binary}" --run-scene return_to_rest --wait --socket "${runtime_socket}"
 "${old_binary}" --disable --socket "${runtime_socket}"
 
-echo "Stopping the previous source-run daemon..."
-if [[ -f "${daemon_pid_file}" ]]; then
-  daemon_pid="$(cat "${daemon_pid_file}")"
-  if [[ "$(ps -p "${daemon_pid}" -o comm= 2>/dev/null)" == "oriond" ]]; then
-    kill -TERM "${daemon_pid}" 2>/dev/null || true
-  fi
+echo "Testing and building Orion revision ${revision} while the old daemon remains safely torque-off..."
+python3 -m py_compile orion_studio/gateway.py
+python3 -m unittest discover -s orion_studio/tests -v
+cargo test --locked --manifest-path runtime/Cargo.toml --all-targets -- \
+  --skip mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco
+cargo build --release --locked --manifest-path runtime/Cargo.toml
+active_binary="${project_root}/runtime/target/release/oriond"
+
+echo "Stopping the previous runtime process..."
+if unit_exists oriond.service; then
+  sudo -n systemctl stop oriond.service
 fi
 pkill -TERM -x oriond 2>/dev/null || true
 for _ in {1..50}; do
@@ -137,16 +162,16 @@ if pgrep -x oriond >/dev/null; then
 fi
 daemon_available=false
 
-echo "Testing and building Orion revision ${revision}..."
-python3 -m py_compile orion_studio/gateway.py
-python3 -m unittest discover -s orion_studio/tests -v
-cargo test --locked --manifest-path runtime/Cargo.toml --all-targets -- \
-  --skip mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco
-cargo build --release --locked --manifest-path runtime/Cargo.toml
+if [[ ! -f "${token_file}" ]]; then
+  echo "Creating the Studio pairing token; save the following value in Studio:"
+  python3 orion_studio/gateway.py create-token --token-file "${token_file}"
+fi
 
-active_binary="${project_root}/runtime/target/release/oriond"
-echo "Starting the rebuilt source-run daemon..."
-start_source_daemon "${active_binary}" "${daemon_log}" "${daemon_pid_file}"
+echo "Installing and enabling Orion's boot services..."
+scripts/install_pi_services.sh "${project_root}" "${orion_user}" "${user_home}"
+sudo -n systemctl restart oriond.service
+scripts/wait_for_oriond.sh "${active_binary}" "${runtime_socket}" 20
+daemon_available=true
 
 status_json="$("${active_binary}" --status --socket "${runtime_socket}")"
 python3 -c 'import json,sys; value=json.loads(sys.argv[1]); expected=sys.argv[2]; actual=value.get("build_revision"); raise SystemExit(0 if actual == expected else f"running build {actual!r} does not match {expected!r}")' "${status_json}" "${revision}"
@@ -166,27 +191,11 @@ echo "Returning Orion to rest, fading lights off, and disabling torque..."
 final_status="$("${active_binary}" --status --socket "${runtime_socket}")"
 python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value.get("torque_enabled") is False, value; assert value.get("mode") == "configured", value' "${final_status}"
 
-if [[ ! -f "${token_file}" ]]; then
-  echo "Creating the Studio pairing token; save the following value in Studio:"
-  python3 orion_studio/gateway.py create-token --token-file "${token_file}"
-fi
-
-if [[ -f "${gateway_pid_file}" ]]; then
-  gateway_pid="$(cat "${gateway_pid_file}")"
-  gateway_command="$(ps -p "${gateway_pid}" -o args= 2>/dev/null)"
-  if [[ "${gateway_command}" == *"orion_studio/gateway.py serve"* ]]; then
-    kill -TERM "${gateway_pid}" 2>/dev/null || true
-  fi
-fi
-pkill -TERM -f 'orion_studio/gateway.py serve' 2>/dev/null || true
-nohup python3 orion_studio/gateway.py serve \
-  --bind 0.0.0.0 \
-  --port 7447 \
-  --token-file "${token_file}" \
-  --project-root "${project_root}" \
-  >"${gateway_log}" 2>&1 </dev/null &
-gateway_pid=$!
-echo "${gateway_pid}" > "${gateway_pid_file}"
+sudo -n systemctl restart orion-studio-gateway.service
+sudo -n systemctl is-active --quiet oriond.service
+sudo -n systemctl is-active --quiet orion-studio-gateway.service
+sudo -n systemctl is-enabled --quiet oriond.service
+sudo -n systemctl is-enabled --quiet orion-studio-gateway.service
 
 gateway_ready=false
 for _ in {1..50}; do
@@ -194,19 +203,15 @@ for _ in {1..50}; do
     gateway_ready=true
     break
   fi
-  if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-    echo "The Studio gateway exited; see ${gateway_log}." >&2
-    exit 1
-  fi
   sleep 0.1
 done
 if [[ "${gateway_ready}" != true ]]; then
-  echo "The Studio gateway did not become reachable; see ${gateway_log}." >&2
+  echo "The Studio gateway did not become reachable; inspect its journal." >&2
   exit 1
 fi
 
 trap - ERR INT TERM
 echo "Deployment ${revision} passed. Orion is at rest, lights are off, and torque is disabled."
+echo "oriond and the Studio gateway are enabled for boot."
 echo "Studio gateway: http://orion.local:7447"
-echo "oriond log: ${daemon_log}"
-echo "gateway log: ${gateway_log}"
+echo "Logs: journalctl -u oriond.service -u orion-studio-gateway.service"

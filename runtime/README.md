@@ -37,26 +37,44 @@ scripts/deploy_pi.sh
 ```
 
 The command connects to `mofe@orion.local` over SSH and streams the remote
-deployment logic; it installs no system service. Override the target when
-needed with `--host`, `--root`, or `--branch`. SSH host identity and key access
-must already be trusted normally; the script never disables host-key checking.
+deployment logic. Override the target when needed with `--host`, `--root`, or
+`--branch`. SSH host identity and key access must already be trusted normally;
+the script never disables host-key checking. The Pi user needs passwordless
+`sudo` for unattended installation and control of the two system services.
 
 On the Pi, deployment requires the selected branch to already be checked out,
 then fetches and fast-forwards it. It never switches branches, stashes, resets,
-or cleans the Pi checkout. Deployment returns
-the currently running Orion to `rest`, disables torque, stops the old process,
-runs gateway tests and the Pi-compatible Rust suite, and release-builds
-`oriond`. The simulator-only MuJoCo integration test remains a workstation
-pre-push gate. Deployment then starts the new source-run daemon, verifies its
-embedded `build_revision`, configures and enables Orion, moves to
-`zero_reference`, and runs the no-motion
-`deployment_smoke` RGBW/audio scene. A successful trial returns to `rest`,
-fades lights off, disables torque, and starts the authenticated Studio gateway
-on port 7447. Any post-start failure attempts the same resting shutdown.
+or cleans the Pi checkout. Deployment stops the gateway, returns the currently
+running Orion to `rest`, disables torque, runs gateway tests and the
+Pi-compatible Rust suite, and release-builds `oriond` while the old daemon
+remains safely torque-off. The simulator-only MuJoCo integration test remains a
+workstation pre-push gate.
 
-Runtime and gateway logs and PID files live under
-`~/.local/state/orion/`. Calibration and the Studio pairing token remain under
-`~/.config/orion/` and are never replaced during ordinary updates.
+The deployment then installs and enables `oriond.service` and
+`orion-studio-gateway.service`, starts the rebuilt runtime, verifies its
+embedded `build_revision`, configures and enables Orion, moves to
+`zero_reference`, and runs the no-motion `deployment_smoke` RGBW/audio scene.
+A successful trial returns to `rest`, fades lights off, disables torque, and
+starts the authenticated gateway on port 7447. Any post-start failure attempts
+the same resting shutdown.
+
+Both services start on reboot. `oriond` deliberately boots in torque-off
+observe mode. The authenticated gateway remains reachable, and Studio's first
+explicit movement Run uses the semantic `prepare_movement` operation to
+configure and enable torque. Lighting/audio-only scenes do not energize the
+servos. Use **Release torque** in Studio when holding is no longer needed.
+
+Logs are owned by journald:
+
+```bash
+sudo systemctl status oriond.service orion-studio-gateway.service
+journalctl -u oriond.service -u orion-studio-gateway.service
+```
+
+Calibration and the Studio pairing token remain under `~/.config/orion/` and
+are never replaced during ordinary updates. The unit templates are under
+`scripts/systemd/`; `scripts/install_pi_services.sh` renders the configured Pi
+user, home, and source-checkout paths into `/etc/systemd/system/`.
 
 ## MuJoCo-first daemon
 
@@ -87,9 +105,10 @@ accumulates the shared base translation, tilt, height, and contact policy in
 ## Physical hardware
 
 The Rust transport has been validated on Orion's Raspberry Pi and five-servo
-STS3215 bus. Run all commands from the source checkout; Orion is not installed
-as a system service. The deployment script may keep the source-built process
-running in the background after its bounded smoke test.
+STS3215 bus. The installed systemd service still executes the release binary
+and assets directly from the source checkout; no second runtime copy exists.
+Stop `oriond.service` before opening the serial, RGBW, or audio devices with a
+manual commissioning process.
 
 ### Read hardware state without enabling torque
 
@@ -295,15 +314,27 @@ reset when the source-run daemon restarts. Scene states are `executing`,
 scene and its active movement. `--wait` exits `0`, `4`, `5`, or `6` for
 completed, timed out, cancelled, or failed respectively.
 
-The scene library is recursive, including `scenes/user/`. The private Unix
-protocol also supports `scene reload` for the authenticated Studio gateway.
+The scene library is recursive, including `scenes/user/`. User-authored poses
+are loaded recursively from `motion/user/poses/`, and user motions live under
+`motion/motions/user/`. Built-in names cannot be shadowed. At startup and
+reload, `oriond` validates every pose against the active driver limits and
+validates every motion keyframe reference and timing value.
+
+The private Unix protocol supports `joint limits` so the authenticated Studio
+gateway can report the running driver's commissioned radians without exposing
+servo registers. It also supports `asset reload`, which reloads poses,
+motions, and scenes together and atomically replaces the validated runtime
+libraries while no movement or scene is active. `scene reload` remains the
+narrower scene-only operation.
+
 Reload re-reads the daemon's configured scene directory, validates all pose,
 motion, and audio-cue references, and atomically replaces the in-memory catalog
 only when no scene is active. It does not accept a path or scene body over the
 local command socket.
 
-During development, build and run `oriond` directly from this source tree. It
-is not installed as a system service.
+For manual development, build and run `oriond` directly from this source tree
+only after stopping the installed service. Normal Pi operation uses the
+source-backed `oriond.service`.
 
 ## Generated speech
 

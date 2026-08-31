@@ -25,6 +25,13 @@ DEFAULT_SOCKET = "/tmp/oriond.sock"
 MAX_BODY_BYTES = 262_144
 MAX_RESPONSE_BYTES = 1_048_576
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+JOINT_NAMES = (
+    "base_yaw_joint",
+    "shoulder_pitch_joint",
+    "elbow_pitch_joint",
+    "head_roll_joint",
+    "head_pitch_joint",
+)
 DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:1420",
     "http://127.0.0.1:1420",
@@ -127,6 +134,7 @@ class OrionGateway:
         poses = self._checked("pose list")
         motions = self._checked("motion list")
         scenes = self._checked("scene list")
+        limits = self._checked("joint limits")
         return {
             "api_version": API_VERSION,
             "capabilities": {
@@ -135,6 +143,10 @@ class OrionGateway:
                 "scene": scenes.get("scenes", []),
                 "scene_publish": {"format_version": 1, "max_body_bytes": MAX_BODY_BYTES},
                 "scene_library": {"read": True, "create": True, "update": "revision"},
+                "joint_limits": limits.get("joints", []),
+                "pose_library": {"read": True, "create": True, "update": False},
+                "motion_library": {"read": True, "create": True, "update": False},
+                "movement_lifecycle": ["prepare", "release"],
                 "speech": {"max_text_bytes": 2_000},
                 "cancel": ["movement", "scene", "speech"],
             },
@@ -165,6 +177,10 @@ class OrionGateway:
         elif operation == "scene":
             name = self._name(payload.get("name"), "scene")
             response = self._checked(f"scene start {name}")
+        elif operation == "prepare_movement":
+            response = self._prepare_movement()
+        elif operation == "release_movement":
+            response = self._release_movement()
         elif operation == "speech":
             text = payload.get("text")
             if not isinstance(text, str) or not text.strip():
@@ -183,7 +199,7 @@ class OrionGateway:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, speech, and cancel.",
+                "Supported operations are goto, motion, scene, speech, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {
@@ -192,6 +208,36 @@ class OrionGateway:
             "operation": operation,
             "result": response,
         }
+
+    def _prepare_movement(self) -> dict[str, Any]:
+        status = self.client.request("status")
+        mode = status.get("mode")
+        if mode == "observe":
+            self._checked("configure")
+            mode = "configured"
+        if mode == "configured":
+            return self._checked("enable")
+        if mode == "holding":
+            return {"ok": True, "command": "prepare_movement", "mode": "holding", "already_prepared": True}
+        raise GatewayError(
+            HTTPStatus.CONFLICT,
+            "movement_busy",
+            f"Orion cannot prepare movement while runtime mode is '{mode}'.",
+        )
+
+    def _release_movement(self) -> dict[str, Any]:
+        status = self.client.request("status")
+        scenes = self._checked("scene status")
+        mode = status.get("mode")
+        if mode == "moving" or status.get("motion") is not None or scenes.get("scene") is not None:
+            raise GatewayError(
+                HTTPStatus.CONFLICT,
+                "movement_busy",
+                "Cancel the active scene or movement before releasing torque.",
+            )
+        if status.get("torque_enabled") is True:
+            return self._checked("disable")
+        return {"ok": True, "command": "release_movement", "mode": mode, "already_released": True}
 
     def publish_scene(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         with self.scene_write_lock:
@@ -410,6 +456,169 @@ class OrionGateway:
             "reload": reload_result,
         }
 
+    def list_user_poses(self) -> dict[str, Any]:
+        return self._list_user_assets(self._user_pose_directory(), "motion/user/poses")
+
+    def read_user_pose(self, name: Any) -> dict[str, Any]:
+        return self._read_user_asset(
+            self._user_pose_directory(),
+            "motion/user/poses",
+            self._name(name, "pose"),
+        )
+
+    def publish_pose(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        name = self._validate_pose_document(document)
+        limits = self._checked("joint limits").get("joints", [])
+        self._validate_pose_limits(document, limits)
+        return self._publish_immutable_asset(
+            kind="pose",
+            name=name,
+            document=document,
+            directory=self._user_pose_directory(),
+            relative_directory="motion/user/poses",
+            existing_names=self._checked("pose list").get("poses", []),
+        )
+
+    def list_user_motions(self) -> dict[str, Any]:
+        return self._list_user_assets(self._user_motion_directory(), "motion/motions/user")
+
+    def read_user_motion(self, name: Any) -> dict[str, Any]:
+        return self._read_user_asset(
+            self._user_motion_directory(),
+            "motion/motions/user",
+            self._name(name, "motion"),
+        )
+
+    def publish_motion(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        name = self._validate_motion_document(document)
+        return self._publish_immutable_asset(
+            kind="motion",
+            name=name,
+            document=document,
+            directory=self._user_motion_directory(),
+            relative_directory="motion/motions/user",
+            existing_names=self._checked("motion list").get("motions", []),
+        )
+
+    def _publish_immutable_asset(
+        self,
+        *,
+        kind: str,
+        name: str,
+        document: Any,
+        directory: Path,
+        relative_directory: str,
+        existing_names: Any,
+    ) -> tuple[HTTPStatus, dict[str, Any]]:
+        with self.scene_write_lock:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                encoded = self._encode_scene_document(document)
+            except OSError as error:
+                raise GatewayError(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    "asset_write_failed",
+                    f"Could not prepare the user {kind}: {error}",
+                ) from error
+            path = directory / f"{name}.yaml"
+            relative_path = f"{relative_directory}/{name}.yaml"
+            if path.exists():
+                current = self._read_user_scene_file(path)
+                if current != encoded:
+                    raise GatewayError(
+                        HTTPStatus.CONFLICT,
+                        f"user_{kind}_exists",
+                        f"A different user {kind} named '{name}' already exists; choose a new name.",
+                    )
+                reload_result = self._checked("asset reload")
+                return HTTPStatus.OK, {
+                    "api_version": API_VERSION,
+                    "published": True,
+                    "already_present": True,
+                    "name": name,
+                    "revision": self._revision(encoded),
+                    "relative_path": relative_path,
+                    "reload": reload_result,
+                }
+            if isinstance(existing_names, list) and name in existing_names:
+                raise GatewayError(
+                    HTTPStatus.CONFLICT,
+                    f"built_in_{kind}",
+                    f"'{name}' is an existing Orion {kind} and cannot be replaced.",
+                )
+
+            created = False
+            try:
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                created = True
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(encoded)
+                    output.flush()
+                    os.fsync(output.fileno())
+                reload_result = self._checked("asset reload")
+            except GatewayError:
+                if created:
+                    path.unlink(missing_ok=True)
+                raise
+            except OSError as error:
+                if created:
+                    path.unlink(missing_ok=True)
+                raise GatewayError(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    "asset_write_failed",
+                    f"Could not publish user {kind} '{name}': {error}",
+                ) from error
+            return HTTPStatus.CREATED, {
+                "api_version": API_VERSION,
+                "published": True,
+                "already_present": False,
+                "name": name,
+                "revision": self._revision(encoded),
+                "relative_path": relative_path,
+                "reload": reload_result,
+            }
+
+    def _list_user_assets(self, directory: Path, relative_directory: str) -> dict[str, Any]:
+        if not directory.exists():
+            return {"api_version": API_VERSION, "assets": []}
+        try:
+            paths = sorted(path for path in directory.iterdir() if path.suffix in {".yaml", ".yml"})
+        except OSError as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "asset_library_read_failed",
+                f"Could not read the Pi user asset library: {error}",
+            ) from error
+        assets = []
+        for path in paths:
+            data = self._read_user_scene_file(path)
+            assets.append({
+                "name": self._name(path.stem, "asset"),
+                "revision": self._revision(data),
+                "bytes": len(data),
+                "relative_path": f"{relative_directory}/{path.name}",
+            })
+        return {"api_version": API_VERSION, "assets": assets}
+
+    def _read_user_asset(self, directory: Path, relative_directory: str, name: str) -> dict[str, Any]:
+        path = self._existing_named_yaml(directory, name, "asset")
+        data = self._read_user_scene_file(path)
+        try:
+            yaml = data.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise GatewayError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "invalid_asset_encoding",
+                f"User asset '{name}' is not valid UTF-8.",
+            ) from error
+        return {
+            "api_version": API_VERSION,
+            "name": name,
+            "revision": self._revision(data),
+            "relative_path": f"{relative_directory}/{path.name}",
+            "yaml": yaml,
+        }
+
     def _user_scene_directory(self) -> Path:
         if self.project_root is None:
             raise GatewayError(
@@ -419,21 +628,42 @@ class OrionGateway:
             )
         return self.project_root / "scenes" / "user"
 
+    def _user_pose_directory(self) -> Path:
+        if self.project_root is None:
+            raise GatewayError(
+                HTTPStatus.NOT_IMPLEMENTED,
+                "pose_library_unavailable",
+                "The gateway was not configured with an Orion project root.",
+            )
+        return self.project_root / "motion" / "user" / "poses"
+
+    def _user_motion_directory(self) -> Path:
+        if self.project_root is None:
+            raise GatewayError(
+                HTTPStatus.NOT_IMPLEMENTED,
+                "motion_library_unavailable",
+                "The gateway was not configured with an Orion project root.",
+            )
+        return self.project_root / "motion" / "motions" / "user"
+
     def _existing_user_scene_path(self, name: str) -> Path:
-        directory = self._user_scene_directory()
+        return self._existing_named_yaml(self._user_scene_directory(), name, "user scene")
+
+    @staticmethod
+    def _existing_named_yaml(directory: Path, name: str, label: str) -> Path:
         matches = [directory / f"{name}.{extension}" for extension in ("yaml", "yml")]
         matches = [path for path in matches if path.exists()]
         if not matches:
             raise GatewayError(
                 HTTPStatus.NOT_FOUND,
-                "user_scene_not_found",
-                f"User scene '{name}' does not exist on the Pi.",
+                "user_asset_not_found",
+                f"{label.title()} '{name}' does not exist on the Pi.",
             )
         if len(matches) != 1:
             raise GatewayError(
                 HTTPStatus.CONFLICT,
-                "duplicate_user_scene",
-                f"User scene '{name}' has duplicate YAML files on the Pi.",
+                "duplicate_user_asset",
+                f"{label.title()} '{name}' has duplicate YAML files on the Pi.",
             )
         return matches[0]
 
@@ -493,6 +723,88 @@ class OrionGateway:
             if descriptor is not None:
                 os.close(descriptor)
             temporary.unlink(missing_ok=True)
+
+    @classmethod
+    def _validate_pose_document(cls, document: Any) -> str:
+        if not isinstance(document, dict) or set(document) != {"format_version", "units", "poses"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Expected a versioned pose document.")
+        if document.get("format_version") != 1 or document.get("units") != "radians":
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose format_version must be 1 with radian units.")
+        poses = document.get("poses")
+        if not isinstance(poses, dict) or len(poses) != 1:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "A user pose file must contain exactly one pose.")
+        name, pose = next(iter(poses.items()))
+        name = cls._name(name, "pose")
+        if not isinstance(pose, dict) or set(pose) != {"description", "positions"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose fields must be description and positions.")
+        if not isinstance(pose.get("description"), str):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose description must be text.")
+        positions = pose.get("positions")
+        if not isinstance(positions, dict) or set(positions) != set(JOINT_NAMES):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose positions must contain every Orion joint exactly once.")
+        for joint, value in positions.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", f"Pose position for {joint} must be finite.")
+        return name
+
+    @classmethod
+    def _validate_pose_limits(cls, document: dict[str, Any], limits: Any) -> None:
+        if not isinstance(limits, list):
+            raise GatewayError(HTTPStatus.BAD_GATEWAY, "invalid_joint_limits", "oriond returned invalid joint limits.")
+        ranges: dict[str, tuple[float, float]] = {}
+        for limit in limits:
+            if not isinstance(limit, dict):
+                continue
+            name = limit.get("name")
+            lower = limit.get("lower_rad")
+            upper = limit.get("upper_rad")
+            if (
+                name in JOINT_NAMES
+                and isinstance(lower, (int, float))
+                and not isinstance(lower, bool)
+                and isinstance(upper, (int, float))
+                and not isinstance(upper, bool)
+                and math.isfinite(lower)
+                and math.isfinite(upper)
+                and lower < upper
+            ):
+                ranges[name] = (float(lower), float(upper))
+        if set(ranges) != set(JOINT_NAMES):
+            raise GatewayError(HTTPStatus.BAD_GATEWAY, "invalid_joint_limits", "oriond omitted Orion joint limits.")
+        pose = next(iter(document["poses"].values()))
+        for name, value in pose["positions"].items():
+            lower, upper = ranges[name]
+            if not lower <= float(value) <= upper:
+                raise GatewayError(
+                    HTTPStatus.BAD_REQUEST,
+                    "pose_out_of_range",
+                    f"Pose position for {name} must stay between {lower:.6f} and {upper:.6f} radians.",
+                )
+
+    @classmethod
+    def _validate_motion_document(cls, document: Any) -> str:
+        if not isinstance(document, dict) or set(document) != {"format_version", "motion"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Expected a versioned motion document.")
+        if document.get("format_version") != 1 or not isinstance(document.get("motion"), dict):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion format_version must be 1.")
+        motion = document["motion"]
+        if set(motion) != {"name", "description", "keyframes"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion fields must be name, description, and keyframes.")
+        name = cls._name(motion.get("name"), "motion")
+        if not isinstance(motion.get("description"), str):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion description must be text.")
+        keyframes = motion.get("keyframes")
+        if not isinstance(keyframes, list) or not keyframes:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "A motion must contain at least one keyframe.")
+        for keyframe in keyframes:
+            if not isinstance(keyframe, dict) or set(keyframe) != {"pose", "duration", "hold"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion keyframes require pose, duration, and hold.")
+            cls._name(keyframe.get("pose"), "pose")
+            duration = cls._number(keyframe.get("duration"), "Keyframe duration", minimum=0.000001)
+            hold = cls._number(keyframe.get("hold"), "Keyframe hold", minimum=0.0)
+            if duration > 300.0 or hold > 300.0:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Keyframe timing cannot exceed 300 seconds.")
+        return name
 
     @classmethod
     def _validate_scene_document(cls, document: Any) -> str:
@@ -638,15 +950,27 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return HTTPStatus.OK, gateway.list_user_scenes()
             if path.startswith("/api/v1/scenes/"):
                 return HTTPStatus.OK, gateway.read_user_scene(path.removeprefix("/api/v1/scenes/"))
+            if path == "/api/v1/poses":
+                return HTTPStatus.OK, gateway.list_user_poses()
+            if path.startswith("/api/v1/poses/"):
+                return HTTPStatus.OK, gateway.read_user_pose(path.removeprefix("/api/v1/poses/"))
+            if path == "/api/v1/motions":
+                return HTTPStatus.OK, gateway.list_user_motions()
+            if path.startswith("/api/v1/motions/"):
+                return HTTPStatus.OK, gateway.read_user_motion(path.removeprefix("/api/v1/motions/"))
             raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
-            if path not in {"/api/v1/operations", "/api/v1/scenes"}:
+            if path not in {"/api/v1/operations", "/api/v1/scenes", "/api/v1/poses", "/api/v1/motions"}:
                 raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
             payload = self._read_json()
             if path == "/api/v1/scenes":
                 return gateway.publish_scene(payload)
+            if path == "/api/v1/poses":
+                return gateway.publish_pose(payload)
+            if path == "/api/v1/motions":
+                return gateway.publish_motion(payload)
             return gateway.submit(payload)
 
         def _put(self) -> tuple[HTTPStatus, dict[str, Any]]:

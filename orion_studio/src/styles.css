@@ -111,6 +111,9 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .panel-kicker { margin: 0; color: var(--amber); font: 500 .59rem ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: .16em; }
 
 .asset-section { padding: 14px 0; border-top: 1px solid var(--line); }
+.asset-section-heading { display: flex; align-items: center; gap: 6px; padding: 0 7px 8px; }
+.asset-section-heading h3 { flex: 1; margin: 0; }
+.asset-section-heading .icon-button { width: 24px; height: 24px; border-radius: 6px; }
 .asset-section h3 { display: flex; align-items: center; justify-content: space-between; margin: 0 7px 8px; color: var(--muted); font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; }
 .asset-section h3 span { display: grid; place-items: center; min-width: 20px; height: 18px; padding: 0 5px; border-radius: 99px; color: var(--faint); background: rgba(255,255,255,.04); font: .58rem ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .asset-list { display: grid; gap: 3px; }
@@ -141,7 +144,7 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .viewport-fallback span { color: var(--text); font-weight: 650; }
 .viewport-fallback p { max-width: 360px; margin: 8px 0 0; font-size: .78rem; line-height: 1.5; }
 
-.add-event-bar { display: flex; align-items: center; gap: 7px; padding-top: 10px; }
+.add-event-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-top: 10px; }
 .add-event-bar > span { margin-right: auto; color: var(--muted); font: .62rem ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .add-event-bar button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--surface); font-size: .64rem; }
 .add-event-bar button:hover { color: #fff; border-color: var(--line-strong); }
@@ -155,6 +158,25 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .empty-inspector h2 { margin: 9px 0 5px; font-size: .95rem; }
 .empty-inspector p:last-child { color: var(--muted); font-size: .7rem; line-height: 1.6; }
 .inspector-fields { display: grid; gap: 12px; margin-top: 17px; }
+.pose-editor { min-height: 0; }
+.pose-editor textarea { min-height: 64px; padding-top: 8px; resize: vertical; }
+.joint-control-list { display: grid; gap: 13px; }
+.joint-control { display: grid; gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.015); }
+.joint-control > div:first-child, .joint-range { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.joint-control > div:first-child label { color: var(--text); text-transform: capitalize; }
+.joint-control output, .joint-range { color: var(--faint); font: .56rem ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.joint-control input[type="range"] { min-height: 18px; height: 18px; padding: 0; accent-color: var(--amber); background: transparent; border: 0; box-shadow: none; }
+.joint-range input { width: 82px; min-height: 29px; text-align: center; }
+.field-help { margin: -2px 0 0; color: var(--muted); font-size: .61rem; line-height: 1.5; }
+.motion-editor { min-height: 0; }
+.motion-editor textarea { min-height: 64px; padding-top: 8px; resize: vertical; }
+.keyframe-list { display: grid; gap: 9px; }
+.keyframe-card { display: grid; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.015); }
+.keyframe-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.keyframe-card header strong { color: #dce5ef; font-size: .65rem; }
+.keyframe-card header > div { display: flex; gap: 4px; }
+.keyframe-card .icon-button { width: 25px; height: 25px; border-radius: 6px; }
+.keyframe-timing { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .channel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .robot-status-card { margin-top: auto; background: rgba(255,255,255,.015); }
 .robot-status-card > div { display: flex; align-items: center; gap: 8px; color: var(--green); font-size: .72rem; }

@@ -53,8 +53,16 @@ pnpm test
 pnpm build
 ```
 
-The production bundle is configured for macOS, Windows, and Linux. Native
-packaging still needs to be built and signed on each target OS.
+The production bundle is configured for macOS, Windows, and Linux. Linux uses
+a platform overlay that produces `.deb` and `.rpm` installers:
+
+```bash
+pnpm tauri build
+```
+
+macOS and Windows packages still need to be built and signed on their target
+operating systems. Their `.icns` and `.ico` assets remain in the shared bundle
+manifest.
 
 During source development, Studio resolves the Orion project from its Tauri
 crate location. A packaged or relocated build can point at a checkout explicitly:
@@ -68,10 +76,18 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
 - Load Orion's real URDF and STL meshes into an orbitable 3D preview.
 - Browse the existing scenes, named poses, and authored motions directly from
   the Rust/YAML project assets.
+- Create calibration-bounded named poses with five joint sliders. The sliders
+  use the running robot's commissioned limits while connected and the tracked
+  operational limits while offline; editing a slider never moves hardware.
+- Build named motions as ordered pose keyframes with transition and hold times.
+  Studio previews the same quintic blend shape that `oriond` executes.
 - Preview pose and motion timing locally with the same quintic blend shape used
   by the runtime.
 - Scrub and play a multi-lane scene timeline for movement, RGBW lighting, and
   queued local audio cues.
+- Insert pulse and two-cycle breathe lighting templates. Studio expands them
+  into editable version-1 RGBW fade events, so preview and hardware use the
+  existing runtime lighting path rather than a separate effects engine.
 - Add, select, drag to retime, edit, and delete scene events, and edit the
   scene description.
 - Save a scene as a new YAML file under `scenes/user/`; while connected the
@@ -81,14 +97,14 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
 - Load the Pi's user-scene library on connection, create new Pi scenes, and
   revision-update an existing Pi user scene without losing concurrent edits.
 - Ask `oriond` to reload its validated catalog after every Pi write, then run
-  the named scene on hardware without restarting the daemon.
+  the named pose, motion, or scene on hardware without restarting the daemon.
 
-Built-in scenes and poses are source material and are never overwritten. The
-native offline save command validates the scene and uses create-new file
-semantics. Studio loads validated local files from `scenes/user/` at desktop
-startup, then merges the Pi's user library when it connects. A Pi scene wins
-over an offline staging copy with the same user-scene name; neither may shadow
-a built-in. See `scenes/user/README.md`.
+Built-in scenes, poses, and motions are source material and are never
+overwritten. New user assets use create-only semantics and live under
+`scenes/user/`, `motion/user/poses/`, and `motion/motions/user/`. Studio loads
+validated local files at desktop startup, then merges the Pi's authoritative
+user libraries when it connects. A Pi asset wins over an offline staging copy
+with the same user-asset name; no user asset may shadow a built-in.
 
 An edited scene remains a draft. **Save As** always creates a distinct user
 scene: directly on the Pi when connected, or in the desktop checkout while
@@ -100,16 +116,18 @@ create is removed, and a failed update restores the previous file before the
 old catalog is reloaded.
 
 The authenticated gateway API keeps the raw Unix socket private and exposes
-only scene-library metadata, one named scene document at a time, create-new
-publishing, and revision-checked updates. It never accepts arbitrary paths.
+only named semantic libraries and operations. It accepts create-new pose and
+motion documents, plus create and revision-checked update operations for user
+scenes. It never accepts arbitrary paths, servo registers, or joint streams.
 
 ## Connect Studio to the Pi
 
-Continue running `oriond` from the Pi source checkout; do not install it as a
-systemd service. A successful workstation-side `scripts/deploy_pi.sh` run
-starts both the source-built daemon and gateway, performs the bounded physical
-smoke test, and creates a development pairing token only when one does not
-already exist. Save the token printed by that first deployment.
+The Pi runs `oriond.service` and `orion-studio-gateway.service`; both execute
+directly from the source checkout and start on reboot. A successful
+workstation-side `scripts/deploy_pi.sh` run installs/enables both units,
+performs the bounded physical smoke test, and creates a development pairing
+token only when one does not already exist. Save the token printed by that
+first deployment.
 
 For manual recovery, create a development pairing token once:
 
@@ -136,6 +154,12 @@ only in session storage. The connection status displays the running Rust
 binary's embedded Git revision, so a source update is not mistaken for a
 completed daemon restart. The raw `/tmp/oriond.sock` socket never leaves the
 Pi.
+
+After reboot, Orion intentionally starts torque-off. Running a pose, motion,
+or movement-containing scene asks the gateway to prepare movement through the
+validated runtime before submitting the named capability. Lighting/audio-only
+scenes leave torque off. Studio exposes **Release torque** when Orion is
+holding and no run is active.
 
 The gateway has explicit development origins for the local Vite server and
 Tauri desktop shells. Add another exact origin only when needed:

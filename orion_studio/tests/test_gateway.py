@@ -24,6 +24,8 @@ class FakeOrionClient:
         self.speech = None
         self.reject_reload = False
         self.reject_reload_count = 0
+        self.mode = "holding"
+        self.torque_enabled = True
 
     def request(self, command: str):
         self.commands.append(command)
@@ -32,8 +34,8 @@ class FakeOrionClient:
                 "schema_version": 3,
                 "robot": "orion",
                 "build_revision": "test-revision",
-                "mode": "holding",
-                "torque_enabled": True,
+                "mode": self.mode,
+                "torque_enabled": self.torque_enabled,
                 "motion": self.motion,
                 "last_motion": None,
                 "joints": [],
@@ -48,12 +50,43 @@ class FakeOrionClient:
             return {"ok": True, "motions": ["look_at_left"]}
         if command == "scene list":
             return {"ok": True, "scenes": ["acknowledge_left"]}
+        if command == "joint limits":
+            return {
+                "ok": True,
+                "joints": [
+                    {"name": "base_yaw_joint", "lower_rad": -1.54, "upper_rad": 1.54},
+                    {"name": "shoulder_pitch_joint", "lower_rad": -1.43, "upper_rad": 0.80},
+                    {"name": "elbow_pitch_joint", "lower_rad": -1.01, "upper_rad": 1.03},
+                    {"name": "head_roll_joint", "lower_rad": -1.54, "upper_rad": 1.47},
+                    {"name": "head_pitch_joint", "lower_rad": -0.53, "upper_rad": 0.70},
+                ],
+            }
         if command == "scene reload":
             if self.reject_reload or self.reject_reload_count > 0:
                 if self.reject_reload_count > 0:
                     self.reject_reload_count -= 1
                 return {"ok": False, "error": "invalid scene catalog"}
             return {"ok": True, "command": "scene_reload", "scenes": ["acknowledge_left"]}
+        if command == "asset reload":
+            return {
+                "ok": True,
+                "command": "asset_reload",
+                "poses": ["home", "rest", "studio_pose"],
+                "motions": ["look_at_left", "studio_motion"],
+                "scenes": ["acknowledge_left"],
+            }
+        if command == "configure":
+            self.mode = "configured"
+            self.torque_enabled = False
+            return {"ok": True, "command": "configure", "mode": self.mode}
+        if command == "enable":
+            self.mode = "holding"
+            self.torque_enabled = True
+            return {"ok": True, "command": "enable", "mode": self.mode}
+        if command == "disable":
+            self.mode = "configured"
+            self.torque_enabled = False
+            return {"ok": True, "command": "disable", "mode": self.mode}
         if command.startswith("goto "):
             self.motion = {"run_id": 4, "name": "home", "state": "executing"}
             return {"ok": True, "command": "goto", "run_id": 4, "state": "executing"}
@@ -85,6 +118,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(capabilities["goto"], ["home", "rest"])
         self.assertEqual(capabilities["motion"], ["look_at_left"])
         self.assertEqual(capabilities["scene"], ["acknowledge_left"])
+        self.assertEqual(capabilities["joint_limits"][0]["name"], "base_yaw_joint")
 
     def test_translates_only_named_semantic_operations(self):
         status, response = self.gateway.submit(
@@ -97,6 +131,19 @@ class GatewayTests(unittest.TestCase):
         with self.assertRaises(GatewayError):
             self.gateway.submit({"operation": "joint_stream", "positions": [0, 1]})
         self.assertNotIn("joint_stream", self.client.commands)
+
+    def test_prepares_movement_after_a_safe_reboot_and_releases_torque(self):
+        self.client.mode = "observe"
+        self.client.torque_enabled = False
+        status, response = self.gateway.submit({"operation": "prepare_movement"})
+        self.assertEqual(status, 202)
+        self.assertEqual(response["result"]["mode"], "holding")
+        self.assertEqual(self.client.commands[-3:], ["status", "configure", "enable"])
+
+        status, response = self.gateway.submit({"operation": "release_movement"})
+        self.assertEqual(status, 202)
+        self.assertEqual(response["result"]["mode"], "configured")
+        self.assertEqual(self.client.commands[-3:], ["status", "scene status", "disable"])
 
     def test_rejects_a_stale_cancel_without_stopping_newer_motion(self):
         self.client.motion = {"run_id": 9, "name": "home", "state": "executing"}
@@ -231,6 +278,83 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(context.exception.code, "runtime_rejected")
             self.assertEqual(path.read_bytes(), previous)
             self.assertEqual(self.client.commands[-1], "scene reload")
+
+    def test_publishes_immutable_calibrated_pose_and_motion_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "motion").mkdir()
+            gateway = OrionGateway(self.client, root)
+            pose = {
+                "format_version": 1,
+                "units": "radians",
+                "poses": {
+                    "studio_pose": {
+                        "description": "A Studio keyframe.",
+                        "positions": {
+                            "base_yaw_joint": 0.2,
+                            "shoulder_pitch_joint": -0.2,
+                            "elbow_pitch_joint": 0.3,
+                            "head_roll_joint": 0.1,
+                            "head_pitch_joint": -0.1,
+                        },
+                    }
+                },
+            }
+            status, published_pose = gateway.publish_pose(pose)
+            self.assertEqual(status, 201)
+            self.assertEqual(published_pose["relative_path"], "motion/user/poses/studio_pose.yaml")
+            self.assertEqual(self.client.commands[-1], "asset reload")
+
+            motion = {
+                "format_version": 1,
+                "motion": {
+                    "name": "studio_motion",
+                    "description": "A Studio motion.",
+                    "keyframes": [{"pose": "studio_pose", "duration": 1.5, "hold": 0.2}],
+                },
+            }
+            status, published_motion = gateway.publish_motion(motion)
+            self.assertEqual(status, 201)
+            self.assertEqual(
+                published_motion["relative_path"],
+                "motion/motions/user/studio_motion.yaml",
+            )
+            self.assertEqual(gateway.list_user_poses()["assets"][0]["name"], "studio_pose")
+            self.assertEqual(gateway.list_user_motions()["assets"][0]["name"], "studio_motion")
+            self.assertEqual(json.loads(gateway.read_user_pose("studio_pose")["yaml"]), pose)
+            self.assertEqual(json.loads(gateway.read_user_motion("studio_motion")["yaml"]), motion)
+
+            changed = json.loads(json.dumps(pose))
+            changed["poses"]["studio_pose"]["positions"]["base_yaw_joint"] = 0.3
+            with self.assertRaises(GatewayError) as context:
+                gateway.publish_pose(changed)
+            self.assertEqual(context.exception.code, "user_pose_exists")
+
+    def test_rejects_pose_outside_running_robot_limits_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "motion").mkdir()
+            gateway = OrionGateway(self.client, root)
+            pose = {
+                "format_version": 1,
+                "units": "radians",
+                "poses": {
+                    "unsafe_pose": {
+                        "description": "Outside base calibration.",
+                        "positions": {
+                            "base_yaw_joint": 2.0,
+                            "shoulder_pitch_joint": 0.0,
+                            "elbow_pitch_joint": 0.0,
+                            "head_roll_joint": 0.0,
+                            "head_pitch_joint": 0.0,
+                        },
+                    }
+                },
+            }
+            with self.assertRaises(GatewayError) as context:
+                gateway.publish_pose(pose)
+            self.assertEqual(context.exception.code, "pose_out_of_range")
+            self.assertFalse((root / "motion/user/poses/unsafe_pose.yaml").exists())
 
     def test_rejects_invalid_scene_documents_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:

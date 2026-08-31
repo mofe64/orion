@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
+use serde::Serialize;
+
 use crate::calibration::{ENCODER_RESOLUTION, JointCalibration};
 use crate::pose::JointPositions;
 use crate::state::JointState;
@@ -39,6 +41,13 @@ impl Default for JointServoProfile {
 
 pub type ServoProfiles = BTreeMap<String, JointServoProfile>;
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct JointLimit {
+    pub name: String,
+    pub lower_rad: f64,
+    pub upper_rad: f64,
+}
+
 /// The hardware-facing operations used by the daemon state machine.
 ///
 /// Keeping this boundary in joint-space lets the same daemon logic drive the
@@ -49,6 +58,7 @@ pub trait RuntimeDriver {
     fn deactivate(&mut self) -> Result<()>;
     fn read(&mut self) -> Result<Vec<JointState>>;
     fn write(&mut self, positions_radians: &JointPositions) -> Result<()>;
+    fn joint_limits(&self) -> Result<Vec<JointLimit>>;
     fn validate_positions(&self, positions_radians: &JointPositions) -> Result<()>;
     fn clamp_positions_to_safe_range(
         &self,
@@ -351,6 +361,30 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
         self.encode_positions(positions_radians).map(|_| ())
     }
 
+    pub fn joint_limits(&self) -> Result<Vec<JointLimit>> {
+        if !self.configured {
+            return Err(Error::InvalidState(
+                "STS3215 driver is not configured.".into(),
+            ));
+        }
+        let radians_per_step = 2.0 * PI / ENCODER_RESOLUTION as f64;
+        Ok(self
+            .calibrations
+            .iter()
+            .map(|joint| {
+                let first = joint.safe_min_delta_raw as f64 * radians_per_step
+                    / joint.encoder_direction as f64;
+                let second = joint.safe_max_delta_raw as f64 * radians_per_step
+                    / joint.encoder_direction as f64;
+                JointLimit {
+                    name: joint.name.clone(),
+                    lower_rad: first.min(second),
+                    upper_rad: first.max(second),
+                }
+            })
+            .collect())
+    }
+
     pub fn clamp_positions_to_safe_range(
         &self,
         positions_radians: &JointPositions,
@@ -513,6 +547,10 @@ impl<T: Sts3215Transport> RuntimeDriver for Sts3215Driver<T> {
 
     fn write(&mut self, positions_radians: &JointPositions) -> Result<()> {
         Sts3215Driver::write(self, positions_radians)
+    }
+
+    fn joint_limits(&self) -> Result<Vec<JointLimit>> {
+        Sts3215Driver::joint_limits(self)
     }
 
     fn validate_positions(&self, positions_radians: &JointPositions) -> Result<()> {
@@ -754,6 +792,12 @@ mod tests {
                 .iter()
                 .any(|call| call == "torque_on")
         );
+
+        let limits = driver.joint_limits().unwrap();
+        assert_eq!(limits.len(), 2);
+        assert_eq!(limits[0].name, "base_yaw_joint");
+        assert!((limits[0].lower_rad + 1.540_116_711).abs() < 1e-6);
+        assert!((limits[0].upper_rad - 1.540_116_711).abs() < 1e-6);
     }
 
     #[test]

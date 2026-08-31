@@ -6,7 +6,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::driver::RuntimeDriver;
+use crate::driver::{JointLimit, RuntimeDriver};
 use crate::pose::JointPositions;
 use crate::state::JointState;
 use crate::{Error, ORION_JOINT_NAMES, Result};
@@ -198,6 +198,20 @@ impl RuntimeDriver for MujocoDriver {
         self.validate_positions(positions_radians)?;
         self.exchange(json!({"command": "write", "positions": positions_radians}))?;
         Ok(())
+    }
+
+    fn joint_limits(&self) -> Result<Vec<JointLimit>> {
+        Ok(ORION_JOINT_NAMES
+            .iter()
+            .map(|name| {
+                let (lower_rad, upper_rad) = self.limits[*name];
+                JointLimit {
+                    name: (*name).to_owned(),
+                    lower_rad,
+                    upper_rad,
+                }
+            })
+            .collect())
     }
 
     fn validate_positions(&self, positions_radians: &JointPositions) -> Result<()> {

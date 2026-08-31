@@ -70,6 +70,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         completion: CompletionCriteria,
     ) -> Result<Self> {
         validate_completion_criteria(completion)?;
+        validate_motion_assets(&driver, &poses, &motions)?;
         let snapshot = StateSnapshot::new(
             RuntimeMode::Observe,
             1,
@@ -158,6 +159,9 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         }
         if command == "motion list" {
             return Ok(json!({"ok": true, "motions": self.motions.names()}).to_string());
+        }
+        if command == "joint limits" {
+            return Ok(json!({"ok": true, "joints": self.driver.joint_limits()?}).to_string());
         }
         if command == "status" {
             return self.snapshot.to_json();
@@ -437,6 +441,55 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     pub fn driver(&self) -> &D {
         &self.driver
     }
+
+    pub fn poses(&self) -> &PoseLibrary {
+        &self.poses
+    }
+
+    pub fn motions(&self) -> &MotionLibrary {
+        &self.motions
+    }
+
+    pub fn replace_motion_assets(
+        &mut self,
+        poses: PoseLibrary,
+        motions: MotionLibrary,
+    ) -> Result<()> {
+        if self.active_movement.is_some() || self.mode == RuntimeMode::Moving {
+            return Err(Error::InvalidState(
+                "Cannot reload pose or motion assets while movement is active.".into(),
+            ));
+        }
+        validate_motion_assets(&self.driver, &poses, &motions)?;
+        self.poses = poses;
+        self.motions = motions;
+        Ok(())
+    }
+}
+
+fn validate_motion_assets<D: RuntimeDriver>(
+    driver: &D,
+    poses: &PoseLibrary,
+    motions: &MotionLibrary,
+) -> Result<()> {
+    for (name, positions) in poses.iter() {
+        driver.validate_positions(positions).map_err(|error| {
+            Error::OutOfRange(format!(
+                "Pose '{name}' is outside the active driver limits: {error}"
+            ))
+        })?;
+    }
+    for (name, motion) in motions.iter() {
+        for keyframe in &motion.keyframes {
+            driver.validate_positions(&keyframe.target).map_err(|error| {
+                Error::OutOfRange(format!(
+                    "Motion '{name}' keyframe '{}' is outside the active driver limits: {error}",
+                    keyframe.pose_name
+                ))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_completion_criteria(criteria: CompletionCriteria) -> Result<()> {
@@ -559,6 +612,16 @@ mod tests {
             self.writes.push(positions.clone());
             Ok(())
         }
+        fn joint_limits(&self) -> Result<Vec<crate::driver::JointLimit>> {
+            Ok(ORION_JOINT_NAMES
+                .iter()
+                .map(|name| crate::driver::JointLimit {
+                    name: (*name).to_owned(),
+                    lower_rad: -3.0,
+                    upper_rad: 3.0,
+                })
+                .collect())
+        }
         fn validate_positions(&self, positions: &JointPositions) -> Result<()> {
             if positions.len() != ORION_JOINT_NAMES.len()
                 || positions
@@ -630,6 +693,8 @@ mod tests {
             serde_json::from_str(&core.handle_command("pose list", 0.0)).unwrap();
         let motions: serde_json::Value =
             serde_json::from_str(&core.handle_command("motion list", 0.0)).unwrap();
+        let limits: serde_json::Value =
+            serde_json::from_str(&core.handle_command("joint limits", 0.0)).unwrap();
 
         assert_eq!(poses["ok"], true);
         assert!(
@@ -645,6 +710,13 @@ mod tests {
                 .unwrap()
                 .contains(&serde_json::Value::String("look_at_left".into()))
         );
+        assert_eq!(
+            limits["joints"].as_array().unwrap().len(),
+            ORION_JOINT_NAMES.len()
+        );
+        assert_eq!(limits["joints"][0]["name"], "base_yaw_joint");
+        assert_eq!(limits["joints"][0]["lower_rad"], -3.0);
+        assert_eq!(limits["joints"][0]["upper_rad"], 3.0);
     }
 
     #[test]

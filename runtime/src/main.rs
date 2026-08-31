@@ -64,6 +64,7 @@ struct Options {
     calibration_file: PathBuf,
     socket_path: PathBuf,
     poses_file: PathBuf,
+    user_poses_directory: PathBuf,
     motions_directory: PathBuf,
     audio_cues_directory: PathBuf,
     audio_card: String,
@@ -85,18 +86,42 @@ struct Options {
 }
 
 #[derive(Clone)]
-struct SceneReloadContext {
-    directory: PathBuf,
-    poses: PoseLibrary,
-    motions: MotionLibrary,
+struct AssetReloadContext {
+    poses_file: PathBuf,
+    user_poses_directory: PathBuf,
+    motions_directory: PathBuf,
+    scenes_directory: PathBuf,
     cues: CueLibrary,
 }
 
-impl SceneReloadContext {
-    fn load(&self) -> orion_runtime::Result<SceneLibrary> {
-        let library = SceneLibrary::load(&self.directory, &self.poses, &self.motions)?;
+impl AssetReloadContext {
+    fn load_poses(&self) -> orion_runtime::Result<PoseLibrary> {
+        PoseLibrary::load_with_user_directory(
+            &self.poses_file,
+            &self.user_poses_directory,
+            &ORION_JOINT_NAMES,
+        )
+    }
+
+    fn load_motions(&self, poses: &PoseLibrary) -> orion_runtime::Result<MotionLibrary> {
+        MotionLibrary::load(&self.motions_directory, poses)
+    }
+
+    fn load_scenes(
+        &self,
+        poses: &PoseLibrary,
+        motions: &MotionLibrary,
+    ) -> orion_runtime::Result<SceneLibrary> {
+        let library = SceneLibrary::load(&self.scenes_directory, poses, motions)?;
         library.validate_audio_cues(&self.cues)?;
         Ok(library)
+    }
+
+    fn load_all(&self) -> orion_runtime::Result<(PoseLibrary, MotionLibrary, SceneLibrary)> {
+        let poses = self.load_poses()?;
+        let motions = self.load_motions(&poses)?;
+        let scenes = self.load_scenes(&poses, &motions)?;
+        Ok((poses, motions, scenes))
     }
 }
 
@@ -112,6 +137,7 @@ impl Default for Options {
             calibration_file: PathBuf::new(),
             socket_path: DEFAULT_SOCKET_PATH.into(),
             poses_file: "motion/config/poses.yaml".into(),
+            user_poses_directory: "motion/user/poses".into(),
             motions_directory: "motion/motions".into(),
             audio_cues_directory: "audio/cues".into(),
             audio_card: ORION_AUDIO_CARD.into(),
@@ -188,6 +214,7 @@ fn usage() -> &'static str {
   --calibration FILE  Orion calibration JSON file.\n\
   --socket PATH       Local API socket (default: /tmp/oriond.sock).\n\
   --poses FILE        Pose library used by --serve.\n\
+  --user-poses DIR    Studio user-pose directory used by --serve.\n\
   --motions DIR       Motion-library directory used by --serve.\n\
   --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
@@ -590,6 +617,9 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
                 options.tts_socket_path = require_value(&mut arguments, &argument)?.into()
             }
             "--poses" => options.poses_file = require_value(&mut arguments, &argument)?.into(),
+            "--user-poses" => {
+                options.user_poses_directory = require_value(&mut arguments, &argument)?.into()
+            }
             "--motions" => {
                 options.motions_directory = require_value(&mut arguments, &argument)?.into()
             }
@@ -777,15 +807,20 @@ fn play_cue(options: &Options) -> orion_runtime::Result<i32> {
 }
 
 fn serve(options: Options) -> orion_runtime::Result<i32> {
-    let poses = PoseLibrary::load(&options.poses_file, &ORION_JOINT_NAMES)?;
+    let poses = PoseLibrary::load_with_user_directory(
+        &options.poses_file,
+        &options.user_poses_directory,
+        &ORION_JOINT_NAMES,
+    )?;
     let motions = MotionLibrary::load(&options.motions_directory, &poses)?;
     let scenes = SceneLibrary::load(&options.scenes_directory, &poses, &motions)?;
     let cues = CueLibrary::load(&options.audio_cues_directory)?;
     scenes.validate_audio_cues(&cues)?;
-    let scene_reload = SceneReloadContext {
-        directory: options.scenes_directory.clone(),
-        poses: poses.clone(),
-        motions: motions.clone(),
+    let asset_reload = AssetReloadContext {
+        poses_file: options.poses_file.clone(),
+        user_poses_directory: options.user_poses_directory.clone(),
+        motions_directory: options.motions_directory.clone(),
+        scenes_directory: options.scenes_directory.clone(),
         cues: cues.clone(),
     };
     match options.backend {
@@ -806,7 +841,7 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
                 poses,
                 motions,
                 scenes,
-                scene_reload,
+                asset_reload,
                 lighting,
                 audio,
                 &options,
@@ -824,7 +859,7 @@ fn serve(options: Options) -> orion_runtime::Result<i32> {
                 poses,
                 motions,
                 scenes,
-                scene_reload,
+                asset_reload,
                 lighting,
                 audio,
                 &options,
@@ -839,7 +874,7 @@ fn serve_driver<D: RuntimeDriver>(
     poses: PoseLibrary,
     motions: MotionLibrary,
     scene_library: SceneLibrary,
-    scene_reload: SceneReloadContext,
+    asset_reload: AssetReloadContext,
     mut lighting: Box<dyn LightingDevice>,
     mut audio: Box<dyn AudioDevice>,
     options: &Options,
@@ -874,7 +909,7 @@ fn serve_driver<D: RuntimeDriver>(
                 &mut scenes,
                 &mut speech,
                 audio.as_mut(),
-                Some(&scene_reload),
+                Some(&asset_reload),
             )
         })?;
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
@@ -901,7 +936,7 @@ fn handle_daemon_command_with_reload<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     scenes: &mut SceneCoordinator,
     speech: &mut SpeechCoordinator,
     audio: &mut A,
-    scene_reload: Option<&SceneReloadContext>,
+    asset_reload: Option<&AssetReloadContext>,
 ) -> String {
     match handle_daemon_command_inner(
         command,
@@ -910,7 +945,7 @@ fn handle_daemon_command_with_reload<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         scenes,
         speech,
         audio,
-        scene_reload,
+        asset_reload,
     ) {
         Ok(response) => response,
         Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
@@ -924,7 +959,7 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     scenes: &mut SceneCoordinator,
     speech: &mut SpeechCoordinator,
     audio: &mut A,
-    scene_reload: Option<&SceneReloadContext>,
+    asset_reload: Option<&AssetReloadContext>,
 ) -> orion_runtime::Result<String> {
     if command == "speech status" {
         return Ok(serde_json::json!({
@@ -971,15 +1006,39 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         .to_string());
     }
     if command == "scene reload" {
-        let context = scene_reload.ok_or_else(|| {
+        let context = asset_reload.ok_or_else(|| {
             orion_runtime::Error::InvalidState("Scene reload is not configured.".into())
         })?;
-        let library = context.load()?;
+        let library = context.load_scenes(core.poses(), core.motions())?;
         let names = scenes.replace_library(library)?;
         return Ok(serde_json::json!({
             "ok": true,
             "command": "scene_reload",
             "scenes": names,
+        })
+        .to_string());
+    }
+    if command == "asset reload" {
+        let context = asset_reload.ok_or_else(|| {
+            orion_runtime::Error::InvalidState("Asset reload is not configured.".into())
+        })?;
+        if scenes.is_active() || core.snapshot().motion.is_some() {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "command": "asset_reload",
+                "error": "cannot reload assets while a scene or movement is active",
+            })
+            .to_string());
+        }
+        let (poses, motions, scene_library) = context.load_all()?;
+        core.replace_motion_assets(poses, motions)?;
+        let scene_names = scenes.replace_library(scene_library)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "command": "asset_reload",
+            "poses": core.poses().names(),
+            "motions": core.motions().names(),
+            "scenes": scene_names,
         })
         .to_string());
     }
@@ -1109,6 +1168,17 @@ mod tests {
 
         fn write(&mut self, _positions_radians: &JointPositions) -> orion_runtime::Result<()> {
             Ok(())
+        }
+
+        fn joint_limits(&self) -> orion_runtime::Result<Vec<orion_runtime::JointLimit>> {
+            Ok(ORION_JOINT_NAMES
+                .iter()
+                .map(|name| orion_runtime::JointLimit {
+                    name: (*name).to_owned(),
+                    lower_rad: -3.0,
+                    upper_rad: 3.0,
+                })
+                .collect())
         }
 
         fn validate_positions(
@@ -1295,10 +1365,11 @@ mod tests {
             PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
         let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
-        let reload = SceneReloadContext {
-            directory: root.join("scenes"),
-            poses: poses.clone(),
-            motions: motions.clone(),
+        let reload = AssetReloadContext {
+            poses_file: root.join("motion/config/poses.yaml"),
+            user_poses_directory: root.join("motion/user/poses"),
+            motions_directory: root.join("motion/motions"),
+            scenes_directory: root.join("scenes"),
             cues: CueLibrary::load(root.join("audio/cues")).unwrap(),
         };
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
@@ -1378,6 +1449,28 @@ mod tests {
             reloaded["scenes"]
                 .as_array()
                 .is_some_and(|names| names.iter().any(|name| name == "acknowledge_left"))
+        );
+
+        let assets: serde_json::Value = serde_json::from_str(&handle_daemon_command_with_reload(
+            "asset reload",
+            0.4,
+            &mut core,
+            &mut scenes,
+            &mut speech,
+            &mut audio,
+            Some(&reload),
+        ))
+        .unwrap();
+        assert_eq!(assets["ok"], true);
+        assert!(
+            assets["poses"]
+                .as_array()
+                .is_some_and(|names| names.iter().any(|name| name == "home"))
+        );
+        assert!(
+            assets["motions"]
+                .as_array()
+                .is_some_and(|names| names.iter().any(|name| name == "look_at_left"))
         );
     }
 

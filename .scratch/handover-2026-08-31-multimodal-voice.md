@@ -679,3 +679,19 @@ The next agent should start by defining and implementing the smallest
 Studio-to-Pi transport, then prove Mac microphone transcription with
 push-to-talk. Do not remove the working Pi voice path, change the scene schema,
 or expose raw hardware control while establishing that boundary.
+
+## Subsequent Studio and boot-service decision (2026-08-31)
+
+The earlier source-run-only prohibition in this handover has been explicitly
+superseded by the user. `oriond` remains built and executed from the Pi source
+checkout, but normal operation now uses `oriond.service` and
+`orion-studio-gateway.service`, both enabled at boot. The gateway still exposes
+only authenticated semantic capabilities; `/tmp/oriond.sock` remains private.
+
+Reboot remains torque-off. Studio prepares movement only after an explicit Run
+of a pose, motion, or movement-containing scene, and can explicitly release
+torque afterward. The safe deployment path is `scripts/deploy_pi.sh`, which
+returns to rest and disables torque before rebuilding, verifies zero pose plus
+RGBW/audio, returns to rest again, and installs/restarts the services. This
+later section is authoritative where it conflicts with the historical
+source-run statements above.

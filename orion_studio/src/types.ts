@@ -9,10 +9,18 @@ export const JOINT_NAMES = [
 export type JointName = (typeof JOINT_NAMES)[number];
 export type JointPositions = Record<JointName, number>;
 
+export interface JointLimit {
+  name: JointName;
+  lower_rad: number;
+  upper_rad: number;
+}
+
 export interface PoseDefinition {
   name: string;
   description: string;
   positions: JointPositions;
+  source: "built_in" | "user";
+  remote_revision?: string;
 }
 
 export interface MotionKeyframe {
@@ -25,6 +33,26 @@ export interface MotionDefinition {
   name: string;
   description: string;
   keyframes: MotionKeyframe[];
+  source: "built_in" | "user";
+  remote_revision?: string;
+}
+
+export interface StoredPoseDocument {
+  format_version: 1;
+  units: "radians";
+  poses: Record<string, {
+    description: string;
+    positions: JointPositions;
+  }>;
+}
+
+export interface StoredMotionDocument {
+  format_version: 1;
+  motion: {
+    name: string;
+    description: string;
+    keyframes: MotionKeyframe[];
+  };
 }
 
 export interface BaseSceneEvent {
@@ -92,6 +120,7 @@ export interface ProjectCatalog {
   cueUrls: Record<string, string>;
   urdf: string;
   meshUrls: Record<string, string>;
+  jointLimits: JointLimit[];
 }
 
 export interface RunStatus {
@@ -127,5 +156,9 @@ export interface GatewayCapabilities {
     cancel: string[];
     scene_publish: { format_version: number; max_body_bytes: number };
     scene_library: { read: boolean; create: boolean; update: "revision" };
+    joint_limits: JointLimit[];
+    pose_library: { read: boolean; create: boolean; update: false };
+    motion_library: { read: boolean; create: boolean; update: false };
+    movement_lifecycle: Array<"prepare" | "release">;
   };
 }

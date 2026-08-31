@@ -22,7 +22,8 @@ pub use audio::{
 pub use calibration::{JointCalibration, load_calibration_file};
 pub use daemon::{CompletionCriteria, OBSERVE_FREQUENCY_HZ, RuntimeCore};
 pub use driver::{
-    JointServoProfile, RuntimeDriver, ServoProfiles, Sts3215Driver, make_orion_servo_profiles,
+    JointLimit, JointServoProfile, RuntimeDriver, ServoProfiles, Sts3215Driver,
+    make_orion_servo_profiles,
 };
 pub use error::{Error, Result};
 pub use lighting::{

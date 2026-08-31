@@ -42,6 +42,26 @@ export interface UpdatedScene {
   relative_path: string;
 }
 
+export interface UserAssetSummary {
+  name: string;
+  revision: string;
+  bytes: number;
+  relative_path: string;
+}
+
+export interface UserAssetLibrary {
+  api_version: number;
+  assets: UserAssetSummary[];
+}
+
+export interface UserAssetSource {
+  api_version: number;
+  name: string;
+  revision: string;
+  relative_path: string;
+  yaml: string;
+}
+
 async function request<T>(connection: GatewayConnection, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${connection.url.replace(/\/$/, "")}${path}`, {
     ...init,
@@ -68,6 +88,20 @@ export function runScene(connection: GatewayConnection, name: string): Promise<u
   return request(connection, "/api/v1/operations", {
     method: "POST",
     body: JSON.stringify({ operation: "scene", name }),
+  });
+}
+
+export function prepareMovement(connection: GatewayConnection): Promise<unknown> {
+  return request(connection, "/api/v1/operations", {
+    method: "POST",
+    body: JSON.stringify({ operation: "prepare_movement" }),
+  });
+}
+
+export function releaseMovement(connection: GatewayConnection): Promise<unknown> {
+  return request(connection, "/api/v1/operations", {
+    method: "POST",
+    body: JSON.stringify({ operation: "release_movement" }),
   });
 }
 
@@ -101,6 +135,36 @@ export function updateUserScene(
   return request(connection, `/api/v1/scenes/${encodeURIComponent(name)}`, {
     method: "PUT",
     body: JSON.stringify({ expected_revision: expectedRevision, document }),
+  });
+}
+
+export function listUserPoses(connection: GatewayConnection): Promise<UserAssetLibrary> {
+  return request(connection, "/api/v1/poses");
+}
+
+export function getUserPose(connection: GatewayConnection, name: string): Promise<UserAssetSource> {
+  return request(connection, `/api/v1/poses/${encodeURIComponent(name)}`);
+}
+
+export function publishPose(connection: GatewayConnection, document: unknown): Promise<PublishedScene> {
+  return request(connection, "/api/v1/poses", {
+    method: "POST",
+    body: JSON.stringify(document),
+  });
+}
+
+export function listUserMotions(connection: GatewayConnection): Promise<UserAssetLibrary> {
+  return request(connection, "/api/v1/motions");
+}
+
+export function getUserMotion(connection: GatewayConnection, name: string): Promise<UserAssetSource> {
+  return request(connection, `/api/v1/motions/${encodeURIComponent(name)}`);
+}
+
+export function publishMotion(connection: GatewayConnection, document: unknown): Promise<PublishedScene> {
+  return request(connection, "/api/v1/motions", {
+    method: "POST",
+    body: JSON.stringify(document),
   });
 }
 

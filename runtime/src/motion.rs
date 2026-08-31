@@ -95,6 +95,10 @@ impl MotionLibrary {
     pub fn names(&self) -> Vec<String> {
         self.motions.keys().cloned().collect()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &MotionDefinition)> {
+        self.motions.iter()
+    }
 }
 
 fn collect_yaml_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
@@ -140,8 +144,15 @@ fn load_motion_file(path: &Path, poses: &PoseLibrary) -> Result<MotionDefinition
             "Motion file must contain a motion mapping.".into(),
         ));
     };
-    if entry.name.is_empty() {
-        return Err(Error::Runtime("Motion name cannot be empty.".into()));
+    if entry.name.is_empty()
+        || !entry
+            .name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(Error::Runtime(
+            "Motion name must be a semantic Orion name.".into(),
+        ));
     }
     if entry.keyframes.is_empty() {
         return Err(Error::Runtime(format!(

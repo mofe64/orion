@@ -889,6 +889,17 @@ mod tests {
             Ok(())
         }
 
+        fn joint_limits(&self) -> Result<Vec<crate::driver::JointLimit>> {
+            Ok(crate::ORION_JOINT_NAMES
+                .iter()
+                .map(|name| crate::driver::JointLimit {
+                    name: (*name).to_owned(),
+                    lower_rad: -3.0,
+                    upper_rad: 3.0,
+                })
+                .collect())
+        }
+
         fn validate_positions(&self, _positions_radians: &JointPositions) -> Result<()> {
             Ok(())
         }

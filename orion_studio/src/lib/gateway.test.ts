@@ -3,8 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getCapabilities,
   getUserScene,
+  listUserPoses,
   listUserScenes,
+  publishPose,
   publishScene,
+  prepareMovement,
+  releaseMovement,
   updateUserScene,
 } from "./gateway";
 
@@ -22,6 +26,12 @@ describe("Studio gateway client", () => {
         cancel: ["movement", "scene", "speech"],
         scene_publish: { format_version: 1, max_body_bytes: 262144 },
         scene_library: { read: true, create: true, update: "revision" },
+        joint_limits: [
+          { name: "base_yaw_joint", lower_rad: -1.54, upper_rad: 1.54 },
+        ],
+        pose_library: { read: true, create: true, update: false },
+        motion_library: { read: true, create: true, update: false },
+        movement_lifecycle: ["prepare", "release"],
       },
     };
     const fetchMock = vi.fn().mockResolvedValue({
@@ -40,6 +50,29 @@ describe("Studio gateway client", () => {
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer secret" }),
       }),
+    );
+  });
+
+  it("prepares and releases movement through semantic lifecycle operations", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ api_version: 1, accepted: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = { url: "http://orion.local:7447", token: "secret" };
+
+    await prepareMovement(connection);
+    await releaseMovement(connection);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://orion.local:7447/api/v1/operations",
+      expect.objectContaining({ body: JSON.stringify({ operation: "prepare_movement" }) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://orion.local:7447/api/v1/operations",
+      expect.objectContaining({ body: JSON.stringify({ operation: "release_movement" }) }),
     );
   });
 
@@ -146,6 +179,50 @@ describe("Studio gateway client", () => {
         method: "PUT",
         body: JSON.stringify({ expected_revision: revision, document }),
       }),
+    );
+  });
+
+  it("lists and creates immutable user keyframe poses", async () => {
+    const revision = "c".repeat(64);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          api_version: 1,
+          assets: [{
+            name: "studio_pose",
+            revision,
+            bytes: 200,
+            relative_path: "motion/user/poses/studio_pose.yaml",
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          api_version: 1,
+          published: true,
+          already_present: false,
+          name: "studio_pose",
+          revision,
+          relative_path: "motion/user/poses/studio_pose.yaml",
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = { url: "http://orion.local:7447", token: "secret" };
+    const document = {
+      format_version: 1,
+      units: "radians",
+      poses: { studio_pose: { description: "Test", positions: {} } },
+    };
+
+    await listUserPoses(connection);
+    await publishPose(connection, document);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://orion.local:7447/api/v1/poses",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(document) }),
     );
   });
 });

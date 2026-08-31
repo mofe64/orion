@@ -1,0 +1,23 @@
+[Unit]
+Description=Orion hardware runtime
+Documentation=file://@PROJECT_ROOT@/runtime/README.md
+Wants=orion-neopixel-pin.service
+After=local-fs.target sound.target orion-neopixel-pin.service
+
+[Service]
+Type=simple
+User=@ORION_USER@
+WorkingDirectory=@PROJECT_ROOT@
+Environment=HOME=@USER_HOME@
+UMask=0077
+ExecStart=@PROJECT_ROOT@/runtime/target/release/oriond --serve --backend hardware --port /dev/ttyACM0 --baud-rate 1000000 --calibration @USER_HOME@/.config/orion/servo_calibration.json
+ExecStop=@PROJECT_ROOT@/scripts/orion_safe_stop.sh @PROJECT_ROOT@/runtime/target/release/oriond /tmp/oriond.sock
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
