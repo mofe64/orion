@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { load as loadYaml } from "js-yaml";
 import {
   CircleStop,
-  CloudCog,
+  Film,
   Lightbulb,
   Link2,
   Move3d,
@@ -11,9 +11,9 @@ import {
   Power,
   Radio,
   Save,
-  Sparkles,
   Unplug,
   Volume2,
+  Waypoints,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -39,6 +39,7 @@ import {
   publishMotion,
   publishScene,
   prepareMovement,
+  previewScene,
   releaseMovement,
   runMotion,
   runScene,
@@ -47,7 +48,16 @@ import {
   type UserAssetSource,
   type UserSceneSource,
 } from "./lib/gateway";
-import { sampleSceneLight, sampleScenePose, sceneDuration } from "./lib/preview";
+import {
+  eventDuration,
+  eventEndPose,
+  expandSceneTimeline,
+  isDelayEvent,
+  sampleSceneLight,
+  sampleScenePose,
+  sceneDuration,
+  splitSceneEvent,
+} from "./lib/preview";
 import type {
   GatewayCapabilities,
   GatewayStatus,
@@ -55,6 +65,7 @@ import type {
   MotionDefinition,
   MotionKeyframe,
   PoseDefinition,
+  ProjectCatalog,
   SceneDefinition,
   SceneEvent,
   StoredSceneDocument,
@@ -72,13 +83,20 @@ function sortedTimeline(events: SceneEvent[]): SceneEvent[] {
   return [...events].sort((left, right) => left.at - right.at);
 }
 
-function sceneDocument(scene: SceneDefinition, name: string) {
+function sceneDocument(
+  scene: SceneDefinition,
+  name: string,
+  catalog: ProjectCatalog,
+): StoredSceneDocument {
+  const timeline = expandSceneTimeline(scene, catalog)
+    .filter((event) => event.type !== "scene")
+    .map(({ id: _id, ...event }) => event);
   return {
     format_version: 1,
     scene: {
       name,
       description: scene.description,
-      timeline: scene.timeline.map(({ id: _id, ...event }) => event),
+      timeline,
     },
   };
 }
@@ -130,7 +148,7 @@ function remoteScene(source: UserSceneSource): SceneDefinition {
     || document.scene.name !== source.name
     || !Array.isArray(document.scene.timeline)
   ) {
-    throw new Error(`Pi user scene '${source.name}' does not match its library metadata.`);
+    throw new Error(`Robot scene '${source.name}' could not be verified.`);
   }
   return storedScene(document, source.revision);
 }
@@ -144,7 +162,7 @@ function remotePose(source: UserAssetSource): PoseDefinition {
     || Object.keys(document.poses ?? {}).length !== 1
     || !entry
   ) {
-    throw new Error(`Pi user pose '${source.name}' does not match its library metadata.`);
+    throw new Error(`Robot pose '${source.name}' could not be verified.`);
   }
   return {
     name: source.name,
@@ -169,7 +187,7 @@ function storedPose(document: StoredPoseDocument): PoseDefinition {
 function remoteMotion(source: UserAssetSource): MotionDefinition {
   const document = loadYaml(source.yaml) as StoredMotionDocument;
   if (document?.format_version !== 1 || document.motion?.name !== source.name) {
-    throw new Error(`Pi user motion '${source.name}' does not match its library metadata.`);
+    throw new Error(`Robot motion '${source.name}' could not be verified.`);
   }
   return {
     ...document.motion,
@@ -185,23 +203,37 @@ function storedMotion(document: StoredMotionDocument): MotionDefinition {
   };
 }
 
-function createEvent(type: SceneEvent["type"], at: number, catalog = projectCatalog): SceneEvent {
+function createEvent(
+  type: SceneEvent["type"],
+  at: number,
+  catalog = projectCatalog,
+  currentSceneName = "",
+): SceneEvent {
   const id = crypto.randomUUID();
   switch (type) {
     case "play_motion":
       return { id, at, type, motion: Object.keys(catalog.motions)[0] };
     case "goto_pose":
-      return { id, at, type, pose: Object.keys(catalog.poses)[0], duration_seconds: 2 };
+      return {
+        id,
+        at,
+        type,
+        pose: catalog.poses.attentive ? "attentive" : Object.keys(catalog.poses)[0],
+        duration_seconds: 2,
+      };
+    case "scene":
+      return {
+        id,
+        at,
+        type,
+        scene: Object.keys(catalog.scenes).find((name) => name !== currentSceneName)
+          ?? Object.keys(catalog.scenes)[0],
+      };
     case "light":
       return { id, at, type, red: 8, green: 3, blue: 0, white: 20, transition_seconds: 0.35 };
     case "audio":
       return { id, at, type, cue: catalog.cues[0] ?? "acknowledge" };
   }
-}
-
-function runLabel(run: { state: string; name?: string; run_id: number } | null | undefined): string {
-  if (!run) return "No active run";
-  return `${run.name ?? "run"} · ${run.state} · #${run.run_id}`;
 }
 
 export default function App() {
@@ -215,6 +247,7 @@ export default function App() {
   const [poseDraft, setPoseDraft] = useState<PoseDefinition | null>(null);
   const [poseSaveAsName, setPoseSaveAsName] = useState("my_keyframe");
   const [poseDirty, setPoseDirty] = useState(false);
+  const [editingTimelinePoseId, setEditingTimelinePoseId] = useState<string | null>(null);
   const [motionDraft, setMotionDraft] = useState<MotionDefinition | null>(null);
   const [motionSaveAsName, setMotionSaveAsName] = useState("my_motion");
   const [motionDirty, setMotionDirty] = useState(false);
@@ -258,32 +291,35 @@ export default function App() {
       motions: { ...catalog.motions, [event.motion]: motionDraft },
     };
   }, [catalog, motionDraft, previewKind, scene.timeline]);
+  const expandedTimeline = useMemo(
+    () => expandSceneTimeline(scene, previewCatalog),
+    [scene, previewCatalog],
+  );
 
   const duration = useMemo(() => {
     const cueEnd = scene.timeline.reduce((latest, event) => {
       if (event.type !== "audio") return latest;
       return Math.max(latest, event.at + (cueDurations[event.cue] ?? 1));
     }, 0);
-    return Math.max(sceneDuration(scene, previewCatalog), cueEnd);
-  }, [scene, cueDurations, previewCatalog]);
+    const expandedCueEnd = expandedTimeline.reduce((latest, event) => {
+      if (event.type !== "audio") return latest;
+      return Math.max(latest, event.at + (cueDurations[event.cue] ?? 1));
+    }, cueEnd);
+    return Math.max(sceneDuration(scene, previewCatalog), expandedCueEnd);
+  }, [scene, cueDurations, previewCatalog, expandedTimeline]);
   const sampledJoints = useMemo(
     () => sampleScenePose(scene, previewCatalog, currentTime),
     [scene, previewCatalog, currentTime],
   );
-  const previewJoints = previewKind === "pose" && poseDraft
+  const previewJoints = (previewKind === "pose" || editingTimelinePoseId) && poseDraft
     ? poseDraft.positions
     : sampledJoints;
-  const previewLight = useMemo(() => sampleSceneLight(scene, currentTime), [scene, currentTime]);
+  const previewLight = useMemo(
+    () => sampleSceneLight(scene, currentTime, previewCatalog),
+    [scene, currentTime, previewCatalog],
+  );
   const selectedEvent = scene.timeline.find((event) => event.id === selectedEventId) ?? null;
   const connection: GatewayConnection = { url: gatewayUrl, token: gatewayToken };
-  const activeRobotRun = robotStatus?.scene.active ?? robotStatus?.runtime.motion;
-  const latestRobotRun = activeRobotRun ?? robotStatus?.scene.last ?? robotStatus?.runtime.last_motion;
-  const robotRunSummary = activeRobotRun
-    ? `Active: ${runLabel(activeRobotRun)}`
-    : latestRobotRun
-      ? `Last: ${runLabel(latestRobotRun)}`
-      : "No runs yet";
-
   const stopPreviewAudio = useCallback(() => {
     previewAudioQueue.current = [];
     if (previewAudio.current) {
@@ -316,7 +352,7 @@ export default function App() {
   const resetPreviewCues = (time: number) => {
     stopPreviewAudio();
     dispatchedPreviewCues.current.clear();
-    for (const event of scene.timeline) {
+    for (const event of expandedTimeline) {
       if (event.type === "audio" && event.at < time) {
         dispatchedPreviewCues.current.add(event.id);
       }
@@ -366,7 +402,7 @@ export default function App() {
       })
       .catch(() => {
         setProjectRoot("");
-        setNotice("No local Orion checkout was found. Connect to the Pi, or set ORION_PROJECT_ROOT for offline staging.");
+        setNotice("No offline project is configured. Connect to Orion to load and save your personal assets.");
       });
   }, []);
 
@@ -407,7 +443,7 @@ export default function App() {
 
   useEffect(() => {
     if (!playing) return;
-    for (const event of scene.timeline) {
+    for (const event of expandedTimeline) {
       if (
         event.type === "audio"
         && event.at <= currentTime
@@ -418,7 +454,7 @@ export default function App() {
       }
     }
     playNextPreviewCue();
-  }, [currentTime, playing, scene.timeline, playNextPreviewCue]);
+  }, [currentTime, playing, expandedTimeline, playNextPreviewCue]);
 
   useEffect(() => {
     if (!playing) stopPreviewAudio();
@@ -447,6 +483,7 @@ export default function App() {
     const next = copyScene(catalog.scenes[name]);
     setScene(next);
     setPoseDraft(null);
+    setEditingTimelinePoseId(null);
     setPoseDirty(false);
     setMotionDraft(null);
     setMotionDirty(false);
@@ -460,8 +497,8 @@ export default function App() {
     setNotice(next.source === "built_in"
       ? `Loaded built-in scene “${name}” as a read-only source. Save As creates a user copy.`
       : next.remote_revision
-        ? `Loaded Pi user scene “${name}”. Save changes uses revision checking; Save As creates a copy.`
-        : `Loaded local user scene “${name}”. Save As creates another local or Pi copy.`);
+        ? `Loaded your scene “${name}” from Orion. Save changes protects newer edits; Save As creates a copy.`
+        : `Loaded your offline scene “${name}”. Save As creates a separate copy.`);
   };
 
   const previewPose = (name: string) => {
@@ -474,6 +511,7 @@ export default function App() {
       timeline: [{ id: crypto.randomUUID(), at: 0, type: "goto_pose", pose: name, duration_seconds: 1 }],
     };
     setPoseDraft(structuredClone(catalog.poses[name]));
+    setEditingTimelinePoseId(null);
     setPoseSaveAsName(
       connected && catalog.poses[name].source === "user" && !catalog.poses[name].remote_revision
         ? name
@@ -514,6 +552,7 @@ export default function App() {
       }],
     };
     setPoseDraft(nextPose);
+    setEditingTimelinePoseId(null);
     setPoseSaveAsName("my_keyframe");
     setPoseDirty(true);
     setMotionDraft(null);
@@ -539,6 +578,7 @@ export default function App() {
     };
     setScene(next);
     setPoseDraft(null);
+    setEditingTimelinePoseId(null);
     setPoseDirty(false);
     setMotionDraft(structuredClone(catalog.motions[name]));
     setMotionSaveAsName(
@@ -584,6 +624,7 @@ export default function App() {
     setMotionSaveAsName("my_motion");
     setMotionDirty(true);
     setPoseDraft(null);
+    setEditingTimelinePoseId(null);
     setPoseDirty(false);
     setScene(preview);
     setPreviewKind("motion");
@@ -606,6 +647,7 @@ export default function App() {
     };
     setScene(next);
     setPoseDraft(null);
+    setEditingTimelinePoseId(null);
     setPoseDirty(false);
     setMotionDraft(null);
     setMotionDirty(false);
@@ -615,7 +657,7 @@ export default function App() {
     setCurrentTime(0);
     setDirty(true);
     setSaveAsName("my_orion_scene");
-    setNotice("Created a new scene draft. Add semantic clips, then Save As to scenes/user/.");
+    setNotice("Created a new scene. Add clips to the timeline, then choose Save As.");
   };
 
   const updateEvent = (updated: SceneEvent) => {
@@ -643,43 +685,136 @@ export default function App() {
     setDirty(true);
   };
 
-  const deleteEvent = () => {
-    if (!selectedEventId || scene.timeline.length === 1) {
+  const deleteEvent = (eventId = selectedEventId) => {
+    if (!eventId || scene.timeline.length === 1) {
       setNotice("A scene must keep at least one event.");
       return;
     }
     setScene((current) => ({
       ...current,
       source: "draft",
-      timeline: current.timeline.filter((event) => event.id !== selectedEventId),
+      timeline: current.timeline.filter((event) => event.id !== eventId),
     }));
+    if (editingTimelinePoseId === eventId) {
+      setEditingTimelinePoseId(null);
+      setPoseDraft(null);
+    }
     setSelectedEventId(null);
     setDirty(true);
   };
 
+  const laneEnd = (type: SceneEvent["type"]): number => {
+    const laneTypes = type === "play_motion" || type === "goto_pose" || type === "scene"
+      ? ["play_motion", "goto_pose", "scene"]
+      : type === "light"
+        ? ["light"]
+        : ["audio"];
+    return scene.timeline.reduce((latest, event) => {
+      if (!laneTypes.includes(event.type)) return latest;
+      const clipDuration = event.type === "audio"
+        ? cueDurations[event.cue] ?? eventDuration(event, previewCatalog)
+        : eventDuration(event, previewCatalog);
+      return Math.max(latest, event.at + clipDuration);
+    }, 0);
+  };
+
   const addEvent = (type: SceneEvent["type"]) => {
-    const event = createEvent(type, Number(currentTime.toFixed(2)), catalog);
+    const at = Number(laneEnd(type).toFixed(2));
+    const event = createEvent(type, at, catalog, scene.name);
     setScene((current) => ({
       ...current,
       source: "draft",
       timeline: sortedTimeline([...current.timeline, event]),
     }));
     setSelectedEventId(event.id);
+    setCurrentTime(at);
+    setPlaying(false);
     setDirty(true);
+    setNotice(`${type.replaceAll("_", " ")} appended at ${at.toFixed(2)}s.`);
   };
 
   const addLightingEffect = (kind: LightingEffectKind) => {
-    const events = createLightingEffect(kind, Number(currentTime.toFixed(3)), previewLight);
+    const at = Number(laneEnd("light").toFixed(3));
+    const startingLight = sampleSceneLight(scene, at, previewCatalog);
+    const events = createLightingEffect(kind, at, startingLight);
     setScene((current) => ({
       ...current,
       source: "draft",
       timeline: sortedTimeline([...current.timeline, ...events]),
     }));
     setSelectedEventId(events[0].id);
+    setCurrentTime(at);
+    setPlaying(false);
     setDirty(true);
     setNotice(
       `${kind === "pulse" ? "Pulse" : "Breathe"} added as ${events.length} editable RGBW fades using the existing scene format.`,
     );
+  };
+
+  const editTimelinePose = (eventId: string) => {
+    const event = scene.timeline.find((item) => item.id === eventId);
+    if (event?.type !== "goto_pose") return;
+    const baseline = catalog.poses[event.pose];
+    if (!baseline) {
+      setNotice(`The baseline pose “${event.pose}” is not available.`);
+      return;
+    }
+    setEditingTimelinePoseId(eventId);
+    setPoseDraft(structuredClone(baseline));
+    setPoseSaveAsName(`${baseline.name}_variation`);
+    setPoseDirty(true);
+    setSelectedEventId(eventId);
+    setCurrentTime(event.at + event.duration_seconds);
+    setPlaying(false);
+    setNotice(`Editing a copy of “${baseline.name}”. Saving creates a new pose and changes only this clip.`);
+  };
+
+  const splitTimelineEvent = (eventId: string) => {
+    const event = scene.timeline.find((item) => item.id === eventId);
+    if (!event) return;
+    const parts = splitSceneEvent(event, previewCatalog);
+    if (parts.length === 1 && parts[0] === event) {
+      setNotice("This clip has no composite parts to split.");
+      return;
+    }
+    setScene((current) => ({
+      ...current,
+      source: "draft",
+      timeline: sortedTimeline(current.timeline.flatMap((item) => item.id === eventId ? parts : [item])),
+    }));
+    setSelectedEventId(parts[0]?.id ?? null);
+    setCurrentTime(parts[0]?.at ?? event.at);
+    setDirty(true);
+    const delayCount = parts.filter(isDelayEvent).length;
+    setNotice(`Split “${event.type === "play_motion" ? event.motion : event.type === "scene" ? event.scene : "clip"}” into ${parts.length - delayCount} editable parts and ${delayCount} visible delays.`);
+  };
+
+  const insertDelayAfter = (eventId: string, seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    const event = scene.timeline.find((item) => item.id === eventId);
+    if (!event) return;
+    const after = event.at + eventDuration(event, previewCatalog);
+    const holdPose = eventEndPose(event, previewCatalog);
+    setScene((current) => ({
+      ...current,
+      source: "draft",
+      timeline: sortedTimeline([
+        ...current.timeline.map((item) => (
+          item.id !== eventId && item.at >= after - 0.001
+          ? { ...item, at: Number((item.at + seconds).toFixed(3)) }
+          : item
+        )),
+        ...(holdPose ? [{
+          id: `${eventId}:delay:${crypto.randomUUID()}`,
+          at: after,
+          type: "goto_pose" as const,
+          pose: holdPose,
+          duration_seconds: seconds,
+        }] : []),
+      ]),
+    }));
+    setDirty(true);
+    setNotice(`Inserted a ${seconds.toFixed(2)}s delay after the selected clip.`);
   };
 
   const updatePosePosition = (joint: JointName, value: number) => {
@@ -701,7 +836,7 @@ export default function App() {
   const savePoseDraft = async () => {
     if (!poseDraft) return;
     if (!connected && !projectRoot) {
-      setNotice("Connect to Orion to save on the Pi, or set ORION_PROJECT_ROOT for offline staging.");
+      setNotice("Connect to Orion to save, or configure an offline project for local work.");
       return;
     }
     const name = poseSaveAsName.trim();
@@ -725,6 +860,24 @@ export default function App() {
           ? result.revision
           : undefined,
       };
+      setPoseCatalog((current) => ({ ...current, [saved.name]: saved }));
+      if (editingTimelinePoseId) {
+        setScene((current) => ({
+          ...current,
+          source: "draft",
+          timeline: current.timeline.map((event) => (
+            event.id === editingTimelinePoseId && event.type === "goto_pose"
+              ? { ...event, pose: saved.name }
+              : event
+          )),
+        }));
+        setPoseDraft(null);
+        setPoseDirty(false);
+        setEditingTimelinePoseId(null);
+        setDirty(true);
+        setNotice(`Created the new pose “${saved.name}” and assigned it only to this timeline clip.`);
+        return;
+      }
       const preview: SceneDefinition = {
         format_version: 1,
         name: `${saved.name}_pose_preview`,
@@ -738,13 +891,12 @@ export default function App() {
           duration_seconds: 1,
         }],
       };
-      setPoseCatalog((current) => ({ ...current, [saved.name]: saved }));
       setPoseDraft(saved);
       setPoseSaveAsName(`${saved.name}_v2`);
       setPoseDirty(false);
       setScene(preview);
       setSelectedEventId(preview.timeline[0].id);
-      setNotice(`Saved immutable keyframe ${result.relative_path}${connected ? " on Orion" : " in local staging"}.`);
+      setNotice(`Saved the new pose “${saved.name}”${connected ? " on Orion" : " in your offline project"}.`);
     } catch (error) {
       setNotice(`Could not save pose: ${String(error)}`);
     }
@@ -753,7 +905,7 @@ export default function App() {
   const saveMotionDraft = async () => {
     if (!motionDraft) return;
     if (!connected && !projectRoot) {
-      setNotice("Connect to Orion to save on the Pi, or set ORION_PROJECT_ROOT for offline staging.");
+      setNotice("Connect to Orion to save, or configure an offline project for local work.");
       return;
     }
     const name = motionSaveAsName.trim();
@@ -805,7 +957,7 @@ export default function App() {
       setMotionDirty(false);
       setScene(preview);
       setSelectedEventId(preview.timeline[0].id);
-      setNotice(`Saved immutable motion ${result.relative_path}${connected ? " on Orion" : " in local staging"}.`);
+      setNotice(`Saved the new motion “${saved.name}”${connected ? " on Orion" : " in your offline project"}.`);
     } catch (error) {
       setNotice(`Could not save motion: ${String(error)}`);
     }
@@ -813,7 +965,7 @@ export default function App() {
 
   const saveUserScene = async () => {
     if (!connected && !projectRoot) {
-      setNotice("Connect to Orion to save on the Pi, or set ORION_PROJECT_ROOT for offline staging.");
+      setNotice("Connect to Orion to save, or configure an offline project for local work.");
       return;
     }
     const name = saveAsName.trim();
@@ -821,7 +973,7 @@ export default function App() {
       setNotice("Save As name may contain only letters, numbers, underscores, and hyphens.");
       return;
     }
-    const document = sceneDocument(scene, name);
+    const document = sceneDocument(scene, name, previewCatalog);
     try {
       const result = connected
         ? await publishScene(connection, document)
@@ -843,7 +995,7 @@ export default function App() {
       setDirty(false);
       setSaveAsName(`${savedScene.name}_copy`);
       setNotice(
-        `Saved ${result.relative_path}${connected ? " on Orion" : " in the local project"}. Studio did not modify any built-in scene.`,
+        `Saved the new scene “${savedScene.name}”${connected ? " on Orion" : " in your offline project"}. The original scene is unchanged.`,
       );
     } catch (error) {
       setNotice(`Could not save scene: ${String(error)}`);
@@ -852,7 +1004,7 @@ export default function App() {
 
   const saveSceneChanges = async () => {
     if (!connected || !scene.remote_revision) {
-      setNotice("Connect to Orion and load a Pi user scene before saving changes in place.");
+      setNotice("Connect to Orion and load one of your saved scenes before saving changes in place.");
       return;
     }
     try {
@@ -860,7 +1012,7 @@ export default function App() {
         connection,
         scene.name,
         scene.remote_revision,
-        sceneDocument(scene, scene.name),
+        sceneDocument(scene, scene.name, previewCatalog),
       );
       const savedScene: SceneDefinition = {
         ...copyScene(scene),
@@ -870,7 +1022,7 @@ export default function App() {
       setScene(savedScene);
       setSceneCatalog((current) => ({ ...current, [savedScene.name]: savedScene }));
       setDirty(false);
-      setNotice(`Saved revision-checked changes to ${result.relative_path} and reloaded Orion's scene catalog.`);
+      setNotice(`Saved changes to “${result.name}” and refreshed Orion's scene library.`);
     } catch (error) {
       setNotice(`Could not save changes: ${String(error)}`);
     }
@@ -931,7 +1083,7 @@ export default function App() {
       localStorage.setItem("orionStudioGateway", gatewayUrl);
       sessionStorage.setItem("orionStudioToken", gatewayToken);
       setNotice(
-        `Connected to Orion in ${status.runtime.mode} mode · loaded ${remoteScenes.length} scenes, ${remoteMotions.length} motions, and ${remotePoses.length} poses from the Pi.`,
+        `Connected to Orion · loaded ${remoteScenes.length} scenes, ${remoteMotions.length} motions, and ${remotePoses.length} poses.`,
       );
     } catch (error) {
       setConnected(false);
@@ -968,12 +1120,12 @@ export default function App() {
           throw new Error("Save As before hardware playback so Studio and Orion use the same scene document.");
         }
         if (scene.source === "user" && !scene.remote_revision) {
-          const published = await publishScene(connection, sceneDocument(scene, scene.name));
+          const published = await publishScene(connection, sceneDocument(scene, scene.name, previewCatalog));
           const synchronized = { ...scene, remote_revision: published.revision };
           setScene(synchronized);
           setSceneCatalog((current) => ({ ...current, [scene.name]: synchronized }));
         }
-        if (scene.timeline.some((event) => event.type === "play_motion" || event.type === "goto_pose")) {
+        if (expandedTimeline.some((event) => event.type === "play_motion" || event.type === "goto_pose")) {
           await prepareMovement(connection);
         }
         await runScene(connection, scene.name);
@@ -982,6 +1134,29 @@ export default function App() {
       setRobotStatus(await getStatus(connection));
     } catch (error) {
       setNotice(`Hardware run was not started: ${String(error)}`);
+    }
+  };
+
+  const previewOnRobot = async () => {
+    if (!connected) {
+      setConnectionOpen(true);
+      setNotice("Connect to Orion before previewing on the robot.");
+      return;
+    }
+    if (!robotCapabilities?.capabilities.scene_preview) {
+      setNotice("Orion needs the latest software update before hardware preview is available.");
+      return;
+    }
+    try {
+      const document = sceneDocument(scene, "studio_preview", previewCatalog);
+      if (expandedTimeline.some((event) => event.type === "play_motion" || event.type === "goto_pose")) {
+        await prepareMovement(connection);
+      }
+      await previewScene(connection, document);
+      setRobotStatus(await getStatus(connection));
+      setNotice("Orion accepted this unsaved preview. Nothing was added to its scene library.");
+    } catch (error) {
+      setNotice(`Hardware preview was not started: ${String(error)}`);
     }
   };
 
@@ -1015,10 +1190,9 @@ export default function App() {
     <div className="studio-shell">
       <header className="topbar">
         <div className="brand-lockup">
-          <div className="brand-mark"><Sparkles size={18} /></div>
           <div><strong>ORION</strong><span>STUDIO</span></div>
         </div>
-        <div className="project-chip"><CloudCog size={15} /><span>{projectRoot || "Pi-authoritative mode · no local checkout"}</span></div>
+        <div className="project-chip"><span>{connected ? "Robot connected" : projectRoot ? "Local project ready" : "Connect to Orion"}</span></div>
         <div className="topbar-actions">
           <button className="secondary-button" onClick={() => setConnectionOpen((open) => !open)}>
             {connected ? <Radio size={16} /> : <Unplug size={16} />}
@@ -1027,9 +1201,9 @@ export default function App() {
           {previewKind === "scene" && scene.remote_revision && dirty && <button className="secondary-button" onClick={saveSceneChanges}><Save size={16} />Save changes</button>}
           <button
             className="secondary-button"
-            onClick={previewKind === "pose" ? savePoseDraft : previewKind === "motion" ? saveMotionDraft : saveUserScene}
+            onClick={editingTimelinePoseId || previewKind === "pose" ? savePoseDraft : previewKind === "motion" ? saveMotionDraft : saveUserScene}
           >
-            <Save size={16} />{previewKind === "pose" ? "Save pose" : previewKind === "motion" ? "Save motion" : "Save As"}
+            <Save size={16} />{editingTimelinePoseId ? "Save new pose" : previewKind === "pose" ? "Save pose" : previewKind === "motion" ? "Save motion" : "Save As"}
           </button>
           <button className="primary-button" onClick={runOnRobot}><Link2 size={16} />{scene.source === "user" && !scene.remote_revision && !dirty ? "Publish & Run" : "Run on Orion"}</button>
           <button className="stop-button" onClick={stopRobot} disabled={!robotStatus?.scene.active && !robotStatus?.runtime.motion}><CircleStop size={16} />Stop</button>
@@ -1043,11 +1217,11 @@ export default function App() {
 
       {connectionOpen && (
         <section className="connection-popover">
-          <header><div><p className="panel-kicker">ROBOT LINK</p><h2>Connect to Orion</h2></div><span>Pi gateway v1</span></header>
-          <label>Gateway URL<input value={gatewayUrl} onChange={(event) => setGatewayUrl(event.target.value)} /></label>
-          <label>Studio token<input type="password" value={gatewayToken} onChange={(event) => setGatewayToken(event.target.value)} /></label>
+          <header><div><p className="panel-kicker">ROBOT LINK</p><h2>Connect to Orion</h2></div><span>Secure connection</span></header>
+          <label>Robot address<input value={gatewayUrl} onChange={(event) => setGatewayUrl(event.target.value)} /></label>
+          <label>Pairing token<input type="password" value={gatewayToken} onChange={(event) => setGatewayToken(event.target.value)} /></label>
           <button className="primary-button" onClick={connectRobot}>Connect</button>
-          <small>The raw `/tmp/oriond.sock` remains private on the Pi.</small>
+          <small>Studio sends only named poses, motions, scenes, and playback commands.</small>
         </section>
       )}
 
@@ -1060,7 +1234,7 @@ export default function App() {
             <div className="asset-list">
               {Object.values(catalog.scenes).map((item) => (
                 <button key={item.name} className={`asset-item ${selectedLibraryScene === item.name ? "active" : ""}`} onClick={() => loadScene(item.name)}>
-                  <Sparkles size={14} /><span>{item.name.replaceAll("_", " ")}</span>
+                  <Film size={14} /><span>{item.name.replaceAll("_", " ")}</span>
                 </button>
               ))}
             </div>
@@ -1085,7 +1259,7 @@ export default function App() {
             </div>
             <div className="asset-list compact">
               {Object.keys(catalog.motions).map((name) => (
-                <button key={name} className="asset-item" onClick={() => previewMotion(name)}><Move3d size={14} /><span>{name.replaceAll("_", " ")}</span></button>
+                <button key={name} className="asset-item" onClick={() => previewMotion(name)}><Waypoints size={14} /><span>{name.replaceAll("_", " ")}</span></button>
               ))}
             </div>
           </section>
@@ -1105,8 +1279,9 @@ export default function App() {
           </div>
           <RobotViewport catalog={catalog} joints={previewJoints} light={previewLight} />
           {previewKind === "scene" && <div className="add-event-bar">
-            <span>Add at {currentTime.toFixed(2)}s</span>
-            <button onClick={() => addEvent("play_motion")}><Move3d size={14} />Motion</button>
+            <span>New clips snap to the end of their track</span>
+            <button onClick={() => addEvent("scene")}><Film size={14} />Scene</button>
+            <button onClick={() => addEvent("play_motion")}><Waypoints size={14} />Motion</button>
             <button onClick={() => addEvent("goto_pose")}><Move3d size={14} />Pose</button>
             <button onClick={() => addEvent("light")}><Lightbulb size={14} />Light</button>
             <button onClick={() => addLightingEffect("pulse")}><Lightbulb size={14} />Pulse</button>
@@ -1120,9 +1295,9 @@ export default function App() {
             <p className="panel-kicker">SAFE SAVE</p>
             <label>Save As name<input value={saveAsName} onChange={(event) => setSaveAsName(event.target.value)} /></label>
             <label>Scene description<textarea rows={3} value={scene.description} onChange={(event) => updateSceneDescription(event.target.value)} /></label>
-            <p>{connected ? "Pi-authoritative" : "Offline local staging"} · <code>scenes/user/</code></p>
+            <p>Saved as a personal scene. Orion's built-in scenes remain unchanged.</p>
           </section>}
-          {previewKind === "pose" && poseDraft ? (
+          {(editingTimelinePoseId || previewKind === "pose") && poseDraft ? (
             <PoseEditor
               pose={poseDraft}
               limits={jointLimits}
@@ -1151,15 +1326,8 @@ export default function App() {
               onSave={saveMotionDraft}
             />
           ) : (
-            <EventInspector catalog={previewCatalog} event={selectedEvent} onChange={updateEvent} onDelete={deleteEvent} />
+            <EventInspector catalog={previewCatalog} currentSceneName={scene.name} event={selectedEvent} onChange={updateEvent} onDelete={deleteEvent} />
           )}
-          <section className="robot-status-card">
-            <div><Radio size={15} /><strong>{connected ? "Orion connected" : "Robot offline"}</strong></div>
-            <p>{connected
-              ? `Runtime ${robotStatus?.runtime.mode} · build ${robotStatus?.runtime.build_revision ?? "unknown"} · ${robotRunSummary}`
-              : "Open Connect robot to pair with the Pi gateway."}</p>
-            {robotCapabilities && <p>{robotCapabilities.capabilities.scene.length} scenes · {robotCapabilities.capabilities.motion.length} motions · {robotCapabilities.capabilities.goto.length} poses on Pi</p>}
-          </section>
         </div>
       </main>
 
@@ -1170,8 +1338,13 @@ export default function App() {
         currentTime={currentTime}
         playing={playing}
         selectedEventId={selectedEventId}
+        hardwarePreviewEnabled={connected && !Boolean(robotStatus?.scene.active || robotStatus?.runtime.motion)}
         onSelectEvent={setSelectedEventId}
         onMoveEvent={moveEvent}
+        onDeleteEvent={deleteEvent}
+        onEditPose={editTimelinePose}
+        onSplitEvent={splitTimelineEvent}
+        onInsertDelay={insertDelayAfter}
         onSeek={(time) => { resetPreviewCues(time); setCurrentTime(time); setPlaying(false); }}
         onTogglePlay={() => {
           if (currentTime >= duration) {
@@ -1180,6 +1353,7 @@ export default function App() {
           }
           setPlaying((value) => !value);
         }}
+        onPreviewHardware={previewOnRobot}
         onRewind={() => { resetPreviewCues(0); setCurrentTime(0); setPlaying(false); }}
       />
 

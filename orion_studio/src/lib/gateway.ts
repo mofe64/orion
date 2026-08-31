@@ -91,6 +91,13 @@ export function runScene(connection: GatewayConnection, name: string): Promise<u
   });
 }
 
+export function previewScene(connection: GatewayConnection, document: unknown): Promise<unknown> {
+  return request(connection, "/api/v1/operations", {
+    method: "POST",
+    body: JSON.stringify({ operation: "preview_scene", document }),
+  });
+}
+
 export function prepareMovement(connection: GatewayConnection): Promise<unknown> {
   return request(connection, "/api/v1/operations", {
     method: "POST",

@@ -102,7 +102,7 @@ export function MotionEditor({
         </div>
 
         <button className="secondary-button" onClick={addFrame}><Plus size={14} />Add keyframe</button>
-        <button className="primary-button" onClick={onSave}><Save size={15} />Save immutable motion</button>
+        <button className="primary-button" onClick={onSave}><Save size={15} />Save as new motion</button>
         <p className="field-help">Orion computes quintic interpolation between these named poses.</p>
       </div>
     </aside>

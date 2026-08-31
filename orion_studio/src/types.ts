@@ -85,7 +85,17 @@ export interface AudioEvent extends BaseSceneEvent {
   cue: string;
 }
 
-export type SceneEvent = PlayMotionEvent | GotoPoseEvent | LightEvent | AudioEvent;
+/**
+ * Studio-only composite clip. It is expanded into ordinary runtime events
+ * before a scene document is saved or submitted to Orion.
+ */
+export interface SceneReferenceEvent extends BaseSceneEvent {
+  type: "scene";
+  scene: string;
+}
+
+export type PersistedSceneEvent = PlayMotionEvent | GotoPoseEvent | LightEvent | AudioEvent;
+export type SceneEvent = PersistedSceneEvent | SceneReferenceEvent;
 
 export interface SceneDefinition {
   format_version: 1;
@@ -101,7 +111,7 @@ export interface StoredSceneDocument {
   scene: {
     name: string;
     description: string;
-    timeline: Array<Omit<SceneEvent, "id">>;
+    timeline: Array<Omit<PersistedSceneEvent, "id">>;
   };
 }
 
@@ -120,6 +130,7 @@ export interface ProjectCatalog {
   cueUrls: Record<string, string>;
   urdf: string;
   meshUrls: Record<string, string>;
+  urdfJointOffsets: JointPositions;
   jointLimits: JointLimit[];
 }
 
@@ -155,6 +166,7 @@ export interface GatewayCapabilities {
     speech: { max_text_bytes: number };
     cancel: string[];
     scene_publish: { format_version: number; max_body_bytes: number };
+    scene_preview?: { format_version: number; max_body_bytes: number; persisted: false };
     scene_library: { read: boolean; create: boolean; update: "revision" };
     joint_limits: JointLimit[];
     pose_library: { read: boolean; create: boolean; update: false };

@@ -96,7 +96,7 @@ export function PoseEditor({
         </div>
 
         <button className="primary-button" onClick={onSave}>
-          <Save size={15} />Save immutable pose
+          <Save size={15} />Save as new pose
         </button>
         <p className="field-help">Saving creates a named keyframe. Slider changes never move Orion.</p>
       </div>

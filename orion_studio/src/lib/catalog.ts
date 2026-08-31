@@ -2,6 +2,7 @@ import { load } from "js-yaml";
 
 import posesYaml from "../../../motion/config/poses.yaml?raw";
 import motionLimitsYaml from "../../../motion/config/motion_limits.yaml?raw";
+import modelReference from "../../../simulation/mujoco/config/model_reference.json";
 import orionUrdf from "../../../description/urdf/orion.urdf?raw";
 import { JOINT_NAMES } from "../types";
 import type {
@@ -181,6 +182,10 @@ function loadCueUrls(): Record<string, string> {
 
 const cueUrls = loadCueUrls();
 
+const urdfJointOffsets = Object.fromEntries(
+  JOINT_NAMES.map((name) => [name, -Number(modelReference.joint_reference_radians[name])]),
+) as JointPositions;
+
 export const projectCatalog: ProjectCatalog = {
   poses: loadPoses(),
   motions: loadMotions(),
@@ -189,5 +194,6 @@ export const projectCatalog: ProjectCatalog = {
   cueUrls,
   urdf: orionUrdf,
   meshUrls: loadMeshes(),
+  urdfJointOffsets,
   jointLimits: loadJointLimits(),
 };

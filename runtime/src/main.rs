@@ -12,7 +12,8 @@ use orion_runtime::{
     ORION_AUDIO_PCM_DEVICE, ORION_JOINT_NAMES, PI5_NEOPIXEL_DEVICE_PATH, Pi5NeoPixelDevice,
     PoseLibrary, RecordingAudioDevice, RecordingLightingDevice, Rgbw8, RuntimeCore, RuntimeDriver,
     RustypotTransport, SceneCoordinator, SceneLibrary, SpeechCoordinator, Sts3215Driver,
-    UnixCommandServer, configure_respeaker_v2_mixer, load_calibration_file, request_daemon,
+    UnixCommandServer, configure_respeaker_v2_mixer, load_calibration_file, parse_scene_document,
+    request_daemon,
 };
 
 const DEFAULT_BAUD_RATE: i32 = 1_000_000;
@@ -1045,6 +1046,47 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     if command == "scene list" {
         return Ok(serde_json::json!({"ok": true, "scenes": scenes.names()}).to_string());
     }
+    if let Some(document) = command.strip_prefix("scene preview ") {
+        let context = asset_reload.ok_or_else(|| {
+            orion_runtime::Error::InvalidState("Scene preview is not configured.".into())
+        })?;
+        if let Some(motion) = core.snapshot().motion.as_ref() {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "command": "scene_preview",
+                "error": "motion already active",
+                "active_run_id": motion.run_id,
+            })
+            .to_string());
+        }
+        if let Some(active_speech) = speech.active_status() {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "command": "scene_preview",
+                "error": "speech already active",
+                "active_speech_run_id": active_speech.run_id,
+            })
+            .to_string());
+        }
+        let definition = parse_scene_document(
+            document,
+            "Studio ephemeral preview",
+            core.poses(),
+            core.motions(),
+        )?;
+        definition.validate_audio_cues(&context.cues)?;
+        let status = scenes.start_definition(definition, now_seconds)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "command": "scene_preview",
+            "run_id": status.run_id,
+            "scene": status.name,
+            "state": status.state,
+            "event_count": status.event_count,
+            "persisted": false,
+        })
+        .to_string());
+    }
     if let Some(name) = command.strip_prefix("scene start ") {
         let name = name.trim();
         if name.is_empty() || name.split_whitespace().count() != 1 {
@@ -1472,6 +1514,41 @@ mod tests {
                 .as_array()
                 .is_some_and(|names| names.iter().any(|name| name == "look_at_left"))
         );
+
+        let preview_document = serde_json::json!({
+            "format_version": 1,
+            "scene": {
+                "name": "studio_preview",
+                "description": "Ephemeral test preview.",
+                "timeline": [{
+                    "at": 0.0,
+                    "type": "light",
+                    "red": 1,
+                    "green": 2,
+                    "blue": 3,
+                    "white": 4,
+                    "transition_seconds": 0.1,
+                }],
+            },
+        });
+        let preview_command = format!(
+            "scene preview {}",
+            serde_json::to_string(&preview_document).unwrap()
+        );
+        let preview: serde_json::Value = serde_json::from_str(&handle_daemon_command_with_reload(
+            &preview_command,
+            0.5,
+            &mut core,
+            &mut scenes,
+            &mut speech,
+            &mut audio,
+            Some(&reload),
+        ))
+        .unwrap();
+        assert_eq!(preview["ok"], true);
+        assert_eq!(preview["command"], "scene_preview");
+        assert_eq!(preview["run_id"], 2);
+        assert_eq!(preview["persisted"], false);
     }
 
     #[test]

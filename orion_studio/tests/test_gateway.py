@@ -94,6 +94,14 @@ class FakeOrionClient:
             return {"ok": True, "command": "play", "run_id": 5, "state": "executing"}
         if command.startswith("scene start "):
             return {"ok": True, "command": "scene_start", "run_id": 6, "state": "executing"}
+        if command.startswith("scene preview "):
+            return {
+                "ok": True,
+                "command": "scene_preview",
+                "run_id": 8,
+                "state": "executing",
+                "persisted": False,
+            }
         if command.startswith("speech start "):
             return {"ok": True, "command": "speech_start", "run_id": 7, "state": "synthesizing"}
         if command == "stop":
@@ -131,6 +139,26 @@ class GatewayTests(unittest.TestCase):
         with self.assertRaises(GatewayError):
             self.gateway.submit({"operation": "joint_stream", "positions": [0, 1]})
         self.assertNotIn("joint_stream", self.client.commands)
+
+    def test_previews_a_valid_scene_without_writing_it(self):
+        document = {
+            "format_version": 1,
+            "scene": {
+                "name": "studio_preview",
+                "description": "Unsaved preview.",
+                "timeline": [
+                    {"at": 0, "type": "goto_pose", "pose": "home", "duration_seconds": 1.5}
+                ],
+            },
+        }
+        status, response = self.gateway.submit(
+            {"operation": "preview_scene", "document": document}
+        )
+        self.assertEqual(status, 202)
+        self.assertFalse(response["result"]["persisted"])
+        command = self.client.commands[-1]
+        self.assertTrue(command.startswith("scene preview "))
+        self.assertEqual(json.loads(command.removeprefix("scene preview ")), document)
 
     def test_prepares_movement_after_a_safe_reboot_and_releases_torque(self):
         self.client.mode = "observe"

@@ -7,6 +7,7 @@ import {
   listUserScenes,
   publishPose,
   publishScene,
+  previewScene,
   prepareMovement,
   releaseMovement,
   updateUserScene,
@@ -73,6 +74,33 @@ describe("Studio gateway client", () => {
       2,
       "http://orion.local:7447/api/v1/operations",
       expect.objectContaining({ body: JSON.stringify({ operation: "release_movement" }) }),
+    );
+  });
+
+  it("submits an ephemeral scene preview as a semantic operation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ api_version: 1, accepted: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = { url: "http://orion.local:7447", token: "secret" };
+    const document = {
+      format_version: 1,
+      scene: {
+        name: "studio_preview",
+        description: "Unsaved preview",
+        timeline: [{ at: 0, type: "goto_pose", pose: "home", duration_seconds: 1 }],
+      },
+    };
+
+    await previewScene(connection, document);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://orion.local:7447/api/v1/operations",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ operation: "preview_scene", document }),
+      }),
     );
   });
 

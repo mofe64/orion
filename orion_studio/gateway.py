@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 API_VERSION = 1
 DEFAULT_SOCKET = "/tmp/oriond.sock"
 MAX_BODY_BYTES = 262_144
+MAX_PREVIEW_SCENE_BYTES = 3_000
 MAX_RESPONSE_BYTES = 1_048_576
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 JOINT_NAMES = (
@@ -142,6 +143,11 @@ class OrionGateway:
                 "motion": motions.get("motions", []),
                 "scene": scenes.get("scenes", []),
                 "scene_publish": {"format_version": 1, "max_body_bytes": MAX_BODY_BYTES},
+                "scene_preview": {
+                    "format_version": 1,
+                    "max_body_bytes": MAX_PREVIEW_SCENE_BYTES,
+                    "persisted": False,
+                },
                 "scene_library": {"read": True, "create": True, "update": "revision"},
                 "joint_limits": limits.get("joints", []),
                 "pose_library": {"read": True, "create": True, "update": False},
@@ -177,6 +183,35 @@ class OrionGateway:
         elif operation == "scene":
             name = self._name(payload.get("name"), "scene")
             response = self._checked(f"scene start {name}")
+        elif operation == "preview_scene":
+            if set(payload) != {"operation", "document"}:
+                raise GatewayError(
+                    HTTPStatus.BAD_REQUEST,
+                    "invalid_scene_preview",
+                    "Scene preview requires only operation and document fields.",
+                )
+            document = payload.get("document")
+            self._validate_scene_document(document)
+            try:
+                encoded = json.dumps(
+                    document,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (TypeError, ValueError) as error:
+                raise GatewayError(
+                    HTTPStatus.BAD_REQUEST,
+                    "invalid_scene_preview",
+                    f"Could not encode the scene preview: {error}",
+                ) from error
+            if len(encoded) > MAX_PREVIEW_SCENE_BYTES:
+                raise GatewayError(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    "scene_preview_too_large",
+                    f"Scene preview cannot exceed {MAX_PREVIEW_SCENE_BYTES} UTF-8 bytes.",
+                )
+            response = self._checked(f"scene preview {encoded.decode('utf-8')}")
         elif operation == "prepare_movement":
             response = self._prepare_movement()
         elif operation == "release_movement":
@@ -199,7 +234,7 @@ class OrionGateway:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, speech, prepare_movement, release_movement, and cancel.",
+                "Supported operations are goto, motion, scene, preview_scene, speech, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {

@@ -327,10 +327,19 @@ motions, and scenes together and atomically replaces the validated runtime
 libraries while no movement or scene is active. `scene reload` remains the
 narrower scene-only operation.
 
+The private `scene preview DOCUMENT` command is reserved for the authenticated
+Studio gateway. It parses one inline version-1 scene against the currently
+loaded pose, motion, and audio libraries, then starts the normal scene
+coordinator without adding it to the library or filesystem. The gateway limits
+the compact document to 3,000 UTF-8 bytes so the complete command stays within
+the Unix protocol's fixed 4,096-byte input boundary. Preview still uses normal
+scene run IDs, status, cancellation, movement validation, and lifecycle rules.
+
 Reload re-reads the daemon's configured scene directory, validates all pose,
 motion, and audio-cue references, and atomically replaces the in-memory catalog
-only when no scene is active. It does not accept a path or scene body over the
-local command socket.
+only when no scene is active. No command accepts an arbitrary asset path;
+inline preview is the sole non-persisted scene-body operation and the raw
+socket remains Pi-local.
 
 For manual development, build and run `oriond` directly from this source tree
 only after stopping the installed service. Normal Pi operation uses the

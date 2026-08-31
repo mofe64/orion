@@ -36,7 +36,7 @@ pub use mujoco::{MujocoDriver, SimulationMetrics};
 pub use pose::{JointPositions, PoseLibrary};
 pub use scene::{
     SCENE_FORMAT_VERSION, SceneAction, SceneCoordinator, SceneDefinition, SceneEvent, SceneLibrary,
-    SceneMotion, SceneMotionDevice, ScenePhase, ScenePlayer, SceneStatus,
+    SceneMotion, SceneMotionDevice, ScenePhase, ScenePlayer, SceneStatus, parse_scene_document,
 };
 pub use socket::{UnixCommandServer, request_daemon};
 pub use speech::{

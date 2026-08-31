@@ -33,4 +33,12 @@ describe("Orion Studio asset catalog", () => {
       }
     }
   });
+
+  it("maps logical pose zero into the calibrated physical model reference", () => {
+    expect(projectCatalog.urdfJointOffsets.base_yaw_joint).toBeCloseTo(-0.315320384242287);
+    expect(projectCatalog.urdfJointOffsets.shoulder_pitch_joint).toBeCloseTo(-0.096485421696463);
+    expect(projectCatalog.urdfJointOffsets.elbow_pitch_joint).toBeCloseTo(-0.331339850183298);
+    expect(projectCatalog.urdfJointOffsets.head_roll_joint).toBeCloseTo(-0.712126211333258);
+    expect(projectCatalog.urdfJointOffsets.head_pitch_joint).toBeCloseTo(-0.053689327575997);
+  });
 });

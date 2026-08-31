@@ -51,6 +51,20 @@ into two slower rise/return cycles. Each generated keyframe is an ordinary
 `light` event that can be retimed or recolored individually, and the last event
 returns to the RGBW state sampled when the template was inserted.
 
+Studio can also place a named scene as a composite timeline clip and split a
+motion or composite scene into editable parts. This is an editor-only feature:
+scene clips are recursively flattened before save or submission, motions become
+ordinary `goto_pose` events, and authored holds become visible Delay clips.
+When saved, each delay is a safe same-pose `goto_pose`, preserving the complete
+configured motion duration without adding a new action type. Saved files
+continue to contain only the four version-1 actions listed above.
+
+**Preview on Orion** does not create a user file. Studio sends a small temporary
+version-1 document through the authenticated gateway; `oriond` validates every
+named pose, motion, and cue, starts the normal scene lifecycle, and discards the
+definition after the run. Save/Publish remains the explicit path for adding a
+scene to `scenes/user/`.
+
 Audio cue names resolve to WAV filename stems under `audio/cues/`. The library
 is validated when the daemon starts. One cue may play at a time; a later due
 audio event waits until the current cue completes. Cancellation stops active

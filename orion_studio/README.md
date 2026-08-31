@@ -90,6 +90,15 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
   existing runtime lighting path rather than a separate effects engine.
 - Add, select, drag to retime, edit, and delete scene events, and edit the
   scene description.
+- Append every new clip to the end of its lane, right-click clips for delete
+  and delay actions, and split motions or nested scene clips into editable
+  pose/light/audio parts. Motion holds remain visible as editable Delay clips.
+- Treat a timeline pose as a baseline: **Edit as a new pose** clones its named
+  source, previews bounded joint changes locally, and on save creates a new
+  immutable pose assigned only to that clip.
+- Use scene clips as a Studio composition aid. Before save or hardware preview,
+  Studio recursively flattens them into the existing version-1 semantic events;
+  no new persisted scene action is introduced.
 - Save a scene as a new YAML file under `scenes/user/`; while connected the
   Pi copy is authoritative, while offline the desktop checkout is staging.
 - Connect to the Pi, read lifecycle and terminal results, run named
@@ -98,6 +107,9 @@ ORION_PROJECT_ROOT=/path/to/orion pnpm tauri dev
   revision-update an existing Pi user scene without losing concurrent edits.
 - Ask `oriond` to reload its validated catalog after every Pi write, then run
   the named pose, motion, or scene on hardware without restarting the daemon.
+- Preview the current unsaved scene on connected hardware from the Preview
+  dropdown. The gateway size-caps the temporary document, and `oriond`
+  validates its named assets before running it without writing a scene file.
 
 Built-in scenes, poses, and motions are source material and are never
 overwritten. New user assets use create-only semantics and live under
@@ -118,7 +130,9 @@ old catalog is reloaded.
 The authenticated gateway API keeps the raw Unix socket private and exposes
 only named semantic libraries and operations. It accepts create-new pose and
 motion documents, plus create and revision-checked update operations for user
-scenes. It never accepts arbitrary paths, servo registers, or joint streams.
+scenes. Its `preview_scene` operation accepts one version-1 semantic scene of
+at most 3,000 UTF-8 bytes and never persists it. It never accepts arbitrary
+paths, servo registers, or joint streams.
 
 ## Connect Studio to the Pi
 

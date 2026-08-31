@@ -152,9 +152,9 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
     const robot = robotRef.current;
     if (!robot) return;
     for (const [name, value] of Object.entries(joints)) {
-      robot.joints[name]?.setJointValue(value);
+      robot.joints[name]?.setJointValue(value + catalog.urdfJointOffsets[name as keyof JointPositions]);
     }
-  }, [joints]);
+  }, [catalog.urdfJointOffsets, joints]);
 
   useEffect(() => {
     const lamp = lampLightRef.current;

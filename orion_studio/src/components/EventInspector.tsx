@@ -1,9 +1,11 @@
 import { Trash2 } from "lucide-react";
 
+import { isDelayEvent } from "../lib/preview";
 import type { ProjectCatalog, SceneEvent } from "../types";
 
 interface EventInspectorProps {
   catalog: ProjectCatalog;
+  currentSceneName: string;
   event: SceneEvent | null;
   onChange: (event: SceneEvent) => void;
   onDelete: () => void;
@@ -32,25 +34,33 @@ function NumberField(props: {
   );
 }
 
-export function EventInspector({ catalog, event, onChange, onDelete }: EventInspectorProps) {
+function lightPreviewColor(red: number, green: number, blue: number, white: number): string {
+  const channel = (value: number, whiteMix: number) => Math.round(
+    Math.min(255, value + white * whiteMix),
+  );
+  return `rgb(${channel(red, 1)}, ${channel(green, 0.82)}, ${channel(blue, 0.64)})`;
+}
+
+export function EventInspector({ catalog, currentSceneName, event, onChange, onDelete }: EventInspectorProps) {
   if (!event) {
     return (
       <aside className="inspector empty-inspector">
         <p className="panel-kicker">INSPECTOR</p>
         <h2>Select a timeline clip</h2>
-        <p>Choose a movement, lighting transition, or cue to edit its semantic fields.</p>
+        <p>Choose a movement, lighting transition, or cue to edit its details.</p>
       </aside>
     );
   }
 
   const patch = (changes: Partial<SceneEvent>) => onChange({ ...event, ...changes } as SceneEvent);
+  const delay = isDelayEvent(event);
 
   return (
     <aside className="inspector">
       <div className="inspector-heading">
         <div>
           <p className="panel-kicker">INSPECTOR</p>
-          <h2>{event.type.replaceAll("_", " ")}</h2>
+          <h2>{delay ? "delay" : event.type.replaceAll("_", " ")}</h2>
         </div>
         <button className="icon-button danger" onClick={onDelete} aria-label="Delete selected event"><Trash2 size={16} /></button>
       </div>
@@ -67,7 +77,18 @@ export function EventInspector({ catalog, event, onChange, onDelete }: EventInsp
           </label>
         )}
 
-        {event.type === "goto_pose" && (
+        {event.type === "scene" && (
+          <label>
+            Scene clip
+            <select value={event.scene} onChange={(change) => patch({ scene: change.target.value })}>
+              {Object.keys(catalog.scenes)
+                .filter((name) => name !== currentSceneName)
+                .map((name) => <option key={name}>{name}</option>)}
+            </select>
+          </label>
+        )}
+
+        {event.type === "goto_pose" && !delay && (
           <>
             <label>
               Named pose
@@ -79,8 +100,19 @@ export function EventInspector({ catalog, event, onChange, onDelete }: EventInsp
           </>
         )}
 
+        {event.type === "goto_pose" && delay && (
+          <NumberField label="Delay duration" value={event.duration_seconds} min={0.01} max={60} onChange={(duration_seconds) => patch({ duration_seconds })} />
+        )}
+
         {event.type === "light" && (
           <>
+            <div className="light-color-preview">
+              <span style={{ background: lightPreviewColor(event.red, event.green, event.blue, event.white) }} />
+              <div>
+                <strong>Selected lamp colour</strong>
+                <small>RGBW {event.red} · {event.green} · {event.blue} · {event.white}</small>
+              </div>
+            </div>
             <div className="channel-grid">
               <NumberField label="Red" value={event.red} min={0} max={255} step={1} onChange={(red) => patch({ red })} />
               <NumberField label="Green" value={event.green} min={0} max={255} step={1} onChange={(green) => patch({ green })} />

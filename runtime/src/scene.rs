@@ -99,14 +99,21 @@ impl SceneLibrary {
 
     pub fn validate_audio_cues(&self, cues: &CueLibrary) -> Result<()> {
         for scene in self.scenes.values() {
-            for event in &scene.events {
-                if let SceneAction::Audio { cue } = &event.action {
-                    if !cues.contains(cue) {
-                        return Err(Error::Runtime(format!(
-                            "Scene '{}' references unknown Orion audio cue '{}'.",
-                            scene.name, cue
-                        )));
-                    }
+            scene.validate_audio_cues(cues)?;
+        }
+        Ok(())
+    }
+}
+
+impl SceneDefinition {
+    pub fn validate_audio_cues(&self, cues: &CueLibrary) -> Result<()> {
+        for event in &self.events {
+            if let SceneAction::Audio { cue } = &event.action {
+                if !cues.contains(cue) {
+                    return Err(Error::Runtime(format!(
+                        "Scene '{}' references unknown Orion audio cue '{}'.",
+                        self.name, cue
+                    )));
                 }
             }
         }
@@ -198,11 +205,17 @@ fn load_scene_file(
             path.display()
         ))
     })?;
-    let document: SceneDocument = serde_yaml::from_str(&contents).map_err(|error| {
-        Error::Runtime(format!(
-            "Could not parse scene file '{}': {error}",
-            path.display()
-        ))
+    parse_scene_document(&contents, &path.display().to_string(), poses, motions)
+}
+
+pub fn parse_scene_document(
+    contents: &str,
+    source: &str,
+    poses: &PoseLibrary,
+    motions: &MotionLibrary,
+) -> Result<SceneDefinition> {
+    let document: SceneDocument = serde_yaml::from_str(contents).map_err(|error| {
+        Error::Runtime(format!("Could not parse scene file '{}': {error}", source))
     })?;
     if document.format_version != SCENE_FORMAT_VERSION {
         return Err(Error::Runtime(format!(
@@ -245,7 +258,7 @@ fn load_scene_file(
                 motions.motion(&motion).map_err(|error| {
                     Error::Runtime(format!(
                         "Invalid motion reference in scene file '{}': {error}",
-                        path.display()
+                        source
                     ))
                 })?;
                 SceneAction::Motion(SceneMotion::Play { motion })
@@ -266,7 +279,7 @@ fn load_scene_file(
                 poses.pose(&pose).map_err(|error| {
                     Error::Runtime(format!(
                         "Invalid pose reference in scene file '{}': {error}",
-                        path.display()
+                        source
                     ))
                 })?;
                 SceneAction::Motion(SceneMotion::Goto {
@@ -673,6 +686,15 @@ impl SceneCoordinator {
     }
 
     pub fn start(&mut self, name: &str, now_seconds: f64) -> Result<SceneStatus> {
+        let definition = self.library.scene(name)?.clone();
+        self.start_definition(definition, now_seconds)
+    }
+
+    pub fn start_definition(
+        &mut self,
+        definition: SceneDefinition,
+        now_seconds: f64,
+    ) -> Result<SceneStatus> {
         if let Some(active) = self.active.as_ref() {
             return Err(Error::InvalidState(format!(
                 "Scene '{}' is already active as run {}.",
@@ -680,7 +702,6 @@ impl SceneCoordinator {
                 active.status().run_id
             )));
         }
-        let definition = self.library.scene(name)?.clone();
         let run_id = self.next_run_id;
         self.next_run_id = self
             .next_run_id
