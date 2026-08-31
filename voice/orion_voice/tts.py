@@ -1,18 +1,14 @@
-"""Piper model adapter and Raspberry Pi benchmark."""
+"""Piper adapter for Orion's selected production voice."""
 
 from __future__ import annotations
 
 import audioop
-from dataclasses import asdict, dataclass
-import json
 from pathlib import Path
-import resource
-import time
 import wave
 
 
 ORION_PLAYBACK_SAMPLE_RATE = 48_000
-DEFAULT_PIPER_VOICE_NAME = "en_US-lessac-medium"
+DEFAULT_PIPER_VOICE_NAME = "en_US-ryan-medium"
 DEFAULT_PIPER_MODEL_DIRECTORY = Path(__file__).resolve().parents[1] / "models"
 DEFAULT_PIPER_MODEL_PATH = (
     DEFAULT_PIPER_MODEL_DIRECTORY / f"{DEFAULT_PIPER_VOICE_NAME}.onnx"
@@ -22,7 +18,11 @@ DEFAULT_PIPER_MODEL_PATH = (
 class PiperSynthesizer:
     """Load one Piper voice and produce Orion's physical playback format."""
 
-    def __init__(self, model_path: Path, voice_loader=None) -> None:
+    def __init__(
+        self,
+        model_path: Path = DEFAULT_PIPER_MODEL_PATH,
+        voice_loader=None,
+    ) -> None:
         self.model_path = Path(model_path)
         config_path = Path(f"{self.model_path}.json")
         if not self.model_path.is_file():
@@ -86,53 +86,3 @@ class PiperSynthesizer:
             output_path.unlink(missing_ok=True)
             raise RuntimeError("Piper generated no audio")
         return frames_written / ORION_PLAYBACK_SAMPLE_RATE
-
-
-@dataclass(frozen=True)
-class BenchmarkResult:
-    model: str
-    device: str
-    load_seconds: float
-    synthesis_seconds: list[float]
-    audio_seconds: list[float]
-    realtime_factors: list[float]
-    peak_rss_kib: int
-
-
-def benchmark(
-    text: str,
-    output_directory: Path,
-    iterations: int,
-    model_path: Path = DEFAULT_PIPER_MODEL_PATH,
-) -> BenchmarkResult:
-    if iterations <= 0:
-        raise ValueError("benchmark iterations must be positive")
-
-    load_started = time.monotonic()
-    synthesizer = PiperSynthesizer(model_path)
-    load_seconds = time.monotonic() - load_started
-
-    synthesis_seconds: list[float] = []
-    audio_seconds: list[float] = []
-    realtime_factors: list[float] = []
-    for index in range(iterations):
-        started = time.monotonic()
-        duration = synthesizer.synthesize(
-            text, output_directory / f"piper-{index + 1}.wav"
-        )
-        elapsed = time.monotonic() - started
-        synthesis_seconds.append(elapsed)
-        audio_seconds.append(duration)
-        realtime_factors.append(elapsed / duration)
-
-    result = BenchmarkResult(
-        model=model_path.stem,
-        device="cpu",
-        load_seconds=load_seconds,
-        synthesis_seconds=synthesis_seconds,
-        audio_seconds=audio_seconds,
-        realtime_factors=realtime_factors,
-        peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-    )
-    print(json.dumps(asdict(result), separators=(",", ":")))
-    return result

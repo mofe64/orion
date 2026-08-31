@@ -1,89 +1,74 @@
-# Orion local voice worker
+# Orion local voice runtime
 
-`voice/` contains Orion's local machine-learning voice processes. The current
-slice is a persistent Piper text-to-speech worker. It loads one ONNX voice,
-accepts JSON-line requests over `/tmp/orion-tts.sock`, and writes temporary
-48 kHz, 16-bit stereo WAV files.
+`voice/` contains Orion's local speech processes. It has two narrow runtime
+boundaries:
 
-The worker does not open ALSA and does not control motion or lighting. The Rust
-daemon receives the generated path and plays it through its existing
-`AudioDevice`, so cues, generated speech, scene completion, and the ReSpeaker
-JST route keep one physical audio owner. Speech IDs, status, cancellation, and
-`--wait` remain independent of the selected TTS model.
+```text
+agent/oriond -> /tmp/orion-tts.sock -> Piper Ryan Medium -> temporary WAV
+microphones -> Sherpa keyword spotter -> /tmp/orion-wake.sock -> wake event
+```
 
-## Python environment
+Piper owns text-to-speech model inference. `oriond` remains the only owner of
+physical playback, so generated speech keeps the same speech IDs, status,
+`--wait`, cancellation, and ALSA lifecycle as cues and scenes.
 
-Orion currently keeps voice dependencies in a user-owned Python 3.11
-environment, separate from Debian and the repository-level MuJoCo environment:
+The wake worker owns transient 16 kHz mono microphone capture and detects the
+phrase `HEY ORION` locally. It publishes JSON-line events and never writes
+microphone audio to disk. The future agent runtime will subscribe to those
+events. Speech-to-text is the next voice slice and is not implemented here.
+
+## Install the Python environment
+
+Orion uses its existing Python 3.11 environment because the Pi's system Python
+is newer than the versions currently selected for the voice stack:
 
 ```bash
 cd /home/mofe/dev/orion
 
-curl -LsSf https://astral.sh/uv/install.sh | sh
-/home/mofe/.local/bin/uv python install 3.11
-/home/mofe/.local/bin/uv sync --project voice --python 3.11
-
-voice/.venv/bin/python --version
+/home/mofe/.local/bin/uv sync \
+  --project voice \
+  --python 3.11
 ```
 
-The final command must report Python `3.11.x`. Do not use `sudo` for these
-commands and do not replace `/usr/bin/python3`.
+The pinned runtime dependencies are Piper 1.7.0 and Sherpa ONNX 1.13.6. `uv
+sync` removes packages that are no longer declared.
 
-`uv sync` makes `voice/.venv` match `voice/pyproject.toml`. During the
-Chatterbox-to-Piper migration it removes Chatterbox, PyTorch, Perth,
-Praat-Parselmouth, and the other packages that Piper does not require.
+## Install the selected models
 
-## Download the benchmark voice
-
-Voice models are runtime data and are ignored by Git. Download the initial
-63 MB `en_US-lessac-medium` candidate into `voice/models/`:
+Run the repeatable model installer:
 
 ```bash
-voice/.venv/bin/python -m piper.download_voices \
-  --download-dir voice/models \
-  en_US-lessac-medium
+voice/install-models.sh
 ```
 
-This creates both files required by Piper:
+It performs four bounded operations:
+
+1. Downloads `en_US-ryan-medium`, Orion's selected production voice.
+2. Downloads Sherpa's English 3.3-million-parameter GigaSpeech keyword model.
+3. Generates the model-specific BPE tokens for `HEY ORION`.
+4. Removes other top-level Piper voice files while retaining the wake model.
+
+The resulting runtime data is ignored by Git:
 
 ```text
-voice/models/en_US-lessac-medium.onnx
-voice/models/en_US-lessac-medium.onnx.json
+voice/models/en_US-ryan-medium.onnx
+voice/models/en_US-ryan-medium.onnx.json
+voice/models/wake/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/
 ```
 
-The worker reports a clear error with this download command if either file is
-missing.
-
-## Benchmark Piper first
-
-Run the same three-iteration benchmark used for Chatterbox:
+To repeat only the selected-voice cleanup:
 
 ```bash
-voice/.venv/bin/orion-voice benchmark-tts \
-  --text "Hello. I am Orion, and my voice is running locally." \
-  --iterations 3
+voice/cleanup-voices.sh
 ```
 
-The command prints JSON containing model-load time, synthesis time, generated
-audio duration, realtime factor, and peak resident memory. A realtime factor
-below `1.0` means synthesis completed faster than the produced speech.
-Benchmark WAVs are written to `/tmp/orion-tts-benchmark/`.
+The cleanup refuses to run unless both Ryan Medium files are already present.
+It removes only `.onnx` and `.onnx.json` files directly inside `voice/models/`;
+it does not touch nested wake-word or future speech-recognition models.
 
-Listen through Orion's commissioned ReSpeaker route:
+## Run text to speech
 
-```bash
-hardware/audio/configure-playback.sh
-aplay -D plughw:CARD=seeed2micvoicec,DEV=0 \
-  /tmp/orion-tts-benchmark/piper-2.wav
-```
-
-Piper produces sentence chunks internally. This adapter currently collects
-them into one temporary WAV because `oriond` owns playback by file. The chunked
-API leaves a later path to playback-before-completion without changing models.
-
-## Run from source
-
-Terminal 1 owns the model:
+Terminal 1 loads Ryan Medium once and owns TTS inference:
 
 ```bash
 cd /home/mofe/dev/orion
@@ -96,7 +81,7 @@ Wait for:
 orion-tts: ready on /tmp/orion-tts.sock
 ```
 
-Terminal 2 owns Orion hardware as before:
+Terminal 2 owns Orion hardware and playback:
 
 ```bash
 sudo runtime/target/release/oriond --serve \
@@ -109,15 +94,12 @@ sudo runtime/target/release/oriond --serve \
 Terminal 3 submits speech:
 
 ```bash
-runtime/target/release/oriond --speak "Hello. I am Orion." --wait
+runtime/target/release/oriond \
+  --speak "Hello. I am Orion." \
+  --wait
 ```
 
-The worker and daemon remain foreground source processes; this slice does not
-install either as a boot service.
-
-## Lifecycle and ownership
-
-A speech run follows:
+The speech lifecycle remains:
 
 ```text
 synthesizing -> playing -> completed
@@ -132,62 +114,74 @@ runtime/target/release/oriond --speech-status
 runtime/target/release/oriond --stop-speech
 ```
 
-The daemon retains only the active speech run and most recent terminal result.
-Run IDs reset on daemon restart. Generated WAV files are removed after playback
-or cancellation; they are not a speech archive. `--wait` exits `0` for
-completed, `5` for cancelled, and `7` for failed.
+Generated WAV files are removed after playback or cancellation. They are not a
+speech archive.
 
-Standalone speech and authored scenes are mutually exclusive in this first
-slice because they share the physical audio backend. Parameterized speech
-inside a coordinated motion/light scene is a later scene-contract change.
+## Run wake-word detection
 
-## Try another Piper voice
-
-Download another voice, then pass its model explicitly to both benchmarking and
-the worker:
+Terminal 1 starts local microphone capture and inference:
 
 ```bash
-voice/.venv/bin/python -m piper.download_voices \
-  --download-dir voice/models \
-  VOICE_NAME
-
-voice/.venv/bin/orion-voice benchmark-tts \
-  --model voice/models/VOICE_NAME.onnx
-
-voice/.venv/bin/orion-voice tts-worker \
-  --model voice/models/VOICE_NAME.onnx
+cd /home/mofe/dev/orion
+voice/.venv/bin/orion-voice wake-worker
 ```
 
-This lets us choose Orion's permanent voice by listening on the physical robot
-without changing source code.
+Wait for:
 
-## Remove the obsolete Chatterbox data
+```text
+orion-wake: listening for HEY ORION
+```
 
-First complete the Piper benchmark and listening check. Then inspect and remove
-the old downloadable Chatterbox checkpoint:
+In terminal 2, subscribe before speaking:
 
 ```bash
-du -sh /home/mofe/.cache/huggingface/hub/models--ResembleAI--chatterbox-nano
-rm -rf -- /home/mofe/.cache/huggingface/hub/models--ResembleAI--chatterbox-nano
+cd /home/mofe/dev/orion
+voice/.venv/bin/orion-voice wait-wake
 ```
 
-The deletion is limited to the reproducible Chatterbox Nano cache; it does not
-touch other Hugging Face models. It can be recovered by downloading Chatterbox
-again. Finally, discard unused uv cache entries:
+Say **“Hey Orion.”** A successful detection returns:
+
+```json
+{"event_id":1,"event":"wake_word","phrase":"HEY ORION"}
+```
+
+The worker continues listening and increments `event_id`. A subscriber receives
+future events only; the socket is an event stream, not a history database.
+
+The defaults are a `0.25` trigger threshold, `1.5` keyword score, and two CPU
+threads. If physical testing misses clear utterances, lower the threshold in a
+small step:
 
 ```bash
-/home/mofe/.local/bin/uv cache prune
+voice/.venv/bin/orion-voice wake-worker --threshold 0.20
 ```
 
-## Tests without downloading the model
+A lower threshold is easier to trigger and can increase false positives. Keep
+the default unless repeated physical trials justify changing it.
 
-The adapter and worker tests inject fake Piper voices:
+## Current voice-loop boundary
+
+The wake worker and future speech recognizer must not open independent capture
+streams indefinitely. The STT slice will create one microphone owner that
+switches between:
+
+```text
+wake listening -> command capture/transcription -> wake listening
+```
+
+For now, the wake event proves activation only. It does not capture the words
+after `HEY ORION`, route an intent, move Orion, or synthesize a response.
+
+## Tests
+
+The unit suite uses fake Piper chunks, fake Sherpa streams, and temporary Unix
+sockets, so it does not need downloaded models or robot hardware:
 
 ```bash
 cd /home/mofe/dev/orion
 PYTHONPATH=voice python3 -m unittest discover -s voice/tests -v
 ```
 
-These tests verify request validation, model/config validation, 48 kHz stereo
-conversion, Unix-socket transport, WAV-result reporting, and stale-socket
-cleanup without importing Piper or downloading a voice.
+The tests cover request validation, 48 kHz stereo speech conversion, ephemeral
+WAV cleanup, selected-voice identity, wake-model validation, streaming keyword
+decoding, ALSA capture arguments, event ordering, and stale-socket cleanup.

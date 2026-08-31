@@ -4,7 +4,11 @@ import tempfile
 import unittest
 import wave
 
-from orion_voice.tts import ORION_PLAYBACK_SAMPLE_RATE, PiperSynthesizer
+from orion_voice.tts import (
+    DEFAULT_PIPER_VOICE_NAME,
+    ORION_PLAYBACK_SAMPLE_RATE,
+    PiperSynthesizer,
+)
 
 
 class FakeChunk:
@@ -26,6 +30,9 @@ class EmptyVoice:
 
 
 class PiperSynthesizerTests(unittest.TestCase):
+    def test_uses_selected_ryan_medium_voice(self) -> None:
+        self.assertEqual(DEFAULT_PIPER_VOICE_NAME, "en_US-ryan-medium")
+
     def test_loads_model_and_writes_orion_playback_format(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

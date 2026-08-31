@@ -74,9 +74,9 @@ declaring completion.
 
 Lighting and audio are narrow device traits. Recording implementations make
 scene timing deterministic on a development machine. The physical Pi 5
-NeoPixel adapter implements the lighting trait; the ReSpeaker adapter remains
-future work. Neither a scene nor the future agent writes GPIO, ALSA, or servo
-registers directly.
+NeoPixel adapter implements the lighting trait, and the ReSpeaker V2 adapter
+owns cue and generated-speech playback through ALSA. Neither a scene nor the
+future agent writes GPIO, ALSA, or servo registers directly.
 
 The source-run daemon owns lighting and the scene coordinator. A client submits
 `--run-scene NAME`, retains the returned ephemeral scene `run_id`, and follows
@@ -84,6 +84,20 @@ the active or most recent terminal result with `--scene-status` or `--wait`.
 Scene completion waits for all scheduled light transitions plus the same
 measured movement settling lifecycle used by direct motion commands. Only one
 active and one terminal scene result are retained; there is no scene database.
+
+## Local voice processes
+
+Python model processes remain outside the deterministic Rust control loop.
+The persistent Piper worker loads Orion's selected Ryan Medium voice and
+returns temporary WAV paths over `/tmp/orion-tts.sock`; `oriond` retains
+physical playback ownership and the speech lifecycle. A separate Sherpa ONNX
+worker captures transient 16 kHz microphone PCM and publishes `HEY ORION`
+events over `/tmp/orion-wake.sock` for the future agent runtime. It stores no
+microphone audio.
+
+Wake detection is an activation boundary, not speech understanding. The next
+voice slice must give wake detection and speech-to-text one microphone owner
+that switches between wake listening and command transcription.
 
 The authoritative physical calibration remains outside the repository at
 `~/.config/orion/servo_calibration.json`. The tracked copy under

@@ -267,10 +267,11 @@ is not installed as a system service.
 
 ## Generated speech
 
-The optional persistent Piper worker under `voice/` generates speech without
-loading its ONNX model in Orion's 50 Hz Rust control loop. Follow
-`voice/README.md` to create its Python 3.11 environment, benchmark the Pi, and
-start `/tmp/orion-tts.sock`.
+The optional persistent Piper worker under `voice/` generates speech with
+Orion's selected Ryan Medium voice without loading its ONNX model in Orion's
+50 Hz Rust control loop. Follow `voice/README.md` to create its Python 3.11
+environment, install the selected local models, and start
+`/tmp/orion-tts.sock`.
 
 With the worker and hardware daemon running, submit dynamic speech through the
 daemon-owned ReSpeaker playback backend:
@@ -285,3 +286,8 @@ Speech states are `synthesizing`, `playing`, `completed`, `failed`, and
 `cancelled`. Only the active run and most recent terminal result are retained.
 The generated WAV is temporary and removed after playback. A failed `--wait`
 returns exit code `7`; cancellation returns `5`.
+
+The separate local wake worker captures transient microphone PCM and publishes
+`HEY ORION` detections through `/tmp/orion-wake.sock` for the future agent
+runtime. It does not yet perform speech-to-text or intent routing. See
+`voice/README.md` for the physical test sequence.

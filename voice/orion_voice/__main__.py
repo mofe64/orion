@@ -5,7 +5,17 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .tts import DEFAULT_PIPER_MODEL_PATH, PiperSynthesizer, benchmark
+from .tts import PiperSynthesizer
+from .wake import (
+    DEFAULT_CAPTURE_DEVICE,
+    DEFAULT_WAKE_MODEL_DIRECTORY,
+    DEFAULT_WAKE_SOCKET_PATH,
+    AlsaPcmCapture,
+    SherpaWakeDetector,
+    WakeEventPublisher,
+    WakeWorker,
+    wait_for_wake,
+)
 from .worker import DEFAULT_TTS_OUTPUT_DIRECTORY, DEFAULT_TTS_SOCKET_PATH, TtsWorker
 
 
@@ -18,34 +28,48 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument(
         "--output-dir", type=Path, default=DEFAULT_TTS_OUTPUT_DIRECTORY
     )
-    worker.add_argument("--model", type=Path, default=DEFAULT_PIPER_MODEL_PATH)
 
-    benchmark_parser = commands.add_parser(
-        "benchmark-tts", help="benchmark Piper on this computer"
+    wake = commands.add_parser(
+        "wake-worker", help="listen locally for the HEY ORION wake phrase"
     )
-    benchmark_parser.add_argument(
-        "--text", default="Hello. I am Orion, and my voice is running locally."
+    wake.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
+    wake.add_argument("--model-dir", type=Path, default=DEFAULT_WAKE_MODEL_DIRECTORY)
+    wake.add_argument("--socket", type=Path, default=DEFAULT_WAKE_SOCKET_PATH)
+    wake.add_argument("--threads", type=int, default=2)
+    wake.add_argument("--score", type=float, default=1.5)
+    wake.add_argument("--threshold", type=float, default=0.25)
+
+    wait = commands.add_parser(
+        "wait-wake", help="wait for one event from the wake-word worker"
     )
-    benchmark_parser.add_argument(
-        "--output-dir", type=Path, default=Path("/tmp/orion-tts-benchmark")
-    )
-    benchmark_parser.add_argument("--iterations", type=int, default=3)
-    benchmark_parser.add_argument("--model", type=Path, default=DEFAULT_PIPER_MODEL_PATH)
+    wait.add_argument("--socket", type=Path, default=DEFAULT_WAKE_SOCKET_PATH)
     return parser
 
 
 def main() -> int:
     arguments = build_parser().parse_args()
-    if arguments.command == "benchmark-tts":
-        benchmark(
-            arguments.text,
-            arguments.output_dir,
-            arguments.iterations,
-            arguments.model,
+    if arguments.command == "wait-wake":
+        print(wait_for_wake(arguments.socket).to_json_line().decode().rstrip())
+        return 0
+    if arguments.command == "wake-worker":
+        detector = SherpaWakeDetector(
+            arguments.model_dir,
+            num_threads=arguments.threads,
+            keywords_score=arguments.score,
+            keywords_threshold=arguments.threshold,
         )
+        wake_worker = WakeWorker(
+            detector,
+            AlsaPcmCapture(arguments.device),
+            WakeEventPublisher(arguments.socket),
+        )
+        try:
+            wake_worker.serve_forever()
+        except KeyboardInterrupt:
+            wake_worker.close()
         return 0
 
-    synthesizer = PiperSynthesizer(arguments.model)
+    synthesizer = PiperSynthesizer()
     worker = TtsWorker(synthesizer, arguments.socket, arguments.output_dir)
     try:
         worker.serve_forever()
