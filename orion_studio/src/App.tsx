@@ -6,6 +6,7 @@ import {
   Film,
   Lightbulb,
   Link2,
+  Mic,
   Move3d,
   Music2,
   Plus,
@@ -23,11 +24,13 @@ import { MotionEditor } from "./components/MotionEditor";
 import { PoseEditor } from "./components/PoseEditor";
 import { RobotViewport } from "./components/RobotViewport";
 import { Timeline, type TimelineSelectionMode } from "./components/Timeline";
+import { VoicePanel } from "./components/VoicePanel";
 import { projectCatalog } from "./lib/catalog";
 import { createLightingEffect, type LightingEffectKind } from "./lib/lightingEffects";
 import { buildSceneDocument } from "./lib/sceneDocument";
 import { materializeSceneDraft, usedDraftPoseNames } from "./lib/sceneDraft";
 import { duplicateTimelineEvents, timelineLane } from "./lib/timelineEditing";
+import type { StudioVoicePhase } from "./lib/studioVoicePipeline";
 import {
   cancelRun,
   getCapabilities,
@@ -249,6 +252,8 @@ export default function App() {
   const [projectRoot, setProjectRoot] = useState("");
   const [notice, setNotice] = useState("Built-in assets loaded from the Orion project.");
 
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voicePhase, setVoicePhase] = useState<StudioVoicePhase>("off");
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [gatewayUrl, setGatewayUrl] = useState(() => localStorage.getItem("orionStudioGateway") ?? "http://orion.local:7447");
   const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem("orionStudioToken") ?? "");
@@ -1345,7 +1350,33 @@ export default function App() {
         </div>
         <div className="project-chip"><span>{connected ? "Robot connected" : projectRoot ? "Local project ready" : "Connect to Orion"}</span></div>
         <div className="topbar-actions">
-          <button className="secondary-button" onClick={() => setConnectionOpen((open) => !open)}>
+          <button
+            className={`secondary-button ${!["off", "error"].includes(voicePhase) ? "voice-active" : ""}`}
+            aria-expanded={voiceOpen}
+            onClick={() => {
+              setConnectionOpen(false);
+              setVoiceOpen((open) => !open);
+            }}
+          >
+            <Mic size={16} />
+            {voicePhase === "ready"
+              ? "Voice ready"
+              : voicePhase === "command_listening"
+                ? "Listening…"
+                : voicePhase === "transcribing"
+                  ? "Transcribing…"
+                  : voicePhase === "thinking"
+                    ? "Thinking…"
+                    : voicePhase === "synthesizing"
+                      ? "Preparing voice…"
+                      : voicePhase === "speaking"
+                        ? "Speaking…"
+                        : "Voice"}
+          </button>
+          <button className="secondary-button" onClick={() => {
+            setVoiceOpen(false);
+            setConnectionOpen((open) => !open);
+          }}>
             {connected ? <Radio size={16} /> : <Unplug size={16} />}
             {connected ? robotStatus?.runtime.mode ?? "Connected" : "Connect robot"}
           </button>
@@ -1366,6 +1397,13 @@ export default function App() {
           )}
         </div>
       </header>
+
+      <VoicePanel
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onNotice={setNotice}
+        onPhaseChange={setVoicePhase}
+      />
 
       {connectionOpen && (
         <section className="connection-popover">

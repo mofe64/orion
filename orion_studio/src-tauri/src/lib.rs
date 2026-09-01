@@ -2,6 +2,8 @@ use std::path::Path;
 
 use orion_studio_scene_store::{MotionDocument, PoseDocument, SavedScene, SceneDocument};
 
+mod voice_worker;
+
 #[tauri::command]
 fn default_project_root() -> Result<String, String> {
     let root = if let Some(path) = std::env::var_os("ORION_PROJECT_ROOT") {
@@ -49,6 +51,7 @@ fn load_user_motions(project_root: String) -> Result<Vec<MotionDocument>, String
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(voice_worker::VoiceWorkerManager::default())
         .invoke_handler(tauri::generate_handler![
             default_project_root,
             save_user_scene,
@@ -56,7 +59,9 @@ pub fn run() {
             save_user_pose,
             load_user_poses,
             save_user_motion,
-            load_user_motions
+            load_user_motions,
+            voice_worker::start_voice_worker,
+            voice_worker::stop_voice_worker
         ])
         .run(tauri::generate_context!())
         .expect("error while running Orion Studio");

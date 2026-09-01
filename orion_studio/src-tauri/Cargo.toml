@@ -15,4 +15,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 orion-studio-scene-store = { path = "scene-store" }
+serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
+uuid = { version = "1", features = ["v4"] }

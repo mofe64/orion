@@ -2117,8 +2117,10 @@ name = "orion-studio"
 version = "0.1.0"
 dependencies = [
  "orion-studio-scene-store",
+ "serde",
  "tauri",
  "tauri-build",
+ "uuid",
 ]
 
 [[package]]
