@@ -1,5 +1,8 @@
 # How Orion moves
 
+Motion assets and limits live in [`motion/`](../../motion/). Runtime lifecycle
+and execution behaviour live in [`runtime/`](../../runtime/).
+
 Orion separates motion intent from execution. A pose says where every joint
 should end. A motion says which poses to visit, how long each transition takes,
 and how long to hold each arrival.

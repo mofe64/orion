@@ -1,4 +1,8 @@
-# How Orion's MuJoCo Model Works
+# How Orion's MuJoCo model works
+
+[`simulation/mujoco/robot.xml`](../../simulation/mujoco/robot.xml) defines the
+maintained MuJoCo model. Physical limits and calibration remain separate
+runtime inputs.
 
 MuJoCo needs a model that describes Orion's bodies, joints, mass, shapes,
 motors, sensors, and surroundings. MuJoCo's XML format is called MJCF.

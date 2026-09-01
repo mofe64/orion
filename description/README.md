@@ -1,6 +1,6 @@
 # Orion robot description
 
-This directory contains simulator-independent robot-description assets.
+Orion's simulator-independent robot-description assets include:
 
 - `urdf/orion.urdf` is the neutral kinematic, visual, collision, and inertial
   description. Mesh references are relative and require no ROS package index.

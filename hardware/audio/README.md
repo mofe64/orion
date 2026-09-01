@@ -5,14 +5,6 @@ identified electrically by its TLV320AIC3104 codec at I2C address `0x18`. The
 HAT provides two microphones plus playback through its 3.5 mm jack and JST 2.0
 speaker output.
 
-This distinction is important: the ReSpeaker V2 overlay targets a
-TLV320AIC3104 codec at I2C address `0x18`; the WM8960 is the V1 path at address
-`0x1a`. The two overlays are not interchangeable.
-
-The product listing described a WM8960, but Orion's boot diagnostics are the
-source of truth: the board acknowledged `0x18`, while a WM8960 probe at `0x1a`
-failed with I/O error `-121`. The V1 and V2 overlays are not interchangeable.
-
 Orion uses Seeed's V2 device-tree overlay with the Raspberry Pi kernel's
 `snd_soc_tlv320aic3x`, `snd_soc_tlv320aic3x_i2c`, and
 `snd_soc_simple_card` modules. The overlay selects the Pi 5 I2S
@@ -26,8 +18,8 @@ Grove digital connector, but the audio overlay does not claim them. Orion
 already owns BCM12 for the 40-pixel NeoPixel shield, so nothing may be attached
 to the ReSpeaker Grove digital connector while that lighting wiring is in use.
 
-The HAT's three APA102 LEDs and user button are outside the first audio slice.
-Orion continues to use the 40-pixel RGBW shield as its expressive-light device.
+The HAT's three APA102 LEDs and user button are not used. Orion uses the
+40-pixel RGBW shield as its expressive-light device.
 
 ## Persistent Raspberry Pi 5 setup
 
@@ -127,3 +119,12 @@ NeoPixel PWM output. The JST route produced the 440 Hz right-channel test tone,
 the direct `--play-cue acknowledge` command played Orion's local chime, and
 both expressive acknowledgement scenes played the chime successfully.
 Physical listening established `-6 dB` as Orion's default PCM playback level.
+
+## Planned audio-front-end upgrade
+
+The commissioned Pi listener consumes 16 kHz mono audio even though the mixer
+enables both microphone routes. Stereo capture, channel diagnostics, adaptive
+combination, denoising, beamforming, and playback-reference echo cancellation
+are not implemented. See the
+[audio-front-end upgrade](../../docs/explanation/audio-front-end-upgrade.md)
+for its boundary, phases, expected limits, and validation gate.

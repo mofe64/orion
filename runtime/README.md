@@ -6,6 +6,9 @@ interpolation, calibration contract, STS3215 profile, 50 Hz state snapshots,
 the Pi 5 RGBW output backend, ReSpeaker V2 WAV playback, and multimodal scene
 coordination.
 
+See the [system architecture](../docs/explanation/system-architecture.md) for
+workstation/Pi boundaries and device ownership.
+
 The physical transport uses
 [`rustypot`](https://github.com/pollen-robotics/rustypot) for protocol-v1 packet
 parsing, synchronized reads/writes, and serial communication. Orion retains its
@@ -367,8 +370,9 @@ Speech states are `synthesizing`, `playing`, `completed`, `failed`, and
 The generated WAV is temporary and removed after playback. A failed `--wait`
 returns exit code `7`; cancellation returns `5`.
 
-The separate local wake worker captures transient microphone PCM and publishes
-ordered `HELLO WORLD` and transcribed-command events through
-`/tmp/orion-wake.sock` for the future agent
-runtime. It does not yet perform speech-to-text or intent routing. See
-`voice/README.md` for the physical test sequence.
+The separate Pi-local listener captures transient microphone PCM, detects
+`HELLO WORLD`, performs Moonshine speech-to-text, and publishes ordered wake
+and transcribed-command events through `/tmp/orion-wake.sock`. It does not
+interpret the transcript or route intent to Orion capabilities. See the
+[Pi-local fallback voice guide](../voice/README.md) for the physical test
+sequence.

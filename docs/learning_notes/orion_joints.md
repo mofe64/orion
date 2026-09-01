@@ -1,4 +1,4 @@
-# Orion's Joint Structure
+# Orion's joint structure
 
 Orion has five powered joints. Together they form one movement chain from the
 base to the lamp head:
@@ -27,12 +27,19 @@ For every joint:
 The angles below are measured from the CAD-defined zero position. Zero is a
 reference configuration, not automatically Orion's home or rest pose.
 
+The approximate travel descriptions below explain the imported URDF geometry;
+they are not permission to command that entire range on the physical robot.
+The runtime's commissioned position bounds live in
+[`motion/config/motion_limits.yaml`](../../motion/config/motion_limits.yaml),
+and the hardware driver derives its conversion from the accepted servo
+calibration.
+
 ## `base_yaw_joint`
 
 ```text
 parent: base_link
 child:  shoulder_mount_link
-travel: about 360 degrees
+URDF reference travel: about 360 degrees
 ```
 
 `base_link` contains the physical lamp base, base cover, and base-servo parts.
@@ -52,7 +59,7 @@ The physical base itself remains facing the same direction.
 ```text
 parent: shoulder_mount_link
 child:  upper_arm_link
-travel: about 180 degrees
+URDF reference travel: about 180 degrees
 ```
 
 `shoulder_mount_link` is the small bracket and servo assembly immediately above
@@ -67,7 +74,7 @@ it also moves the elbow, forearm, and lamp head.
 ```text
 parent: upper_arm_link
 child:  forearm_link
-travel: about 180 degrees
+URDF reference travel: about 180 degrees
 ```
 
 This joint is the hinge between Orion's two long arm sections. It bends and
@@ -81,7 +88,7 @@ does not move the base or upper arm relative to the shoulder.
 ```text
 parent: forearm_link
 child:  head_roll_link
-travel: about 360 degrees
+URDF reference travel: about 360 degrees
 ```
 
 This joint is at the end of the forearm, before the final lamp-head hinge. Its
@@ -95,7 +102,7 @@ It rolls the head-support assembly. Because `head_pitch_joint` and
 ```text
 parent: head_roll_link
 child:  lamp_head_link
-travel: about 180 degrees
+URDF reference travel: about 180 degrees
 ```
 
 This is the final hinge in the chain. It tilts the complete lamp head relative
@@ -113,9 +120,11 @@ For example, a head tilt can look different after base yaw and elbow pitch have
 already changed. The same `head_pitch_joint` angle is still used, but its parent
 frame now has a different world position and orientation.
 
-This is why Orion sends and records all five joint values together. The joint
-names, parent-child relationships, exact axes, and exact limits must agree
-between the URDF, MJCF, controller configuration, and motion system.
+This is why Orion sends and records all five joint values together. Joint
+names and parent-child relationships must agree across the URDF, MJCF, runtime,
+and motion system. Their limits serve different purposes: the URDF explains the
+imported model, while commissioned calibration and motion configuration
+constrain physical execution.
 
 The XML rules behind parent, child, origin, and axis are explained in
 [URDF Basics](orion_urdf_basics.md).

@@ -1,4 +1,8 @@
-# URDF Basics
+# URDF basics
+
+[`description/urdf/orion.urdf`](../../description/urdf/orion.urdf) defines
+Orion's link geometry, frames, axes, and model reference ranges. Physical servo
+calibration and runtime safety limits are separate.
 
 ## Links
 
@@ -306,7 +310,13 @@ For a revolute joint:
 - `effort` is nominally the maximum torque in N·m.
 - `velocity` is the maximum angular speed in rad/s.
 
-It is important that these values match the motor/servo specifications.
+In a production URDF, these values should describe meaningful actuator limits.
+Orion's imported `effort="10"` and `velocity="10"` values are generic
+placeholders; they are not commissioned STS3215 limits and must not be used to
+infer safe hardware commands. Physical position conversion comes from the
+accepted servo calibration, while tracked operational and provisional dynamic
+limits live in
+[`motion/config/motion_limits.yaml`](../../motion/config/motion_limits.yaml).
 
 ## Fixed Joints
 

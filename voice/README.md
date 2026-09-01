@@ -1,7 +1,9 @@
-# Orion local voice runtime
+# Orion Raspberry Pi-local fallback voice runtime
 
-`voice/` contains Orion's local speech processes. It has two narrow runtime
-boundaries:
+`voice/` contains Orion's Raspberry Pi-local fallback and diagnostic speech
+processes. Studio Voice is the primary interactive path; see the
+[voice architecture](../docs/explanation/voice-architecture.md). The Pi path
+has two narrow runtime boundaries:
 
 ```text
 agent/oriond -> /tmp/orion-tts.sock -> Piper Ryan Medium -> temporary WAV
@@ -12,16 +14,16 @@ Piper owns text-to-speech model inference. `oriond` remains the only owner of
 physical playback, so generated speech keeps the same speech IDs, status,
 `--wait`, cancellation, and ALSA lifecycle as cues and scenes.
 
-The normal listener owns transient 16 kHz mono microphone capture, detects the
+The listener owns transient 16 kHz mono microphone capture, detects the
 phrase `HELLO WORLD`, segments the following command with Silero VAD, and
 transcribes it locally with Moonshine Tiny English INT8. It publishes ordered
-JSON-line events and never writes microphone audio to disk. The future agent
-runtime will subscribe to those events.
+JSON-line events and never writes microphone audio to disk. It does not
+interpret the resulting transcript or invoke an agent.
 
 ## Install the Python environment
 
-Orion uses its existing Python 3.11 environment because the Pi's system Python
-is newer than the versions currently selected for the voice stack:
+Orion uses a Python 3.11 environment because the selected Pi voice packages do
+not support the Pi's newer system Python:
 
 ```bash
 cd /home/mofe/dev/orion
@@ -71,7 +73,7 @@ voice/cleanup-voices.sh
 
 The cleanup refuses to run unless both Ryan Medium files are already present.
 It removes only `.onnx` and `.onnx.json` files directly inside `voice/models/`;
-it does not touch nested wake-word or future speech-recognition models.
+it does not touch nested wake-word or speech-recognition models.
 
 ## Run text to speech
 

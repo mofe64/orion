@@ -1,7 +1,10 @@
 # Orion Studio
 
-Orion Studio is the cross-platform desktop workspace for previewing and
-authoring Orion scenes, then submitting named work to the robot.
+Orion Studio is the desktop workspace for previewing and authoring Orion
+scenes, submitting named work to the robot, and running Orion's primary voice
+experience. The application shell targets macOS, Windows, and Linux, while the
+current MLX voice adapters require Apple Silicon. See the
+[platform support matrix](../docs/reference/platform-support.md).
 
 ```text
 Tauri + React Studio                    Raspberry Pi
@@ -15,10 +18,16 @@ Tauri + React Studio                    Raspberry Pi
                                         sole hardware authority
 ```
 
-Studio never opens a servo, light, or audio device. The Pi gateway accepts
-only named pose, motion, scene, speech, status, and run-scoped cancellation
-operations. `oriond` remains responsible for validation, interpolation,
-lifecycle state, and all physical execution.
+Studio never opens the Raspberry Pi's servo, lighting, or audio devices. When
+the user explicitly enables Voice, Studio opens the workstation microphone and
+speaker. The Pi gateway accepts only named pose, motion, scene, speech, status,
+and run-scoped cancellation operations. `oriond` remains responsible for
+validation, interpolation, lifecycle state, and all physical execution.
+
+For the system-wide boundaries, see the
+[system architecture](../docs/explanation/system-architecture.md). New
+contributors should follow [Run Orion Studio](../docs/tutorials/first-studio-run.md)
+before using the component reference below.
 
 ## Desktop development
 
@@ -44,6 +53,10 @@ cd /path/to/orion/orion_studio
 pnpm install
 pnpm tauri dev
 ```
+
+These commands start Studio without preparing the optional voice worker. A new
+device must separately install and prefetch the voice models before enabling
+Voice; follow [Run Studio Voice for the first time](../docs/tutorials/first-studio-voice-run.md).
 
 For UI-only work, `pnpm dev` opens the same frontend at
 `http://localhost:1420`. Useful checks are:
@@ -222,6 +235,63 @@ The platform-neutral native scene store can be tested without GTK/WebKit:
 cargo test --manifest-path orion_studio/src-tauri/scene-store/Cargo.toml
 ```
 
-The Pi wake detector and transcription path remain untouched as a diagnostic
-and offline fallback. Future desktop voice work will use a platform-neutral
-transcription boundary rather than making Studio's core macOS-specific.
+## Studio local voice pipeline
+
+Studio owns the user-controlled voice pipeline:
+
+```text
+operating-system microphone
+        -> Tauri WebView getUserMedia
+        -> AudioWorklet 20 ms mono frames
+        -> native sample rate converted to 16 kHz PCM16
+        -> persistent authenticated localhost WebSocket
+        -> Rustpotter reference detection at threshold 0.400
+        -> three-second in-memory pre-roll + endpointing
+        -> Qwen3-ASR wake confirmation and command transcription
+        -> configured AgentProvider (Codex by default)
+        -> local Chatterbox Turbo 8-bit speech generation
+        -> Studio speaker + playback acknowledgement
+```
+
+Open **Voice** in Studio's top bar and choose **Enable microphone**. The panel
+shows model startup, the selected device, the native sample rate, a live dBFS
+level, wake/command state, the final transcript, and Orion's reply.
+Capture begins only after this user action. Audio and pre-roll remain transient
+in memory and the WebSocket client rejects non-loopback destinations. Voice
+requires `pnpm tauri dev`; the UI-only Vite server cannot launch native workers.
+
+`src/lib/studioMicrophone.ts` is the platform adapter for WebView microphone
+capture. `public/orion-microphone-worklet.js` batches samples on the Web Audio
+rendering thread so the UI thread does not own real-time capture.
+`src/lib/voiceRuntime.ts` owns start, stop, failure, stale-callback rejection,
+and observable capture state. `src/lib/voiceAudio.ts` performs streaming-rate
+conversion, PCM16 encoding, and exact 80 ms worker batching.
+`src/lib/voiceWorkerProtocol.ts` owns the versioned wire contract, while
+`src/lib/studioSpeaker.ts` converts returned PCM16 to Web Audio playback, and
+`src/lib/studioVoicePipeline.ts` coordinates the complete state machine.
+
+Tauri starts one Python process from `voice_worker/.venv`, assigns a random
+loopback port and per-run token, and stops it with the Studio voice session.
+The Python worker keeps Qwen3-ASR and Chatterbox resident, while a small native
+Rust extension runs the commissioned Rustpotter reference. Qwen confirms every
+candidate before the selected agent receives a command. The default Codex
+adapter uses the existing `codex login` session and runs in an empty, ephemeral,
+read-only workspace with approvals denied. “Hey Orion, turn left” completes in
+one ASR pass; “Hey Orion” opens a follow-up command capture. See the
+[voice-worker reference](voice_worker/README.md) for its protocol and tests,
+and the [first-run tutorial](../docs/tutorials/first-studio-voice-run.md) for
+complete device setup.
+
+Training recordings and evaluators are not runtime dependencies. They live in
+the sibling `voice-model-lab` workspace outside the Orion repository. Orion
+retains only the commissioned 104 KB `.rpw` reference.
+
+The macOS bundle includes `NSMicrophoneUsageDescription` in
+`src-tauri/Info.plist`. Windows and Linux continue to use their platform
+WebView and operating-system media permissions.
+
+The current agent can produce speech only; it cannot request physical
+capabilities. Endpoint tuning, deterministic agent capability routing, Pi
+speech transport, worker packaging, and non-MLX adapters remain incomplete.
+The Pi activation and transcription path remains a diagnostic and offline
+fallback.

@@ -1,7 +1,7 @@
 # Orion scenes
 
-This directory is the backend-independent source of truth for Orion's local
-multimodal scenes. A scene references named poses and motions rather than
+Orion's backend-independent multimodal scenes live in this directory. A scene
+references named poses and motions rather than
 containing raw servo commands. Lighting is expressed as logical RGBW values;
 the Pi backend is responsible for translating complete 40-pixel frames to the
 physical NeoPixel shield.

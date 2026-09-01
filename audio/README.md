@@ -1,8 +1,8 @@
 # Orion local audio cues
 
-This directory is the source of truth for short, deterministic sounds played
-by Orion scenes. Hardware routing and ReSpeaker commissioning remain under
-`hardware/audio/`; these files are portable scene resources.
+Short, deterministic sounds played by Orion scenes live in this directory.
+Hardware routing and ReSpeaker commissioning remain under `hardware/audio/`;
+the cue files are portable scene resources.
 
 Each cue is addressed by its filename stem. For example, a scene action with
 `cue: acknowledge` resolves to `audio/cues/acknowledge.wav`. Names may contain

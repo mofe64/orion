@@ -1,6 +1,6 @@
 # Orion motion
 
-This directory is the backend-independent source of truth for Orion motion.
+Orion's backend-independent motion assets live in this directory.
 
 - `config/poses.yaml` contains named joint-space poses.
 - `config/motion_limits.yaml` contains portable position and dynamic limits.
