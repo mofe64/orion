@@ -12,6 +12,7 @@ const RETIME_ITERATIONS: usize = 12;
 const OVERSHOOT_SAMPLES: usize = 80;
 const CALIBRATION_BLEND_ITERATIONS: usize = 18;
 const COMMAND_RATE_HZ: f64 = 50.0;
+const INTERRUPT_SPEED_HEADROOM: f64 = 0.95;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WaypointArrival {
@@ -152,9 +153,11 @@ impl CompiledTrajectory {
 
     /// Compile an interruption blend whose 50 Hz command samples remain inside
     /// calibration. Measured start velocity is preserved joint-by-joint when
-    /// it is safe. Only joints whose blend would leave their calibrated range
-    /// are progressively attenuated; authored targets and all other joints are
-    /// unchanged.
+    /// it is physically representable and safe. A present-speed telemetry
+    /// spike above the motor profile ceiling is first bounded with small
+    /// braking headroom; only joints whose blend would then leave their
+    /// calibrated range are progressively attenuated. Authored targets and
+    /// all other joints are unchanged.
     pub fn compile_calibrated(
         name: impl Into<String>,
         start: JointPositions,
@@ -167,6 +170,12 @@ impl CompiledTrajectory {
         let name = name.into();
         validate_limits(&start, limits)?;
         let mut blended_velocity = start_velocity;
+        let bounded_start_speed = maximum_velocity_rad_s * INTERRUPT_SPEED_HEADROOM;
+        for velocity in blended_velocity.values_mut() {
+            if velocity.abs() > maximum_velocity_rad_s {
+                *velocity = velocity.signum() * bounded_start_speed;
+            }
+        }
         for _ in 0..CALIBRATION_BLEND_ITERATIONS {
             let candidate = Self::compile(
                 name.clone(),
@@ -853,6 +862,49 @@ mod tests {
                 .unwrap();
             assert!((-1.0..=1.0).contains(&positions["safe"]));
             assert!((-1.0..=1.0).contains(&positions["edge"]));
+        }
+    }
+
+    #[test]
+    fn calibrated_interruption_bounds_telemetry_above_motor_ceiling() {
+        let start = positions(&[("joint", -0.22)]);
+        // STS3215 present-speed telemetry is quantized in 0.732 RPM units.
+        // A transient raw value of 100 reports 7.665 rad/s, above the motor
+        // profile ceiling and therefore impossible to preserve in a bounded
+        // compiled command stream.
+        let measured_velocity = positions(&[("joint", 7.665_486_074_759_095)]);
+        let trajectory = CompiledTrajectory::compile_calibrated(
+            "reversing-interruption",
+            start.clone(),
+            measured_velocity.clone(),
+            vec![TrajectoryWaypoint {
+                label: "new_target".into(),
+                positions: positions(&[("joint", -0.36)]),
+                duration_seconds: 0.95,
+                arrival: WaypointArrival::Settle,
+                hold_seconds: 0.0,
+                marker: None,
+            }],
+            MotionStyle::named("thinking").unwrap(),
+            STS3215_MAX_SPEED_RAD_S,
+            &[JointLimit {
+                name: "joint".into(),
+                lower_rad: -1.0,
+                upper_rad: 1.0,
+            }],
+        )
+        .unwrap();
+
+        let first = trajectory.sample_state(0.0).unwrap();
+        assert_eq!(first.positions, start);
+        assert!(first.velocities["joint"].abs() < measured_velocity["joint"].abs());
+        assert!(trajectory.peak_velocity_rad_s() <= STS3215_MAX_SPEED_RAD_S * 1.001);
+        let steps = (trajectory.duration_seconds() * COMMAND_RATE_HZ).ceil() as usize;
+        for step in 0..=steps {
+            let position = trajectory
+                .sample((step as f64 / COMMAND_RATE_HZ).min(trajectory.duration_seconds()))
+                .unwrap()["joint"];
+            assert!((-1.0..=1.0).contains(&position));
         }
     }
 }

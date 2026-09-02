@@ -11,7 +11,7 @@ use orion_runtime::{
     LightingDevice, MAX_SPEECH_TEXT_BYTES, MotionLibrary, MujocoDriver, ORION_APLAY_PATH,
     ORION_AUDIO_CARD, ORION_AUDIO_PCM_DEVICE, ORION_JOINT_NAMES, PI5_NEOPIXEL_DEVICE_PATH,
     Pi5NeoPixelDevice, PoseLibrary, RecordingAudioDevice, RecordingLightingDevice, Rgbw8,
-    RuntimeCore, RuntimeDriver, RustypotTransport, SceneCoordinator, SceneLibrary,
+    RuntimeCore, RuntimeDriver, RustypotTransport, SceneCoordinator, SceneLibrary, ScenePhase,
     SpeechCoordinator, Sts3215Driver, UnixCommandServer, configure_respeaker_v2_mixer,
     load_calibration_file, parse_scene_document, render_effect, request_daemon,
 };
@@ -911,6 +911,9 @@ fn serve_driver<D: RuntimeDriver>(
             now_seconds,
             &mut core,
             scenes.is_active(),
+            scenes
+                .last_status()
+                .map(|status| (status.run_id, status.state == ScenePhase::Completed)),
             speech.is_active(),
             speech.active_analysis(),
             speech.active_energy_frame(),
@@ -1177,7 +1180,7 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         definition.validate_audio_cues(&context.cues)?;
         let status = scenes.start_definition(definition, now_seconds)?;
         if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.note_foreground_started(now_seconds);
+            coordinator.note_foreground_scene_started(now_seconds, status.run_id);
         }
         return Ok(serde_json::json!({
             "ok": true,
@@ -1217,7 +1220,7 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         }
         let status = scenes.start(name, now_seconds)?;
         if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.note_foreground_started(now_seconds);
+            coordinator.note_foreground_scene_started(now_seconds, status.run_id);
         }
         return Ok(serde_json::json!({
             "ok": true,

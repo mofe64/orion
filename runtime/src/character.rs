@@ -65,6 +65,7 @@ pub struct CharacterCoordinator {
     active_idle_category: Option<NextIdleCategory>,
     starting_run_id: Option<u64>,
     foreground_pending: bool,
+    foreground_scene_run_id: Option<u64>,
     speech_motion_run_id: Option<u64>,
     next_speech_gesture_frame: usize,
     last_speech_clip: Option<String>,
@@ -88,6 +89,7 @@ impl CharacterCoordinator {
             active_idle_category: None,
             starting_run_id: None,
             foreground_pending: false,
+            foreground_scene_run_id: None,
             speech_motion_run_id: None,
             next_speech_gesture_frame: 20,
             last_speech_clip: None,
@@ -228,11 +230,22 @@ impl CharacterCoordinator {
         self.reset_timers(now);
     }
 
+    pub fn note_foreground_scene_started(&mut self, now: f64, run_id: u64) {
+        if !self.status.enabled {
+            return;
+        }
+        self.foreground_scene_run_id = Some(run_id);
+        self.status.state = CharacterState::ForegroundScene;
+        self.status.active_clip = None;
+        self.reset_timers(now);
+    }
+
     pub fn tick<D: RuntimeDriver>(
         &mut self,
         now: f64,
         core: &mut RuntimeCore<D>,
         scene_active: bool,
+        last_scene_result: Option<(u64, bool)>,
         speech_active: bool,
         speech_analysis: Option<&SpeechAnalysis>,
         speech_frame: Option<usize>,
@@ -243,6 +256,21 @@ impl CharacterCoordinator {
         if scene_active {
             self.status.state = CharacterState::ForegroundScene;
             return Ok(());
+        }
+        if let Some(run_id) = self.foreground_scene_run_id {
+            let Some((terminal_run_id, completed)) = last_scene_result else {
+                return Ok(());
+            };
+            if terminal_run_id != run_id {
+                return Ok(());
+            }
+            if completed {
+                self.capture_anchor(core);
+            }
+            self.foreground_scene_run_id = None;
+            self.status.state = self.idle_state();
+            self.status.active_clip = None;
+            self.reset_timers(now);
         }
         if self
             .status
@@ -523,6 +551,7 @@ impl CharacterCoordinator {
         self.active_idle_category = None;
         self.starting_run_id = None;
         self.foreground_pending = false;
+        self.foreground_scene_run_id = None;
         self.speech_motion_run_id = None;
     }
 }
@@ -744,14 +773,49 @@ mod tests {
         character.status.state = CharacterState::Listening;
         character.status.active_anchor = Some(core.poses().pose("home").unwrap().clone());
 
-        character.tick(1.0, core, true, true, None, None).unwrap();
+        character
+            .tick(1.0, core, true, None, true, None, None)
+            .unwrap();
         assert_eq!(character.status.state, CharacterState::ForegroundScene);
 
-        character.tick(1.1, core, false, true, None, None).unwrap();
+        character
+            .tick(1.1, core, false, None, true, None, None)
+            .unwrap();
         assert_eq!(character.status.state, CharacterState::Speaking);
 
-        character.tick(1.2, core, false, false, None, None).unwrap();
+        character
+            .tick(1.2, core, false, None, false, None, None)
+            .unwrap();
         assert_eq!(character.status.state, CharacterState::HomeIdle);
+    }
+
+    #[test]
+    fn only_a_completed_scene_replaces_the_idle_anchor() {
+        let core = &mut core();
+        let home = core.poses().pose("home").unwrap().clone();
+        let measured: JointPositions = core
+            .snapshot()
+            .joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.position))
+            .collect();
+        assert_ne!(home, measured);
+
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.state = CharacterState::HomeIdle;
+        character.status.active_anchor = Some(home.clone());
+        character.note_foreground_scene_started(1.0, 7);
+        character
+            .tick(1.1, core, false, Some((7, false)), false, None, None)
+            .unwrap();
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&home));
+
+        character.note_foreground_scene_started(2.0, 8);
+        character
+            .tick(2.1, core, false, Some((8, true)), false, None, None)
+            .unwrap();
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&measured));
     }
 
     #[test]
@@ -819,7 +883,7 @@ mod tests {
         character.status.next_idle_category = Some(NextIdleCategory::Micro);
 
         character
-            .tick(100.0, &mut core, false, false, None, None)
+            .tick(100.0, &mut core, false, None, false, None, None)
             .unwrap();
 
         assert!(!character.status.enabled);
