@@ -72,11 +72,12 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
         .map(|name| ((*name).to_owned(), JointServoProfile::default()))
         .collect();
     // The elbow and head pitch axes carry gravity loads while holding Orion's
-    // powered poses. Matching their proportional gain keeps steady-state pose
-    // error inside the measured completion tolerance without relaxing that
-    // tolerance for every joint.
+    // powered poses. Their measured per-joint gains keep steady-state pose
+    // error inside the completion tolerance without relaxing that tolerance
+    // for every joint. Head pitch carries the lamp head at the end of the arm,
+    // so its commissioned gain is higher than the elbow's.
     profiles.get_mut("elbow_pitch_joint").unwrap().p_coefficient = 32;
-    profiles.get_mut("head_pitch_joint").unwrap().p_coefficient = 32;
+    profiles.get_mut("head_pitch_joint").unwrap().p_coefficient = 48;
     profiles
 }
 
@@ -720,7 +721,7 @@ mod tests {
         );
         assert_eq!(
             driver.transport().registers[&(5, Register::PCoefficient)],
-            32
+            48
         );
         assert!(
             driver
