@@ -90,10 +90,10 @@ states and does not play the response through the workstation speaker. Listen
 for clear ReSpeaker output while observing:
 
 - varied use of the four speaking clips without immediate repetition;
-- restrained low-amplitude motion during ordinary speech;
+- clearly readable but restrained motion during ordinary speech;
 - larger motion near audible phrase-energy peaks;
 - intentional stillness in quiet regions;
-- spatial `speaking_energy` light response; and
+- spatial, smoothed `speaking_energy` light response that remains secondary to motion; and
 - a smooth return to the pre-speech anchor before a freshly randomized idle
   delay begins.
 

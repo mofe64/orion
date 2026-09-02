@@ -1,15 +1,15 @@
 format_version: 2
 motion:
   name: idle_directional_hold
-  description: Small pose-compatible detail while holding left or right.
+  description: Readable pose-compatible detail while holding left or right.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.020, shoulder_pitch_joint: -0.012}
+    - offsets: {head_pitch_joint: 0.070, shoulder_pitch_joint: -0.050}
       duration: 0.7
       arrival: through
-    - offsets: {head_roll_joint: 0.016, elbow_pitch_joint: 0.012}
+    - offsets: {head_roll_joint: 0.060, elbow_pitch_joint: 0.050, head_pitch_joint: 0.025}
       duration: 0.65
       arrival: through
     - offsets: {}

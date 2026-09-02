@@ -897,6 +897,7 @@ fn serve_driver<D: RuntimeDriver>(
     );
     let started_at = Instant::now();
     let mut next_sample = started_at;
+    let mut speaking_light_intensity = 0.0;
     while !stopping.load(Ordering::Relaxed) {
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
@@ -904,8 +905,14 @@ fn serve_driver<D: RuntimeDriver>(
         scenes.tick(now_seconds, &mut core, lighting.as_mut(), audio.as_mut())?;
         speech.tick(audio.as_mut());
         if let Some(energy) = speech.active_energy() {
-            let normalized = (energy / 0.22).clamp(0.08, 1.0);
-            lighting.render(&render_effect("speaking_energy", now_seconds, normalized)?)?;
+            speaking_light_intensity = smooth_speaking_light(speaking_light_intensity, energy);
+            lighting.render(&render_effect(
+                "speaking_energy",
+                now_seconds,
+                speaking_light_intensity,
+            )?)?;
+        } else {
+            speaking_light_intensity = 0.0;
         }
         character.tick(
             now_seconds,
@@ -939,6 +946,12 @@ fn serve_driver<D: RuntimeDriver>(
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }
     Ok(0)
+}
+
+fn smooth_speaking_light(previous: f64, energy: f64) -> f64 {
+    let target = (energy / 0.30).clamp(0.06, 0.72);
+    let response = if target > previous { 0.18 } else { 0.07 };
+    previous + (target - previous) * response
 }
 
 fn handle_daemon_command_with_character<D: RuntimeDriver, A: AudioDevice + ?Sized>(
@@ -1543,6 +1556,18 @@ mod tests {
             Some(EXIT_SPEECH_FAILED)
         );
         assert!(speech_state_exit_code("mystery").is_err());
+    }
+
+    #[test]
+    fn speaking_light_smooths_attack_and_release_below_full_scale() {
+        let attack = smooth_speaking_light(0.0, 0.30);
+        assert!(attack > 0.0 && attack < 0.72);
+
+        let release = smooth_speaking_light(attack, 0.0);
+        assert!(release > 0.06 && release < attack);
+
+        let sustained = (0..100).fold(0.0, |level, _| smooth_speaking_light(level, 0.30));
+        assert!((sustained - 0.72).abs() < 1e-6);
     }
 
     #[test]

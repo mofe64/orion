@@ -6,13 +6,13 @@ motion:
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: -0.035, head_roll_joint: 0.025}
+    - offsets: {base_yaw_joint: -0.10, head_roll_joint: 0.070}
       duration: 0.5
       arrival: through
-    - offsets: {base_yaw_joint: 0.045, head_roll_joint: -0.020}
+    - offsets: {base_yaw_joint: 0.13, head_roll_joint: -0.060}
       duration: 0.55
       arrival: through
-    - offsets: {base_yaw_joint: -0.012}
+    - offsets: {base_yaw_joint: -0.040, head_roll_joint: 0.020}
       duration: 0.45
       arrival: through
     - offsets: {}

@@ -20,23 +20,25 @@ idea; light, sound, and secondary joints support rather than compete with it.
 | `return_home` | Weighted downward/central settle into powered home | No decorative overshoot; joints arrive with controlled overlap | Slow return-home style communicates weight and finality |
 | `look_at_left` | Functional direct left orientation | No expressive anticipation; continuous compiler still supplies slow-in/out | Utility motion keeps a clean directional silhouette |
 | `look_at_right` | Functional direct right orientation | No expressive anticipation; final settle is explicit | Utility motion respects the same calibrated and spline contracts |
-| `idle_breathe` | Coordinated compact rise and release | Compression/extension is tiny and always returns to the immutable anchor | Long living-idle timing; no sound |
+| `idle_breathe` | Coordinated visible rise and release | Compression/extension is restrained and always returns to the immutable anchor | Long living-idle timing; no sound |
 | `idle_head_curiosity` | Gentle pitch/roll examination | First tilt flows through a smaller counter-shape | Head detail stays subordinate to the held pose; no sound |
-| `idle_micro_glance` | Two-to-three-degree glance compatible with a held silhouette | Base starts the glance, head counters, both return | Short micro-idle with long randomized quiet interval |
+| `idle_micro_glance` | Readable glance compatible with a held silhouette | Base starts the glance, head counters, both return | Short micro-idle with long randomized quiet interval |
 | `idle_shoulder_adjust` | Small internal weight redistribution | Shoulder initiates; elbow/head trail and settle | Quiet living-idle timing; does not change the anchor |
 | `idle_weight_shift` | Coordinated base/shoulder/elbow weight change | Body lead with head counterbalance and tapered return | Larger idle, selected less often; motion and light only |
 | `idle_soft_head_shake` | Restrained asymmetric shake | Small first side, larger counter, diminished final echo | Direction changes flow through spline points without stop plateaus |
 | `idle_attentive_hold` | Subtle upward energy within attentive anchors | Shoulder/head rise then diagonal secondary detail | Faster attentive character but low amplitude |
 | `idle_directional_hold` | Detail that preserves a left/right held silhouette | Pitch/shoulder lead; roll/elbow follow | Avoids yaw that would undermine the directional staging |
-| `speak_calm_sway` | Low-amplitude conversational sway | Alternating base/head counter-motion returns cleanly | Used sparsely between quiet regions; light follows RMS energy |
+| `speak_calm_sway` | Readable conversational head-and-body sway | Head, shoulder, and elbow form alternating counter-shapes and return cleanly | Used sparsely between quiet regions; smoothed light follows RMS energy |
 | `speak_emphasis_nod` | Single phrase-boundary nod | Fast head preparation and smaller recoil | Emphatic style only at detected energy peaks |
-| `speak_explanatory_lean` | Small forward explanatory emphasis | Shoulder/elbow lead, head supports, then quiet return | Phrase-scale beat with deliberate stillness afterward |
+| `speak_explanatory_lean` | Clear forward explanatory emphasis | Shoulder/elbow lead, head supports, then quiet return | Phrase-scale beat with deliberate stillness afterward |
 | `speak_reflective_tilt` | Reflective diagonal thought shape | Base counterbalances the head tilt; diminished follow-through | Calm timing and longer quiet return; never loops continuously |
 
 ## Pose and scene review
 
 `home`, `attentive`, `thinking`, `curious`, `delight`, `look_left`, and
 `look_right` are powered character anchors with distinct readable silhouettes.
+`home` holds the lamp head on a forward, slightly lowered cartoon eyeline rather
+than at the lower edge of calibrated pitch travel.
 `zero_reference` is calibration-only. `rest` is a mechanically supported
 shutdown pose and is intentionally excluded from character animation.
 Anticipation, lean, and overshoot poses are transition drawings, not idle

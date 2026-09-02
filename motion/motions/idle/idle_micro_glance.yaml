@@ -1,15 +1,15 @@
 format_version: 2
 motion:
   name: idle_micro_glance
-  description: Two-degree base and head glance with a full return.
+  description: Readable base-and-head glance with a full return.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: 0.040, head_roll_joint: -0.022}
+    - offsets: {base_yaw_joint: 0.11, head_roll_joint: -0.070}
       duration: 0.65
       arrival: through
-    - offsets: {base_yaw_joint: 0.025, head_roll_joint: -0.012}
+    - offsets: {base_yaw_joint: 0.050, head_roll_joint: -0.030}
       duration: 0.55
       arrival: through
     - offsets: {}

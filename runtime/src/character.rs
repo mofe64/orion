@@ -236,6 +236,7 @@ impl CharacterCoordinator {
         }
         self.status.state = CharacterState::Speaking;
         self.status.active_clip = None;
+        self.next_speech_gesture_frame = 20 + self.rng.index(45);
         self.reset_timers(now);
     }
 
@@ -406,15 +407,21 @@ impl CharacterCoordinator {
             .active_anchor
             .as_ref()
             .and_then(|anchor| closest_pose_profile(core, anchor));
-        let mut candidates: Vec<&str> = match category {
-            NextIdleCategory::Micro => MICRO_IDLES.to_vec(),
-            NextIdleCategory::Large => LARGE_IDLES.to_vec(),
+        let mut candidates: Vec<&str> = match (profile.as_deref(), category) {
+            (Some("directional"), NextIdleCategory::Micro) => vec![
+                "idle_breathe",
+                "idle_head_curiosity",
+                "idle_shoulder_adjust",
+                "idle_directional_hold",
+            ],
+            (Some("directional"), NextIdleCategory::Large) => {
+                vec!["idle_breathe", "idle_weight_shift", "idle_directional_hold"]
+            }
+            (_, NextIdleCategory::Micro) => MICRO_IDLES.to_vec(),
+            (_, NextIdleCategory::Large) => LARGE_IDLES.to_vec(),
         };
         if profile.as_deref() == Some("attentive") {
             candidates.push("idle_attentive_hold");
-        }
-        if profile.as_deref() == Some("directional") {
-            candidates.push("idle_directional_hold");
         }
         candidates.retain(|clip| self.last_idle.as_deref() != Some(*clip));
         candidates[self.rng.index(candidates.len())].to_owned()
@@ -874,6 +881,17 @@ mod tests {
     }
 
     #[test]
+    fn every_speech_run_resets_its_gesture_schedule() {
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.next_speech_gesture_frame = 10_000;
+
+        character.note_speech_started(1.0);
+
+        assert!((20..65).contains(&character.next_speech_gesture_frame));
+    }
+
+    #[test]
     fn only_a_completed_scene_replaces_the_idle_anchor() {
         let core = &mut core();
         let home = core.poses().pose("home").unwrap().clone();
@@ -914,6 +932,24 @@ mod tests {
                 let selected = character.choose_idle(category, &core);
                 assert_ne!(Some(selected.clone()), previous);
                 previous = Some(selected);
+            }
+        }
+    }
+
+    #[test]
+    fn directional_idles_avoid_yaw_clips_that_collapse_at_the_right_limit() {
+        let core = core();
+        let mut character = CharacterCoordinator::new(17);
+        character.status.active_anchor = Some(core.poses().pose("look_right").unwrap().clone());
+
+        for category in [NextIdleCategory::Micro, NextIdleCategory::Large] {
+            for _ in 0..100 {
+                let selected = character.choose_idle(category, &core);
+                assert!(!matches!(
+                    selected.as_str(),
+                    "idle_micro_glance" | "idle_soft_head_shake"
+                ));
+                character.last_idle = Some(selected);
             }
         }
     }

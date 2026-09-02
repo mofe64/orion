@@ -1,18 +1,18 @@
 format_version: 2
 motion:
   name: speak_explanatory_lean
-  description: Small forward explanatory emphasis and return.
+  description: Clear forward explanatory emphasis with overlapping return.
   space: anchor_relative
   style: speaking_calm
   return_to_anchor: true
   keyframes:
-    - offsets: {shoulder_pitch_joint: 0.028, elbow_pitch_joint: -0.035, head_pitch_joint: 0.018}
-      duration: 0.42
+    - offsets: {shoulder_pitch_joint: 0.10, elbow_pitch_joint: -0.12, head_pitch_joint: 0.10}
+      duration: 0.46
       arrival: through
       marker: phrase
-    - offsets: {shoulder_pitch_joint: 0.012, elbow_pitch_joint: -0.016}
-      duration: 0.38
+    - offsets: {shoulder_pitch_joint: 0.045, elbow_pitch_joint: -0.05, head_roll_joint: -0.04}
+      duration: 0.42
       arrival: through
     - offsets: {}
-      duration: 0.52
+      duration: 0.56
       arrival: settle

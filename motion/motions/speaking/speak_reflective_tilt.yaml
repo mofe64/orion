@@ -6,13 +6,13 @@ motion:
   style: speaking_calm
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.035, head_pitch_joint: -0.012, base_yaw_joint: -0.015}
-      duration: 0.5
+    - offsets: {head_roll_joint: 0.14, head_pitch_joint: 0.06, shoulder_pitch_joint: -0.05}
+      duration: 0.52
       arrival: through
       marker: reflection
-    - offsets: {head_roll_joint: 0.018, head_pitch_joint: 0.008}
-      duration: 0.44
+    - offsets: {head_roll_joint: 0.06, head_pitch_joint: -0.03, shoulder_pitch_joint: 0.02}
+      duration: 0.48
       arrival: through
     - offsets: {}
-      duration: 0.62
+      duration: 0.66
       arrival: settle

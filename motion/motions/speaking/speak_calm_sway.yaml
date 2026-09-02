@@ -1,17 +1,17 @@
 format_version: 2
 motion:
   name: speak_calm_sway
-  description: Low-amplitude conversational sway with a quiet return.
+  description: Readable conversational head-and-body sway with a quiet return.
   space: anchor_relative
   style: speaking_calm
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: -0.025, head_roll_joint: 0.018}
-      duration: 0.55
+    - offsets: {head_roll_joint: 0.10, shoulder_pitch_joint: 0.06, elbow_pitch_joint: -0.05}
+      duration: 0.52
       arrival: through
-    - offsets: {base_yaw_joint: 0.020, head_roll_joint: -0.014, head_pitch_joint: 0.010}
-      duration: 0.62
+    - offsets: {head_roll_joint: -0.08, shoulder_pitch_joint: -0.04, elbow_pitch_joint: 0.04, head_pitch_joint: 0.06}
+      duration: 0.58
       arrival: through
     - offsets: {}
-      duration: 0.68
+      duration: 0.60
       arrival: settle

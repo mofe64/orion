@@ -1,15 +1,15 @@
 format_version: 2
 motion:
   name: idle_attentive_hold
-  description: Subtle upward movement for attentive anchors.
+  description: Clear upward movement for attentive anchors.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {shoulder_pitch_joint: 0.020, head_pitch_joint: 0.025, elbow_pitch_joint: -0.014}
+    - offsets: {shoulder_pitch_joint: 0.065, head_pitch_joint: 0.090, elbow_pitch_joint: -0.055}
       duration: 0.75
       arrival: through
-    - offsets: {head_roll_joint: 0.018, head_pitch_joint: 0.012}
+    - offsets: {head_roll_joint: 0.060, head_pitch_joint: 0.040, shoulder_pitch_joint: 0.025}
       duration: 0.65
       arrival: through
     - offsets: {}

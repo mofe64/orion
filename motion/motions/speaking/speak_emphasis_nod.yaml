@@ -6,13 +6,13 @@ motion:
   style: speaking_emphatic
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.055, shoulder_pitch_joint: -0.018}
-      duration: 0.20
+    - offsets: {head_pitch_joint: 0.18, shoulder_pitch_joint: -0.05}
+      duration: 0.22
       arrival: through
       marker: emphasis
-    - offsets: {head_pitch_joint: -0.018, elbow_pitch_joint: 0.015}
-      duration: 0.23
+    - offsets: {head_pitch_joint: -0.07, elbow_pitch_joint: 0.045}
+      duration: 0.25
       arrival: through
     - offsets: {}
-      duration: 0.28
+      duration: 0.32
       arrival: settle
