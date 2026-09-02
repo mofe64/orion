@@ -1067,16 +1067,14 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         }
         if let Some(coordinator) = character.as_deref_mut() {
             coordinator.preempt_idle(now_seconds, core)?;
-            coordinator.note_foreground_started(now_seconds);
         }
         let status = speech.start_spooled(identifier.trim())?;
+        if let Some(coordinator) = character.as_deref_mut() {
+            coordinator.note_speech_started(now_seconds);
+        }
         return Ok(serde_json::json!({"ok": true, "command": "speech_file", "run_id": status.run_id, "state": status.state}).to_string());
     }
     if let Some(text) = command.strip_prefix("speech start ") {
-        if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.preempt_idle(now_seconds, core)?;
-            coordinator.note_foreground_started(now_seconds);
-        }
         if scenes.is_active() {
             return Ok(serde_json::json!({
                 "ok": false,
@@ -1086,7 +1084,13 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
             })
             .to_string());
         }
+        if let Some(coordinator) = character.as_deref_mut() {
+            coordinator.preempt_idle(now_seconds, core)?;
+        }
         let status = speech.start(text)?;
+        if let Some(coordinator) = character.as_deref_mut() {
+            coordinator.note_speech_started(now_seconds);
+        }
         return Ok(serde_json::json!({
             "ok": true,
             "command": "speech_start",

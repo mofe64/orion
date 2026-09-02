@@ -230,6 +230,15 @@ impl CharacterCoordinator {
         self.reset_timers(now);
     }
 
+    pub fn note_speech_started(&mut self, now: f64) {
+        if !self.status.enabled {
+            return;
+        }
+        self.status.state = CharacterState::Speaking;
+        self.status.active_clip = None;
+        self.reset_timers(now);
+    }
+
     pub fn note_foreground_scene_started(&mut self, now: f64, run_id: u64) {
         if !self.status.enabled {
             return;
@@ -833,6 +842,35 @@ mod tests {
             .tick(1.2, core, false, None, false, None, None)
             .unwrap();
         assert_eq!(character.status.state, CharacterState::HomeIdle);
+    }
+
+    #[test]
+    fn speech_preserves_the_immutable_idle_anchor() {
+        let core = &mut core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let measured: JointPositions = core
+            .snapshot()
+            .joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.position))
+            .collect();
+        assert_ne!(anchor, measured);
+
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.state = CharacterState::HomeIdle;
+        character.status.active_anchor = Some(anchor.clone());
+        character.note_speech_started(1.0);
+        character
+            .tick(1.1, core, false, None, true, None, None)
+            .unwrap();
+        character
+            .tick(1.2, core, false, None, false, None, None)
+            .unwrap();
+
+        assert_eq!(character.status.state, CharacterState::HomeIdle);
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+        assert!(!character.foreground_pending);
     }
 
     #[test]
