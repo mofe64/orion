@@ -78,7 +78,8 @@ hardware/audio/configure-playback.sh
 ```
 
 The script selects `DAC_R1`, sends it through the right line mixer, keeps both
-analogue stages at unity gain, and sets PCM to the commissioned `-6 dB` level.
+analogue stages at unity gain, and sets PCM to the current physical-acceptance
+target of `0 dB`.
 The right differential line output feeds the V2 HAT's mono amplifier and JST
 connector; the `HP` controls instead serve the 3.5 mm jack.
 
@@ -118,7 +119,8 @@ capture registered as `seeed2micvoicec`, while BCM12 remained assigned to the
 NeoPixel PWM output. The JST route produced the 440 Hz right-channel test tone,
 the direct cue command played Orion's local chime, and both expressive
 acknowledgement scenes exercised that ReSpeaker playback path successfully.
-Physical listening established `-6 dB` as Orion's default PCM playback level.
+The current acceptance target is `0 dB`; final listening acceptance must confirm
+that speech is clear without audible clipping at the assembled JST speaker.
 
 ## Planned audio-front-end upgrade
 

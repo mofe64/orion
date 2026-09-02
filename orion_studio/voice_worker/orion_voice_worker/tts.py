@@ -6,6 +6,11 @@ from typing import Callable, Protocol
 import numpy as np
 
 
+TARGET_PEAK = 0.85
+MAXIMUM_GAIN = 4.0
+MINIMUM_AUDIBLE_PEAK = 1e-4
+
+
 @dataclass(frozen=True)
 class SpeechAudio:
     pcm: bytes
@@ -57,5 +62,10 @@ class ChatterboxSynthesizer:
         waveform = np.concatenate(chunks)
         if waveform.size == 0 or not np.isfinite(waveform).all():
             raise RuntimeError("Chatterbox generated invalid audio.")
+        peak = float(np.max(np.abs(waveform)))
+        if peak < MINIMUM_AUDIBLE_PEAK:
+            raise RuntimeError("Chatterbox generated inaudible audio.")
+        if peak < TARGET_PEAK:
+            waveform = waveform * min(TARGET_PEAK / peak, MAXIMUM_GAIN)
         pcm = (np.clip(waveform, -1.0, 1.0) * 32_767).astype("<i2").tobytes()
         return SpeechAudio(pcm=pcm, sample_rate=sample_rate)

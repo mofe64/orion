@@ -137,7 +137,7 @@ pub fn configure_respeaker_v2_mixer(card_name: &str) -> Result<()> {
     }
 
     let settings: &[&[&str]] = &[
-        &["sset", "PCM", "-6dB"],
+        &["sset", "PCM", "0dB"],
         &["sset", "Right DAC Mux", "DAC_R1"],
         &["sset", "Right Line Mixer DACR1", "on"],
         &["sset", "Line DAC", "0dB"],

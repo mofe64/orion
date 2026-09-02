@@ -26,6 +26,24 @@ class ChatterboxSynthesizerTests(unittest.TestCase):
         self.assertEqual(audio.samples, 3)
         self.assertEqual(np.frombuffer(audio.pcm, dtype="<i2").tolist(), [-32767, 0, 32767])
 
+    def test_applies_bounded_peak_gain_to_quiet_speech(self) -> None:
+        model = FakeModel([
+            SimpleNamespace(audio=np.array([-0.2, 0.0, 0.1]), sample_rate=24_000),
+        ])
+        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: model)
+
+        samples = np.frombuffer(synthesizer.synthesize("Hello").pcm, dtype="<i2")
+
+        self.assertEqual(samples.tolist(), [-26213, 0, 13106])
+
+    def test_rejects_inaudible_generation(self) -> None:
+        model = FakeModel([
+            SimpleNamespace(audio=np.array([0.0, 0.00001]), sample_rate=24_000),
+        ])
+        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: model)
+        with self.assertRaisesRegex(RuntimeError, "inaudible audio"):
+            synthesizer.synthesize("Hello")
+
     def test_rejects_empty_or_inconsistent_generation(self) -> None:
         empty = ChatterboxSynthesizer("test", model_loader=lambda _name: FakeModel([]))
         with self.assertRaisesRegex(RuntimeError, "no audio"):
