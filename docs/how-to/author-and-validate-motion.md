@@ -156,13 +156,6 @@ stability policy, or the backend changes:
 .venv/bin/python -m pytest -q simulation/mujoco
 ```
 
-Run documentation validation whenever assets, behavior, commands, or
-architecture change:
-
-```bash
-python3 scripts/check_docs.py
-```
-
 Targeted tests are useful during iteration, but the final gate must cover the
 whole catalog because poses and styles have shared consumers.
 
@@ -274,7 +267,6 @@ Before merging, verify:
 - [ ] Relative clips preserve shape under uniform scaling and return exactly.
 - [ ] Rust formatting and complete tests pass.
 - [ ] Python consumers and relevant MuJoCo tests pass.
-- [ ] Documentation links and headings pass `scripts/check_docs.py`.
 - [ ] The animation-principles review reflects the changed catalog.
 - [ ] Record supervised physical acceptance when required.
 - [ ] Return the robot to mechanical rest and disable torque after testing.

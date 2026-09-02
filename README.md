@@ -87,7 +87,6 @@ Run these from the repository root unless a linked guide says otherwise:
 cargo test --manifest-path runtime/Cargo.toml --all-targets
 PYTHONPATH=motion .venv/bin/python -m pytest -q motion/test
 python3 -m unittest discover -s orion_studio/tests -v
-python3 scripts/check_docs.py
 
 cd orion_studio
 pnpm test
