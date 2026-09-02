@@ -32,7 +32,7 @@ idea; light, sound, and secondary joints support rather than compete with it.
 | `speak_emphasis_nod` | Clear phrase-boundary nod | Fast head drawing redirects the continuing body path | Selected near detected energy peaks without stopping the performance |
 | `speak_explanatory_lean` | Clear forward explanatory emphasis | Shoulder/head drawing carries momentum into the next phrase | Phrase-scale staging inside the continuous performance |
 | `speak_reflective_tilt` | Reflective diagonal thought shape | A mirrored variant supplies asymmetry and counter-shape | Calm timing without an isolated return or stop |
-| Generated `speaking_performance` | One fluid action spanning the whole utterance | Gesture drawings are all `through`; quadrature head/elbow motion provides overlapping action and follow-through | Phrase energy controls variation and emphasis; only the final anchor return settles |
+| Generated `speaking_performance` | One fluid, head-led action spanning the whole utterance | Every phrase stages a head lead, then a delayed body follow while the head anticipates its next arc | Seeded scale/direction variation avoids a fixed cycle; energy-gated body beats have a three-phrase minimum interval; only the final anchor return settles |
 
 ## Pose and scene review
 
@@ -61,6 +61,9 @@ exception: it intentionally has no motion and verifies the RGBW/audio devices.
   amplitude and end at zero offset from their immutable anchor.
 - Speech composes its relative drawings into one utterance-length spline. It
   has no internal `settle` keyframes and no scheduler-created motion gaps.
+- Every speech phrase contains a readable head drawing. Ordinary shoulder and
+  elbow motion remains secondary; full body beats are energy-gated, never
+  adjacent, and limited to at most roughly one in three phrase drawings.
 - Routine idle has no sound, timers are randomized, and immediate repetition
   is excluded.
 - Final `settle` is intentional and reaches zero velocity and acceleration.

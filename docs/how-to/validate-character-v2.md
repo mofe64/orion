@@ -94,9 +94,13 @@ for clear ReSpeaker output while observing:
   drawings without immediate repetition;
 - continuous movement on both neighbouring 50 Hz samples around every
   internal drawing, with no unplanned stopped plateau;
-- clearly readable but restrained movement during ordinary speech;
-- larger motion near audible phrase-energy peaks;
-- overlapping head and elbow follow-through that prevents all joints from
+- a head-led hierarchy on every phrase: tilt, pitch, and calibrated turns must
+  read before the supporting shoulder and elbow action;
+- clearly readable but restrained and varied shoulder/elbow follow-through
+  during ordinary speech, with no obvious fixed-cycle repetition;
+- larger explanatory body beats only near selected audible phrase-energy
+  peaks, never on adjacent phrases and no more often than roughly one in three;
+- overlapping head and body follow-through that prevents all joints from
   stopping together;
 - spatial, smoothed `speaking_energy` light response that remains secondary to motion; and
 - one intentional final slow-out and smooth return to the pre-speech anchor
