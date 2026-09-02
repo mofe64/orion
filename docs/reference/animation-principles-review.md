@@ -28,10 +28,11 @@ idea; light, sound, and secondary joints support rather than compete with it.
 | `idle_soft_head_shake` | Restrained asymmetric shake | Small first side, larger counter, diminished final echo | Direction changes flow through spline points without stop plateaus |
 | `idle_attentive_hold` | Subtle upward energy within attentive anchors | Shoulder/head rise then diagonal secondary detail | Faster attentive character but low amplitude |
 | `idle_directional_hold` | Detail that preserves a left/right held silhouette | Pitch/shoulder lead; roll/elbow follow | Avoids yaw that would undermine the directional staging |
-| `speak_calm_sway` | Readable conversational head-and-body sway | Head, shoulder, and elbow form alternating counter-shapes and return cleanly | Used sparsely between quiet regions; smoothed light follows RMS energy |
-| `speak_emphasis_nod` | Single phrase-boundary nod | Fast head preparation and smaller recoil | Emphatic style only at detected energy peaks |
-| `speak_explanatory_lean` | Clear forward explanatory emphasis | Shoulder/elbow lead, head supports, then quiet return | Phrase-scale beat with deliberate stillness afterward |
-| `speak_reflective_tilt` | Reflective diagonal thought shape | Base counterbalances the head tilt; diminished follow-through | Calm timing and longer quiet return; never loops continuously |
+| `speak_calm_sway` | Readable conversational head-and-body sway | Supplies a calm dominant drawing to the utterance-length spline | Weighted toward ordinary phrases; never settles independently |
+| `speak_emphasis_nod` | Clear phrase-boundary nod | Fast head drawing redirects the continuing body path | Selected near detected energy peaks without stopping the performance |
+| `speak_explanatory_lean` | Clear forward explanatory emphasis | Shoulder/head drawing carries momentum into the next phrase | Phrase-scale staging inside the continuous performance |
+| `speak_reflective_tilt` | Reflective diagonal thought shape | A mirrored variant supplies asymmetry and counter-shape | Calm timing without an isolated return or stop |
+| Generated `speaking_performance` | One fluid action spanning the whole utterance | Gesture drawings are all `through`; quadrature head/elbow motion provides overlapping action and follow-through | Phrase energy controls variation and emphasis; only the final anchor return settles |
 
 ## Pose and scene review
 
@@ -58,6 +59,8 @@ exception: it intentionally has no motion and verifies the RGBW/audio devices.
 - Authored overshoot poses are exact; the compiler clamps extra overshoot.
 - All relative idles and speech gestures use one uniform calibration-aware
   amplitude and end at zero offset from their immutable anchor.
+- Speech composes its relative drawings into one utterance-length spline. It
+  has no internal `settle` keyframes and no scheduler-created motion gaps.
 - Routine idle has no sound, timers are randomized, and immediate repetition
   is excluded.
 - Final `settle` is intentional and reaches zero velocity and acceleration.

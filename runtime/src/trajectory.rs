@@ -477,7 +477,7 @@ fn clamp_unrequested_overshoot(
     accelerations: &mut [JointPositions],
 ) {
     for _ in 0..8 {
-        let mut offending = BTreeMap::<String, bool>::new();
+        let mut offending = BTreeSet::<(usize, String)>::new();
         for index in 0..durations.len() {
             let duration = durations[index];
             for joint in points[index].keys() {
@@ -498,21 +498,27 @@ fn clamp_unrequested_overshoot(
                         .0;
                     value < lower || value > upper
                 }) {
-                    offending.insert(joint.clone(), true);
+                    offending.insert((index, joint.clone()));
                 }
             }
         }
         if offending.is_empty() {
             break;
         }
-        for joint in offending.keys() {
-            for index in 1..velocities.len() - 1 {
-                *velocities[index]
-                    .get_mut(joint)
-                    .expect("joint derivative exists") *= 0.5;
-                *accelerations[index]
-                    .get_mut(joint)
-                    .expect("joint derivative exists") *= 0.5;
+        // Clamp only the two derivatives bordering an offending segment. A
+        // global per-joint clamp makes one difficult turn flatten that joint
+        // across an entire long performance, creating visible stop-start
+        // motion far away from the actual overshoot risk.
+        for (segment, joint) in offending {
+            for point in [segment, segment + 1] {
+                if point > 0 && point + 1 < velocities.len() {
+                    *velocities[point]
+                        .get_mut(&joint)
+                        .expect("joint derivative exists") *= 0.5;
+                    *accelerations[point]
+                        .get_mut(&joint)
+                        .expect("joint derivative exists") *= 0.5;
+                }
             }
         }
     }

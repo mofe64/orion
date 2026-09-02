@@ -82,20 +82,25 @@ three responses:
 
 1. a short one-sentence response;
 2. a medium response of roughly three to five sentences; and
-3. a long response approaching a minute without exceeding the 120-second
-   upload contract.
+3. a 20–30 second self-introduction in Orion's own voice, covering who Orion
+   is, their calm-curious character, and how motion, light, and speech work
+   together. Longer uploads may separately exercise the 120-second contract.
 
 For every response confirm that Studio shows Pi `queued`/`playing`/`completed`
 states and does not play the response through the workstation speaker. Listen
 for clear ReSpeaker output while observing:
 
-- varied use of the four speaking clips without immediate repetition;
-- clearly readable but restrained motion during ordinary speech;
+- one utterance-length performance spline assembled from all four speaking
+  drawings without immediate repetition;
+- continuous movement on both neighbouring 50 Hz samples around every
+  internal drawing, with no unplanned stopped plateau;
+- clearly readable but restrained movement during ordinary speech;
 - larger motion near audible phrase-energy peaks;
-- intentional stillness in quiet regions;
+- overlapping head and elbow follow-through that prevents all joints from
+  stopping together;
 - spatial, smoothed `speaking_energy` light response that remains secondary to motion; and
-- a smooth return to the pre-speech anchor before a freshly randomized idle
-  delay begins.
+- one intentional final slow-out and smooth return to the pre-speech anchor
+  before a freshly randomized idle delay begins.
 
 Motion failure must not interrupt audible speech. An audio failure must stop
 speaking animation, restore the anchor, report `failed`, and remove the spool

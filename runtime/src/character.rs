@@ -2,15 +2,23 @@ use serde::Serialize;
 
 use crate::daemon::RuntimeCore;
 use crate::driver::RuntimeDriver;
+use crate::motion::{
+    KeyframeArrival, MotionDefinition, MotionKeyframe, MotionLibrary, MotionSpace,
+};
 use crate::pose::JointPositions;
 use crate::speech::SpeechAnalysis;
 use crate::state::{MovementPhase, RuntimeMode};
+use crate::style::MotionStyle;
 use crate::{Error, Result};
 
 const MICRO_IDLE_MIN_SECONDS: f64 = 8.0;
 const MICRO_IDLE_MAX_SECONDS: f64 = 20.0;
 const LARGE_IDLE_MIN_SECONDS: f64 = 35.0;
 const LARGE_IDLE_MAX_SECONDS: f64 = 75.0;
+const SPEECH_END_LEAD_SECONDS: f64 = 0.12;
+const SPEECH_FINAL_SETTLE_SECONDS: f64 = 0.55;
+const SPEECH_GESTURE_DURATION_SCALE: f64 = 1.35;
+const SPEECH_PEAK_LOOKAHEAD_FRAMES: usize = 75;
 
 const MICRO_IDLES: [&str; 4] = [
     "idle_breathe",
@@ -67,7 +75,7 @@ pub struct CharacterCoordinator {
     foreground_pending: bool,
     foreground_scene_run_id: Option<u64>,
     speech_motion_run_id: Option<u64>,
-    next_speech_gesture_frame: usize,
+    speech_motion_started: bool,
     last_speech_clip: Option<String>,
 }
 
@@ -91,7 +99,7 @@ impl CharacterCoordinator {
             foreground_pending: false,
             foreground_scene_run_id: None,
             speech_motion_run_id: None,
-            next_speech_gesture_frame: 20,
+            speech_motion_started: false,
             last_speech_clip: None,
         }
     }
@@ -236,7 +244,7 @@ impl CharacterCoordinator {
         }
         self.status.state = CharacterState::Speaking;
         self.status.active_clip = None;
-        self.next_speech_gesture_frame = 20 + self.rng.index(45);
+        self.speech_motion_started = false;
         self.reset_timers(now);
     }
 
@@ -297,19 +305,42 @@ impl CharacterCoordinator {
                     self.capture_anchor(core);
                 }
                 self.status.state = CharacterState::Speaking;
-                self.next_speech_gesture_frame = 20 + self.rng.index(45);
+                self.speech_motion_started = false;
             }
             self.tick_speaking(now, core, speech_analysis, speech_frame);
             return Ok(());
         }
 
-        if matches!(
-            self.status.state,
-            CharacterState::Speaking | CharacterState::Settling
-        ) {
+        if self.status.state == CharacterState::Speaking {
             if let Some(run_id) = self.speech_motion_run_id {
                 if terminal_phase(core, run_id).is_none() {
-                    self.status.state = CharacterState::Settling;
+                    if core.mode() == RuntimeMode::Moving {
+                        let _ = checked(core.handle_command("stop", now));
+                    }
+                    self.speech_motion_run_id = None;
+                    if core.mode() == RuntimeMode::Holding
+                        && let Some(anchor) = self.status.active_anchor.clone()
+                        && let Ok(settle_run_id) = core.play_generated_anchored_relative(
+                            speech_settle_motion(),
+                            anchor,
+                            now,
+                        )
+                    {
+                        self.speech_motion_run_id = Some(settle_run_id);
+                        self.status.active_clip = Some("speak_settle".into());
+                        self.status.state = CharacterState::Settling;
+                        return Ok(());
+                    }
+                }
+                self.speech_motion_run_id = None;
+            }
+            self.status.active_clip = None;
+            self.status.state = self.idle_state();
+            self.reset_timers(now);
+        }
+        if self.status.state == CharacterState::Settling {
+            if let Some(run_id) = self.speech_motion_run_id {
+                if terminal_phase(core, run_id).is_none() {
                     return Ok(());
                 }
                 self.speech_motion_run_id = None;
@@ -432,7 +463,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
         analysis: Option<&SpeechAnalysis>,
-        frame: Option<usize>,
+        _frame: Option<usize>,
     ) {
         if let Some(run_id) = self.speech_motion_run_id {
             if terminal_phase(core, run_id).is_some() {
@@ -442,33 +473,128 @@ impl CharacterCoordinator {
                 return;
             }
         }
-        let (Some(analysis), Some(frame), Some(anchor)) =
-            (analysis, frame, self.status.active_anchor.clone())
-        else {
+        if self.speech_motion_started {
+            return;
+        }
+        let (Some(analysis), Some(anchor)) = (analysis, self.status.active_anchor.clone()) else {
             return;
         };
-        if frame < self.next_speech_gesture_frame || core.mode() != RuntimeMode::Holding {
+        if core.mode() != RuntimeMode::Holding {
             return;
         }
-        let energy = analysis.rms_20ms.get(frame).copied().unwrap_or(0.0);
-        let maximum = analysis.rms_20ms.iter().copied().fold(0.0, f64::max);
-        if energy < (maximum * 0.16).max(0.004) {
-            self.next_speech_gesture_frame = frame + 12;
+        self.speech_motion_started = true;
+        let Ok(performance) = self.compose_speech_performance(analysis, core.motions()) else {
             return;
-        }
-        let emphasis = analysis
-            .phrase_peaks
-            .iter()
-            .any(|peak| peak.abs_diff(frame) <= 3);
-        let clip = self.choose_speech_clip(emphasis);
-        // Speech motion is deliberately best-effort: playback remains the
-        // primary operation if a gesture cannot be compiled or started.
-        if let Ok(run_id) = core.play_anchored_relative(&clip, anchor, now) {
+        };
+        // Speech motion remains best-effort: playback is never failed because
+        // a generated performance could not be compiled or started.
+        if let Ok(run_id) = core.play_generated_anchored_relative(performance, anchor, now) {
             self.speech_motion_run_id = Some(run_id);
-            self.status.active_clip = Some(clip.clone());
-            self.last_speech_clip = Some(clip);
+            self.status.active_clip = Some("speaking_performance".into());
         }
-        self.next_speech_gesture_frame = frame + 70 + self.rng.index(100);
+    }
+
+    fn compose_speech_performance(
+        &mut self,
+        analysis: &SpeechAnalysis,
+        motions: &MotionLibrary,
+    ) -> Result<MotionDefinition> {
+        let style = MotionStyle::named("speaking_emphatic")?;
+        let performance_seconds = (analysis.duration_seconds - SPEECH_END_LEAD_SECONDS).max(0.9);
+        let authored_budget = performance_seconds * style.tempo;
+        let settle_budget = (SPEECH_FINAL_SETTLE_SECONDS * style.tempo)
+            .min(authored_budget * 0.35)
+            .max(0.16);
+        let active_budget = (authored_budget - settle_budget).max(0.24);
+        let mut authored_seconds = 0.0;
+        let mut keyframes = Vec::new();
+        let mut peak_cursor = 0;
+        let mut gesture_index = 0;
+
+        while active_budget - authored_seconds > 0.22 {
+            let current_frame = ((authored_seconds / style.tempo) / 0.020).round() as usize;
+            while analysis
+                .phrase_peaks
+                .get(peak_cursor)
+                .is_some_and(|peak| *peak + 10 < current_frame)
+            {
+                peak_cursor += 1;
+            }
+            let emphasis = analysis
+                .phrase_peaks
+                .get(peak_cursor)
+                .is_some_and(|peak| *peak <= current_frame + SPEECH_PEAK_LOOKAHEAD_FRAMES);
+            if emphasis {
+                peak_cursor += 1;
+            }
+            let clip = self.choose_speech_clip(emphasis);
+            let definition = motions.motion(&clip)?;
+            let nominal_seconds = if emphasis { 0.72 } else { 1.05 }
+                * SPEECH_GESTURE_DURATION_SCALE
+                * self.rng.range(0.90, 1.10);
+            let remaining = active_budget - authored_seconds;
+            let fit = (remaining / nominal_seconds).min(1.0);
+            if fit < 0.24 && !keyframes.is_empty() {
+                break;
+            }
+
+            // Each selected clip contributes its dominant key drawing. The
+            // global spline supplies the in-betweens and carries velocity
+            // through it into the next phrase instead of replaying the clip's
+            // authored return-to-anchor settle.
+            let mut keyframe = definition.keyframes[0].clone();
+            if gesture_index % 2 == 1
+                && matches!(clip.as_str(), "speak_calm_sway" | "speak_reflective_tilt")
+                && let Some(head_roll) = keyframe.target.get_mut("head_roll_joint")
+            {
+                *head_roll = -*head_roll;
+            }
+            keyframe.duration_seconds = nominal_seconds * fit;
+            keyframe.arrival = KeyframeArrival::Through;
+            keyframe.hold_seconds = 0.0;
+            keyframe.marker = Some(format!("gesture_{gesture_index}_{clip}"));
+            authored_seconds += keyframe.duration_seconds;
+            keyframes.push(keyframe);
+            self.last_speech_clip = Some(clip);
+            gesture_index += 1;
+        }
+
+        if keyframes.is_empty() {
+            return Err(Error::Runtime(
+                "Speech performance could not allocate an expressive keyframe.".into(),
+            ));
+        }
+        // A low-amplitude quadrature sway keeps secondary joints out of phase
+        // with the primary drawings. At every internal drawing at least one of
+        // these channels is still travelling, which creates overlapping action
+        // and prevents the whole character from stopping at once.
+        for (index, keyframe) in keyframes.iter_mut().enumerate() {
+            let phase = (index + 1) as f64 * std::f64::consts::FRAC_PI_4;
+            *keyframe
+                .target
+                .entry("head_roll_joint".into())
+                .or_insert(0.0) += 0.12 * phase.sin();
+            *keyframe
+                .target
+                .entry("elbow_pitch_joint".into())
+                .or_insert(0.0) += 0.09 * phase.cos();
+        }
+        keyframes.push(MotionKeyframe {
+            pose_name: None,
+            target: JointPositions::new(),
+            duration_seconds: (authored_budget - authored_seconds).max(0.12),
+            arrival: KeyframeArrival::Settle,
+            hold_seconds: 0.0,
+            marker: Some("speech_settled".into()),
+        });
+        Ok(MotionDefinition {
+            name: "speaking_performance".into(),
+            description: "Utterance-length continuous speaking performance.".into(),
+            space: MotionSpace::AnchorRelative,
+            style,
+            return_to_anchor: true,
+            keyframes,
+        })
     }
 
     fn choose_speech_clip(&mut self, emphasis: bool) -> String {
@@ -573,6 +699,25 @@ impl CharacterCoordinator {
         self.foreground_pending = false;
         self.foreground_scene_run_id = None;
         self.speech_motion_run_id = None;
+        self.speech_motion_started = false;
+    }
+}
+
+fn speech_settle_motion() -> MotionDefinition {
+    MotionDefinition {
+        name: "speak_settle".into(),
+        description: "Blend an interrupted speaking performance back to its anchor.".into(),
+        space: MotionSpace::AnchorRelative,
+        style: MotionStyle::named("speaking_calm").expect("built-in speaking style exists"),
+        return_to_anchor: true,
+        keyframes: vec![MotionKeyframe {
+            pose_name: None,
+            target: JointPositions::new(),
+            duration_seconds: 0.42,
+            arrival: KeyframeArrival::Settle,
+            hold_seconds: 0.0,
+            marker: Some("speech_settled".into()),
+        }],
     }
 }
 
@@ -694,7 +839,7 @@ impl SeededRandom {
 mod tests {
     use crate::ORION_JOINT_NAMES;
     use crate::driver::JointLimit;
-    use crate::motion::MotionLibrary;
+    use crate::motion::{MotionLibrary, MotionSequence};
     use crate::pose::PoseLibrary;
     use crate::state::JointState;
 
@@ -881,14 +1026,193 @@ mod tests {
     }
 
     #[test]
-    fn every_speech_run_resets_its_gesture_schedule() {
+    fn every_speech_run_resets_its_continuous_performance() {
         let mut character = CharacterCoordinator::new(42);
         character.status.enabled = true;
-        character.next_speech_gesture_frame = 10_000;
+        character.speech_motion_started = true;
 
         character.note_speech_started(1.0);
 
-        assert!((20..65).contains(&character.next_speech_gesture_frame));
+        assert!(!character.speech_motion_started);
+    }
+
+    #[test]
+    fn utterance_length_speech_performance_flows_until_one_final_settle() {
+        let core = core();
+        let mut character = CharacterCoordinator::new(42);
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 1_000],
+            quiet_regions: vec![(240, 255), (690, 705)],
+            phrase_peaks: vec![60, 210, 360, 510, 660, 810, 940],
+            duration_seconds: 20.0,
+        };
+        let performance = character
+            .compose_speech_performance(&analysis, core.motions())
+            .unwrap();
+
+        assert!(performance.keyframes.len() > 12);
+        assert!(
+            performance
+                .keyframes
+                .iter()
+                .take(performance.keyframes.len() - 1)
+                .all(|keyframe| keyframe.arrival == KeyframeArrival::Through)
+        );
+        assert_eq!(
+            performance.keyframes.last().unwrap().arrival,
+            KeyframeArrival::Settle
+        );
+        assert!(performance.keyframes.last().unwrap().target.is_empty());
+
+        let markers = performance.markers();
+        let gestures: Vec<_> = markers
+            .iter()
+            .filter(|marker| marker.starts_with("gesture_"))
+            .collect();
+        assert!(gestures.len() >= 8);
+        assert!(
+            gestures
+                .windows(2)
+                .all(|pair| pair[0].splitn(3, '_').nth(2) != pair[1].splitn(3, '_').nth(2))
+        );
+
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let sequence = MotionSequence::new(&performance, anchor.clone()).unwrap();
+        assert!((19.5..=20.1).contains(&sequence.duration_seconds()));
+        for index in 0..sequence.keyframe_count() - 1 {
+            let arrival = sequence.keyframe_arrival_time(index).unwrap();
+            // A change of direction may have one instantaneous zero crossing,
+            // but there must be commanded motion on both neighbouring 50 Hz
+            // samples rather than a visible stopped plateau.
+            let before = sequence.sample_state((arrival - 0.040).max(0.0)).unwrap();
+            let after = sequence.sample_state(arrival + 0.040).unwrap();
+            let before_speed: f64 = before.velocities.values().map(|value| value.abs()).sum();
+            let after_speed: f64 = after.velocities.values().map(|value| value.abs()).sum();
+            assert!(
+                before_speed > 0.005,
+                "stopped before speech keyframe {index}: {before_speed}"
+            );
+            assert!(
+                after_speed > 0.005,
+                "stopped after speech keyframe {index}: {after_speed}"
+            );
+        }
+        assert_eq!(
+            sequence.sample(sequence.duration_seconds()).unwrap(),
+            anchor
+        );
+    }
+
+    #[test]
+    fn ending_speech_interrupts_the_long_performance_and_blends_to_anchor() {
+        let mut core = core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 500],
+            quiet_regions: vec![],
+            phrase_peaks: vec![80, 240, 400],
+            duration_seconds: 10.0,
+        };
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.state = CharacterState::HomeIdle;
+        character.status.active_anchor = Some(anchor.clone());
+        character.note_speech_started(0.0);
+
+        character
+            .tick(0.1, &mut core, false, None, true, Some(&analysis), Some(0))
+            .unwrap();
+        let performance_run = character.speech_motion_run_id.unwrap();
+        assert_eq!(core.mode(), RuntimeMode::Moving);
+
+        character
+            .tick(0.2, &mut core, false, None, false, None, None)
+            .unwrap();
+        assert_eq!(character.status.state, CharacterState::Settling);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("speak_settle")
+        );
+        assert_ne!(character.speech_motion_run_id, Some(performance_run));
+
+        let mut now = 0.2;
+        while character.status.state == CharacterState::Settling {
+            now += 0.1;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            assert!(now < 10.0, "speech settle did not terminate");
+        }
+        assert_eq!(character.status.state, CharacterState::HomeIdle);
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+        assert!(character.speech_motion_run_id.is_none());
+    }
+
+    #[test]
+    fn generated_speech_performance_remains_readable_at_every_supported_anchor() {
+        let core = core();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let calibration = crate::calibration::load_calibration_file(
+            root.join("simulation/mujoco/config/servo_calibration.json"),
+            &ORION_JOINT_NAMES,
+        )
+        .unwrap();
+        let limits: Vec<JointLimit> = calibration
+            .iter()
+            .map(|joint| {
+                let (lower_rad, upper_rad) = joint.safe_range_radians();
+                JointLimit {
+                    name: joint.name.clone(),
+                    lower_rad,
+                    upper_rad,
+                }
+            })
+            .collect();
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 1_000],
+            quiet_regions: vec![],
+            phrase_peaks: vec![100, 300, 500, 700, 900],
+            duration_seconds: 20.0,
+        };
+        let mut character = CharacterCoordinator::new(42);
+        let performance = character
+            .compose_speech_performance(&analysis, core.motions())
+            .unwrap();
+
+        for anchor_name in ["home", "attentive", "look_left", "look_right"] {
+            let anchor = core.poses().pose(anchor_name).unwrap().clone();
+            let scale = performance
+                .uniform_amplitude_scale(&anchor, &limits)
+                .unwrap();
+            assert!(scale > 0.75, "{anchor_name} collapsed to scale {scale}");
+            let zero_velocity = anchor.keys().map(|joint| (joint.clone(), 0.0)).collect();
+            let sequence = MotionSequence::compile_scaled_calibrated(
+                &performance,
+                anchor.clone(),
+                zero_velocity,
+                anchor.clone(),
+                scale,
+                &limits,
+            )
+            .unwrap();
+            for sample in 0..=100 {
+                let positions = sequence
+                    .sample(sequence.duration_seconds() * sample as f64 / 100.0)
+                    .unwrap();
+                for limit in &limits {
+                    assert!((limit.lower_rad..=limit.upper_rad).contains(&positions[&limit.name]));
+                }
+            }
+            assert_eq!(
+                sequence.sample(sequence.duration_seconds()).unwrap(),
+                anchor
+            );
+        }
     }
 
     #[test]

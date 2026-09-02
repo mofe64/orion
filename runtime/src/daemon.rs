@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::driver::RuntimeDriver;
-use crate::motion::{MotionLibrary, MotionSequence};
+use crate::motion::{MotionDefinition, MotionLibrary, MotionSequence};
 use crate::pose::{JointPositions, PoseLibrary};
 use crate::state::{JointState, MotionState, MovementPhase, RuntimeMode, StateSnapshot};
 use crate::trajectory::JointTrajectory;
@@ -480,17 +480,48 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         anchor: JointPositions,
         now_seconds: f64,
     ) -> Result<u64> {
+        let definition = self.motions.motion(name)?.clone();
+        self.play_generated_anchored_relative(definition, anchor, now_seconds)
+    }
+
+    /// Compile and start a character-owned relative performance assembled at
+    /// runtime. Speech uses this to turn phrase gestures into one continuous
+    /// spline while retaining the same calibration and anchor guarantees as
+    /// authored relative clips.
+    pub fn play_generated_anchored_relative(
+        &mut self,
+        definition: MotionDefinition,
+        anchor: JointPositions,
+        now_seconds: f64,
+    ) -> Result<u64> {
         if self.mode != RuntimeMode::Holding || self.active_movement.is_some() {
             return Err(Error::InvalidState(
                 "Anchored character motion requires idle holding torque.".into(),
             ));
         }
-        let definition = self.motions.motion(name)?.clone();
         if definition.space != crate::motion::MotionSpace::AnchorRelative
             || !definition.return_to_anchor
         {
             return Err(Error::InvalidArgument(format!(
-                "Character clip '{name}' must be anchor-relative and return to anchor."
+                "Character clip '{}' must be anchor-relative and return to anchor.",
+                definition.name
+            )));
+        }
+        let final_keyframe = definition.keyframes.last().ok_or_else(|| {
+            Error::InvalidArgument(format!(
+                "Character clip '{}' has no final keyframe.",
+                definition.name
+            ))
+        })?;
+        if final_keyframe.arrival != crate::motion::KeyframeArrival::Settle
+            || final_keyframe
+                .target
+                .values()
+                .any(|offset| offset.abs() > 1e-12)
+        {
+            return Err(Error::InvalidArgument(format!(
+                "Character clip '{}' must finish with one zero-offset settle.",
+                definition.name
             )));
         }
         let start = self
@@ -518,7 +549,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         self.trajectory = None;
         self.movement_started_at = now_seconds;
         self.mode = RuntimeMode::Moving;
-        self.begin_movement(name, target)
+        self.begin_movement(&definition.name, target)
     }
 
     pub fn replace_motion_assets(
