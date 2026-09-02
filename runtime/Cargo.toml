@@ -14,6 +14,10 @@ path = "src/lib.rs"
 name = "oriond"
 path = "src/main.rs"
 
+[[bin]]
+name = "orion-trajectory"
+path = "src/bin/orion-trajectory.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,12 +1,14 @@
 """Native MuJoCo completion and stability regression tests."""
 
 import sys
+import tempfile
 import unittest
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
 import mujoco
+import yaml
 
 
 MUJOCO_DIRECTORY = Path(__file__).resolve().parent
@@ -25,10 +27,8 @@ from mujoco_backend import (  # noqa: E402
     set_joint_state,
 )
 from orion_motion.execution_types import ExecutionStatus  # noqa: E402
+from orion_motion.compiled_trajectory import compile_trajectory  # noqa: E402
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
-from orion_motion.trajectory_builder import build_trajectory  # noqa: E402
-from orion_motion.trajectory_generator import generate_trajectory  # noqa: E402
-from orion_motion.trajectory_validator import require_valid_trajectory  # noqa: E402
 from stability_monitor import (  # noqa: E402
     StabilityPolicyError,
     stability_policy_from_data,
@@ -40,20 +40,19 @@ class ClosedViewer:
         return False
 
 
-def make_simulation(validated, start_positions):
+def make_simulation(trajectory, start_positions):
     model = mujoco.MjModel.from_xml_path(str(MUJOCO_DIRECTORY / "scene.xml"))
     data = mujoco.MjData(model)
-    mapping = resolve_joint_mapping(model, validated.trajectory.joint_names)
+    mapping = resolve_joint_mapping(model, trajectory.joint_names)
     set_joint_state(model, data, mapping, start_positions)
     return model, data, mapping
 
 
 def aggressive_trajectory():
     poses = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
-    limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
-    regions = load_yaml_file(CONFIG_DIRECTORY / "forbidden_regions.yaml")
     poses["poses"]["aggressive_test"] = {
         "description": "Intentionally aggressive simulator test pose.",
+        "tags": ["simulation_test"],
         "positions": {
             "base_yaw_joint": -1.50,
             "shoulder_pitch_joint": 0.75,
@@ -63,43 +62,50 @@ def aggressive_trajectory():
         },
     }
     motion = {
-        "format_version": 1,
+        "format_version": 2,
         "motion": {
             "name": "aggressive_test",
             "description": "Negative stability test only.",
+            "space": "absolute",
+            "style": "quick_reaction",
             "keyframes": [
                 {
                     "pose": "aggressive_test",
                     "duration": 0.1,
+                    "arrival": "settle",
                     "hold": 0.5,
                 }
             ],
         },
     }
-    for joint_limits in limits["joints"].values():
-        joint_limits["max_velocity"] = 1_000_000.0
-        joint_limits["max_acceleration"] = 1_000_000.0
-        joint_limits["max_jerk"] = 1_000_000_000.0
-
-    requested = build_trajectory(motion, poses, limits)
-    start = tuple(
-        poses["poses"]["attentive"]["positions"][name]
-        for name in requested.joint_names
-    )
-    generated = generate_trajectory(requested, start, (0.0,) * 5, limits)
-    return require_valid_trajectory(generated, limits, regions), start
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        pose_path = root / "poses.yaml"
+        motions = root / "motions"
+        motions.mkdir()
+        pose_path.write_text(yaml.safe_dump(poses, sort_keys=False), encoding="utf-8")
+        (motions / "aggressive_test.yaml").write_text(
+            yaml.safe_dump(motion, sort_keys=False), encoding="utf-8"
+        )
+        trajectory = compile_trajectory(
+            "aggressive_test",
+            "attentive",
+            pose_file=pose_path,
+            motions_directory=motions,
+        )
+    return trajectory, trajectory.points[0].positions
 
 
 class NativeExecutionTests(unittest.TestCase):
     def test_slow_motion_records_feedback_and_settles(self):
-        _, validated, start = load_playback_data("look_at_left", "attentive")
-        model, data, mapping = make_simulation(validated, start)
+        _, trajectory, start = load_playback_data("look_at_left", "attentive")
+        model, data, mapping = make_simulation(trajectory, start)
 
         result = run_playback_loop(
             model,
             data,
             mapping,
-            validated,
+            trajectory,
             lead_in=0.2,
             viewer=None,
         )
@@ -113,8 +119,8 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertEqual(execution_result_data(result)["status"], "succeeded")
 
     def test_time_elapsed_without_measured_settling_is_failure(self):
-        _, validated, start = load_playback_data("look_at_left", "attentive")
-        model, data, mapping = make_simulation(validated, start)
+        _, trajectory, start = load_playback_data("look_at_left", "attentive")
+        model, data, mapping = make_simulation(trajectory, start)
         strict_policy = replace(
             load_stability_policy(),
             position_tolerance=1e-8,
@@ -126,7 +132,7 @@ class NativeExecutionTests(unittest.TestCase):
             model,
             data,
             mapping,
-            validated,
+            trajectory,
             lead_in=0.2,
             viewer=None,
             policy=strict_policy,
@@ -136,14 +142,14 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertFalse(result.succeeded)
 
     def test_aggressive_motion_is_rejected_by_stability_measurement(self):
-        validated, start = aggressive_trajectory()
-        model, data, mapping = make_simulation(validated, start)
+        trajectory, start = aggressive_trajectory()
+        model, data, mapping = make_simulation(trajectory, start)
 
         result = run_playback_loop(
             model,
             data,
             mapping,
-            validated,
+            trajectory,
             lead_in=1.0,
             viewer=None,
         )
@@ -155,14 +161,14 @@ class NativeExecutionTests(unittest.TestCase):
         )
 
     def test_closing_viewer_is_cancellation_not_success(self):
-        _, validated, start = load_playback_data("look_at_left", "attentive")
-        model, data, mapping = make_simulation(validated, start)
+        _, trajectory, start = load_playback_data("look_at_left", "attentive")
+        model, data, mapping = make_simulation(trajectory, start)
 
         result = run_playback_loop(
             model,
             data,
             mapping,
-            validated,
+            trajectory,
             lead_in=1.0,
             viewer=ClosedViewer(),
         )

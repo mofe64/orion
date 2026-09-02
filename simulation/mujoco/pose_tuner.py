@@ -38,7 +38,10 @@ DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 sys.path.insert(0, str(MOTION_SOURCE))
 
 from orion_motion.motion_loader import load_yaml_file  # noqa: E402
-from orion_motion.motion_validator import validate_pose_library  # noqa: E402
+from orion_motion.calibration import (  # noqa: E402
+    CANONICAL_JOINT_NAMES,
+    load_calibrated_joint_ranges,
+)
 
 
 PoseCommandMode = Literal["move", "set"]
@@ -63,11 +66,16 @@ class TunerState:
 
 
 def load_pose_configuration(pose_name: str) -> PoseConfiguration:
-    """Load and validate the canonical pose library, limits, and start pose."""
+    """Load the v2 pose library and calibration-owned joint ranges."""
 
-    limits_data = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
     poses_data = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
-    validate_pose_library(poses_data, limits_data)
+    if not isinstance(poses_data, dict) or poses_data.get("format_version") != 2:
+        raise ValueError("Pose library must use format_version 2 (v2 required).")
+    if poses_data.get("units") != "radians":
+        raise ValueError("Pose library units must be radians.")
+    calibrated = load_calibrated_joint_ranges(
+        Path(__file__).resolve().parent / "config" / "servo_calibration.json"
+    )
 
     poses = poses_data["poses"]
     if pose_name not in poses:
@@ -76,21 +84,18 @@ def load_pose_configuration(pose_name: str) -> PoseConfiguration:
             f"Unknown starting pose '{pose_name}'. Available poses: {available}"
         )
 
-    joint_order = tuple(limits_data["joint_order"])
-    limits = {
-        name: (
-            float(
-                limits_data["joints"][name]["operational_position"]["lower"]
-            ),
-            float(
-                limits_data["joints"][name]["operational_position"]["upper"]
-            ),
-        )
-        for name in joint_order
-    }
+    joint_order = CANONICAL_JOINT_NAMES
+    limits = {item.name: (item.lower_rad, item.upper_rad) for item in calibrated}
+    positions = poses[pose_name].get("positions")
+    if not isinstance(positions, dict) or set(positions) != set(joint_order):
+        raise ValueError(f"Pose '{pose_name}' must contain all five Orion joints.")
     initial_targets = {
-        name: float(poses[pose_name]["positions"][name]) for name in joint_order
+        name: float(positions[name]) for name in joint_order
     }
+    for name, value in initial_targets.items():
+        lower, upper = limits[name]
+        if not math.isfinite(value) or not lower <= value <= upper:
+            raise ValueError(f"Pose '{pose_name}' {name} is outside calibration.")
 
     return PoseConfiguration(
         joint_order=joint_order,

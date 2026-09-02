@@ -10,6 +10,7 @@ Use this guide to set up, operate, understand, and develop Orion.
 
 ## How-to guides
 
+- [Validate character v2 on physical Orion](how-to/validate-character-v2.md)
 - [Manage Studio Voice models](how-to/manage-studio-voice-models.md)
 - [Deploy the runtime and gateway to the Pi](../runtime/README.md#deploy-an-update-to-the-raspberry-pi)
 - [Commission the STS3215 servos](../hardware/servo_setup/README.md)

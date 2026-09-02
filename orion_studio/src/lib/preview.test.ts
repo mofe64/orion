@@ -1,61 +1,85 @@
 import { describe, expect, it } from "vitest";
 
-import { projectCatalog } from "./catalog";
+import type { CompiledTrajectoryPreview, SceneDefinition } from "../types";
 import {
-  expandSceneTimeline,
-  quinticBlend,
+  markerTime,
+  sampleCompiledTrajectory,
   sampleSceneLight,
+  sampleSceneTrajectory,
   sceneDuration,
-  splitSceneEvent,
+  sceneMarkers,
+  validateSceneMotionSchedule,
 } from "./preview";
 
-describe("Studio preview semantics", () => {
-  it("uses a quintic blend with zero endpoints", () => {
-    expect(quinticBlend(0)).toBe(0);
-    expect(quinticBlend(1)).toBe(1);
-    expect(quinticBlend(0.5)).toBeCloseTo(0.5);
+const trajectory: CompiledTrajectoryPreview = {
+  format_version: 2, compiler: "orion-runtime", motion_name: "test", space: "absolute",
+  style: "attentive", joint_names: ["base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint", "head_roll_joint", "head_pitch_joint"],
+  duration_seconds: 1, control_rate_hz: 50, peak_velocity_rad_s: 2, amplitude_scale: 1,
+  markers: [{ name: "notice", time_seconds: 0.6 }],
+  samples: [
+    { time_from_start: 0, positions: [0, 0, 0, 0, 0], velocities: [0, 0, 0, 0, 0], accelerations: [0, 0, 0, 0, 0], keyframe_index: 0, keyframe: "start", reached_markers: [] },
+    { time_from_start: 0.5, positions: [0.5, 0, 0, 0, 0], velocities: [1, 0, 0, 0, 0], accelerations: [0, 0, 0, 0, 0], keyframe_index: 0, keyframe: "through", reached_markers: [] },
+    { time_from_start: 1, positions: [1, 0, 0, 0, 0], velocities: [0, 0, 0, 0, 0], accelerations: [0, 0, 0, 0, 0], keyframe_index: 1, keyframe: "settle", reached_markers: ["notice"] },
+  ],
+};
+
+const scene: SceneDefinition = {
+  format_version: 2, name: "test", description: "", source: "draft",
+  motion: [{ id: "m", at: 0.2, play: "test" }],
+  lighting: [{ id: "l", on_marker: "notice", effect: "acknowledge_pulse", duration: 0.8 }],
+  audio: [{ id: "a", on_marker: "notice", cue: "notice_warm" }],
+  finish: { anchor: "final_pose", lighting: "pose_default" },
+};
+const trajectories = { m: trajectory };
+
+describe("Rust trajectory preview", () => {
+  it("samples the exact 50 Hz document without inventing interpolation", () => {
+    expect(sampleCompiledTrajectory(trajectory, 0.49).base_yaw_joint).toBe(0);
+    expect(sampleCompiledTrajectory(trajectory, 0.5).base_yaw_joint).toBe(0.5);
+    expect(sampleCompiledTrajectory(trajectory, 99).base_yaw_joint).toBe(1);
   });
 
-  it("derives duration from semantic scene events", () => {
-    expect(sceneDuration(projectCatalog.scenes.acknowledge_left, projectCatalog)).toBeCloseTo(5.0);
+  it("retimes marker tracks from compiler output", () => {
+    expect(markerTime(trajectory, "notice")).toBe(0.6);
+    expect(sceneDuration(scene, trajectories)).toBeCloseTo(1.6);
+    expect(sampleSceneLight(scene, 0.79, trajectories).white).toBe(0);
+    expect(sampleSceneLight(scene, 0.8, trajectories).white).toBe(170);
   });
 
-  it("previews RGBW transitions without changing the scene schema", () => {
-    const scene = projectCatalog.scenes.lighting_acknowledge;
-    expect(sampleSceneLight(scene, 0)).toEqual({ red: 0, green: 0, blue: 0, white: 0 });
-    expect(sampleSceneLight(scene, 0.35)).toEqual({ red: 8, green: 3, blue: 0, white: 20 });
-    expect(sampleSceneLight(scene, 2)).toEqual({ red: 0, green: 0, blue: 0, white: 28 });
-  });
-
-  it("splits motions into timed poses while retaining holds as gaps", () => {
-    const parts = splitSceneEvent({
-      id: "motion",
-      at: 0,
-      type: "play_motion",
-      motion: "look_at_left_expressive",
-    }, projectCatalog);
-
-    expect(parts.map((part) => part.type)).toEqual(Array(8).fill("goto_pose"));
-    expect(parts.map((part) => part.at)).toEqual([0, 1.2, 1.4, 2.2, 2.35, 3.35, 3.5, 4.2]);
-    expect(parts.map((part) => part.type === "goto_pose" ? part.duration_seconds : 0))
-      .toEqual([1.2, 0.2, 0.8, 0.15, 1, 0.15, 0.7, 0.8]);
-    const last = parts.at(-1)!;
-    expect(last.at + (last.type === "goto_pose" ? last.duration_seconds : 0)).toBeCloseTo(5);
-  });
-
-  it("flattens Studio scene clips before runtime submission", () => {
-    const nested = projectCatalog.scenes.acknowledge_left;
-    const parent = {
-      format_version: 1 as const,
-      name: "parent",
-      description: "Composite scene",
-      source: "draft" as const,
-      timeline: [{ id: "nested", at: 2, type: "scene" as const, scene: nested.name }],
+  it("previews every sequential scene clip on the shared scene clock", () => {
+    const second = { ...trajectory, motion_name: "second", duration_seconds: 0.5 };
+    const sequence: SceneDefinition = {
+      ...scene,
+      motion: [
+        { id: "m", at: 0.2, play: "test" },
+        { id: "m2", at: 1.2, play: "second" },
+      ],
     };
+    const compiled = { m: trajectory, m2: second };
 
-    const expanded = expandSceneTimeline(parent, projectCatalog);
-    expect(expanded).toHaveLength(nested.timeline.length);
-    expect(expanded[0].at).toBe(nested.timeline[0].at + 2);
-    expect(expanded.every((event) => event.type !== "scene")).toBe(true);
+    validateSceneMotionSchedule(sequence, compiled);
+    expect(sceneDuration(sequence, compiled)).toBeCloseTo(1.7);
+    expect(sampleSceneTrajectory(sequence, compiled, 0.1)).toBeNull();
+    expect(sampleSceneTrajectory(sequence, compiled, 0.7)?.base_yaw_joint).toBe(0.5);
+    expect(sampleSceneTrajectory(sequence, compiled, 1.3)?.base_yaw_joint).toBe(0);
+    const markers = sceneMarkers(sequence, compiled);
+    expect(markers.map(({ name, motion_event_id }) => ({ name, motion_event_id }))).toEqual([
+      { name: "notice", motion_event_id: "m" },
+      { name: "notice", motion_event_id: "m2" },
+    ]);
+    expect(markers[0].time_seconds).toBeCloseTo(0.8);
+    expect(markers[1].time_seconds).toBeCloseTo(1.8);
+  });
+
+  it("rejects a preview schedule when Rust-compiled clip durations overlap", () => {
+    const overlap: SceneDefinition = {
+      ...scene,
+      motion: [
+        { id: "m", at: 0.2, play: "test" },
+        { id: "m2", at: 1.1, play: "test" },
+      ],
+    };
+    expect(() => validateSceneMotionSchedule(overlap, { m: trajectory, m2: trajectory }))
+      .toThrow(/overlaps the preceding clip/);
   });
 });

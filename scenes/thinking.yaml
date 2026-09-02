@@ -1,0 +1,8 @@
+format_version: 2
+scene:
+  name: thinking
+  description: Move into an asymmetric thinking anchor with drifting warm light.
+  motion: [{at: 0.0, play: thinking_shift}]
+  lighting: [{at: 0.0, effect: thinking_drift, intensity: 0.52, duration: 1.8, transition: 0.3}]
+  audio: []
+  finish: {anchor: final_pose, lighting: pose_default}

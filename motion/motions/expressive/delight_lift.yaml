@@ -1,0 +1,11 @@
+format_version: 2
+motion:
+  name: delight_lift
+  description: Lift with restrained delight and settle in the open pose.
+  space: absolute
+  style: quick_reaction
+  keyframes:
+    - pose: delight
+      duration: 0.75
+      arrival: settle
+      marker: delight

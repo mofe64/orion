@@ -1,0 +1,8 @@
+format_version: 2
+scene:
+  name: curiosity
+  description: Open into a curious silhouette with a spatial sweep and tonal rise.
+  motion: [{at: 0.0, play: curious_tilt}]
+  lighting: [{at: 0.0, effect: curious_sweep, intensity: 0.65, duration: 1.4, transition: 0.2}]
+  audio: [{on_marker: notice, cue: curious_rise}]
+  finish: {anchor: final_pose, lighting: pose_default}

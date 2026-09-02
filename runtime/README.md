@@ -266,22 +266,22 @@ cues live under `audio/cues/` and can be commissioned without starting the
 servo daemon:
 
 ```bash
-runtime/target/release/oriond --play-cue acknowledge
+runtime/target/release/oriond --play-cue acknowledge_warm
 ```
 
 The direct command blocks until `aplay` exits and returns nonzero if playback
 fails. Do not run it concurrently with a hardware daemon that may also own the
 ALSA PCM.
 
-Direct `acknowledge` playback and the complete `acknowledge_left` and
-`acknowledge_right` motion/light/audio scenes have been commissioned on the
-assembled robot through the source-run release daemon.
+Direct warm-cue playback and the complete `acknowledge_left` and
+`acknowledge_right` motion/light/audio scenes use the same physical ReSpeaker
+path as the character coordinator.
 
-Portable scenes live under `scenes/`. Version 1 can play an existing motion,
-go to an existing pose, fade to a uniform 8-bit RGBW value, and dispatch a
-named audio cue. Scene files are validated against the pose, motion, and cue
-libraries before playback. All events use seconds from one supplied monotonic
-start time.
+Portable scenes live under `scenes/`. The v2 format coordinates
+non-overlapping motion clips with parallel spatial
+RGBW effects and queued audio. Events use seconds or Rust-compiled motion
+markers from one supplied monotonic clock. Scene files are validated against
+the pose, motion, effect, and cue libraries before playback.
 
 The scene player implements `SceneMotionDevice` for `RuntimeCore`, so it starts
 motion through the existing `goto`/`play` command boundary and follows the
@@ -299,7 +299,7 @@ backends with the identical scene clock and lifecycle.
 Run the lighting-only scene without enabling torque:
 
 ```bash
-runtime/target/release/oriond --run-scene lighting_acknowledge --wait
+runtime/target/release/oriond --run-scene deployment_smoke --wait
 runtime/target/release/oriond --scene-status
 ```
 
@@ -331,7 +331,7 @@ libraries while no movement or scene is active. `scene reload` remains the
 narrower scene-only operation.
 
 The private `scene preview DOCUMENT` command is reserved for the authenticated
-Studio gateway. It parses one inline version-1 scene against the currently
+Studio gateway. It parses one inline v2 scene against the currently
 loaded pose, motion, and audio libraries, then starts the normal scene
 coordinator without adding it to the library or filesystem. The gateway limits
 the compact document to 3,000 UTF-8 bytes so the complete command stays within

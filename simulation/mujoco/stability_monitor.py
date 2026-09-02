@@ -48,11 +48,11 @@ def stability_policy_from_data(data: Any) -> StabilityPolicy:
 
     if not isinstance(data, dict):
         raise StabilityPolicyError("stability limits must be a mapping")
-    if type(data.get("format_version")) is not int or data["format_version"] != 1:
-        raise StabilityPolicyError("stability_limits.format_version must be 1")
-    if data.get("applicability") != "provisional_simulation_only":
+    if type(data.get("format_version")) is not int or data["format_version"] != 2:
+        raise StabilityPolicyError("stability_limits.format_version must be 2")
+    if data.get("applicability") != "diagnostic_simulation_only":
         raise StabilityPolicyError(
-            "stability_limits.applicability must be provisional_simulation_only"
+            "stability_limits.applicability must be diagnostic_simulation_only"
         )
 
     completion = data.get("completion")

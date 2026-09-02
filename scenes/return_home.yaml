@@ -1,0 +1,8 @@
+format_version: 2
+scene:
+  name: return_home
+  description: Return to powered home with a weighted settle and warm glow.
+  motion: [{at: 0.0, play: return_home}]
+  lighting: [{at: 0.0, effect: settle_glow, intensity: 0.48, duration: 2.1, transition: 0.35}]
+  audio: [{at: 1.0, cue: settle_soft}]
+  finish: {anchor: final_pose, lighting: pose_default}

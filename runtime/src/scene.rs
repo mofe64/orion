@@ -7,18 +7,17 @@ use serde::{Deserialize, Serialize};
 use crate::audio::{AudioDevice, CueLibrary};
 use crate::daemon::RuntimeCore;
 use crate::driver::RuntimeDriver;
-use crate::lighting::{LightingDevice, Rgbw8};
+use crate::lighting::{LIGHTING_EFFECT_NAMES, LightingDevice, Rgbw8, render_effect};
 use crate::motion::MotionLibrary;
-use crate::pose::PoseLibrary;
+use crate::pose::{JointPositions, PoseLibrary};
 use crate::state::MovementPhase;
 use crate::{Error, Result};
 
-pub const SCENE_FORMAT_VERSION: u32 = 1;
+pub const SCENE_FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SceneMotion {
     Play { motion: String },
-    Goto { pose: String, duration_seconds: f64 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,8 +27,22 @@ pub enum SceneAction {
         color: Rgbw8,
         transition_seconds: f64,
     },
+    Effect {
+        effect: String,
+        intensity: f64,
+        duration_seconds: f64,
+        transition_seconds: f64,
+    },
     Audio {
         cue: String,
+    },
+    OnMarker {
+        marker: String,
+        action: Box<SceneAction>,
+    },
+    Finish {
+        anchor: String,
+        lighting: String,
     },
 }
 
@@ -108,7 +121,11 @@ impl SceneLibrary {
 impl SceneDefinition {
     pub fn validate_audio_cues(&self, cues: &CueLibrary) -> Result<()> {
         for event in &self.events {
-            if let SceneAction::Audio { cue } = &event.action {
+            let action = match &event.action {
+                SceneAction::OnMarker { action, .. } => action.as_ref(),
+                action => action,
+            };
+            if let SceneAction::Audio { cue } = action {
                 if !cues.contains(cue) {
                     return Err(Error::Runtime(format!(
                         "Scene '{}' references unknown Orion audio cue '{}'.",
@@ -157,41 +174,61 @@ struct SceneEntry {
     #[serde(default)]
     description: String,
     #[serde(default)]
-    timeline: Vec<SceneEventDocument>,
+    motion: Vec<MotionTrackDocument>,
+    #[serde(default)]
+    lighting: Vec<LightingTrackDocument>,
+    #[serde(default)]
+    audio: Vec<AudioTrackDocument>,
+    finish: Option<FinishDocument>,
 }
 
 #[derive(Debug, Deserialize)]
-struct SceneEventDocument {
+#[serde(deny_unknown_fields)]
+struct MotionTrackDocument {
     at: f64,
-    #[serde(flatten)]
-    action: SceneActionDocument,
+    play: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum SceneActionDocument {
-    PlayMotion {
-        motion: String,
-    },
-    GotoPose {
-        pose: String,
-        duration_seconds: f64,
-    },
-    Light {
-        #[serde(default)]
-        red: u8,
-        #[serde(default)]
-        green: u8,
-        #[serde(default)]
-        blue: u8,
-        #[serde(default)]
-        white: u8,
-        #[serde(default)]
-        transition_seconds: f64,
-    },
-    Audio {
-        cue: String,
-    },
+#[serde(deny_unknown_fields)]
+struct LightingTrackDocument {
+    #[serde(default)]
+    at: Option<f64>,
+    #[serde(default)]
+    on_marker: Option<String>,
+    effect: String,
+    #[serde(default = "default_intensity")]
+    intensity: f64,
+    #[serde(default = "default_effect_duration")]
+    duration: f64,
+    #[serde(default)]
+    transition: f64,
+    #[serde(default)]
+    palette: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AudioTrackDocument {
+    #[serde(default)]
+    at: Option<f64>,
+    #[serde(default)]
+    on_marker: Option<String>,
+    cue: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FinishDocument {
+    anchor: String,
+    lighting: String,
+}
+
+fn default_intensity() -> f64 {
+    1.0
+}
+fn default_effect_duration() -> f64 {
+    0.8
 }
 
 fn load_scene_file(
@@ -211,9 +248,21 @@ fn load_scene_file(
 pub fn parse_scene_document(
     contents: &str,
     source: &str,
-    poses: &PoseLibrary,
+    _poses: &PoseLibrary,
     motions: &MotionLibrary,
 ) -> Result<SceneDefinition> {
+    let header: serde_yaml::Value = serde_yaml::from_str(contents).map_err(|error| {
+        Error::Runtime(format!("Could not parse scene file '{}': {error}", source))
+    })?;
+    if header
+        .get("format_version")
+        .and_then(serde_yaml::Value::as_u64)
+        != Some(SCENE_FORMAT_VERSION as u64)
+    {
+        return Err(Error::Runtime(
+            "Scene file must use format_version 2 (v2 required).".into(),
+        ));
+    }
     let document: SceneDocument = serde_yaml::from_str(contents).map_err(|error| {
         Error::Runtime(format!("Could not parse scene file '{}': {error}", source))
     })?;
@@ -230,96 +279,119 @@ pub fn parse_scene_document(
     if entry.name.trim().is_empty() {
         return Err(Error::Runtime("Scene name cannot be empty.".into()));
     }
-    if entry.timeline.is_empty() {
+    if entry.motion.is_empty() && entry.lighting.is_empty() && entry.audio.is_empty() {
         return Err(Error::Runtime(format!(
-            "Scene '{}' must contain timeline events.",
+            "Scene '{}' must contain at least one parallel-track event.",
             entry.name
         )));
     }
-
-    let mut events = Vec::with_capacity(entry.timeline.len());
-    let mut previous_at = 0.0;
-    for (index, event) in entry.timeline.into_iter().enumerate() {
-        if !event.at.is_finite() || event.at < 0.0 || (index > 0 && event.at < previous_at) {
+    let mut events = Vec::new();
+    let mut known_markers = BTreeMap::<String, bool>::new();
+    let mut previous_motion_end = 0.0;
+    for motion_event in entry.motion {
+        if !valid_at(motion_event.at) || motion_event.at < previous_motion_end {
             return Err(Error::Runtime(format!(
-                "Scene '{}' timeline times must be finite, non-negative, and ordered.",
+                "Scene '{}' motion clips may not overlap and must use finite non-negative times.",
                 entry.name
             )));
         }
-        previous_at = event.at;
-        let action = match event.action {
-            SceneActionDocument::PlayMotion { motion } => {
-                if motion.trim().is_empty() {
-                    return Err(Error::Runtime(format!(
-                        "Scene '{}' contains an empty motion name.",
-                        entry.name
-                    )));
-                }
-                motions.motion(&motion).map_err(|error| {
-                    Error::Runtime(format!(
-                        "Invalid motion reference in scene file '{}': {error}",
-                        source
-                    ))
-                })?;
-                SceneAction::Motion(SceneMotion::Play { motion })
-            }
-            SceneActionDocument::GotoPose {
-                pose,
-                duration_seconds,
-            } => {
-                if pose.trim().is_empty()
-                    || !duration_seconds.is_finite()
-                    || duration_seconds <= 0.0
-                {
-                    return Err(Error::Runtime(format!(
-                        "Scene '{}' goto_pose requires a pose and positive finite duration.",
-                        entry.name
-                    )));
-                }
-                poses.pose(&pose).map_err(|error| {
-                    Error::Runtime(format!(
-                        "Invalid pose reference in scene file '{}': {error}",
-                        source
-                    ))
-                })?;
-                SceneAction::Motion(SceneMotion::Goto {
-                    pose,
-                    duration_seconds,
-                })
-            }
-            SceneActionDocument::Light {
-                red,
-                green,
-                blue,
-                white,
-                transition_seconds,
-            } => {
-                if !transition_seconds.is_finite() || transition_seconds < 0.0 {
-                    return Err(Error::Runtime(format!(
-                        "Scene '{}' light transition must be finite and non-negative.",
-                        entry.name
-                    )));
-                }
-                SceneAction::Light {
-                    color: Rgbw8::new(red, green, blue, white),
-                    transition_seconds,
-                }
-            }
-            SceneActionDocument::Audio { cue } => {
-                if cue.trim().is_empty() {
-                    return Err(Error::Runtime(format!(
-                        "Scene '{}' contains an empty audio cue.",
-                        entry.name
-                    )));
-                }
-                SceneAction::Audio { cue }
-            }
-        };
+        let definition = motions.motion(&motion_event.play).map_err(|error| {
+            Error::Runtime(format!(
+                "Invalid motion reference in scene file '{}': {error}",
+                source
+            ))
+        })?;
+        let nominal_duration: f64 = definition
+            .keyframes
+            .iter()
+            .map(|keyframe| {
+                keyframe.duration_seconds / definition.style.tempo + keyframe.hold_seconds
+            })
+            .sum();
+        previous_motion_end = motion_event.at + nominal_duration;
+        for marker in definition.markers() {
+            known_markers.insert(marker, true);
+        }
         events.push(SceneEvent {
-            at_seconds: event.at,
-            action,
+            at_seconds: motion_event.at,
+            action: SceneAction::Motion(SceneMotion::Play {
+                motion: motion_event.play,
+            }),
         });
     }
+    for light in entry.lighting {
+        if !LIGHTING_EFFECT_NAMES.contains(&light.effect.as_str())
+            || !light.intensity.is_finite()
+            || !(0.0..=1.0).contains(&light.intensity)
+            || !light.duration.is_finite()
+            || light.duration < 0.0
+            || !light.transition.is_finite()
+            || light.transition < 0.0
+        {
+            return Err(Error::Runtime(format!(
+                "Scene '{}' contains an invalid lighting effect.",
+                entry.name
+            )));
+        }
+        if light
+            .palette
+            .as_deref()
+            .is_some_and(|palette| palette != "warm")
+        {
+            return Err(Error::Runtime(format!(
+                "Scene '{}' supports only the warm Orion palette.",
+                entry.name
+            )));
+        }
+        let action = SceneAction::Effect {
+            effect: light.effect,
+            intensity: light.intensity,
+            duration_seconds: light.duration,
+            transition_seconds: light.transition,
+        };
+        let (at_seconds, action) = triggered_action(
+            light.at,
+            light.on_marker,
+            action,
+            &known_markers,
+            &entry.name,
+        )?;
+        events.push(SceneEvent { at_seconds, action });
+    }
+    for audio in entry.audio {
+        if audio.cue.trim().is_empty() {
+            return Err(Error::Runtime(format!(
+                "Scene '{}' contains an empty audio cue.",
+                entry.name
+            )));
+        }
+        let action = SceneAction::Audio { cue: audio.cue };
+        let (at_seconds, action) = triggered_action(
+            audio.at,
+            audio.on_marker,
+            action,
+            &known_markers,
+            &entry.name,
+        )?;
+        events.push(SceneEvent { at_seconds, action });
+    }
+    let finish = entry
+        .finish
+        .ok_or_else(|| Error::Runtime(format!("Scene '{}' requires finish policy.", entry.name)))?;
+    if finish.anchor != "final_pose" || finish.lighting != "pose_default" {
+        return Err(Error::Runtime(format!(
+            "Scene '{}' finish must use final_pose and pose_default.",
+            entry.name
+        )));
+    }
+    events.push(SceneEvent {
+        at_seconds: 0.0,
+        action: SceneAction::Finish {
+            anchor: finish.anchor,
+            lighting: finish.lighting,
+        },
+    });
+    events.sort_by(|left, right| left.at_seconds.total_cmp(&right.at_seconds));
 
     Ok(SceneDefinition {
         name: entry.name,
@@ -328,9 +400,44 @@ pub fn parse_scene_document(
     })
 }
 
+fn valid_at(at: f64) -> bool {
+    at.is_finite() && at >= 0.0
+}
+
+fn triggered_action(
+    at: Option<f64>,
+    marker: Option<String>,
+    action: SceneAction,
+    known_markers: &BTreeMap<String, bool>,
+    scene_name: &str,
+) -> Result<(f64, SceneAction)> {
+    match (at, marker) {
+        (Some(at), None) if valid_at(at) => Ok((at, action)),
+        (None, Some(marker)) if known_markers.contains_key(&marker) => Ok((
+            0.0,
+            SceneAction::OnMarker {
+                marker,
+                action: Box::new(action),
+            },
+        )),
+        (None, Some(marker)) => Err(Error::Runtime(format!(
+            "Scene '{scene_name}' references unknown motion marker '{marker}'."
+        ))),
+        _ => Err(Error::Runtime(format!(
+            "Scene '{scene_name}' events require exactly one of at or on_marker."
+        ))),
+    }
+}
+
 pub trait SceneMotionDevice {
     fn start(&mut self, motion: &SceneMotion, now_seconds: f64) -> Result<u64>;
     fn phase(&self, run_id: u64) -> Option<MovementPhase>;
+    fn marker_reached(&self, _run_id: u64, _marker: &str) -> bool {
+        false
+    }
+    fn default_lighting_effect(&self) -> Option<String> {
+        None
+    }
     fn cancel(&mut self, now_seconds: f64) -> Result<()>;
 }
 
@@ -338,10 +445,6 @@ impl<D: RuntimeDriver> SceneMotionDevice for RuntimeCore<D> {
     fn start(&mut self, motion: &SceneMotion, now_seconds: f64) -> Result<u64> {
         let command = match motion {
             SceneMotion::Play { motion } => format!("play {motion}"),
-            SceneMotion::Goto {
-                pose,
-                duration_seconds,
-            } => format!("goto {pose} {duration_seconds:.6}"),
         };
         let response = self.handle_command(&command, now_seconds);
         let value: serde_json::Value = serde_json::from_str(&response)?;
@@ -371,6 +474,45 @@ impl<D: RuntimeDriver> SceneMotionDevice for RuntimeCore<D> {
         .flatten()
         .find(|movement| movement.run_id == run_id)
         .map(|movement| movement.state)
+    }
+
+    fn marker_reached(&self, run_id: u64, marker: &str) -> bool {
+        [
+            self.snapshot().motion.as_ref(),
+            self.snapshot().last_motion.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|movement| movement.run_id == run_id)
+        .is_some_and(|movement| {
+            movement
+                .reached_markers
+                .iter()
+                .any(|reached| reached == marker)
+        })
+    }
+
+    fn default_lighting_effect(&self) -> Option<String> {
+        let positions: JointPositions = self
+            .snapshot()
+            .joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.position))
+            .collect();
+        self.poses()
+            .names()
+            .into_iter()
+            .filter_map(|name| {
+                let pose = self.poses().definition(&name).ok()?;
+                let distance = pose
+                    .positions
+                    .iter()
+                    .map(|(joint, target)| (positions[joint] - target).powi(2))
+                    .sum::<f64>();
+                Some((distance, pose.default_lighting.clone()))
+            })
+            .min_by(|left, right| left.0.total_cmp(&right.0))
+            .and_then(|(_, effect)| effect)
     }
 
     fn cancel(&mut self, now_seconds: f64) -> Result<()> {
@@ -429,6 +571,14 @@ struct LightTransition {
     duration_seconds: f64,
 }
 
+#[derive(Clone, Debug)]
+struct ActiveEffect {
+    name: String,
+    starts_at: f64,
+    duration_seconds: f64,
+    intensity: f64,
+}
+
 #[derive(Debug)]
 pub struct ScenePlayer {
     definition: SceneDefinition,
@@ -439,6 +589,10 @@ pub struct ScenePlayer {
     light: Rgbw8,
     transition: Option<LightTransition>,
     last_rendered: Option<Rgbw8>,
+    effect: Option<ActiveEffect>,
+    last_motion_run_id: Option<u64>,
+    finish_seen: bool,
+    has_finish_policy: bool,
 }
 
 impl ScenePlayer {
@@ -454,6 +608,11 @@ impl ScenePlayer {
             ));
         }
         let event_count = definition.events.len();
+        let has_finish_policy = definition
+            .events
+            .iter()
+            .any(|event| matches!(event.action, SceneAction::Finish { .. }));
+        let finish_seen = !has_finish_policy;
         Ok(Self {
             status: SceneStatus {
                 run_id,
@@ -472,6 +631,10 @@ impl ScenePlayer {
             light: initial_light,
             transition: None,
             last_rendered: None,
+            effect: None,
+            last_motion_run_id: None,
+            finish_seen,
+            has_finish_policy,
         })
     }
 
@@ -506,13 +669,26 @@ impl ScenePlayer {
                 continue;
             }
             let event = self.definition.events[index].clone();
-            match event.action {
+            let action = match event.action {
+                SceneAction::OnMarker { marker, action } => {
+                    let Some(run_id) = self.last_motion_run_id else {
+                        continue;
+                    };
+                    if !motion.marker_reached(run_id, &marker) {
+                        continue;
+                    }
+                    *action
+                }
+                action => action,
+            };
+            match action {
                 SceneAction::Motion(scene_motion) => {
                     if self.status.active_motion_run_id.is_some() {
                         continue;
                     }
                     let run_id = motion.start(&scene_motion, now_seconds)?;
                     self.status.active_motion_run_id = Some(run_id);
+                    self.last_motion_run_id = Some(run_id);
                 }
                 SceneAction::Light {
                     color,
@@ -538,13 +714,40 @@ impl ScenePlayer {
                     audio.play(&cue)?;
                     self.status.active_audio_cue = Some(cue);
                 }
+                SceneAction::Effect {
+                    effect,
+                    intensity,
+                    duration_seconds,
+                    transition_seconds,
+                } => {
+                    self.effect = Some(ActiveEffect {
+                        name: effect,
+                        starts_at: elapsed,
+                        duration_seconds: duration_seconds + transition_seconds,
+                        intensity,
+                    });
+                }
+                SceneAction::Finish { .. } => self.finish_seen = true,
+                SceneAction::OnMarker { .. } => {
+                    unreachable!("marker wrapper is removed before dispatch")
+                }
             }
             self.dispatched[index] = true;
             self.status.dispatched_events += 1;
         }
 
         self.advance_light(elapsed)?;
-        if self.last_rendered != Some(self.light) {
+        if let Some(effect) = &self.effect {
+            let effect_elapsed = elapsed - effect.starts_at;
+            lighting.render(&render_effect(
+                &effect.name,
+                effect_elapsed,
+                effect.intensity,
+            )?)?;
+            if effect_elapsed >= effect.duration_seconds {
+                self.effect = None;
+            }
+        } else if self.last_rendered != Some(self.light) {
             lighting.render_uniform(self.light)?;
             self.last_rendered = Some(self.light);
         }
@@ -560,7 +763,15 @@ impl ScenePlayer {
             && self.status.active_motion_run_id.is_none()
             && self.status.active_audio_cue.is_none()
             && self.transition.is_none()
+            && self.effect.is_none()
+            && self.finish_seen
         {
+            if self.has_finish_policy {
+                let effect = motion
+                    .default_lighting_effect()
+                    .unwrap_or_else(|| "settle_glow".to_owned());
+                lighting.render(&render_effect(&effect, 0.0, 0.55)?)?;
+            }
             self.status.state = ScenePhase::Completed;
         }
         Ok(())
@@ -585,6 +796,7 @@ impl ScenePlayer {
         }
         audio.stop()?;
         self.transition = None;
+        self.effect = None;
         self.status.active_motion_run_id = None;
         self.status.active_audio_cue = None;
         self.status.state = ScenePhase::Cancelled;
@@ -611,6 +823,7 @@ impl ScenePlayer {
         }
         let _ = audio.stop();
         self.transition = None;
+        self.effect = None;
         self.status.active_motion_run_id = None;
         self.status.active_audio_cue = None;
         self.status.state = ScenePhase::Failed;
@@ -1039,6 +1252,61 @@ mod tests {
     }
 
     #[test]
+    fn due_audio_cues_queue_in_authored_order_under_single_ownership() {
+        let scene = SceneDefinition {
+            name: "audio_queue".into(),
+            description: "Queue simultaneous authored cues.".into(),
+            events: vec![
+                SceneEvent {
+                    at_seconds: 0.0,
+                    action: SceneAction::Audio {
+                        cue: "notice_warm".into(),
+                    },
+                },
+                SceneEvent {
+                    at_seconds: 0.0,
+                    action: SceneAction::Audio {
+                        cue: "settle_soft".into(),
+                    },
+                },
+            ],
+        };
+        let mut player = ScenePlayer::new(5, scene, 3.0, Rgbw8::OFF).unwrap();
+        let mut motion = FakeMotionDevice::new();
+        let mut lighting = RecordingLightingDevice::new(1).unwrap();
+        let mut audio = RecordingAudioDevice::blocking();
+
+        player
+            .tick(3.0, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        assert_eq!(
+            audio.commands(),
+            &[AudioCommand::Play("notice_warm".into())]
+        );
+        assert_eq!(player.status().dispatched_events, 1);
+
+        audio.finish();
+        player
+            .tick(3.1, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        assert_eq!(
+            audio.commands(),
+            &[
+                AudioCommand::Play("notice_warm".into()),
+                AudioCommand::Play("settle_soft".into()),
+            ]
+        );
+        assert_eq!(player.status().dispatched_events, 2);
+        assert_eq!(player.status().state, ScenePhase::Executing);
+
+        audio.finish();
+        player
+            .tick(3.2, &mut motion, &mut lighting, &mut audio)
+            .unwrap();
+        assert_eq!(player.status().state, ScenePhase::Completed);
+    }
+
+    #[test]
     fn propagates_motion_timeout_and_cancels_devices() {
         let mut player = ScenePlayer::new(1, example_scene(), 0.0, Rgbw8::OFF).unwrap();
         let mut motion = FakeMotionDevice::new();
@@ -1125,25 +1393,14 @@ mod tests {
         let directory = tempdir().unwrap();
         fs::write(
             directory.path().join("acknowledge.yaml"),
-            r#"format_version: 1
+            r#"format_version: 2
 scene:
   name: acknowledge
   description: Test scene.
-  timeline:
-    - at: 0.0
-      type: play_motion
-      motion: look_at_left
-    - at: 0.0
-      type: light
-      white: 40
-      transition_seconds: 0.25
-    - at: 0.2
-      type: audio
-      cue: acknowledge
-    - at: 1.0
-      type: goto_pose
-      pose: home
-      duration_seconds: 2.0
+  motion: [{at: 0.0, play: look_at_left_expressive}]
+  lighting: [{on_marker: notice, effect: acknowledge_pulse, duration: 0.4}]
+  audio: [{on_marker: notice, cue: acknowledge_warm}]
+  finish: {anchor: final_pose, lighting: pose_default}
 "#,
         )
         .unwrap();
@@ -1169,20 +1426,71 @@ scene:
         let directory = tempdir().unwrap();
         fs::write(
             directory.path().join("bad.yaml"),
-            r#"format_version: 1
+            r#"format_version: 2
 scene:
   name: bad
-  timeline:
-    - at: 1.0
-      type: play_motion
-      motion: missing
-    - at: 0.0
-      type: light
-      white: 1
+  motion: [{at: 0.0, play: missing}]
+  lighting: []
+  audio: []
+  finish: {anchor: final_pose, lighting: pose_default}
 "#,
         )
         .unwrap();
         assert!(SceneLibrary::load(directory.path(), &poses, &motions).is_err());
+    }
+
+    #[test]
+    fn rejects_v1_unknown_fields_and_overlapping_motion_tracks() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let poses = PoseLibrary::load(
+            root.join("motion/config/poses.yaml"),
+            &crate::ORION_JOINT_NAMES,
+        )
+        .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+
+        let v1 = r#"format_version: 1
+scene: {name: old, motion: [], lighting: [], audio: []}
+"#;
+        assert!(
+            parse_scene_document(v1, "v1-test", &poses, &motions)
+                .unwrap_err()
+                .to_string()
+                .contains("v2 required")
+        );
+
+        let unknown = r#"format_version: 2
+scene:
+  name: unknown
+  legacy_sequence: true
+  motion: [{at: 0.0, play: look_at_left_expressive}]
+  lighting: []
+  audio: []
+  finish: {anchor: final_pose, lighting: pose_default}
+"#;
+        assert!(
+            parse_scene_document(unknown, "unknown-test", &poses, &motions)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field")
+        );
+
+        let overlap = r#"format_version: 2
+scene:
+  name: overlap
+  motion:
+    - {at: 0.0, play: look_at_left_expressive}
+    - {at: 0.1, play: look_at_right_expressive}
+  lighting: []
+  audio: []
+  finish: {anchor: final_pose, lighting: pose_default}
+"#;
+        assert!(
+            parse_scene_document(overlap, "overlap-test", &poses, &motions)
+                .unwrap_err()
+                .to_string()
+                .contains("may not overlap")
+        );
     }
 
     #[test]
@@ -1199,38 +1507,20 @@ scene:
         scenes.validate_audio_cues(&cues).unwrap();
 
         let scene = scenes.scene("acknowledge_left").unwrap();
-        assert_eq!(scene.events.len(), 4);
+        assert_eq!(scene.events.len(), 5);
         assert_eq!(scene.events[0].at_seconds, 0.0);
-        assert!(matches!(
-            &scene.events[2].action,
-            SceneAction::Audio { cue } if cue == "acknowledge"
-        ));
-        assert_eq!(scene.events[3].at_seconds, 4.2);
+        assert!(scene.events.iter().any(|event| matches!(
+            &event.action, SceneAction::OnMarker { marker, .. } if marker == "notice"
+        )));
         let scene = scenes.scene("acknowledge_right").unwrap();
+        assert_eq!(scene.events.len(), 5);
+        let scene = scenes.scene("return_home").unwrap();
         assert_eq!(scene.events.len(), 4);
-        assert_eq!(scene.events[0].at_seconds, 0.0);
-        assert!(matches!(
-            &scene.events[2].action,
-            SceneAction::Audio { cue } if cue == "acknowledge"
-        ));
-        assert_eq!(scene.events[3].at_seconds, 4.2);
-        let scene = scenes.scene("return_to_rest").unwrap();
-        assert_eq!(scene.events.len(), 2);
         assert!(matches!(
             &scene.events[0].action,
-            SceneAction::Motion(SceneMotion::Goto {
-                pose,
-                duration_seconds,
-            }) if pose == "rest" && *duration_seconds == 3.0
+            SceneAction::Motion(SceneMotion::Play { motion }) if motion == "return_home"
         ));
-        assert!(matches!(
-            &scene.events[1].action,
-            SceneAction::Light {
-                color,
-                transition_seconds,
-            } if *color == Rgbw8::OFF && *transition_seconds == 0.5
-        ));
-        assert!(scenes.scene("lighting_acknowledge").is_ok());
+        assert!(scenes.scene("deployment_smoke").is_ok());
     }
 
     #[test]

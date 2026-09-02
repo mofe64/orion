@@ -7,12 +7,12 @@ Orion is split between a workstation and a Raspberry Pi:
 ```text
 Workstation                                              Raspberry Pi
 
-┌──────────────────────────────┐       HTTP v1       ┌─────────────────────┐
+┌──────────────────────────────┐       HTTP v2       ┌─────────────────────┐
 │ Orion Studio                 │ ──────────────────▶ │ Studio gateway      │
 │                              │   bearer token      │                     │
 │ • author and preview assets  │                     │ • authenticate      │
 │ • submit semantic commands   │                     │ • validate API      │
-│ • run primary voice pipeline │                     │ • adapt requests    │
+│ • synthesize voice responses │                     │ • spool speech WAV  │
 └──────────────────────────────┘                     └──────────┬──────────┘
                                                                │ private
                                                                │ Unix socket
@@ -22,8 +22,8 @@ Workstation                                              Raspberry Pi
                                                     │                     │
                                                     │ • lifecycle/safety  │
                                                     │ • asset validation  │
-                                                    │ • trajectory timing │
-                                                    │ • scene coordination│
+                                                    │ • Rust spline engine│
+                                                    │ • character priority│
                                                     │ • device ownership  │
                                                     └──────────┬──────────┘
                                                                │
@@ -41,9 +41,9 @@ not a separate motion system.
 ### `oriond`
 
 `oriond` is the sole Raspberry Pi hardware authority. It owns the serial bus,
-RGBW output device, and ReSpeaker playback device while the hardware daemon is
-running. It also owns lifecycle transitions, calibration conversion, safety
-limits, interpolation, run IDs, completion checks, and cancellation.
+40-pixel RGBW output, and ReSpeaker playback while running. It also owns the
+explicit character state machine, live-calibration conversion, continuous
+trajectory compilation, semantic run IDs, completion checks, and cancellation.
 
 No Studio or agent operation may bypass this boundary. Higher-level systems
 request named capabilities such as `home`, `look_at_left_expressive`, or
@@ -64,8 +64,10 @@ connection state, and the optional workstation voice experience. Editing a
 slider or timeline never moves hardware. Physical execution requires an
 explicit connected run request through the gateway.
 
-Studio may open the workstation microphone and speaker after the user enables
-Voice. It does not open the Pi's servo, lighting, or audio devices.
+Studio may open the workstation microphone after the user enables Voice and
+synthesizes Chatterbox PCM locally. The authenticated gateway transfers the
+validated WAV to the Pi; primary playback is Orion's ReSpeaker, not the
+workstation speaker. Studio never opens Pi devices directly.
 
 ## Asset flow
 
@@ -78,9 +80,9 @@ motion/motions/user/
 scenes/user/
 ```
 
-When offline, Studio writes to its desktop checkout as a staging area. When
-connected, the Pi library is authoritative. A Pi asset wins over an offline
-asset with the same user-defined name, and no user asset may shadow a built-in.
+Studio's source catalog is available offline for browsing and editing. Publish
+requires a connected Pi, whose user library and live calibration are
+authoritative. No user asset may shadow a built-in.
 
 Creating or updating a Pi asset is transactional from Studio's perspective:
 the gateway writes it, asks `oriond` to reload and validate the complete
@@ -107,11 +109,19 @@ The daemon starts after reboot in torque-off observe mode. The first explicit
 movement request prepares and enables the servo path. Lighting- or audio-only
 work does not energize the servos.
 
+Character mode is a separate explicit state and also starts disabled after
+every restart. Starting it configures torque, moves to powered `home`, captures
+an immutable idle anchor, and schedules randomized relative idles. Foreground
+work outranks speech, reactions, and idle. Mechanical `rest` is reserved for
+shutdown before torque release.
+
 ## Important invariants
 
 - `oriond` is the only owner of Pi hardware devices.
 - Every physical request crosses a semantic, validated capability boundary.
-- Calibration and runtime limits are applied before movement reaches a driver.
+- Pi calibration is the only position-limit authority; the 7.4 V STS3215
+  profile supplies the 52 RPM capability ceiling.
+- Hardware and MuJoCo consume the same Rust-compiled 50 Hz trajectory.
 - Studio editing is inert until the user explicitly requests hardware preview
   or execution.
 - Built-in assets cannot be overwritten or shadowed.

@@ -367,19 +367,15 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 "STS3215 driver is not configured.".into(),
             ));
         }
-        let radians_per_step = 2.0 * PI / ENCODER_RESOLUTION as f64;
         Ok(self
             .calibrations
             .iter()
             .map(|joint| {
-                let first = joint.safe_min_delta_raw as f64 * radians_per_step
-                    / joint.encoder_direction as f64;
-                let second = joint.safe_max_delta_raw as f64 * radians_per_step
-                    / joint.encoder_direction as f64;
+                let (lower_rad, upper_rad) = joint.safe_range_radians();
                 JointLimit {
                     name: joint.name.clone(),
-                    lower_rad: first.min(second),
-                    upper_rad: first.max(second),
+                    lower_rad,
+                    upper_rad,
                 }
             })
             .collect())
@@ -399,7 +395,6 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 "A position is required for every Orion joint.".into(),
             ));
         }
-        let radians_per_step = 2.0 * PI / ENCODER_RESOLUTION as f64;
         self.calibrations
             .iter()
             .map(|joint| {
@@ -412,14 +407,8 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                         joint.name
                     )));
                 }
-                let first = joint.safe_min_delta_raw as f64 * radians_per_step
-                    / joint.encoder_direction as f64;
-                let second = joint.safe_max_delta_raw as f64 * radians_per_step
-                    / joint.encoder_direction as f64;
-                Ok((
-                    joint.name.clone(),
-                    value.clamp(first.min(second), first.max(second)),
-                ))
+                let (lower_rad, upper_rad) = joint.safe_range_radians();
+                Ok((joint.name.clone(), value.clamp(lower_rad, upper_rad)))
             })
             .collect()
     }

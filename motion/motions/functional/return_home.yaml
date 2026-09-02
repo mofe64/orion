@@ -1,9 +1,11 @@
-format_version: 1
+format_version: 2
 
 motion:
   name: return_home
   description: Move from the current joint state to Orion's home pose.
+  space: absolute
+  style: return_home
   keyframes:
     - pose: home
-      duration: 2.0
-      hold: 0.5
+      duration: 1.6
+      arrival: settle

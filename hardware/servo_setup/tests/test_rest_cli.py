@@ -8,8 +8,36 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from orion_servo_setup.provisioning import ORION_SERVO_ASSIGNMENTS
 from orion_servo_setup.rest_cli import main
-from test_pose_execution import NEUTRALS, calibration_document
+
+
+NEUTRALS = {
+    "base_yaw_joint": 942,
+    "shoulder_pitch_joint": 3400,
+    "elbow_pitch_joint": 789,
+    "head_roll_joint": 2753,
+    "head_pitch_joint": 3476,
+}
+
+
+def calibration_document() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "robot": "orion",
+        "servo_model": "sts3215",
+        "writes_servo_eeprom": False,
+        "joints": {
+            item.joint_name: {
+                "servo_id": item.servo_id,
+                "neutral_raw": NEUTRALS[item.joint_name],
+                "encoder_direction": 1,
+                "safe_min_delta_raw": -1004,
+                "safe_max_delta_raw": 1004,
+            }
+            for item in ORION_SERVO_ASSIGNMENTS
+        },
+    }
 
 
 class FakeRestBus:
@@ -58,12 +86,10 @@ class RestCliTests(unittest.TestCase):
             bus = FakeRestBus()
             stream = io.StringIO()
             prompts = iter(["", "", "y"])
-            ranges = {name: (-2.0, 2.0) for name in NEUTRALS}
             with (
                 patch("builtins.input", side_effect=lambda _: next(prompts)),
                 patch("orion_servo_setup.rest_cli.create_lerobot_bus", return_value=bus),
                 patch("orion_servo_setup.rest_cli.read_motion_preflight"),
-                patch("orion_servo_setup.rest_cli.load_operational_ranges", return_value=ranges),
                 patch("orion_servo_setup.rest_cli.time.sleep"),
                 patch(
                     "orion_servo_setup.rest_cli.time.monotonic",

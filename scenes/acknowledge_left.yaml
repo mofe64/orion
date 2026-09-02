@@ -1,26 +1,10 @@
-format_version: 1
-
+format_version: 2
 scene:
   name: acknowledge_left
-  description: Turn left with a restrained warm acknowledgement light.
-  timeline:
-    - at: 0.0
-      type: light
-      red: 8
-      green: 3
-      blue: 0
-      white: 20
-      transition_seconds: 0.35
-    - at: 0.0
-      type: play_motion
-      motion: look_at_left_expressive
-    - at: 0.12
-      type: audio
-      cue: acknowledge
-    - at: 4.20
-      type: light
-      red: 0
-      green: 0
-      blue: 0
-      white: 28
-      transition_seconds: 0.50
+  description: Fluid left turn supported by a warm marker-synchronised acknowledgement.
+  motion: [{at: 0.0, play: look_at_left_expressive}]
+  lighting:
+    - {at: 0.0, effect: attentive_focus, intensity: 0.65, duration: 1.6, transition: 0.2}
+    - {on_marker: notice, effect: acknowledge_pulse, intensity: 0.8, duration: 0.65, transition: 0.1}
+  audio: [{on_marker: notice, cue: acknowledge_warm}]
+  finish: {anchor: final_pose, lighting: pose_default}

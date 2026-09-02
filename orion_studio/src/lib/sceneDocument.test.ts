@@ -1,37 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { projectCatalog } from "./catalog";
 import { buildSceneDocument } from "./sceneDocument";
 
-describe("runtime scene documents", () => {
-  it("compiles a final return-to-rest scene clip for Orion hardware", () => {
-    const scene = {
-      format_version: 1 as const,
-      name: "custom_scene",
-      description: "Custom scene ending at rest",
-      source: "draft" as const,
-      timeline: [
-        { id: "opening", at: 0, type: "goto_pose" as const, pose: "home", duration_seconds: 2 },
-        { id: "return", at: 2, type: "scene" as const, scene: "return_to_rest" },
-      ],
-    };
-
-    const document = buildSceneDocument(scene, scene.name, projectCatalog);
-    expect(document.scene.timeline).toHaveLength(3);
-    expect(document.scene.timeline[1]).toEqual({
-      at: 2,
-      type: "goto_pose",
-      pose: "rest",
-      duration_seconds: 3,
-    });
-    expect(document.scene.timeline[2]).toEqual({
-      at: 2,
-      type: "light",
-      red: 0,
-      green: 0,
-      blue: 0,
-      white: 0,
-      transition_seconds: 0.5,
+describe("buildSceneDocument", () => {
+  it("strips Studio identities and preserves parallel v2 tracks", () => {
+    const document = buildSceneDocument({
+      format_version: 2, name: "draft", description: "Parallel", source: "draft",
+      motion: [{ id: "motion-ui", at: 0, play: "return_home" }],
+      lighting: [{ id: "light-ui", on_marker: "settled", effect: "settle_glow" }],
+      audio: [{ id: "audio-ui", at: 0.4, cue: "settle_soft" }],
+      finish: { anchor: "final_pose", lighting: "pose_default" },
+    }, "published");
+    expect(document).toEqual({
+      format_version: 2,
+      scene: {
+        name: "published", description: "Parallel",
+        motion: [{ at: 0, play: "return_home" }],
+        lighting: [{ on_marker: "settled", effect: "settle_glow" }],
+        audio: [{ at: 0.4, cue: "settle_soft" }],
+        finish: { anchor: "final_pose", lighting: "pose_default" },
+      },
     });
   });
 });

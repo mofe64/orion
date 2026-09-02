@@ -1,0 +1,17 @@
+format_version: 2
+motion:
+  name: idle_weight_shift
+  description: Coordinated base, shoulder, and elbow weight change.
+  space: anchor_relative
+  style: living_idle
+  return_to_anchor: true
+  keyframes:
+    - offsets: {base_yaw_joint: -0.045, shoulder_pitch_joint: -0.035, elbow_pitch_joint: 0.040, head_roll_joint: 0.025}
+      duration: 1.0
+      arrival: through
+    - offsets: {base_yaw_joint: -0.020, shoulder_pitch_joint: -0.018, elbow_pitch_joint: 0.020}
+      duration: 0.8
+      arrival: through
+    - offsets: {}
+      duration: 1.0
+      arrival: settle

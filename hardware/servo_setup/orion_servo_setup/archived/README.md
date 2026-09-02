@@ -9,7 +9,6 @@ They are not part of Orion's runtime control architecture. Their installed CLI
 entry points were removed when the files were archived. Physical movement now
 belongs behind the native Rust `oriond` runtime.
 
-Calibration and rest-capture code temporarily reuse read-only preflight and
-calibration-loading helpers from these modules. Before deleting this directory,
-move those shared helpers into active setup modules and update their imports.
-The four matching unit-test files can then be deleted with the archived code.
+Calibration and rest-capture retain only the read-only preflight helper from
+`motion_test.py`. The former pose executor and its legacy asset parser were removed;
+all physical character motion now goes through the Rust v2 runtime.

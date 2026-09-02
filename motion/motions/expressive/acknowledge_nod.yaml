@@ -1,0 +1,18 @@
+format_version: 2
+motion:
+  name: acknowledge_nod
+  description: A warm, restrained nod around the held anchor.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_pitch_joint: 0.09, shoulder_pitch_joint: -0.025}
+      duration: 0.22
+      arrival: through
+      marker: acknowledge
+    - offsets: {head_pitch_joint: -0.035, elbow_pitch_joint: 0.018}
+      duration: 0.24
+      arrival: through
+    - offsets: {}
+      duration: 0.30
+      arrival: settle

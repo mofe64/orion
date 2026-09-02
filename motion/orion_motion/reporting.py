@@ -16,10 +16,10 @@ from orion_motion.execution_types import (
     ExecutionResult,
     execution_result_data,
 )
-from orion_motion.trajectory_validator import ValidatedTrajectory
+from orion_motion.compiled_trajectory import CompiledTrajectory
 
 
-REPORT_FORMAT_VERSION = 1
+REPORT_FORMAT_VERSION = 2
 
 
 def file_sha256(path: Path) -> str:
@@ -32,27 +32,26 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _peak_dynamics_by_joint(validated: ValidatedTrajectory) -> dict[str, Any]:
-    trajectory = validated.trajectory
+def _peak_dynamics_by_joint(trajectory: CompiledTrajectory) -> dict[str, Any]:
     peaks = {
-        name: {"velocity": 0.0, "acceleration": 0.0, "jerk": 0.0}
+        name: {"velocity": 0.0, "acceleration": 0.0}
         for name in trajectory.joint_names
     }
-    for sample in trajectory.peak_dynamics:
-        joint = peaks[sample.joint_name]
-        joint["velocity"] = max(joint["velocity"], sample.velocity)
-        joint["acceleration"] = max(
-            joint["acceleration"], sample.acceleration
-        )
-        joint["jerk"] = max(joint["jerk"], sample.jerk)
+    for sample in trajectory.samples:
+        for index, name in enumerate(trajectory.joint_names):
+            joint = peaks[name]
+            joint["velocity"] = max(joint["velocity"], abs(sample.velocities[index]))
+            joint["acceleration"] = max(
+                joint["acceleration"], abs(sample.accelerations[index])
+            )
     return peaks
 
 
 def build_run_report(
     *,
     motion_path: Path,
-    limits_path: Path,
-    validated: ValidatedTrajectory,
+    calibration_path: Path,
+    trajectory: CompiledTrajectory,
     start_positions: Sequence[float],
     start_velocities: Sequence[float],
     start_state_age: float,
@@ -60,16 +59,15 @@ def build_run_report(
 ) -> dict[str, Any]:
     """Build one self-contained execution report for later comparison."""
 
-    trajectory = validated.trajectory
     return {
         "format_version": REPORT_FORMAT_VERSION,
         "motion_source": {
             "path": str(motion_path),
             "sha256": file_sha256(motion_path),
         },
-        "limits_source": {
-            "path": str(limits_path),
-            "sha256": file_sha256(limits_path),
+        "calibration_source": {
+            "path": str(calibration_path),
+            "sha256": file_sha256(calibration_path),
         },
         "environment": {
             "python": platform.python_version(),
@@ -84,12 +82,17 @@ def build_run_report(
         "trajectory": {
             "name": trajectory.name,
             "description": trajectory.description,
+            "compiler_revision": trajectory.build_revision,
+            "space": trajectory.space,
+            "style": trajectory.style,
             "joint_names": list(trajectory.joint_names),
             "total_duration": trajectory.total_duration,
-            "segment_count": len(trajectory.segments),
+            "control_rate_hz": trajectory.control_rate_hz,
+            "peak_velocity_rad_s": trajectory.peak_velocity_rad_s,
+            "amplitude_scale": trajectory.amplitude_scale,
             "points": [asdict(point) for point in trajectory.points],
-            "segments": [asdict(segment) for segment in trajectory.segments],
-            "peak_desired_by_joint": _peak_dynamics_by_joint(validated),
+            "markers": [asdict(marker) for marker in trajectory.markers],
+            "peak_desired_by_joint": _peak_dynamics_by_joint(trajectory),
         },
         "execution": execution_result_data(result),
     }
@@ -127,23 +130,17 @@ def _same_number(first: Any, second: Any) -> bool:
     )
 
 
-def _segment_contract(report: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return authored timing and target meaning without measured-start noise."""
+def _trajectory_contract(report: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact Rust-compiled command stream shared by backends."""
 
-    contract = []
-    for segment in report["trajectory"]["segments"]:
-        contract.append(
-            {
-                "pose_name": segment["pose_name"],
-                "kind": segment["kind"],
-                "duration": (
-                    segment["end"]["time_from_start"]
-                    - segment["start"]["time_from_start"]
-                ),
-                "target_positions": segment["end"]["positions"],
-            }
-        )
-    return contract
+    trajectory = report["trajectory"]
+    return {
+        "space": trajectory["space"],
+        "style": trajectory["style"],
+        "control_rate_hz": trajectory["control_rate_hz"],
+        "markers": trajectory["markers"],
+        "points": trajectory["points"],
+    }
 
 
 def _peak_differences(
@@ -157,7 +154,7 @@ def _peak_differences(
                 float(first_peaks[joint_name][field])
                 - float(second_peaks[joint_name][field])
             )
-            for field in ("velocity", "acceleration", "jerk")
+            for field in ("velocity", "acceleration")
         }
         for joint_name in first["trajectory"]["joint_names"]
     }
@@ -184,9 +181,9 @@ def compare_run_reports(
             second["motion_source"]["sha256"],
         ),
         (
-            "motion-limit hash",
-            first["limits_source"]["sha256"],
-            second["limits_source"]["sha256"],
+            "calibration hash",
+            first["calibration_source"]["sha256"],
+            second["calibration_source"]["sha256"],
         ),
         (
             "joint order",
@@ -194,9 +191,9 @@ def compare_run_reports(
             second_trajectory["joint_names"],
         ),
         (
-            "segment targets and timing",
-            _segment_contract(first),
-            _segment_contract(second),
+            "compiled sample stream",
+            _trajectory_contract(first),
+            _trajectory_contract(second),
         ),
     ):
         if first_value != second_value:
@@ -225,10 +222,10 @@ def compare_run_reports(
         "issues": issues,
         "shared_contract": {
             "motion_sha256": first["motion_source"]["sha256"],
-            "limits_sha256": first["limits_source"]["sha256"],
+            "calibration_sha256": first["calibration_source"]["sha256"],
             "joint_names": first_trajectory["joint_names"],
             "total_duration": first_trajectory["total_duration"],
-            "segment_targets_and_timing": _segment_contract(first),
+            "compiled_trajectory": _trajectory_contract(first),
         },
         "desired_peak_differences_by_joint": _peak_differences(first, second),
         "measured_outcomes": {

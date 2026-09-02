@@ -1,0 +1,17 @@
+format_version: 2
+motion:
+  name: idle_breathe
+  description: Small coordinated rise and weighted return.
+  space: anchor_relative
+  style: living_idle
+  return_to_anchor: true
+  keyframes:
+    - offsets: {shoulder_pitch_joint: 0.018, elbow_pitch_joint: -0.022, head_pitch_joint: 0.010}
+      duration: 1.3
+      arrival: through
+    - offsets: {shoulder_pitch_joint: 0.009, elbow_pitch_joint: -0.010, head_pitch_joint: 0.004}
+      duration: 0.9
+      arrival: through
+    - offsets: {}
+      duration: 1.2
+      arrival: settle

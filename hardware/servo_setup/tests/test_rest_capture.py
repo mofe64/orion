@@ -7,17 +7,63 @@ from pathlib import Path
 
 import yaml
 
-from orion_servo_setup.archived.pose_execution import load_hardware_calibration
+from orion_servo_setup.calibration import load_hardware_calibration
 from orion_servo_setup.rest_capture import (
     RestCaptureError,
     positions_to_rest_angles,
     validate_rest_stability,
     write_rest_pose,
 )
-from test_pose_execution import NEUTRALS, calibration_document, pose_document
+from orion_servo_setup.provisioning import ORION_SERVO_ASSIGNMENTS
 
 
-OPERATIONAL_RANGES = {name: (-2.0, 2.0) for name in NEUTRALS}
+NEUTRALS = {
+    "base_yaw_joint": 942,
+    "shoulder_pitch_joint": 3400,
+    "elbow_pitch_joint": 789,
+    "head_roll_joint": 2753,
+    "head_pitch_joint": 3476,
+}
+
+
+def calibration_document() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "robot": "orion",
+        "servo_model": "sts3215",
+        "writes_servo_eeprom": False,
+        "joints": {
+            item.joint_name: {
+                "servo_id": item.servo_id,
+                "neutral_raw": NEUTRALS[item.joint_name],
+                "encoder_direction": 1,
+                "safe_min_delta_raw": -1004,
+                "safe_max_delta_raw": 1004,
+            }
+            for item in ORION_SERVO_ASSIGNMENTS
+        },
+    }
+
+
+def pose_document() -> dict[str, object]:
+    return {
+        "format_version": 2,
+        "units": "radians",
+        "poses": {
+            "rest": {
+                "description": "Mechanical rest.",
+                "tags": ["shutdown_only", "mechanical_rest"],
+                "default_lighting": "off",
+                "positions": {name: 0.0 for name in NEUTRALS},
+            },
+            "home": {
+                "description": "Powered home.",
+                "tags": ["powered", "idle_anchor"],
+                "idle_profile": "home",
+                "positions": {name: 0.0 for name in NEUTRALS},
+            },
+        },
+    }
 
 
 class RestCaptureTests(unittest.TestCase):
@@ -31,9 +77,7 @@ class RestCaptureTests(unittest.TestCase):
             calibration = self._calibration(directory)
             positions = {name: raw + 100 for name, raw in NEUTRALS.items()}
 
-            angles = positions_to_rest_angles(
-                positions, calibration, OPERATIONAL_RANGES
-            )
+            angles = positions_to_rest_angles(positions, calibration)
 
         for angle in angles.values():
             self.assertAlmostEqual(angle, 100 * 2.0 * 3.141592653589793 / 4096, places=7)
@@ -45,18 +89,7 @@ class RestCaptureTests(unittest.TestCase):
             positions["elbow_pitch_joint"] += 1100
 
             with self.assertRaisesRegex(RestCaptureError, "outside calibrated"):
-                positions_to_rest_angles(positions, calibration, OPERATIONAL_RANGES)
-
-    def test_capture_outside_shared_pose_range_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            calibration = self._calibration(directory)
-            positions = dict(NEUTRALS)
-            positions["elbow_pitch_joint"] += 100
-            ranges = dict(OPERATIONAL_RANGES)
-            ranges["elbow_pitch_joint"] = (-0.1, 0.1)
-
-            with self.assertRaisesRegex(RestCaptureError, "shared pose-library"):
-                positions_to_rest_angles(positions, calibration, ranges)
+                positions_to_rest_angles(positions, calibration)
 
     def test_stability_rejects_torque_off_drift(self) -> None:
         sample = dict(NEUTRALS)
@@ -83,7 +116,7 @@ class RestCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "poses.yaml"
             path.write_text(
-                "format_version: 1\n"
+                "format_version: 2\n"
                 "units: radians\n\n"
                 "poses:\n"
                 "  rest:\n"

@@ -1,5 +1,5 @@
-format_version: 1
-applicability: provisional_simulation_only
+format_version: 2
+applicability: diagnostic_simulation_only
 
 # Completion means the final pose and low velocity remain inside these bounds
 # for the full settle duration.

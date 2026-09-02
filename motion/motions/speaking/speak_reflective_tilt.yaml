@@ -1,0 +1,18 @@
+format_version: 2
+motion:
+  name: speak_reflective_tilt
+  description: Reflective head tilt with intentional stillness on return.
+  space: anchor_relative
+  style: speaking_calm
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_roll_joint: 0.035, head_pitch_joint: -0.012, base_yaw_joint: -0.015}
+      duration: 0.5
+      arrival: through
+      marker: reflection
+    - offsets: {head_roll_joint: 0.018, head_pitch_joint: 0.008}
+      duration: 0.44
+      arrival: through
+    - offsets: {}
+      duration: 0.62
+      arrival: settle

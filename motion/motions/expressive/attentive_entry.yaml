@@ -1,0 +1,11 @@
+format_version: 2
+motion:
+  name: attentive_entry
+  description: Rise from the current pose into Orion's attentive anchor.
+  space: absolute
+  style: attentive
+  keyframes:
+    - pose: attentive
+      duration: 0.9
+      arrival: settle
+      marker: attentive

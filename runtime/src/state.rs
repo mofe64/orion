@@ -84,6 +84,8 @@ pub struct MotionState {
     pub keyframe_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyframe_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reached_markers: Vec<String>,
     pub progress: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_position_error_rad: Option<f64>,

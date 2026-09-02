@@ -1,0 +1,8 @@
+format_version: 2
+scene:
+  name: agreement
+  description: Agree softly around the current held anchor.
+  motion: [{at: 0.0, play: acknowledge_nod}]
+  lighting: [{on_marker: acknowledge, effect: acknowledge_pulse, intensity: 0.62, duration: 0.7, transition: 0.1}]
+  audio: [{on_marker: acknowledge, cue: agree_soft}]
+  finish: {anchor: final_pose, lighting: pose_default}

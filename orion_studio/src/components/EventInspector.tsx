@@ -1,141 +1,33 @@
 import { Trash2 } from "lucide-react";
 
-import { isDelayEvent } from "../lib/preview";
-import type { ProjectCatalog, SceneEvent } from "../types";
+import { LIGHTING_EFFECTS } from "../types";
+import type { ProjectCatalog, SceneDefinition } from "../types";
+import type { TrackSelection } from "./Timeline";
 
 interface EventInspectorProps {
+  scene: SceneDefinition;
+  selection: TrackSelection | null;
   catalog: ProjectCatalog;
-  currentSceneName: string;
-  event: SceneEvent | null;
-  onChange: (event: SceneEvent) => void;
+  markers: string[];
+  onChange: (scene: SceneDefinition) => void;
   onDelete: () => void;
 }
 
-function NumberField(props: {
-  label: string;
-  value: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label>
-      {props.label}
-      <input
-        type="number"
-        value={props.value}
-        min={props.min}
-        max={props.max}
-        step={props.step ?? 0.01}
-        onChange={(event) => props.onChange(Number(event.target.value))}
-      />
-    </label>
-  );
-}
-
-function lightPreviewColor(red: number, green: number, blue: number, white: number): string {
-  const channel = (value: number, whiteMix: number) => Math.round(
-    Math.min(255, value + white * whiteMix),
-  );
-  return `rgb(${channel(red, 1)}, ${channel(green, 0.82)}, ${channel(blue, 0.64)})`;
-}
-
-export function EventInspector({ catalog, currentSceneName, event, onChange, onDelete }: EventInspectorProps) {
-  if (!event) {
-    return (
-      <aside className="inspector empty-inspector">
-        <p className="panel-kicker">INSPECTOR</p>
-        <h2>Select a timeline clip</h2>
-        <p>Choose a movement, lighting transition, or cue to edit its details.</p>
-      </aside>
-    );
+export function EventInspector({ scene, selection, catalog, markers, onChange, onDelete }: EventInspectorProps) {
+  if (!selection) return <aside className="inspector empty-inspector"><p className="eyebrow">Inspector</p><h2>Select a track event</h2><p>Choose a motion, light, or sound event to edit its timing and expression.</p></aside>;
+  if (selection.track === "motion") {
+    const event = scene.motion.find((item) => item.id === selection.id);
+    if (!event) return null;
+    return <aside className="inspector"><p className="eyebrow">Motion event</p><h2>{event.play.replaceAll("_", " ")}</h2><label>Motion<select value={event.play} onChange={(input) => onChange({ ...scene, motion: scene.motion.map((item) => item.id === event.id ? { ...item, play: input.target.value } : item) })}>{Object.keys(catalog.motions).map((name) => <option key={name}>{name}</option>)}</select></label><label>Start time<input type="number" min={0} step={0.05} value={event.at} onChange={(input) => onChange({ ...scene, motion: scene.motion.map((item) => item.id === event.id ? { ...item, at: Number(input.target.value) } : item) })} /></label><button className="danger-button" onClick={onDelete}><Trash2 size={15} />Delete motion event</button></aside>;
   }
-
-  const patch = (changes: Partial<SceneEvent>) => onChange({ ...event, ...changes } as SceneEvent);
-  const delay = isDelayEvent(event);
-
-  return (
-    <aside className="inspector">
-      <div className="inspector-heading">
-        <div>
-          <p className="panel-kicker">INSPECTOR</p>
-          <h2>{delay ? "delay" : event.type.replaceAll("_", " ")}</h2>
-        </div>
-        <button className="icon-button danger" onClick={onDelete} aria-label="Delete selected event"><Trash2 size={16} /></button>
-      </div>
-
-      <div className="inspector-fields">
-        <NumberField label="Start time" value={event.at} min={0} max={300} onChange={(at) => patch({ at })} />
-
-        {event.type === "play_motion" && (
-          <label>
-            Authored motion
-            <select value={event.motion} onChange={(change) => patch({ motion: change.target.value })}>
-              {Object.keys(catalog.motions).map((name) => <option key={name}>{name}</option>)}
-            </select>
-          </label>
-        )}
-
-        {event.type === "scene" && (
-          <label>
-            Scene clip
-            <select value={event.scene} onChange={(change) => patch({ scene: change.target.value })}>
-              {Object.keys(catalog.scenes)
-                .filter((name) => name !== currentSceneName)
-                .map((name) => <option key={name}>{name}</option>)}
-            </select>
-          </label>
-        )}
-
-        {event.type === "goto_pose" && !delay && (
-          <>
-            <label>
-              Named pose
-              <select value={event.pose} onChange={(change) => patch({ pose: change.target.value })}>
-                {Object.entries(catalog.poses).map(([name, pose]) => (
-                  <option key={name} value={name}>
-                    {pose.source === "draft" ? `${pose.draftLabel ?? "Edited pose"} (edited)` : name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <NumberField label="Move duration" value={event.duration_seconds} min={0.1} max={60} onChange={(duration_seconds) => patch({ duration_seconds })} />
-          </>
-        )}
-
-        {event.type === "goto_pose" && delay && (
-          <NumberField label="Delay duration" value={event.duration_seconds} min={0.01} max={60} onChange={(duration_seconds) => patch({ duration_seconds })} />
-        )}
-
-        {event.type === "light" && (
-          <>
-            <div className="light-color-preview">
-              <span style={{ background: lightPreviewColor(event.red, event.green, event.blue, event.white) }} />
-              <div>
-                <strong>Selected lamp colour</strong>
-                <small>RGBW {event.red} · {event.green} · {event.blue} · {event.white}</small>
-              </div>
-            </div>
-            <div className="channel-grid">
-              <NumberField label="Red" value={event.red} min={0} max={255} step={1} onChange={(red) => patch({ red })} />
-              <NumberField label="Green" value={event.green} min={0} max={255} step={1} onChange={(green) => patch({ green })} />
-              <NumberField label="Blue" value={event.blue} min={0} max={255} step={1} onChange={(blue) => patch({ blue })} />
-              <NumberField label="White" value={event.white} min={0} max={255} step={1} onChange={(white) => patch({ white })} />
-            </div>
-            <NumberField label="Fade duration" value={event.transition_seconds} min={0} max={60} onChange={(transition_seconds) => patch({ transition_seconds })} />
-          </>
-        )}
-
-        {event.type === "audio" && (
-          <label>
-            Named cue
-            <select value={event.cue} onChange={(change) => patch({ cue: change.target.value })}>
-              {catalog.cues.map((name) => <option key={name}>{name}</option>)}
-            </select>
-          </label>
-        )}
-      </div>
-    </aside>
-  );
+  if (selection.track === "lighting") {
+    const event = scene.lighting.find((item) => item.id === selection.id);
+    if (!event) return null;
+    const patch = (changes: Partial<typeof event>) => onChange({ ...scene, lighting: scene.lighting.map((item) => item.id === event.id ? { ...item, ...changes } : item) });
+    return <aside className="inspector"><p className="eyebrow">Lighting event</p><h2>{event.effect.replaceAll("_", " ")}</h2><label>Effect<select value={event.effect} onChange={(input) => patch({ effect: input.target.value as typeof event.effect })}>{LIGHTING_EFFECTS.map((name) => <option key={name}>{name}</option>)}</select></label><label>Trigger<select value={event.on_marker ? `marker:${event.on_marker}` : "time"} onChange={(input) => input.target.value === "time" ? patch({ at: 0, on_marker: undefined }) : patch({ at: undefined, on_marker: input.target.value.slice(7) })}><option value="time">At a time</option>{markers.map((marker) => <option value={`marker:${marker}`} key={marker}>At marker · {marker}</option>)}</select></label>{event.on_marker === undefined && <label>Start time<input type="number" min={0} step={0.05} value={event.at ?? 0} onChange={(input) => patch({ at: Number(input.target.value) })} /></label>}<label>Duration<input type="number" min={0} step={0.05} value={event.duration ?? 0.8} onChange={(input) => patch({ duration: Number(input.target.value) })} /></label><button className="danger-button" onClick={onDelete}><Trash2 size={15} />Delete lighting event</button></aside>;
+  }
+  const event = scene.audio.find((item) => item.id === selection.id);
+  if (!event) return null;
+  const patch = (changes: Partial<typeof event>) => onChange({ ...scene, audio: scene.audio.map((item) => item.id === event.id ? { ...item, ...changes } : item) });
+  return <aside className="inspector"><p className="eyebrow">Sound event</p><h2>{event.cue.replaceAll("_", " ")}</h2><label>Warm cue<select value={event.cue} onChange={(input) => patch({ cue: input.target.value })}>{catalog.cues.map((cue) => <option key={cue}>{cue}</option>)}</select></label><label>Trigger<select value={event.on_marker ? `marker:${event.on_marker}` : "time"} onChange={(input) => input.target.value === "time" ? patch({ at: 0, on_marker: undefined }) : patch({ at: undefined, on_marker: input.target.value.slice(7) })}><option value="time">At a time</option>{markers.map((marker) => <option value={`marker:${marker}`} key={marker}>At marker · {marker}</option>)}</select></label>{event.on_marker === undefined && <label>Start time<input type="number" min={0} step={0.05} value={event.at ?? 0} onChange={(input) => patch({ at: Number(input.target.value) })} /></label>}<button className="danger-button" onClick={onDelete}><Trash2 size={15} />Delete sound event</button></aside>;
 }

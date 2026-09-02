@@ -13,16 +13,17 @@ Status meanings:
 | Area | Evidence and scope |
 | --- | --- |
 | Robot description | Neutral URDF and shared STL meshes under `description/` |
-| Motion foundation | Named poses and motions, commissioned joint limits, quintic interpolation, and validation under `motion/` and `runtime/` |
+| Motion foundation | V2 named poses and motions, commissioned calibration limits, one continuous Rust spline compiler, and validation under `motion/` and `runtime/` |
 | Native runtime | Rust `oriond` daemon with lifecycle, run IDs, status, settling, cancellation, and hardware/MuJoCo backends |
 | Physical servo path | Five STS3215 servos through the commissioned calibration and `rustypot` transport |
 | Lighting | Pi 5 BCM12 RGBW output, logical RGBW conversion, fades, and all-off handling |
 | Local audio | Named WAV cues and `oriond`-owned ReSpeaker playback |
-| Multimodal scenes | Version-1 motion, pose, RGBW, and audio coordination under one clock |
+| Character coordinator | Explicit disabled/idle/listening/thinking/speaking states, priority, anchor-relative idles, speech gestures, and background lighting |
+| Multimodal scenes | V2 parallel motion, RGBW effect, marker, audio, and exact finish-policy coordination under one clock |
 | Pi services and deployment | Source-backed `oriond` and Studio gateway systemd units plus bounded deployment smoke test |
-| Orion Studio authoring | URDF preview, pose/motion/scene libraries, timeline editing, local preview, user asset creation, and revision-checked scene updates |
+| Orion Studio authoring | Responsive dark creative workspace, URDF preview, v2 pose/motion/scene editors, Rust-compiled preview, calibrated controls, and revisioned publishing |
 | Studio-to-Pi control | Authenticated semantic HTTP gateway over the private `oriond` Unix socket |
-| Studio Voice response | Workstation capture, resampling, Rustpotter activation, Qwen3-ASR confirmation/transcription, provider-isolated text agent, Chatterbox generation, and speaker playback |
+| Studio Voice response | Workstation capture, resampling, Rustpotter activation, Qwen3-ASR confirmation/transcription, provider-isolated text agent, Chatterbox generation, authenticated Pi upload, and ReSpeaker completion reporting |
 | Pi-local fallback voice | Sherpa wake detection, Silero endpointing, Moonshine transcription, Piper speech generation, and `oriond` playback integration |
 
 ## Partial

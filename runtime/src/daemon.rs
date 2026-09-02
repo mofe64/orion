@@ -114,6 +114,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             active.status.keyframe = Some(sequence.keyframe_name(elapsed)?.to_owned());
             active.status.keyframe_index = Some(sequence.keyframe_index(elapsed)?);
             active.status.keyframe_count = Some(sequence.keyframe_count());
+            active.status.reached_markers = sequence.reached_markers(elapsed);
             active.status.progress = sequence.progress(elapsed)?;
             if sequence.complete(elapsed)? {
                 self.motion_sequence = None;
@@ -222,9 +223,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             let target = self.poses.pose(fields[0])?.clone();
             self.driver.validate_positions(&target)?;
             let start = self.measured_positions();
-            self.trajectory = Some(JointTrajectory::new(
+            self.trajectory = Some(JointTrajectory::with_start_velocity(
                 fields[0],
                 self.driver.clamp_positions_to_safe_range(&start)?,
+                self.measured_velocities(),
                 target,
                 duration,
             )?);
@@ -248,23 +250,30 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             if fields.len() != 1 {
                 return Ok(command_error("play", "expected play MOTION"));
             }
-            let definition = self.motions.motion(fields[0])?;
-            for keyframe in &definition.keyframes {
-                self.driver.validate_positions(&keyframe.target)?;
+            let definition = self.motions.motion(fields[0])?.clone();
+            let start = self
+                .driver
+                .clamp_positions_to_safe_range(&self.measured_positions())?;
+            let start_velocity = self.measured_velocities();
+            let limits = self.driver.joint_limits()?;
+            let amplitude_scale = definition.uniform_amplitude_scale(&start, &limits)?;
+            let targets = definition.resolved_targets_with_scale(&start, amplitude_scale)?;
+            for target in &targets {
+                self.driver.validate_positions(target)?;
             }
-            let start = self.measured_positions();
-            let sequence = MotionSequence::new(
-                definition,
-                self.driver.clamp_positions_to_safe_range(&start)?,
+            let sequence = MotionSequence::compile_scaled(
+                &definition,
+                start.clone(),
+                start_velocity,
+                start,
+                amplitude_scale,
             )?;
             let duration = sequence.duration_seconds();
             let keyframes = sequence.keyframe_count();
-            let target = definition
-                .keyframes
+            let target = targets
                 .last()
-                .ok_or_else(|| Error::InvalidArgument("Motion has no final keyframe.".into()))?
-                .target
-                .clone();
+                .cloned()
+                .ok_or_else(|| Error::InvalidArgument("Motion has no final keyframe.".into()))?;
             self.motion_sequence = Some(sequence);
             self.trajectory = None;
             self.movement_started_at = now_seconds;
@@ -302,6 +311,14 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .collect()
     }
 
+    fn measured_velocities(&self) -> JointPositions {
+        self.snapshot
+            .joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.velocity))
+            .collect()
+    }
+
     fn refresh_snapshot(&mut self) -> Result<()> {
         self.sequence += 1;
         let states = self.driver.read()?;
@@ -322,6 +339,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 keyframe: None,
                 keyframe_index: None,
                 keyframe_count: None,
+                reached_markers: Vec::new(),
                 progress: 0.0,
                 max_position_error_rad: None,
                 max_velocity_rad_s: None,
@@ -450,6 +468,55 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         &self.motions
     }
 
+    /// Start a character-owned relative clip around an immutable anchor. The
+    /// measured state still supplies the interruption blend's position and
+    /// velocity, while every authored offset is resolved from `anchor`.
+    pub fn play_anchored_relative(
+        &mut self,
+        name: &str,
+        anchor: JointPositions,
+        now_seconds: f64,
+    ) -> Result<u64> {
+        if self.mode != RuntimeMode::Holding || self.active_movement.is_some() {
+            return Err(Error::InvalidState(
+                "Anchored character motion requires idle holding torque.".into(),
+            ));
+        }
+        let definition = self.motions.motion(name)?.clone();
+        if definition.space != crate::motion::MotionSpace::AnchorRelative
+            || !definition.return_to_anchor
+        {
+            return Err(Error::InvalidArgument(format!(
+                "Character clip '{name}' must be anchor-relative and return to anchor."
+            )));
+        }
+        let start = self
+            .driver
+            .clamp_positions_to_safe_range(&self.measured_positions())?;
+        let limits = self.driver.joint_limits()?;
+        let amplitude_scale = definition.uniform_amplitude_scale(&anchor, &limits)?;
+        let targets = definition.resolved_targets_with_scale(&anchor, amplitude_scale)?;
+        for target in &targets {
+            self.driver.validate_positions(target)?;
+        }
+        let sequence = MotionSequence::compile_scaled(
+            &definition,
+            start,
+            self.measured_velocities(),
+            anchor,
+            amplitude_scale,
+        )?;
+        let target = targets
+            .last()
+            .cloned()
+            .ok_or_else(|| Error::InvalidArgument("Character clip has no final target.".into()))?;
+        self.motion_sequence = Some(sequence);
+        self.trajectory = None;
+        self.movement_started_at = now_seconds;
+        self.mode = RuntimeMode::Moving;
+        self.begin_movement(name, target)
+    }
+
     pub fn replace_motion_assets(
         &mut self,
         poses: PoseLibrary,
@@ -480,11 +547,14 @@ fn validate_motion_assets<D: RuntimeDriver>(
         })?;
     }
     for (name, motion) in motions.iter() {
+        if motion.space == crate::motion::MotionSpace::AnchorRelative {
+            continue;
+        }
         for keyframe in &motion.keyframes {
             driver.validate_positions(&keyframe.target).map_err(|error| {
                 Error::OutOfRange(format!(
                     "Motion '{name}' keyframe '{}' is outside the active driver limits: {error}",
-                    keyframe.pose_name
+                    keyframe.pose_name.as_deref().unwrap_or("relative")
                 ))
             })?;
         }

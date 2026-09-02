@@ -1,0 +1,11 @@
+format_version: 2
+motion:
+  name: curious_tilt
+  description: Open into a curious examining silhouette.
+  space: absolute
+  style: thinking
+  keyframes:
+    - pose: curious
+      duration: 0.95
+      arrival: settle
+      marker: notice

@@ -12,7 +12,7 @@ motion/config/poses.yaml
 motion/motions/**/*.yaml
             |
             +--> Rust motion library --> oriond --> physical servos
-            +--> Python trajectory library --> MuJoCo actuators
+            +--> orion-trajectory -----> Studio and MuJoCo samples
 ```
 
 ## Poses
@@ -23,14 +23,18 @@ calibration ranges.
 
 ## Motions
 
-Each keyframe references a named pose and contains:
+Absolute keyframes reference named poses. Anchor-relative character clips use
+joint offsets and must finish at zero offset. Every keyframe contains:
 
 - `duration`: time spent moving to the pose;
+- `arrival`: `through` for continuous motion or `settle` for an intentional stop;
 - `hold`: time spent stationary after arrival.
 
 The runtime begins a motion from the latest measured physical position, not
-from an assumed previous pose. It uses quintic interpolation so each transition
-starts and ends with zero velocity and acceleration.
+from an assumed previous pose. One continuous piecewise-quintic compiler carries
+position, velocity, and acceleration through `through` keyframes, then reaches
+zero velocity and acceleration only at `settle` keyframes. Direct interruption
+starts from the latest measured position and velocity.
 
 ## Physical execution
 
@@ -41,14 +45,14 @@ continues in the daemon, so scripts must wait for the reported duration or poll
 
 ## Simulation execution
 
-MuJoCo loads the same YAML and uses the portable Python trajectory generator.
-The simulator adds physics, stability, settling, and torque analysis without
-changing the authored motion format.
+MuJoCo asks the Rust `orion-trajectory` binary for the same 50 Hz samples used
+by Studio preview and hardware execution. The simulator adds physics, stability,
+settling, and torque analysis without owning a second interpolation algorithm.
 
 ## Validation
 
-The motion tests check schema, joint order, ranges, timing, quintic dynamics,
-forbidden regions, and report consistency. The Rust tests independently verify
-native YAML loading, keyframe sampling, daemon behavior, and both hardware and
-MuJoCo driver boundaries. Both suites must pass when a shared pose or motion
-changes.
+The motion tests check v2 schema, joint order, calibration-derived ranges,
+timing, continuous spline dynamics, and report consistency. Rust tests verify
+native loading, nonzero velocity at expressive through-keyframes, anchor return,
+uniform safe-range scaling, daemon behavior, and hardware/MuJoCo boundaries.
+Both suites must pass when a shared pose or motion changes.

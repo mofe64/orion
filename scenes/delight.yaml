@@ -1,0 +1,8 @@
+format_version: 2
+scene:
+  name: delight
+  description: Lift into restrained delight with a brief warm sparkle.
+  motion: [{at: 0.0, play: delight_lift}]
+  lighting: [{on_marker: delight, effect: delight_spark, intensity: 0.78, duration: 1.0, transition: 0.12}]
+  audio: [{on_marker: delight, cue: delight_warm}]
+  finish: {anchor: final_pose, lighting: pose_default}

@@ -1,10 +1,11 @@
-format_version: 1
+format_version: 2
 units: radians
 
 poses:
   zero_reference:
     description: Physical zero captured and accepted on Orion on 2026-08-29.
-    positions:
+    tags: [calibration_reference]
+    positions: &zero
       base_yaw_joint: 0.0
       shoulder_pitch_joint: 0.0
       elbow_pitch_joint: 0.0
@@ -12,25 +13,33 @@ poses:
       head_pitch_joint: 0.0
 
   rest:
-    description: Captured torque-free mechanical rest pose; verify stability again after hardware changes.
+    description: Captured torque-free mechanical rest; shutdown and release only.
+    tags: [mechanical, shutdown_only]
+    default_lighting: off
     positions:
       base_yaw_joint: 0.02454369
       shoulder_pitch_joint: -1.40819436
       elbow_pitch_joint: 1.03697101
       head_roll_joint: -0.12271846
-      head_pitch_joint: 0.0076699
+      head_pitch_joint: 0.00766990
 
   home:
-    description: Compact powered rest pose with a lower centre of gravity.
+    description: Compact powered resting pose and default character anchor.
+    tags: [powered, idle_anchor, home]
+    idle_profile: home
+    default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.00000000
-      shoulder_pitch_joint: 0.00000000
-      elbow_pitch_joint: -0.30500000
-      head_roll_joint: -0.00000000
-      head_pitch_joint: -0.53300000
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.0
+      elbow_pitch_joint: -0.305
+      head_roll_joint: 0.0
+      head_pitch_joint: -0.533
 
   attentive:
-    description: Forward-facing posture with a focused, curious head tilt.
+    description: Forward-facing pose with upward, curious energy.
+    tags: [powered, attentive, idle_anchor]
+    idle_profile: attentive
+    default_lighting: attentive_focus
     positions:
       base_yaw_joint: -0.30
       shoulder_pitch_joint: -0.10
@@ -38,73 +47,121 @@ poses:
       head_roll_joint: -0.65
       head_pitch_joint: -0.22
 
-  look_left:
-    description: Attentive posture oriented toward a predefined target on Orion's left.
+  thinking:
+    description: Asymmetric held pose for deliberate thought.
+    tags: [powered, thinking, idle_anchor]
+    idle_profile: attentive
+    default_lighting: thinking_drift
     positions:
-      base_yaw_joint: -1.22800000
-      shoulder_pitch_joint: -0.10000000
-      elbow_pitch_joint: -0.28000000
-      head_roll_joint: -0.65000000
-      head_pitch_joint: -0.22000000
+      base_yaw_joint: -0.16
+      shoulder_pitch_joint: -0.18
+      elbow_pitch_joint: -0.20
+      head_roll_joint: -0.38
+      head_pitch_joint: -0.08
+
+  curious:
+    description: Open, angled pose for examining something nearby.
+    tags: [powered, curious, idle_anchor]
+    idle_profile: attentive
+    default_lighting: curious_sweep
+    positions:
+      base_yaw_joint: 0.18
+      shoulder_pitch_joint: -0.04
+      elbow_pitch_joint: -0.36
+      head_roll_joint: 0.18
+      head_pitch_joint: -0.12
+
+  delight:
+    description: Restrained upward lift with a readable open silhouette.
+    tags: [powered, delight, idle_anchor]
+    idle_profile: attentive
+    default_lighting: delight_spark
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.16
+      elbow_pitch_joint: -0.44
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.02
+
+  look_left:
+    description: Attentive pose oriented toward Orion's left.
+    tags: [powered, directional, idle_anchor]
+    idle_profile: directional
+    default_lighting: attentive_focus
+    positions:
+      base_yaw_joint: -1.228
+      shoulder_pitch_joint: -0.10
+      elbow_pitch_joint: -0.28
+      head_roll_joint: -0.65
+      head_pitch_joint: -0.22
 
   look_left_anticipation:
-    description: Early leftward glance derived from the updated look-left anchor.
+    description: Small opposing preparation for the expressive left turn.
+    tags: [powered, transition]
     positions:
-      base_yaw_joint: -0.64800000
+      base_yaw_joint: 0.08
       shoulder_pitch_joint: -0.04
       elbow_pitch_joint: -0.28
-      head_roll_joint: -0.77
+      head_roll_joint: -0.52
       head_pitch_joint: -0.10
 
   look_left_lean:
-    description: Committed leftward lean derived from the updated look-left anchor.
+    description: Committed leftward body lead.
+    tags: [powered, transition]
     positions:
-      base_yaw_joint: -0.87800000
+      base_yaw_joint: -0.878
       shoulder_pitch_joint: -0.18
       elbow_pitch_joint: -0.20
       head_roll_joint: -0.77
       head_pitch_joint: -0.30
 
   look_left_overshoot:
-    description: Passes the updated left target slightly before settling.
+    description: Authored overshoot before the final left settle.
+    tags: [powered, transition, authored_overshoot]
     positions:
-      base_yaw_joint: -1.30800000
+      base_yaw_joint: -1.308
       shoulder_pitch_joint: -0.14
       elbow_pitch_joint: -0.25
       head_roll_joint: -0.71
       head_pitch_joint: -0.25
 
   look_right:
-    description: Attentive posture oriented toward a predefined target on Orion's right.
+    description: Attentive pose oriented toward Orion's right.
+    tags: [powered, directional, idle_anchor]
+    idle_profile: directional
+    default_lighting: attentive_focus
     positions:
-      base_yaw_joint: 1.54000000
-      shoulder_pitch_joint: -0.10000000
-      elbow_pitch_joint: -0.28000000
+      base_yaw_joint: 1.54
+      shoulder_pitch_joint: -0.10
+      elbow_pitch_joint: -0.28
       head_roll_joint: -0.65
-      head_pitch_joint: -0.22000000
+      head_pitch_joint: -0.22
 
   look_right_anticipation:
-    description: Early rightward glance mirrored from the updated left family.
+    description: Small opposing preparation for the expressive right turn.
+    tags: [powered, transition]
     positions:
-      base_yaw_joint: 0.96000000
+      base_yaw_joint: -0.08
       shoulder_pitch_joint: -0.04
       elbow_pitch_joint: -0.28
-      head_roll_joint: -0.53
+      head_roll_joint: -0.78
       head_pitch_joint: -0.10
 
   look_right_lean:
-    description: Committed rightward lean mirrored from the updated left family.
+    description: Committed rightward body lead.
+    tags: [powered, transition]
     positions:
-      base_yaw_joint: 1.19000000
+      base_yaw_joint: 1.19
       shoulder_pitch_joint: -0.18
       elbow_pitch_joint: -0.20
       head_roll_joint: -0.53
       head_pitch_joint: -0.30
 
   look_right_overshoot:
-    description: Uses a mirrored head accent at the calibrated right-yaw limit before settling.
+    description: Authored shoulder and head overshoot at the calibrated yaw edge.
+    tags: [powered, transition, authored_overshoot]
     positions:
-      base_yaw_joint: 1.54000000
+      base_yaw_joint: 1.54
       shoulder_pitch_joint: -0.14
       elbow_pitch_joint: -0.25
       head_roll_joint: -0.59

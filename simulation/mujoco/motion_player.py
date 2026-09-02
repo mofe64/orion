@@ -49,15 +49,11 @@ from orion_motion.execution_types import (  # noqa: E402
     JointExecutionState,
     execution_result_data,
 )
-from orion_motion.trajectory_builder import build_trajectory  # noqa: E402
-from orion_motion.trajectory_generator import (  # noqa: E402
-    generate_trajectory,
+from orion_motion.compiled_trajectory import (  # noqa: E402
+    CompiledTrajectory,
+    TrajectoryCompilerError,
+    compile_trajectory,
     sample_trajectory,
-)
-from orion_motion.trajectory_validator import (  # noqa: E402
-    TrajectoryValidationError,
-    ValidatedTrajectory,
-    require_valid_trajectory,
 )
 
 
@@ -93,55 +89,24 @@ def find_motion_file(motion_name: str) -> Path:
 
 def load_playback_data(
     motion_name: str, start_pose_name: str
-) -> tuple[Path, ValidatedTrajectory, tuple[float, ...]]:
-    """Load, generate, and validate a motion for MuJoCo execution."""
+) -> tuple[Path, CompiledTrajectory, tuple[float, ...]]:
+    """Load one Rust-compiled v2 motion for MuJoCo execution."""
 
     motion_path = find_motion_file(motion_name)
-    motion_definition = load_yaml_file(motion_path)
-    pose_library = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
-    motion_limits = load_yaml_file(CONFIG_DIRECTORY / "motion_limits.yaml")
-    forbidden_regions = load_yaml_file(
-        CONFIG_DIRECTORY / "forbidden_regions.yaml"
+    compiled = compile_trajectory(
+        motion_name,
+        start_pose_name,
+        pose_file=CONFIG_DIRECTORY / "poses.yaml",
+        motions_directory=MOTIONS_DIRECTORY,
     )
-    requested = build_trajectory(
-        motion_definition,
-        pose_library,
-        motion_limits,
-    )
-
-    if requested.name != motion_name:
-        raise ValueError(
-            f"Motion file '{motion_path.name}' declares name '{requested.name}'"
-        )
-
-    poses = pose_library["poses"]
-    if start_pose_name not in poses:
-        available = ", ".join(sorted(poses))
-        raise ValueError(
-            f"Unknown start pose '{start_pose_name}'. Available poses: {available}"
-        )
-
-    start_positions = tuple(
-        float(poses[start_pose_name]["positions"][joint_name])
-        for joint_name in requested.joint_names
-    )
-    generated = generate_trajectory(
-        requested,
-        start_positions,
-        (0.0,) * len(requested.joint_names),
-        motion_limits,
-    )
-    validated = require_valid_trajectory(
-        generated, motion_limits, forbidden_regions
-    )
-    return motion_path, validated, start_positions
+    return motion_path, compiled, compiled.samples[0].positions
 
 
 def run_playback_loop(
     model: mujoco.MjModel,
     data: mujoco.MjData,
     mapping: MuJoCoJointMapping,
-    validated: ValidatedTrajectory,
+    trajectory: CompiledTrajectory,
     *,
     lead_in: float,
     viewer: Any | None,
@@ -149,10 +114,9 @@ def run_playback_loop(
 ) -> ExecutionResult:
     """Execute one trajectory and require measured settling and stability."""
 
-    if not isinstance(validated, ValidatedTrajectory):
-        raise TypeError("MuJoCo execution requires a ValidatedTrajectory")
+    if not isinstance(trajectory, CompiledTrajectory):
+        raise TypeError("MuJoCo execution requires a Rust CompiledTrajectory")
     active_policy = policy or load_stability_policy()
-    trajectory = validated.trajectory
     playback_start = data.time + lead_in
     feedback_samples: list[ExecutionFeedback] = []
     maximum_position_errors = [0.0] * len(mapping.joint_names)
@@ -364,13 +328,13 @@ def run_playback_loop(
 def report_final_error(
     data: mujoco.MjData,
     mapping: MuJoCoJointMapping,
-    validated: ValidatedTrajectory,
+    trajectory: CompiledTrajectory,
 ) -> float:
     """Print final measured positions and return the largest absolute error."""
 
-    if not isinstance(validated, ValidatedTrajectory):
-        raise TypeError("MuJoCo execution requires a ValidatedTrajectory")
-    desired = validated.trajectory.points[-1].positions
+    if not isinstance(trajectory, CompiledTrajectory):
+        raise TypeError("MuJoCo execution requires a Rust CompiledTrajectory")
+    desired = trajectory.points[-1].positions
     measured = read_joint_positions(data, mapping)
     errors = tuple(
         actual - target
@@ -430,7 +394,7 @@ def print_execution_summary(result: ExecutionResult) -> None:
 
 def play_motion(
     scene_path: Path,
-    validated: ValidatedTrajectory,
+    trajectory: CompiledTrajectory,
     start_positions: tuple[float, ...],
     *,
     lead_in: float,
@@ -439,9 +403,8 @@ def play_motion(
 ) -> ExecutionResult:
     """Initialize MuJoCo and play one shared generated Orion trajectory."""
 
-    if not isinstance(validated, ValidatedTrajectory):
-        raise TypeError("MuJoCo execution requires a ValidatedTrajectory")
-    trajectory = validated.trajectory
+    if not isinstance(trajectory, CompiledTrajectory):
+        raise TypeError("MuJoCo execution requires a Rust CompiledTrajectory")
     model = mujoco.MjModel.from_xml_path(str(scene_path))
     data = mujoco.MjData(model)
     mapping = resolve_joint_mapping(model, trajectory.joint_names)
@@ -453,7 +416,7 @@ def play_motion(
             model,
             data,
             mapping,
-            validated,
+            trajectory,
             lead_in=lead_in,
             viewer=None,
             policy=active_policy,
@@ -468,7 +431,7 @@ def play_motion(
                 model,
                 data,
                 mapping,
-                validated,
+                trajectory,
                 lead_in=lead_in,
                 viewer=viewer,
                 policy=active_policy,
@@ -528,14 +491,13 @@ def main() -> None:
         motion_path, trajectory, start_positions = load_playback_data(
             args.motion, args.start_pose
         )
-    except TrajectoryValidationError as error:
+    except TrajectoryCompilerError as error:
         raise SystemExit(f"Cannot play motion: {error}") from None
 
-    generated = trajectory.trajectory
-    print(f"Motion: {generated.name}")
+    print(f"Motion: {trajectory.name}")
     print(f"Source: {motion_path}")
     print(f"Start pose: {args.start_pose}")
-    print(f"Motion duration: {generated.total_duration:.3f} s")
+    print(f"Motion duration: {trajectory.total_duration:.3f} s")
 
     result = play_motion(
         args.scene.resolve(),

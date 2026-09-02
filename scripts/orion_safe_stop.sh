@@ -18,8 +18,8 @@ fi
 "${binary}" --stop-speech --socket "${socket}" >/dev/null 2>&1 || true
 "${binary}" --stop --socket "${socket}" >/dev/null 2>&1 || true
 
-if ! "${binary}" --run-scene return_to_rest --wait --socket "${socket}"; then
-  echo "Orion could not confirm return_to_rest before service shutdown." >&2
+if ! "${binary}" --goto rest --duration 3.0 --wait --socket "${socket}"; then
+  echo "Orion could not confirm mechanical rest before service shutdown." >&2
   exit 1
 fi
 "${binary}" --disable --socket "${socket}"

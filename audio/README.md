@@ -5,20 +5,22 @@ Hardware routing and ReSpeaker commissioning remain under `hardware/audio/`;
 the cue files are portable scene resources.
 
 Each cue is addressed by its filename stem. For example, a scene action with
-`cue: acknowledge` resolves to `audio/cues/acknowledge.wav`. Names may contain
-ASCII letters, digits, hyphens, and underscores.
+`cue: acknowledge_warm` resolves to `audio/cues/acknowledge_warm.wav`. Names
+may contain ASCII letters, digits, hyphens, and underscores.
 
 Tracked cues use uncompressed RIFF/WAVE audio. Orion's first physical speaker
 is the mono JST output on the ReSpeaker V2 HAT, fed from the right playback
 channel. Cue assets therefore contain identical left and right channels so
 they also preview naturally on normal stereo equipment.
 
-`generate_cues.py` creates Orion's original cue sounds using only Python's
+`generate_cues.py` creates Orion's warm tonal vocabulary using only Python's
 standard library. It is an authoring tool, not a dependency of `oriond`:
 
 ```bash
 python3 audio/generate_cues.py
 ```
 
-The first cue, `acknowledge`, is a restrained 420 ms ascending two-note sound.
-It is used by the left and right expressive acknowledgement scenes.
+The v2 vocabulary is `notice_warm`, `acknowledge_warm`, `curious_rise`,
+`agree_soft`, `delight_warm`, `settle_soft`, and `error_muted`. It uses one
+coherent harmonic palette, gentle attacks, short decays, and restrained
+loudness. Routine idles never dispatch a cue.

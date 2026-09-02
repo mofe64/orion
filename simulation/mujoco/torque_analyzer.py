@@ -41,15 +41,10 @@ DEFAULT_POSE_NAMES = ("zero_reference", "home", "attentive")
 # Consume the backend-independent motion library, matching motion_player.py.
 sys.path.insert(0, str(MOTION_SOURCE))
 
-from orion_motion.motion_loader import load_yaml_file  # noqa: E402
-from orion_motion.trajectory_builder import build_pose_trajectory  # noqa: E402
-from orion_motion.trajectory_generator import (  # noqa: E402
-    generate_trajectory,
+from orion_motion.compiled_trajectory import (  # noqa: E402
+    CompiledTrajectory,
+    compile_trajectory,
     sample_trajectory,
-)
-from orion_motion.trajectory_validator import (  # noqa: E402
-    ValidatedTrajectory,
-    require_valid_trajectory,
 )
 
 JOINT_NAMES = (
@@ -60,14 +55,11 @@ JOINT_NAMES = (
     "head_pitch_joint",
 )
 
-# Published STS3215 reference values at 6 V. These are comparison thresholds,
-# not a mapping from the servo's raw Torque_Limit register.
-RATED_TORQUE_NM = 0.39
-STALL_TORQUE_NM = 1.62
-
-# Goal_Velocity=50 in the commissioning runner is approximately 4.4 degrees/s.
-# This comparison is intentionally separate from shared motion limits.
-COMMISSIONING_VELOCITY_LIMIT_RAD_S = math.radians(4.4)
+# Published 7.4 V STS3215 reference values converted from kg.cm to N.m.
+# They are diagnostic comparisons, not runtime acceptance thresholds or a
+# mapping from the servo's raw Torque_Limit register.
+RATED_TORQUE_NM = 5.0 * 0.0980665
+STALL_TORQUE_NM = 19.5 * 0.0980665
 
 
 class TorqueAnalysisError(RuntimeError):
@@ -127,14 +119,9 @@ class DynamicJointTorqueDemand:
     def stall_fraction(self) -> float:
         return self.peak_absolute_torque_nm / STALL_TORQUE_NM
 
-    @property
-    def commissioning_velocity_fraction(self) -> float:
-        return self.peak_velocity_rad_s / COMMISSIONING_VELOCITY_LIMIT_RAD_S
-
-
 @dataclass(frozen=True)
 class DynamicTrajectoryTorqueReport:
-    """Sampled inverse-dynamics evidence for one validated trajectory."""
+    """Sampled inverse-dynamics evidence for one Rust-compiled trajectory."""
 
     trajectory_name: str
     start_pose_name: str
@@ -142,17 +129,6 @@ class DynamicTrajectoryTorqueReport:
     sample_period_seconds: float
     sample_count: int
     joint_demands: tuple[DynamicJointTorqueDemand, ...]
-
-    @property
-    def minimum_duration_for_velocity_setting_seconds(self) -> float:
-        """Duration needed to fit the same quintic path under the servo setting."""
-
-        maximum_ratio = max(
-            demand.commissioning_velocity_fraction
-            for demand in self.joint_demands
-        )
-        return self.duration_seconds * maximum_ratio
-
 
 def load_named_pose(
     pose_path: Path,
@@ -166,8 +142,8 @@ def load_named_pose(
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise TorqueAnalysisError(f"Could not read poses '{pose_path}': {exc}") from exc
 
-    if not isinstance(root, dict) or root.get("format_version") != 1:
-        raise TorqueAnalysisError("Pose library must use format_version 1.")
+    if not isinstance(root, dict) or root.get("format_version") != 2:
+        raise TorqueAnalysisError("Pose library must use format_version 2 (v2 required).")
     if root.get("units") != "radians":
         raise TorqueAnalysisError("Pose library must use radians.")
     poses = root.get("poses")
@@ -501,62 +477,41 @@ def analyze_named_poses(
     )
 
 
-def load_pose_trajectory(
-    pose_name: str,
+def load_motion_trajectory(
+    motion_name: str,
     start_pose_name: str,
-    duration_seconds: float,
     *,
     config_directory: Path = CONFIG_DIRECTORY,
-) -> ValidatedTrajectory:
-    """Build and validate one stopped-start named-pose trajectory."""
+) -> CompiledTrajectory:
+    """Load one authored motion from Orion's single Rust compiler."""
 
-    if not math.isfinite(duration_seconds) or duration_seconds <= 0.0:
-        raise TorqueAnalysisError("Trajectory duration must be finite and positive.")
-    pose_path = config_directory / "poses.yaml"
-    pose_library = load_yaml_file(pose_path)
-    motion_limits = load_yaml_file(config_directory / "motion_limits.yaml")
-    forbidden_regions = load_yaml_file(
-        config_directory / "forbidden_regions.yaml"
-    )
-    requested = build_pose_trajectory(
-        pose_name,
-        duration_seconds,
-        pose_library,
-        motion_limits,
-    )
-    start_positions = load_named_pose(pose_path, start_pose_name)
-    generated = generate_trajectory(
-        requested,
-        start_positions,
-        (0.0,) * len(start_positions),
-        motion_limits,
-    )
-    return require_valid_trajectory(
-        generated,
-        motion_limits,
-        forbidden_regions,
+    return compile_trajectory(
+        motion_name,
+        start_pose_name,
+        pose_file=config_directory / "poses.yaml",
+        motions_directory=PROJECT_ROOT / "motion" / "motions",
+        calibration_file=MUJOCO_DIRECTORY / "config" / "servo_calibration.json",
     )
 
 
 def analyze_dynamic_trajectory(
     model: mujoco.MjModel,
-    validated: ValidatedTrajectory,
+    trajectory: CompiledTrajectory,
     *,
     start_pose_name: str,
     sample_period_seconds: float = 0.01,
     base_body_name: str = DEFAULT_BASE_BODY_NAME,
 ) -> DynamicTrajectoryTorqueReport:
-    """Sample one validated trajectory and report peak/RMS inverse dynamics."""
+    """Sample one Rust-compiled trajectory and report peak/RMS inverse dynamics."""
 
-    if not isinstance(validated, ValidatedTrajectory):
-        raise TypeError("Dynamic torque analysis requires a ValidatedTrajectory.")
+    if not isinstance(trajectory, CompiledTrajectory):
+        raise TypeError("Dynamic torque analysis requires a Rust CompiledTrajectory.")
     if (
         not math.isfinite(sample_period_seconds)
         or sample_period_seconds <= 0.0
     ):
         raise TorqueAnalysisError("Sample period must be finite and positive.")
 
-    trajectory = validated.trajectory
     if trajectory.joint_names != JOINT_NAMES:
         raise TorqueAnalysisError(
             "Trajectory joint order does not match Orion's canonical joint order."
@@ -678,8 +633,6 @@ def _dynamic_status(demand: DynamicJointTorqueDemand) -> str:
         findings.append("OVER STALL")
     elif demand.peak_absolute_torque_nm > RATED_TORQUE_NM:
         findings.append("torque>rated")
-    if demand.commissioning_velocity_fraction > 1.0:
-        findings.append("speed>setting")
     return ", ".join(findings) or "within references"
 
 
@@ -693,8 +646,7 @@ def format_dynamic_report(report: DynamicTrajectoryTorqueReport) -> str:
             f"{report.sample_period_seconds:.4f} s)"
         ),
         (
-            "joint                    peak N.m  at s   RMS N.m  peak speed  "
-            "speed/set  assessment"
+            "joint                    peak N.m  at s   RMS N.m  peak speed  assessment"
         ),
     ]
     for demand in report.joint_demands:
@@ -702,14 +654,9 @@ def format_dynamic_report(report: DynamicTrajectoryTorqueReport) -> str:
         lines.append(
             f"{demand.joint_name:24} {demand.peak_torque_nm:+9.4f} "
             f"{demand.peak_time_seconds:5.2f} {demand.rms_torque_nm:9.4f} "
-            f"{speed_degrees:9.2f}°/s "
-            f"{demand.commissioning_velocity_fraction:8.1f}x  "
+            f"{speed_degrees:9.2f}°/s  "
             f"{_dynamic_status(demand)}"
         )
-    lines.append(
-        "Minimum same-path duration for the approximate commissioning velocity "
-        f"setting: {report.minimum_duration_for_velocity_setting_seconds:.2f} s"
-    )
     return "\n".join(lines)
 
 
@@ -736,19 +683,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pose to analyze; repeat for multiple poses.",
     )
     parser.add_argument(
-        "--trajectory-to",
-        help="Analyze a generated named-pose trajectory instead of static poses.",
+        "--trajectory",
+        help="Analyze an authored v2 motion instead of static poses.",
     )
     parser.add_argument(
         "--start-pose",
         default="rest",
-        help="Stopped starting pose for trajectory analysis (default: rest).",
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=6.0,
-        help="Named-pose trajectory duration in seconds (default: 6.0).",
+        help="Starting pose for trajectory analysis (default: rest).",
     )
     parser.add_argument(
         "--sample-period",
@@ -762,17 +703,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        if args.trajectory_to:
+        if args.trajectory:
             model = mujoco.MjModel.from_xml_path(str(args.scene))
-            validated = load_pose_trajectory(
-                args.trajectory_to,
+            trajectory = load_motion_trajectory(
+                args.trajectory,
                 args.start_pose,
-                args.duration,
                 config_directory=args.poses.parent,
             )
             dynamic_report = analyze_dynamic_trajectory(
                 model,
-                validated,
+                trajectory,
                 start_pose_name=args.start_pose,
                 sample_period_seconds=args.sample_period,
             )

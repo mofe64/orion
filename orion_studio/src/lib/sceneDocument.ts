@@ -1,21 +1,16 @@
-import { expandSceneTimeline } from "./preview";
-import type { ProjectCatalog, SceneDefinition, StoredSceneDocument } from "../types";
+import type { SceneDefinition, StoredSceneDocument } from "../types";
 
-/** Compile Studio-only scene clips into Orion's version-1 runtime document. */
-export function buildSceneDocument(
-  scene: SceneDefinition,
-  name: string,
-  catalog: ProjectCatalog,
-): StoredSceneDocument {
-  const timeline = expandSceneTimeline(scene, catalog)
-    .filter((event) => event.type !== "scene")
-    .map(({ id: _id, ...event }) => event);
+/** Strip Studio identities while preserving the authored v2 parallel tracks. */
+export function buildSceneDocument(scene: SceneDefinition, name = scene.name): StoredSceneDocument {
   return {
-    format_version: 1,
+    format_version: 2,
     scene: {
       name,
       description: scene.description,
-      timeline,
+      motion: scene.motion.map(({ id: _id, ...event }) => event),
+      lighting: scene.lighting.map(({ id: _id, ...event }) => event),
+      audio: scene.audio.map(({ id: _id, ...event }) => event),
+      finish: scene.finish,
     },
   };
 }

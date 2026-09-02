@@ -1,0 +1,18 @@
+format_version: 2
+motion:
+  name: speak_emphasis_nod
+  description: Phrase-boundary nod for energetic speech peaks.
+  space: anchor_relative
+  style: speaking_emphatic
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_pitch_joint: 0.055, shoulder_pitch_joint: -0.018}
+      duration: 0.20
+      arrival: through
+      marker: emphasis
+    - offsets: {head_pitch_joint: -0.018, elbow_pitch_joint: 0.015}
+      duration: 0.23
+      arrival: through
+    - offsets: {}
+      duration: 0.28
+      arrival: settle

@@ -1,18 +1,22 @@
-format_version: 1
+format_version: 2
 
 motion:
   name: look_at_right_expressive
   description: Notice, lean toward, and settle on the predefined right target.
+  space: absolute
+  style: expressive_turn
   keyframes:
     - pose: look_right_anticipation
-      duration: 2.00
-      hold: 0.20
+      duration: 0.25
+      arrival: through
     - pose: look_right_lean
-      duration: 0.80
-      hold: 0.15
+      duration: 0.40
+      arrival: through
+      marker: notice
     - pose: look_right_overshoot
-      duration: 1.00
-      hold: 0.15
+      duration: 0.30
+      arrival: through
     - pose: look_right
-      duration: 0.70
-      hold: 0.80
+      duration: 0.35
+      arrival: settle
+      marker: settled

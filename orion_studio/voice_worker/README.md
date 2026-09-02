@@ -4,7 +4,7 @@ The worker keeps Orion's wake, transcription, agent, and speech models behind
 one authenticated loopback WebSocket:
 
 ```text
-Rustpotter -> Qwen3-ASR -> AgentProvider -> Chatterbox Turbo -> Studio speaker
+Rustpotter -> Qwen3-ASR -> AgentProvider -> Chatterbox Turbo -> Orion ReSpeaker
 ```
 
 Rustpotter proposes a wake candidate. Qwen confirms that the transcript starts
@@ -70,8 +70,9 @@ Rustpotter candidate
     -> otherwise remove the wake phrase
     -> configured agent provider
     -> Chatterbox PCM16
-    -> Studio speaker
-    -> playback acknowledgement
+    -> Studio validates and uploads PCM16 WAV to Orion
+    -> Pi ReSpeaker + speaking motion + warm RGBW light
+    -> terminal playback acknowledgement
 ```
 
 If the first transcript contains only “Hey Orion”, the worker opens a second
@@ -79,8 +80,9 @@ endpointed capture for the command. Audio remains in memory and the socket
 accepts only one Studio connection.
 
 The version-4 protocol sends JSON state events and binary PCM speech on the
-same socket. The worker ignores microphone frames from the accepted command
-until Studio acknowledges that playback has ended, preventing self-activation.
+same socket. Studio acknowledges playback only after the Pi reports a terminal
+speech run. The worker ignores microphone frames until that acknowledgement,
+preventing Orion's own ReSpeaker response from reactivating the wake path.
 
 ## Validation
 

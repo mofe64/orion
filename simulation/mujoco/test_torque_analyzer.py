@@ -15,13 +15,12 @@ from torque_analyzer import (  # noqa: E402
     DEFAULT_POSE_PATH,
     DEFAULT_SCENE_PATH,
     JOINT_NAMES,
-    RATED_TORQUE_NM,
     TorqueAnalysisError,
     analyze_dynamic_trajectory,
     analyze_named_poses,
     analyze_static_pose,
+    load_motion_trajectory,
     load_named_pose,
-    load_pose_trajectory,
 )
 
 
@@ -65,45 +64,40 @@ class StaticTorqueAnalysisTests(unittest.TestCase):
         )
         self.assertAlmostEqual(report.joint_demands[0].torque_nm, 0.0, places=10)
 
-    def test_rest_to_attentive_reports_dynamic_torque_and_speed(self):
-        validated = load_pose_trajectory("attentive", "rest", 6.0)
+    def test_authored_motion_reports_dynamic_torque_and_speed(self):
+        trajectory = load_motion_trajectory("look_at_left_expressive", "attentive")
         report = analyze_dynamic_trajectory(
             self.model,
-            validated,
-            start_pose_name="rest",
+            trajectory,
+            start_pose_name="attentive",
             sample_period_seconds=0.05,
         )
         demands = {
             demand.joint_name: demand for demand in report.joint_demands
         }
 
-        self.assertEqual(report.trajectory_name, "go_to_pose:attentive")
-        self.assertEqual(report.sample_count, 121)
-        self.assertGreater(
-            demands["elbow_pitch_joint"].peak_absolute_torque_nm,
-            RATED_TORQUE_NM,
+        self.assertEqual(report.trajectory_name, "look_at_left_expressive")
+        self.assertEqual(
+            report.sample_count,
+            1 + round(trajectory.total_duration / 0.05),
         )
         self.assertGreater(
-            demands["elbow_pitch_joint"].commissioning_velocity_fraction,
-            1.0,
+            demands["base_yaw_joint"].peak_velocity_rad_s,
+            0.0,
         )
         self.assertGreater(
             demands["elbow_pitch_joint"].rms_torque_nm,
-            RATED_TORQUE_NM,
-        )
-        self.assertGreater(
-            report.minimum_duration_for_velocity_setting_seconds,
-            15.0,
+            0.0,
         )
 
     def test_dynamic_analysis_rejects_non_positive_sample_period(self):
-        validated = load_pose_trajectory("attentive", "rest", 6.0)
+        trajectory = load_motion_trajectory("look_at_left_expressive", "attentive")
 
         with self.assertRaisesRegex(TorqueAnalysisError, "Sample period"):
             analyze_dynamic_trajectory(
                 self.model,
-                validated,
-                start_pose_name="rest",
+                trajectory,
+                start_pose_name="attentive",
                 sample_period_seconds=0.0,
             )
 

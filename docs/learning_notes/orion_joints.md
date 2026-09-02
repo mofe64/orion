@@ -30,7 +30,7 @@ reference configuration, not automatically Orion's home or rest pose.
 The approximate travel descriptions below explain the imported URDF geometry;
 they are not permission to command that entire range on the physical robot.
 The runtime's commissioned position bounds live in
-[`motion/config/motion_limits.yaml`](../../motion/config/motion_limits.yaml),
+the active Pi calibration,
 and the hardware driver derives its conversion from the accepted servo
 calibration.
 

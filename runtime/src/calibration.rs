@@ -18,6 +18,21 @@ pub struct JointCalibration {
     pub safe_max_delta_raw: i32,
 }
 
+impl JointCalibration {
+    /// Convert the accepted calibration's raw safety envelope into joint radians.
+    ///
+    /// Encoder direction is part of calibration, so reversed installations still
+    /// produce an ordered lower/upper range in joint coordinates.
+    pub fn safe_range_radians(&self) -> (f64, f64) {
+        let radians_per_step = std::f64::consts::TAU / ENCODER_RESOLUTION as f64;
+        let first =
+            self.safe_min_delta_raw as f64 * radians_per_step / self.encoder_direction as f64;
+        let second =
+            self.safe_max_delta_raw as f64 * radians_per_step / self.encoder_direction as f64;
+        (first.min(second), first.max(second))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CalibrationDocument {
     #[serde(default)]

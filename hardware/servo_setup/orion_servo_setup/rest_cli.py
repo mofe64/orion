@@ -9,11 +9,10 @@ from pathlib import Path
 
 from .bus import create_lerobot_bus
 from .archived.motion_test import motion_test_plan, read_motion_preflight
-from .archived.pose_execution import load_hardware_calibration
+from .calibration import load_hardware_calibration
 from .rest_capture import (
     STABILITY_DURATION_SECONDS,
     RestCaptureError,
-    load_operational_ranges,
     positions_to_rest_angles,
     validate_rest_stability,
     write_rest_pose,
@@ -23,9 +22,6 @@ from .rest_capture import (
 DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 ORION_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_POSES = ORION_ROOT / "motion" / "config" / "poses.yaml"
-DEFAULT_LIMITS = (
-    ORION_ROOT / "motion" / "config" / "motion_limits.yaml"
-)
 SAMPLE_INTERVAL_SECONDS = 0.10
 
 
@@ -38,7 +34,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
     parser.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION)
     parser.add_argument("--poses", type=Path, default=DEFAULT_POSES)
-    parser.add_argument("--limits", type=Path, default=DEFAULT_LIMITS)
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -66,7 +61,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         calibration = load_hardware_calibration(args.calibration)
-        operational_ranges = load_operational_ranges(args.limits)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Cannot prepare rest capture: {exc}")
         return 1
@@ -92,7 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             time.sleep(SAMPLE_INTERVAL_SECONDS)
             samples.append(_positions(bus))
         maximum_drift = validate_rest_stability(reference, samples)
-        angles = positions_to_rest_angles(reference, calibration, operational_ranges)
+        angles = positions_to_rest_angles(reference, calibration)
 
         pose_values = " ".join(
             f"{assignment.servo_id}:{angles[assignment.joint_name]:+.5f}"

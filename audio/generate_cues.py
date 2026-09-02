@@ -13,17 +13,15 @@ from pathlib import Path
 SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH_BYTES = 2
-PEAK = 0.50
+PEAK = 0.32
 
 
 def envelope(position: float, duration: float) -> float:
-    fade = min(0.025, duration / 3.0)
-    if position < fade:
-        return math.sin((position / fade) * math.pi / 2.0) ** 2
-    if position > duration - fade:
-        remaining = max(0.0, duration - position)
-        return math.sin((remaining / fade) * math.pi / 2.0) ** 2
-    return 1.0
+    attack = min(0.035, duration / 4.0)
+    if position < attack:
+        return math.sin((position / attack) * math.pi / 2.0) ** 2
+    decay_position = (position - attack) / max(duration - attack, 1e-9)
+    return max(0.0, (1.0 - decay_position) ** 1.4)
 
 
 def tone(frequency_hz: float, duration_seconds: float) -> list[int]:
@@ -53,15 +51,30 @@ def write_stereo_wav(path: Path, mono_samples: list[int]) -> None:
         )
 
 
+def phrase(notes: list[tuple[float, float]], gap: float = 0.018) -> list[int]:
+    samples: list[int] = []
+    for index, (frequency, duration) in enumerate(notes):
+        samples.extend(tone(frequency, duration))
+        if index + 1 < len(notes):
+            samples.extend(silence(gap))
+    return samples
+
+
 def main() -> None:
-    output = Path(__file__).resolve().parent / "cues" / "acknowledge.wav"
-    samples = (
-        tone(659.255, 0.175)
-        + silence(0.025)
-        + tone(783.991, 0.220)
-    )
-    write_stereo_wav(output, samples)
-    print(f"Generated {output}")
+    cues = {
+        "notice_warm": [(523.251, 0.16), (659.255, 0.21)],
+        "acknowledge_warm": [(659.255, 0.16), (783.991, 0.22)],
+        "curious_rise": [(440.000, 0.14), (554.365, 0.15), (659.255, 0.22)],
+        "agree_soft": [(523.251, 0.17), (659.255, 0.20)],
+        "delight_warm": [(523.251, 0.12), (659.255, 0.13), (783.991, 0.24)],
+        "settle_soft": [(659.255, 0.15), (523.251, 0.27)],
+        "error_muted": [(392.000, 0.17), (349.228, 0.25)],
+    }
+    directory = Path(__file__).resolve().parent / "cues"
+    for name, notes in cues.items():
+        output = directory / f"{name}.wav"
+        write_stereo_wav(output, phrase(notes))
+        print(f"Generated {output}")
 
 
 if __name__ == "__main__":

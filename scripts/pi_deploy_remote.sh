@@ -85,7 +85,7 @@ safe_shutdown() {
     if [[ "${torque_enabled}" == "true" ]]; then
       "${active_binary}" --stop-scene --socket "${runtime_socket}" >/dev/null 2>&1
       "${active_binary}" --stop --socket "${runtime_socket}" >/dev/null 2>&1
-      if "${active_binary}" --run-scene return_to_rest --wait --socket "${runtime_socket}" >/dev/null 2>&1; then
+      if "${active_binary}" --goto rest --duration 3.0 --wait --socket "${runtime_socket}" >/dev/null 2>&1; then
         "${active_binary}" --disable --socket "${runtime_socket}" >/dev/null 2>&1
       else
         echo "Rest could not be confirmed; Orion remains holding. Support it physically before stopping the service." >&2
@@ -101,11 +101,6 @@ if [[ "${current_branch}" != "${branch}" ]]; then
   echo "Pi checkout is on '${current_branch:-detached HEAD}', expected '${branch}'. Refusing to switch branches." >&2
   exit 1
 fi
-
-echo "Fetching origin/${branch}..."
-git fetch --prune origin "${branch}"
-git merge --ff-only "origin/${branch}"
-revision="$(git rev-parse --short=12 HEAD)"
 
 if [[ ! -x "${old_binary}" ]]; then
   echo "An existing source-built oriond release is required for the pre-update rest sequence." >&2
@@ -136,18 +131,10 @@ fi
 if [[ "${current_mode}" == "configured" ]]; then
   "${old_binary}" --enable --socket "${runtime_socket}"
 fi
-"${old_binary}" --run-scene return_to_rest --wait --socket "${runtime_socket}"
+"${old_binary}" --goto rest --duration 3.0 --wait --socket "${runtime_socket}"
 "${old_binary}" --disable --socket "${runtime_socket}"
 
-echo "Testing and building Orion revision ${revision} while the old daemon remains safely torque-off..."
-python3 -m py_compile orion_studio/gateway.py
-python3 -m unittest discover -s orion_studio/tests -v
-cargo test --locked --manifest-path runtime/Cargo.toml --all-targets -- \
-  --skip mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco
-cargo build --release --locked --manifest-path runtime/Cargo.toml
-active_binary="${project_root}/runtime/target/release/oriond"
-
-echo "Stopping the previous runtime process..."
+echo "Stopping the previous runtime before replacing the legacy catalog..."
 if unit_exists oriond.service; then
   sudo -n systemctl stop oriond.service
 fi
@@ -161,6 +148,29 @@ if pgrep -x oriond >/dev/null; then
   exit 1
 fi
 daemon_available=false
+
+echo "Fetching origin/${branch}..."
+git fetch --prune origin "${branch}"
+git merge --ff-only "origin/${branch}"
+revision="$(git rev-parse --short=12 HEAD)"
+
+echo "Archiving non-v2 Pi user assets before loading the breaking catalog..."
+bash scripts/migrate_v2_user_assets.sh \
+  "${project_root}" "${user_home}/.local/share/orion/backups"
+
+echo "Testing and building Orion v2 revision ${revision} while torque remains off..."
+python3 -m py_compile orion_studio/gateway.py
+python3 -m unittest discover -s orion_studio/tests -v
+cargo test --locked --manifest-path runtime/Cargo.toml --all-targets -- \
+  --skip mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco
+cargo build --release --locked --manifest-path runtime/Cargo.toml
+active_binary="${project_root}/runtime/target/release/oriond"
+"${project_root}/runtime/target/release/orion-trajectory" \
+  --motion look_at_left_expressive \
+  --start-pose attentive \
+  --pose-file "${project_root}/motion/config/poses.yaml" \
+  --motions-directory "${project_root}/motion/motions" \
+  --calibration "${calibration_file}" >/dev/null
 
 if [[ ! -f "${token_file}" ]]; then
   echo "Creating the Studio pairing token; save the following value in Studio:"
@@ -184,8 +194,13 @@ echo "Configuring, enabling, and moving to zero_reference..."
 echo "Testing Orion's RGBW shield and acknowledge cue..."
 "${active_binary}" --run-scene deployment_smoke --wait --socket "${runtime_socket}"
 
+echo "Testing both continuous expressive arcs and marker-synchronised expression..."
+"${active_binary}" --run-scene acknowledge_left --wait --socket "${runtime_socket}"
+"${active_binary}" --run-scene acknowledge_right --wait --socket "${runtime_socket}"
+"${active_binary}" --run-scene return_home --wait --socket "${runtime_socket}"
+
 echo "Returning Orion to rest, fading lights off, and disabling torque..."
-"${active_binary}" --run-scene return_to_rest --wait --socket "${runtime_socket}"
+"${active_binary}" --goto rest --duration 3.0 --wait --socket "${runtime_socket}"
 "${active_binary}" --disable --socket "${runtime_socket}"
 
 final_status="$("${active_binary}" --status --socket "${runtime_socket}")"

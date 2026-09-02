@@ -6,9 +6,12 @@ import {
   type StudioVoicePhase,
   type StudioVoiceSnapshot,
 } from "../lib/studioVoicePipeline";
+import { OrionSpeechPlayer, type OrionPlaybackSnapshot } from "../lib/studioSpeaker";
+import type { GatewayConnection } from "../lib/gateway";
 
 interface VoicePanelProps {
   open: boolean;
+  connection: GatewayConnection | null;
   onClose: () => void;
   onNotice: (notice: string) => void;
   onPhaseChange: (phase: StudioVoicePhase) => void;
@@ -34,8 +37,11 @@ function meterPercent(levelDbfs: number | null): number {
   return Math.max(0, Math.min(100, ((levelDbfs + 60) / 60) * 100));
 }
 
-export function VoicePanel({ open, onClose, onNotice, onPhaseChange }: VoicePanelProps) {
-  const pipeline = useMemo(() => new StudioVoicePipeline(), []);
+export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange }: VoicePanelProps) {
+  const [playback, setPlayback] = useState<OrionPlaybackSnapshot>({ runId: null, state: "idle" });
+  const pipeline = useMemo(() => new StudioVoicePipeline({
+    speaker: new OrionSpeechPlayer(() => connection, setPlayback),
+  }), [connection]);
   const [snapshot, setSnapshot] = useState<StudioVoiceSnapshot>(() => pipeline.current());
 
   useEffect(() => pipeline.subscribe(setSnapshot), [pipeline]);
@@ -61,7 +67,7 @@ export function VoicePanel({ open, onClose, onNotice, onPhaseChange }: VoicePane
   return (
     <section className="voice-popover" role="dialog" aria-label="Studio voice setup">
       <header>
-        <div><p className="panel-kicker">LOCAL VOICE</p><h2>Studio microphone</h2></div>
+        <div><p className="panel-kicker">ORION VOICE</p><h2>Speak through Orion</h2></div>
         <button className="icon-button" onClick={onClose} aria-label="Close voice setup"><X size={15} /></button>
       </header>
 
@@ -81,14 +87,15 @@ export function VoicePanel({ open, onClose, onNotice, onPhaseChange }: VoicePane
       {snapshot.error && <p className="voice-error">{snapshot.error}</p>}
       {snapshot.transcript && <p className="voice-transcript"><span>Latest command</span>{snapshot.transcript}</p>}
       {snapshot.response && <p className="voice-transcript"><span>Orion</span>{snapshot.response}</p>}
+      {playback.state !== "idle" && <p className="voice-playback"><span>Pi playback</span>{playback.state}{playback.runId ? ` · run ${playback.runId}` : ""}</p>}
 
       <button
         className={active ? "stop-button" : "primary-button"}
-        disabled={snapshot.phase === "stopping"}
+        disabled={snapshot.phase === "stopping" || !connection}
         onClick={() => { void toggleCapture(); }}
       >
         {active ? <MicOff size={15} /> : <Mic size={15} />}
-        {active ? "Stop microphone" : snapshot.phase === "error" ? "Try again" : "Enable microphone"}
+        {active ? "Stop microphone" : !connection ? "Connect Orion first" : snapshot.phase === "error" ? "Try again" : "Enable microphone"}
       </button>
 
       <div className="voice-provider-list">
@@ -98,7 +105,7 @@ export function VoicePanel({ open, onClose, onNotice, onPhaseChange }: VoicePane
         <div><span>Pre-roll</span><strong>3 seconds · memory only</strong></div>
         <div><span>Text to speech</span><strong>{snapshot.ttsModel ?? "Not loaded"}</strong></div>
       </div>
-      <small>Wake detection, transcription, and speech generation run locally. The selected agent provider receives only the confirmed transcript.</small>
+      <small>Wake detection, transcription, and Chatterbox synthesis run locally. PCM16 audio is uploaded securely and plays through Orion's ReSpeaker with speaking motion and light.</small>
     </section>
   );
 }

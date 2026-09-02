@@ -156,8 +156,8 @@ def load_editor_configuration(
     pose_library_path = pose_library_path.expanduser().resolve()
     limits = load_calibrated_limits(calibration_path)
     root = _read_yaml_mapping(pose_library_path)
-    if root.get("format_version") != 1:
-        raise ValueError("Pose library must use format_version 1.")
+    if root.get("format_version") != 2:
+        raise ValueError("Pose library must use format_version 2 (v2 required).")
     if root.get("units") != "radians":
         raise ValueError("Pose library units must be radians.")
 

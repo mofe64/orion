@@ -13,7 +13,7 @@ Environment=HOME=@USER_HOME@
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
 ExecStartPre=@PROJECT_ROOT@/scripts/wait_for_oriond.sh @PROJECT_ROOT@/runtime/target/release/oriond /tmp/oriond.sock 20
-ExecStart=/usr/bin/python3 @PROJECT_ROOT@/orion_studio/gateway.py serve --bind 0.0.0.0 --port 7447 --socket /tmp/oriond.sock --token-file @USER_HOME@/.config/orion/studio-token --project-root @PROJECT_ROOT@
+ExecStart=/usr/bin/python3 @PROJECT_ROOT@/orion_studio/gateway.py serve --bind 0.0.0.0 --port 7447 --socket /tmp/oriond.sock --token-file @USER_HOME@/.config/orion/studio-token --project-root @PROJECT_ROOT@ --calibration @USER_HOME@/.config/orion/servo_calibration.json --trajectory-compiler @PROJECT_ROOT@/runtime/target/release/orion-trajectory
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=10

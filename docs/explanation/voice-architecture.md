@@ -16,7 +16,9 @@ workstation microphone
   -> Qwen3-ASR wake confirmation and command transcription
   -> configured AgentProvider
   -> Chatterbox Turbo speech generation
-  -> workstation speaker
+  -> authenticated mono PCM16/24 kHz WAV upload
+  -> oriond-owned ReSpeaker playback
+  -> energy-driven character motion and RGBW light
 ```
 
 Studio begins capture only after the user selects **Enable microphone**. Raw
@@ -31,8 +33,9 @@ relatively permissive reference threshold without sending every sound to ASR
 or the agent.
 
 The current agent produces a spoken response only. It cannot request movement,
-lighting, audio cues, or scenes. A deterministic, validated capability layer
-must be added before agent output may affect the physical robot.
+lighting, cues, or scenes. Studio maps known voice-pipeline phases to the
+allowlisted listening, thinking, and neutral character states; agent-generated
+text never becomes a raw robot command.
 
 ## Agent and privacy boundary
 

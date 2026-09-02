@@ -1,0 +1,11 @@
+format_version: 2
+motion:
+  name: thinking_shift
+  description: Shift asymmetrically into Orion's thinking anchor.
+  space: absolute
+  style: thinking
+  keyframes:
+    - pose: thinking
+      duration: 1.1
+      arrival: settle
+      marker: thinking

@@ -11,11 +11,7 @@ from typing import Any
 
 import yaml
 
-from .calibration import ENCODER_RESOLUTION, circular_delta
-from .archived.pose_execution import (
-    HardwareJointCalibration,
-    STEPS_PER_RADIAN,
-)
+from .calibration import ENCODER_RESOLUTION, HardwareJointCalibration, circular_delta
 from .provisioning import ORION_SERVO_ASSIGNMENTS
 
 
@@ -25,56 +21,18 @@ REST_DESCRIPTION = (
 )
 STABILITY_DURATION_SECONDS = 5.0
 STABILITY_TOLERANCE_RAW = 10  # About 0.88 degrees.
+STEPS_PER_RADIAN = ENCODER_RESOLUTION / (2.0 * math.pi)
 
 
 class RestCaptureError(RuntimeError):
     """Raised when a candidate rest pose is unsafe, unstable, or cannot be saved."""
 
 
-def load_operational_ranges(path: Path) -> dict[str, tuple[float, float]]:
-    """Load the shared pose-library position contract."""
-
-    path = path.expanduser()
-    try:
-        root = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise RestCaptureError(f"Could not read motion limits '{path}': {exc}") from exc
-    joints = root.get("joints") if isinstance(root, dict) else None
-    if not isinstance(joints, dict):
-        raise RestCaptureError("Motion limits must contain a joints mapping.")
-
-    ranges: dict[str, tuple[float, float]] = {}
-    for assignment in ORION_SERVO_ASSIGNMENTS:
-        joint = joints.get(assignment.joint_name)
-        operational = joint.get("operational_position") if isinstance(joint, dict) else None
-        if not isinstance(operational, dict):
-            raise RestCaptureError(
-                f"Motion limits are missing {assignment.joint_name}.operational_position."
-            )
-        lower = operational.get("lower")
-        upper = operational.get("upper")
-        if (
-            isinstance(lower, bool)
-            or isinstance(upper, bool)
-            or not isinstance(lower, (int, float))
-            or not isinstance(upper, (int, float))
-            or not math.isfinite(float(lower))
-            or not math.isfinite(float(upper))
-            or float(lower) >= float(upper)
-        ):
-            raise RestCaptureError(
-                f"Motion limits for {assignment.joint_name} must be a finite increasing range."
-            )
-        ranges[assignment.joint_name] = (float(lower), float(upper))
-    return ranges
-
-
 def positions_to_rest_angles(
     positions: Mapping[str, int],
     calibration: Mapping[str, HardwareJointCalibration],
-    operational_ranges: Mapping[str, tuple[float, float]],
 ) -> dict[str, float]:
-    """Convert one raw, safe, non-wrapped capture into shared pose radians."""
+    """Convert one raw capture using calibration as the sole position authority."""
 
     expected = {assignment.joint_name for assignment in ORION_SERVO_ASSIGNMENTS}
     if set(positions) != expected:
@@ -100,12 +58,6 @@ def positions_to_rest_angles(
             )
 
         angle = delta / (STEPS_PER_RADIAN * joint.encoder_direction)
-        lower, upper = operational_ranges[name]
-        if not lower <= angle <= upper:
-            raise RestCaptureError(
-                f"{name} rest angle {angle:+.4f} rad is outside the shared pose-library "
-                f"range [{lower}, {upper}]."
-            )
         # Eight decimal places round-trips to the same encoder step.
         result[name] = round(angle, 8)
     return result
@@ -151,8 +103,8 @@ def write_rest_pose(
         root: Any = yaml.safe_load(source)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise RestCaptureError(f"Could not read pose library '{pose_path}': {exc}") from exc
-    if not isinstance(root, dict) or root.get("format_version") != 1:
-        raise RestCaptureError("Pose library must use format_version 1.")
+    if not isinstance(root, dict) or root.get("format_version") != 2:
+        raise RestCaptureError("Pose library must use format_version 2 (v2 required).")
     if root.get("units") != "radians":
         raise RestCaptureError("Pose library units must be radians.")
     poses = root.get("poses")
@@ -167,6 +119,8 @@ def write_rest_pose(
     rest_lines = [
         "  rest:",
         f"    description: {REST_DESCRIPTION}",
+        "    tags: [shutdown_only, mechanical_rest]",
+        "    default_lighting: off",
         "    positions:",
     ]
     for joint_name in expected_joints:

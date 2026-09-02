@@ -75,6 +75,89 @@ class JointCalibration:
     lerobot_safe_range_max: int
 
 
+@dataclass(frozen=True)
+class HardwareJointCalibration:
+    """Minimal, validated calibration view used by torque-free setup tools."""
+
+    joint_name: str
+    servo_id: int
+    neutral_raw: int
+    encoder_direction: int
+    safe_min_delta_raw: int
+    safe_max_delta_raw: int
+
+
+def load_hardware_calibration(path: Path) -> dict[str, HardwareJointCalibration]:
+    """Load the active Orion calibration without interpreting any pose format."""
+
+    path = path.expanduser()
+    try:
+        root = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CalibrationError(f"Could not read calibration '{path}': {exc}") from exc
+    if not isinstance(root, dict) or root.get("schema_version") != 1:
+        raise CalibrationError("Calibration must use schema_version 1.")
+    if (
+        root.get("robot") != "orion"
+        or root.get("servo_model") != "sts3215"
+        or root.get("writes_servo_eeprom") is not False
+    ):
+        raise CalibrationError("Calibration is not an Orion STS3215 software calibration.")
+
+    raw_joints = root.get("joints")
+    expected = {item.joint_name for item in ORION_SERVO_ASSIGNMENTS}
+    if not isinstance(raw_joints, dict) or set(raw_joints) != expected:
+        raise CalibrationError("Calibration must contain Orion's five canonical joints.")
+
+    result: dict[str, HardwareJointCalibration] = {}
+    for assignment in ORION_SERVO_ASSIGNMENTS:
+        raw = raw_joints[assignment.joint_name]
+        if not isinstance(raw, dict):
+            raise CalibrationError(f"Calibration {assignment.joint_name} must be a mapping.")
+        fields = {
+            field_name: raw.get(field_name)
+            for field_name in (
+                "servo_id",
+                "neutral_raw",
+                "encoder_direction",
+                "safe_min_delta_raw",
+                "safe_max_delta_raw",
+            )
+        }
+        for field_name, value in fields.items():
+            if type(value) is not int:
+                raise CalibrationError(
+                    f"{assignment.joint_name}.{field_name} must be an integer."
+                )
+        servo_id = fields["servo_id"]
+        neutral = fields["neutral_raw"]
+        direction = fields["encoder_direction"]
+        safe_min = fields["safe_min_delta_raw"]
+        safe_max = fields["safe_max_delta_raw"]
+        if servo_id != assignment.servo_id:
+            raise CalibrationError(
+                f"{assignment.joint_name} calibration ID {servo_id} does not match ID "
+                f"{assignment.servo_id}."
+            )
+        if not 0 <= neutral < ENCODER_RESOLUTION:
+            raise CalibrationError(f"{assignment.joint_name} neutral is outside 0..4095.")
+        if direction not in (-1, 1):
+            raise CalibrationError(f"{assignment.joint_name} direction must be -1 or +1.")
+        if not -HALF_TURN_RAW < safe_min < 0 < safe_max < HALF_TURN_RAW:
+            raise CalibrationError(
+                f"{assignment.joint_name} safe range must contain calibrated zero."
+            )
+        result[assignment.joint_name] = HardwareJointCalibration(
+            joint_name=assignment.joint_name,
+            servo_id=servo_id,
+            neutral_raw=neutral,
+            encoder_direction=direction,
+            safe_min_delta_raw=safe_min,
+            safe_max_delta_raw=safe_max,
+        )
+    return result
+
+
 def accept_supported_rest_endpoint(
     document: Mapping[str, object],
     *,

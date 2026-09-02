@@ -1,23 +1,10 @@
-format_version: 1
-
+format_version: 2
 scene:
   name: deployment_smoke
-  description: Deployment-only RGBW and local cue smoke test with no servo motion.
-  timeline:
-    - at: 0.0
-      type: light
-      red: 8
-      green: 3
-      blue: 0
-      white: 20
-      transition_seconds: 0.35
-    - at: 0.12
-      type: audio
-      cue: acknowledge
-    - at: 1.5
-      type: light
-      red: 0
-      green: 0
-      blue: 0
-      white: 0
-      transition_seconds: 0.50
+  description: Lighting and audio-only v2 deployment diagnostic.
+  motion: []
+  lighting:
+    - {at: 0.0, effect: acknowledge_pulse, intensity: 0.55, duration: 1.0, transition: 0.15}
+    - {at: 1.1, effect: off, intensity: 1.0, duration: 0.35, transition: 0.1}
+  audio: [{at: 0.12, cue: acknowledge_warm}]
+  finish: {anchor: final_pose, lighting: pose_default}

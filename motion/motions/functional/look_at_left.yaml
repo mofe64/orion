@@ -1,9 +1,11 @@
-format_version: 1
+format_version: 2
 
 motion:
   name: look_at_left
   description: Turn directly toward the predefined target on Orion's left.
+  space: absolute
+  style: attentive
   keyframes:
     - pose: look_left
-      duration: 1.5
-      hold: 0.5
+      duration: 1.2
+      arrival: settle

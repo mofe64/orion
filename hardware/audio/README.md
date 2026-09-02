@@ -50,7 +50,7 @@ sudo reboot
 
 The installer requires Seeed's V2 overlay targeting the Pi 5 I2S
 clock-consumer and TLV320AIC3104 at `0x18`. It installs the compiled overlay,
-rejects known conflicting audio overlays, migrates Orion's previous V1 boot
+rejects known conflicting audio overlays, migrates Orion's previous boot
 entry to one idempotent `dtoverlay=respeaker-2mic-v2_0` entry, and preserves
 the original boot configuration as `config.txt.orion-audio-backup`. It does
 not install custom kernel modules.
@@ -116,8 +116,8 @@ excess noise or clipping. Codec AGC remains disabled.
 The assembled Pi 5 passed the persistent V2 verification with playback and
 capture registered as `seeed2micvoicec`, while BCM12 remained assigned to the
 NeoPixel PWM output. The JST route produced the 440 Hz right-channel test tone,
-the direct `--play-cue acknowledge` command played Orion's local chime, and
-both expressive acknowledgement scenes played the chime successfully.
+the direct cue command played Orion's local chime, and both expressive
+acknowledgement scenes exercised that ReSpeaker playback path successfully.
 Physical listening established `-6 dB` as Orion's default PCM playback level.
 
 ## Planned audio-front-end upgrade

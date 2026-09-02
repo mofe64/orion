@@ -1,0 +1,8 @@
+format_version: 2
+scene:
+  name: attentive_entry
+  description: Enter attentive character state with one readable upward action.
+  motion: [{at: 0.0, play: attentive_entry}]
+  lighting: [{at: 0.0, effect: attentive_focus, intensity: 0.58, duration: 1.35, transition: 0.2}]
+  audio: [{on_marker: attentive, cue: notice_warm}]
+  finish: {anchor: final_pose, lighting: pose_default}

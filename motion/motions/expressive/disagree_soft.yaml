@@ -1,0 +1,21 @@
+format_version: 2
+motion:
+  name: disagree_soft
+  description: A small asymmetric no gesture without agitation.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {base_yaw_joint: -0.065, head_roll_joint: 0.035}
+      duration: 0.22
+      arrival: through
+      marker: disagree
+    - offsets: {base_yaw_joint: 0.075, head_roll_joint: -0.028}
+      duration: 0.28
+      arrival: through
+    - offsets: {base_yaw_joint: -0.025}
+      duration: 0.22
+      arrival: through
+    - offsets: {}
+      duration: 0.28
+      arrival: settle

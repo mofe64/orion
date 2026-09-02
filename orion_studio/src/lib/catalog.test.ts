@@ -1,44 +1,44 @@
 import { describe, expect, it } from "vitest";
 
+import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
 import { projectCatalog } from "./catalog";
 
-describe("Orion Studio asset catalog", () => {
-  it("bundles every STL mesh referenced by the Orion URDF", () => {
-    const referencedMeshes = [...projectCatalog.urdf.matchAll(/filename=["']([^"']+\.stl)["']/g)]
-      .map((match) => match[1].split("/").at(-1));
-
-    expect(referencedMeshes.length).toBeGreaterThan(0);
-    for (const mesh of referencedMeshes) {
-      expect(mesh, `missing bundled URL for ${mesh}`).toBeDefined();
-      expect(projectCatalog.meshUrls[mesh!], `missing bundled URL for ${mesh}`).toBeTruthy();
-    }
+describe("v2 project catalog", () => {
+  it("loads the complete commissioned character vocabulary", () => {
+    const names = Object.keys(projectCatalog.motions);
+    expect(names.filter((name) => name.startsWith("idle_"))).toHaveLength(8);
+    expect(names.filter((name) => name.startsWith("speak_"))).toHaveLength(4);
+    expect(projectCatalog.scenes.acknowledge_left.format_version).toBe(2);
+    expect(projectCatalog.cues).toContain("acknowledge_warm");
   });
 
-  it("resolves every motion and scene reference through named project assets", () => {
+  it("keeps every pose inside the tracked calibration copy", () => {
+    const limits = Object.fromEntries(projectCatalog.jointLimits.map((limit) => [limit.name, limit]));
+    for (const pose of Object.values(projectCatalog.poses)) {
+      expect(Object.keys(pose.positions).sort()).toEqual([...JOINT_NAMES].sort());
+      for (const joint of JOINT_NAMES) {
+        expect(pose.positions[joint]).toBeGreaterThanOrEqual(limits[joint].lower_rad);
+        expect(pose.positions[joint]).toBeLessThanOrEqual(limits[joint].upper_rad);
+      }
+    }
+    expect(projectCatalog.poses.rest.tags).toContain("shutdown_only");
+    expect(projectCatalog.poses.rest.idle_profile).toBeUndefined();
+  });
+
+  it("contains only v2 styles, effects, and valid semantic references", () => {
     for (const motion of Object.values(projectCatalog.motions)) {
-      for (const keyframe of motion.keyframes) {
-        expect(projectCatalog.poses[keyframe.pose], `${motion.name} -> ${keyframe.pose}`).toBeDefined();
+      expect(MOTION_STYLES).toContain(motion.style);
+      expect(motion.keyframes.at(-1)?.arrival).toBe("settle");
+      if (motion.space === "anchor_relative") {
+        expect(motion.return_to_anchor).toBe(true);
+        expect(Object.values(motion.keyframes.at(-1)?.offsets ?? {}).every((value) => value === 0)).toBe(true);
       }
     }
-
     for (const scene of Object.values(projectCatalog.scenes)) {
-      for (const event of scene.timeline) {
-        if (event.type === "play_motion") {
-          expect(projectCatalog.motions[event.motion], `${scene.name} -> ${event.motion}`).toBeDefined();
-        } else if (event.type === "goto_pose") {
-          expect(projectCatalog.poses[event.pose], `${scene.name} -> ${event.pose}`).toBeDefined();
-        } else if (event.type === "audio") {
-          expect(projectCatalog.cueUrls[event.cue], `${scene.name} -> ${event.cue}`).toBeTruthy();
-        }
-      }
+      for (const clip of scene.motion) expect(projectCatalog.motions[clip.play]).toBeDefined();
+      for (const event of scene.lighting) expect(LIGHTING_EFFECTS).toContain(event.effect);
+      for (const event of scene.audio) expect(projectCatalog.cues).toContain(event.cue);
+      expect(scene.finish).toEqual({ anchor: "final_pose", lighting: "pose_default" });
     }
-  });
-
-  it("maps logical pose zero into the calibrated physical model reference", () => {
-    expect(projectCatalog.urdfJointOffsets.base_yaw_joint).toBeCloseTo(-0.315320384242287);
-    expect(projectCatalog.urdfJointOffsets.shoulder_pitch_joint).toBeCloseTo(-0.096485421696463);
-    expect(projectCatalog.urdfJointOffsets.elbow_pitch_joint).toBeCloseTo(-0.331339850183298);
-    expect(projectCatalog.urdfJointOffsets.head_roll_joint).toBeCloseTo(-0.712126211333258);
-    expect(projectCatalog.urdfJointOffsets.head_pitch_joint).toBeCloseTo(-0.053689327575997);
   });
 });

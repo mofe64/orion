@@ -316,7 +316,7 @@ placeholders; they are not commissioned STS3215 limits and must not be used to
 infer safe hardware commands. Physical position conversion comes from the
 accepted servo calibration, while tracked operational and provisional dynamic
 limits live in
-[`motion/config/motion_limits.yaml`](../../motion/config/motion_limits.yaml).
+the active Pi calibration (or its tracked MuJoCo copy for offline work).
 
 ## Fixed Joints
 

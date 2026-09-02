@@ -7,47 +7,37 @@ from orion_motion.execution_types import (
     ExecutionResult,
     ExecutionStatus,
 )
-from orion_motion.motion_loader import load_yaml_file
+from orion_motion.compiled_trajectory import compile_trajectory
 from orion_motion.reporting import build_run_report, compare_run_reports
-from orion_motion.trajectory_builder import build_trajectory
-from orion_motion.trajectory_generator import generate_trajectory
-from orion_motion.trajectory_validator import require_valid_trajectory
 
 
 PACKAGE_DIRECTORY = Path(__file__).parent.parent
 CONFIG_DIRECTORY = PACKAGE_DIRECTORY / "config"
 MOTION_PATH = PACKAGE_DIRECTORY / "motions/functional/look_at_left.yaml"
+CALIBRATION_PATH = (
+    PACKAGE_DIRECTORY.parent / "simulation/mujoco/config/servo_calibration.json"
+)
 
 
 def make_report(backend):
-    poses = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
-    limits_path = CONFIG_DIRECTORY / "motion_limits.yaml"
-    limits = load_yaml_file(limits_path)
-    requested = build_trajectory(
-        load_yaml_file(MOTION_PATH),
-        poses,
-        limits,
+    trajectory = compile_trajectory(
+        "look_at_left",
+        "attentive",
+        pose_file=CONFIG_DIRECTORY / "poses.yaml",
+        motions_directory=PACKAGE_DIRECTORY / "motions",
+        calibration_file=CALIBRATION_PATH,
     )
-    start = tuple(
-        poses["poses"]["attentive"]["positions"][joint_name]
-        for joint_name in requested.joint_names
-    )
-    generated = generate_trajectory(requested, start, (0.0,) * 5, limits)
-    validated = require_valid_trajectory(
-        generated,
-        limits,
-        load_yaml_file(CONFIG_DIRECTORY / "forbidden_regions.yaml"),
-    )
+    start = trajectory.points[0].positions
     result = ExecutionResult(
-        motion_name=requested.name,
+        motion_name=trajectory.name,
         backend=backend,
         status=ExecutionStatus.SUCCEEDED,
         message="done",
     )
     return build_run_report(
         motion_path=MOTION_PATH,
-        limits_path=limits_path,
-        validated=validated,
+        calibration_path=CALIBRATION_PATH,
+        trajectory=trajectory,
         start_positions=start,
         start_velocities=(0.0,) * 5,
         start_state_age=0.01,
@@ -58,11 +48,12 @@ def make_report(backend):
 def test_report_contains_sources_generated_path_and_measured_start():
     report = make_report("native_test")
 
-    assert report["format_version"] == 1
+    assert report["format_version"] == 2
     assert len(report["motion_source"]["sha256"]) == 64
-    assert len(report["limits_source"]["sha256"]) == 64
+    assert len(report["calibration_source"]["sha256"]) == 64
     assert report["trajectory"]["name"] == "look_at_left"
-    assert report["trajectory"]["segments"]
+    assert report["trajectory"]["points"]
+    assert report["trajectory"]["control_rate_hz"] == 50.0
     assert report["trajectory"]["peak_desired_by_joint"]
     assert report["measured_start"]["age_seconds"] == 0.01
     assert report["execution"]["backend"] == "native_test"

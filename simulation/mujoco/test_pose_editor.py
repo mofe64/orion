@@ -66,12 +66,12 @@ class PoseLibraryTests(unittest.TestCase):
             configuration.pose_names[0:3], ("zero_reference", "rest", "home")
         )
         self.assertEqual(configuration.pose_names[-1], "look_right_overshoot")
-        self.assertEqual(len(configuration.pose_names), 12)
+        self.assertEqual(len(configuration.pose_names), 15)
 
     def test_rejects_pose_outside_physical_calibration(self):
         source = POSE_LIBRARY.read_text(encoding="utf-8")
         invalid = source.replace(
-            "      shoulder_pitch_joint: 0.00000000",
+            "      shoulder_pitch_joint: 0.0",
             "      shoulder_pitch_joint: 0.90000000",
             1,
         )
@@ -98,7 +98,7 @@ class PoseLibraryTests(unittest.TestCase):
             after_home.split("  attentive:", 1)[1],
         )
         self.assertIn(
-            "description: Compact powered rest pose with a lower centre of gravity.",
+            "description: Compact powered resting pose and default character anchor.",
             updated,
         )
 

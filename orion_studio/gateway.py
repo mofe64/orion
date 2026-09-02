@@ -10,9 +10,14 @@ import math
 import os
 import re
 import secrets
+import shutil
 import socket
 import stat
+import subprocess
+import tempfile
 import threading
+import wave
+from io import BytesIO
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,9 +25,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 
-API_VERSION = 1
+API_VERSION = 2
 DEFAULT_SOCKET = "/tmp/oriond.sock"
+DEFAULT_SPEECH_SPOOL = Path("/tmp/orion-speech-spool")
+DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 MAX_BODY_BYTES = 262_144
+MAX_SPEECH_BYTES = 8 * 1024 * 1024
 MAX_PREVIEW_SCENE_BYTES = 3_000
 MAX_RESPONSE_BYTES = 1_048_576
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -109,15 +117,26 @@ class UnixOrionClient:
 class OrionGateway:
     """Allowlisted semantic translation; this class never controls hardware."""
 
-    def __init__(self, client: Any, project_root: Path | None = None):
+    def __init__(
+        self,
+        client: Any,
+        project_root: Path | None = None,
+        speech_spool: Path = DEFAULT_SPEECH_SPOOL,
+        calibration_file: Path = DEFAULT_CALIBRATION,
+        trajectory_compiler: Path | None = None,
+    ):
         self.client = client
         self.project_root = project_root
+        self.speech_spool = speech_spool
+        self.calibration_file = calibration_file.expanduser()
+        self.trajectory_compiler = trajectory_compiler
         self.scene_write_lock = threading.Lock()
 
     def status(self) -> dict[str, Any]:
         runtime = self.client.request("status")
         scenes = self._checked("scene status")
         speech = self._checked("speech status")
+        character = self._checked("character status")
         return {
             "api_version": API_VERSION,
             "runtime": runtime,
@@ -129,6 +148,7 @@ class OrionGateway:
                 "active": speech.get("speech"),
                 "last": speech.get("last_speech"),
             },
+            "character": character.get("character"),
         }
 
     def capabilities(self) -> dict[str, Any]:
@@ -142,9 +162,12 @@ class OrionGateway:
                 "goto": poses.get("poses", []),
                 "motion": motions.get("motions", []),
                 "scene": scenes.get("scenes", []),
-                "scene_publish": {"format_version": 1, "max_body_bytes": MAX_BODY_BYTES},
+                "pose_format_version": 2,
+                "motion_format_version": 2,
+                "scene_format_version": 2,
+                "scene_publish": {"format_version": 2, "max_body_bytes": MAX_BODY_BYTES},
                 "scene_preview": {
-                    "format_version": 1,
+                    "format_version": 2,
                     "max_body_bytes": MAX_PREVIEW_SCENE_BYTES,
                     "persisted": False,
                 },
@@ -153,7 +176,18 @@ class OrionGateway:
                 "pose_library": {"read": True, "create": True, "update": False},
                 "motion_library": {"read": True, "create": True, "update": False},
                 "movement_lifecycle": ["prepare", "release"],
-                "speech": {"max_text_bytes": 2_000},
+                "speech": {"format": "pcm16_mono_24000_hz", "max_bytes": MAX_SPEECH_BYTES, "max_seconds": 120},
+                "character_states": ["neutral", "listening", "thinking"],
+                "hardware_profile": {
+                    "variant": "7.4 V STS3215",
+                    "encoder_counts_per_revolution": 4096,
+                    "maximum_no_load_speed_rpm": 52,
+                    "maximum_no_load_speed_rad_s": 5.4454272662,
+                    "rated_torque_kg_cm": 5.0,
+                    "stall_torque_kg_cm": 19.5,
+                    "runtime_control_hz": 50,
+                    "native_profile_registers": True,
+                },
                 "cancel": ["movement", "scene", "speech"],
             },
         }
@@ -228,13 +262,22 @@ class OrionGateway:
                     "Speech must be one line and no more than 2000 UTF-8 bytes.",
                 )
             response = self._checked(f"speech start {text}")
+        elif operation == "character_start":
+            response = self._checked("character start")
+        elif operation == "character_stop":
+            response = self._checked("character stop")
+        elif operation == "character_state":
+            state = payload.get("state")
+            if state not in {"neutral", "listening", "thinking"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_character_state", "Character state must be neutral, listening, or thinking.")
+            response = self._checked(f"character state {state}")
         elif operation == "cancel":
             response = self._cancel(payload)
         else:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, preview_scene, speech, prepare_movement, release_movement, and cancel.",
+                "Supported operations are goto, motion, scene, preview_scene, speech, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {
@@ -243,6 +286,145 @@ class OrionGateway:
             "operation": operation,
             "result": response,
         }
+
+    def upload_speech(self, body: bytes, studio_request_id: str) -> tuple[HTTPStatus, dict[str, Any]]:
+        if not studio_request_id or len(studio_request_id) > 128 or any(char in studio_request_id for char in "\r\n\0"):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_request_id", "Studio voice request ID is required.")
+        self._validate_speech_wav(body)
+        identifier = secrets.token_urlsafe(24)
+        try:
+            self.speech_spool.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path = self.speech_spool / f"{identifier}.wav"
+            temporary = self.speech_spool / f".{identifier}.{secrets.token_hex(8)}.tmp"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(body)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except OSError as error:
+            raise GatewayError(HTTPStatus.INTERNAL_SERVER_ERROR, "speech_spool_failed", f"Could not spool speech: {error}") from error
+        try:
+            runtime = self._checked(f"speech file {identifier}")
+        except GatewayError:
+            path.unlink(missing_ok=True)
+            raise
+        return HTTPStatus.ACCEPTED, {
+            "api_version": API_VERSION,
+            "accepted": True,
+            "studio_voice_request_id": studio_request_id,
+            "run_id": runtime.get("run_id"),
+            "state": runtime.get("state", "queued"),
+        }
+
+    def speech_run_status(self, run_id: int) -> dict[str, Any]:
+        if isinstance(run_id, bool) or run_id <= 0:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_run_id", "Speech run ID must be positive.")
+        status = self._checked("speech status")
+        for key in ("speech", "last_speech"):
+            speech = status.get(key)
+            if isinstance(speech, dict) and speech.get("run_id") == run_id:
+                state = speech.get("state")
+                if state == "synthesizing": state = "queued"
+                return {"api_version": API_VERSION, "run_id": run_id, "state": state, "error": speech.get("error")}
+        raise GatewayError(HTTPStatus.NOT_FOUND, "speech_run_not_found", f"Speech run {run_id} is not active or the most recent result.")
+
+    def compile_trajectory_preview(self, payload: Any) -> dict[str, Any]:
+        """Return the Rust compiler's calibrated 50 Hz sample document."""
+
+        if self.project_root is None:
+            raise GatewayError(HTTPStatus.NOT_IMPLEMENTED, "trajectory_preview_unavailable", "The gateway has no Orion project root.")
+        if not isinstance(payload, dict) or not set(payload) <= {"motion", "document", "start_pose", "anchor_pose"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_trajectory_preview", "Trajectory preview accepts one motion name or v2 document, start_pose, and optional anchor_pose.")
+        if ("motion" in payload) == ("document" in payload):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_trajectory_preview", "Provide exactly one motion name or v2 motion document.")
+        document = payload.get("document")
+        motion = self._validate_motion_document(document) if document is not None else self._name(payload.get("motion"), "motion")
+        start_pose = self._name(payload.get("start_pose"), "pose")
+        anchor_value = payload.get("anchor_pose")
+        anchor_pose = self._name(anchor_value, "pose") if anchor_value is not None else None
+        temporary: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            motions_directory = self.project_root / "motion/motions"
+            if document is not None:
+                temporary = tempfile.TemporaryDirectory(prefix="orion-studio-motion-")
+                motions_directory = Path(temporary.name)
+                (motions_directory / f"{motion}.yaml").write_text(
+                    json.dumps(document, separators=(",", ":"), ensure_ascii=False, allow_nan=False),
+                    encoding="utf-8",
+                )
+            command = [
+                str(self._trajectory_compiler_path()),
+                "--motion", motion,
+                "--start-pose", start_pose,
+                "--pose-file", str(self.project_root / "motion/config/poses.yaml"),
+                "--motions-directory", str(motions_directory),
+                "--calibration", str(self.calibration_file),
+                "--control-rate-hz", "50",
+            ]
+            if anchor_pose is not None:
+                command.extend(("--anchor-pose", anchor_pose))
+            completed = subprocess.run(
+                command,
+                cwd=self.project_root,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "trajectory_compiler_unavailable", f"Could not run the Rust trajectory compiler: {error}") from error
+        finally:
+            if temporary is not None:
+                temporary.cleanup()
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or "The requested motion could not be compiled."
+            raise GatewayError(HTTPStatus.UNPROCESSABLE_ENTITY, "trajectory_compile_failed", detail[:1000])
+        try:
+            document = json.loads(completed.stdout)
+        except json.JSONDecodeError as error:
+            raise GatewayError(HTTPStatus.BAD_GATEWAY, "invalid_trajectory_compiler_response", "The Rust trajectory compiler returned invalid JSON.") from error
+        if not isinstance(document, dict) or document.get("format_version") != 2 or document.get("compiler") != "orion-runtime":
+            raise GatewayError(HTTPStatus.BAD_GATEWAY, "invalid_trajectory_compiler_response", "The Rust trajectory compiler did not return a v2 document.")
+        return document
+
+    def _trajectory_compiler_path(self) -> Path:
+        candidates = [
+            self.trajectory_compiler,
+            self.project_root / "runtime/target/release/orion-trajectory" if self.project_root else None,
+            self.project_root / "runtime/target/debug/orion-trajectory" if self.project_root else None,
+            Path("/usr/local/bin/orion-trajectory"),
+        ]
+        configured = os.environ.get("ORION_TRAJECTORY_COMPILER")
+        if configured:
+            candidates.insert(0, Path(configured))
+        discovered = shutil.which("orion-trajectory")
+        if discovered:
+            candidates.append(Path(discovered))
+        for candidate in candidates:
+            if candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+        raise GatewayError(HTTPStatus.NOT_IMPLEMENTED, "trajectory_compiler_unavailable", "Install the orion-trajectory Rust binary with the runtime deployment.")
+
+    @staticmethod
+    def _validate_speech_wav(body: bytes) -> None:
+        if not body or len(body) > MAX_SPEECH_BYTES:
+            raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "invalid_speech_size", "Speech WAV must be between 1 byte and 8 MiB.")
+        try:
+            with wave.open(BytesIO(body), "rb") as wav:
+                channels = wav.getnchannels()
+                sample_width = wav.getsampwidth()
+                sample_rate = wav.getframerate()
+                frames = wav.getnframes()
+                compression = wav.getcomptype()
+        except (wave.Error, EOFError) as error:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_speech_wav", "Speech body must be a valid RIFF/WAV file.") from error
+        duration = frames / sample_rate if sample_rate else float("inf")
+        if (channels, sample_width, sample_rate, compression) != (1, 2, 24_000, "NONE") or not 0 < duration <= 120.0:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_speech_format", "Speech WAV must be PCM16 mono at 24 kHz and no longer than 120 seconds.")
 
     def _prepare_movement(self) -> dict[str, Any]:
         status = self.client.request("status")
@@ -763,15 +945,16 @@ class OrionGateway:
     def _validate_pose_document(cls, document: Any) -> str:
         if not isinstance(document, dict) or set(document) != {"format_version", "units", "poses"}:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Expected a versioned pose document.")
-        if document.get("format_version") != 1 or document.get("units") != "radians":
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose format_version must be 1 with radian units.")
+        if document.get("format_version") != 2 or document.get("units") != "radians":
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose format_version must be 2 with radian units (v2 required).")
         poses = document.get("poses")
         if not isinstance(poses, dict) or len(poses) != 1:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "A user pose file must contain exactly one pose.")
         name, pose = next(iter(poses.items()))
         name = cls._name(name, "pose")
-        if not isinstance(pose, dict) or set(pose) != {"description", "positions"}:
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose fields must be description and positions.")
+        allowed = {"description", "tags", "idle_profile", "default_lighting", "positions"}
+        if not isinstance(pose, dict) or not set(pose) <= allowed or "positions" not in pose:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose contains unsupported v2 fields or omits positions.")
         if not isinstance(pose.get("description"), str):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pose", "Pose description must be text.")
         positions = pose.get("positions")
@@ -820,75 +1003,97 @@ class OrionGateway:
     def _validate_motion_document(cls, document: Any) -> str:
         if not isinstance(document, dict) or set(document) != {"format_version", "motion"}:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Expected a versioned motion document.")
-        if document.get("format_version") != 1 or not isinstance(document.get("motion"), dict):
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion format_version must be 1.")
+        if document.get("format_version") != 2 or not isinstance(document.get("motion"), dict):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion format_version must be 2 (v2 required).")
         motion = document["motion"]
-        if set(motion) != {"name", "description", "keyframes"}:
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion fields must be name, description, and keyframes.")
+        allowed = {"name", "description", "space", "style", "return_to_anchor", "keyframes"}
+        required = {"name", "description", "space", "style", "keyframes"}
+        if not required <= set(motion) or not set(motion) <= allowed:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion contains unsupported or missing v2 fields.")
         name = cls._name(motion.get("name"), "motion")
         if not isinstance(motion.get("description"), str):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion description must be text.")
+        space = motion.get("space")
+        if space not in {"absolute", "anchor_relative"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion space must be absolute or anchor_relative.")
+        if motion.get("style") not in {"living_idle", "attentive", "expressive_turn", "speaking_calm", "speaking_emphatic", "thinking", "quick_reaction", "return_home"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion style is not in Orion's character style library.")
+        if space == "anchor_relative" and motion.get("return_to_anchor") is not True:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Anchor-relative motion must return_to_anchor.")
+        if space == "absolute" and motion.get("return_to_anchor") not in {None, False}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Absolute motion cannot return_to_anchor.")
         keyframes = motion.get("keyframes")
         if not isinstance(keyframes, list) or not keyframes:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "A motion must contain at least one keyframe.")
         for keyframe in keyframes:
-            if not isinstance(keyframe, dict) or set(keyframe) != {"pose", "duration", "hold"}:
-                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion keyframes require pose, duration, and hold.")
-            cls._name(keyframe.get("pose"), "pose")
+            allowed_keyframe = {"pose", "offsets", "duration", "arrival", "hold", "marker"}
+            if not isinstance(keyframe, dict) or not set(keyframe) <= allowed_keyframe or not {"duration", "arrival"} <= set(keyframe):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Motion keyframe contains invalid v2 fields.")
+            if space == "absolute":
+                if "offsets" in keyframe: raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Absolute keyframes use pose only.")
+                cls._name(keyframe.get("pose"), "pose")
+            else:
+                if "pose" in keyframe or not isinstance(keyframe.get("offsets", {}), dict):
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Relative keyframes use offset mappings only.")
+                if not set(keyframe.get("offsets", {})) <= set(JOINT_NAMES):
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Relative keyframe contains an unknown joint.")
             duration = cls._number(keyframe.get("duration"), "Keyframe duration", minimum=0.000001)
-            hold = cls._number(keyframe.get("hold"), "Keyframe hold", minimum=0.0)
+            hold = cls._number(keyframe.get("hold", 0.0), "Keyframe hold", minimum=0.0)
+            if keyframe.get("arrival") not in {"through", "settle"} or keyframe.get("arrival") == "through" and hold > 0:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Through keyframes cannot hold; arrival must be through or settle.")
             if duration > 300.0 or hold > 300.0:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Keyframe timing cannot exceed 300 seconds.")
+        if keyframes[-1].get("arrival") != "settle":
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Final motion keyframe must settle.")
+        if space == "anchor_relative" and any(abs(float(value)) > 1e-12 for value in keyframes[-1].get("offsets", {}).values()):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_motion", "Relative motion must finish at zero offsets.")
         return name
 
     @classmethod
     def _validate_scene_document(cls, document: Any) -> str:
         if not isinstance(document, dict) or set(document) != {"format_version", "scene"}:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Expected a versioned scene document.")
-        if document.get("format_version") != 1 or not isinstance(document.get("scene"), dict):
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene format_version must be 1.")
+        if document.get("format_version") != 2 or not isinstance(document.get("scene"), dict):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene format_version must be 2 (v2 required).")
         scene = document["scene"]
-        if set(scene) != {"name", "description", "timeline"}:
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene fields must be name, description, and timeline.")
+        if set(scene) != {"name", "description", "motion", "lighting", "audio", "finish"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene must contain v2 parallel motion, lighting, audio, and finish tracks.")
         name = cls._name(scene.get("name"), "scene")
         if not isinstance(scene.get("description"), str):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene description must be text.")
-        timeline = scene.get("timeline")
-        if not isinstance(timeline, list) or not timeline:
-            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene timeline must contain events.")
-
-        previous_at = 0.0
-        for index, event in enumerate(timeline):
-            if not isinstance(event, dict):
-                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Each timeline event must be an object.")
-            at = event.get("at")
-            if isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at) or at < previous_at:
-                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Timeline times must be finite, non-negative, and ordered.")
-            previous_at = float(at)
-            kind = event.get("type")
-            if kind == "play_motion":
-                if set(event) != {"at", "type", "motion"}:
-                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid play_motion event fields.")
-                cls._name(event.get("motion"), "motion")
-            elif kind == "goto_pose":
-                if set(event) != {"at", "type", "pose", "duration_seconds"}:
-                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid goto_pose event fields.")
-                cls._name(event.get("pose"), "pose")
-                cls._number(event.get("duration_seconds"), "Pose duration", minimum=0.000001)
-            elif kind == "light":
-                if set(event) != {"at", "type", "red", "green", "blue", "white", "transition_seconds"}:
-                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid light event fields.")
-                for channel in ("red", "green", "blue", "white"):
-                    value = event.get(channel)
-                    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
-                        raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", f"Light {channel} must be an integer from 0 to 255.")
-                cls._number(event.get("transition_seconds"), "Light transition", minimum=0.0)
-            elif kind == "audio":
-                if set(event) != {"at", "type", "cue"}:
-                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Invalid audio event fields.")
-                cls._name(event.get("cue"), "audio cue")
-            else:
-                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", f"Unsupported scene event type at index {index}.")
+        motion = scene.get("motion")
+        lighting = scene.get("lighting")
+        audio = scene.get("audio")
+        if not all(isinstance(track, list) for track in (motion, lighting, audio)) or not (motion or lighting or audio):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene tracks must be lists with at least one event overall.")
+        previous_at = -1.0
+        for event in motion:
+            if not isinstance(event, dict) or set(event) != {"at", "play"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Motion track events require at and play.")
+            at = cls._number(event.get("at"), "Motion time", minimum=0.0)
+            if at < previous_at: raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Motion track times must be ordered.")
+            previous_at = at
+            cls._name(event.get("play"), "motion")
+        effects = {"warm_idle_breathe", "attentive_focus", "thinking_drift", "speaking_energy", "acknowledge_pulse", "curious_sweep", "delight_spark", "settle_glow", "off"}
+        for event in lighting:
+            if not isinstance(event, dict) or not set(event) <= {"at", "on_marker", "effect", "intensity", "duration", "transition", "palette"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Lighting track event contains invalid fields.")
+            if ("at" in event) == ("on_marker" in event): raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Lighting event requires exactly one trigger.")
+            if "at" in event: cls._number(event["at"], "Lighting time", minimum=0.0)
+            else: cls._name(event["on_marker"], "marker")
+            if event.get("effect") not in effects: raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Unknown Orion lighting effect.")
+            cls._number(event.get("intensity", 1.0), "Lighting intensity", minimum=0.0)
+            cls._number(event.get("duration", 0.8), "Lighting duration", minimum=0.0)
+            cls._number(event.get("transition", 0.0), "Lighting transition", minimum=0.0)
+        for event in audio:
+            if not isinstance(event, dict) or not set(event) <= {"at", "on_marker", "cue"} or "cue" not in event:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Audio track event contains invalid fields.")
+            if ("at" in event) == ("on_marker" in event): raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Audio event requires exactly one trigger.")
+            if "at" in event: cls._number(event["at"], "Audio time", minimum=0.0)
+            else: cls._name(event["on_marker"], "marker")
+            cls._name(event.get("cue"), "audio cue")
+        if scene.get("finish") != {"anchor": "final_pose", "lighting": "pose_default"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene finish must restore final_pose and pose_default.")
         return name
 
     @staticmethod
@@ -957,12 +1162,12 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
     origin_allowlist = {allowed_origins} if isinstance(allowed_origins, str) else set(allowed_origins)
 
     class GatewayHandler(BaseHTTPRequestHandler):
-        server_version = "OrionStudioGateway/0.1"
+        server_version = "OrionStudioGateway/2"
 
         def do_OPTIONS(self) -> None:
             self.send_response(HTTPStatus.NO_CONTENT)
             self._cors_headers()
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Orion-Voice-Request-ID")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
             self.end_headers()
 
@@ -977,42 +1182,52 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
-            if path == "/api/v1/status":
+            if path == "/api/v2/status":
                 return HTTPStatus.OK, gateway.status()
-            if path == "/api/v1/capabilities":
+            if path == "/api/v2/capabilities":
                 return HTTPStatus.OK, gateway.capabilities()
-            if path == "/api/v1/scenes":
+            if path.startswith("/api/v2/speech/"):
+                value = path.removeprefix("/api/v2/speech/")
+                if not value.isdigit():
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_run_id", "Speech run ID must be numeric.")
+                return HTTPStatus.OK, gateway.speech_run_status(int(value))
+            if path == "/api/v2/scenes":
                 return HTTPStatus.OK, gateway.list_user_scenes()
-            if path.startswith("/api/v1/scenes/"):
-                return HTTPStatus.OK, gateway.read_user_scene(path.removeprefix("/api/v1/scenes/"))
-            if path == "/api/v1/poses":
+            if path.startswith("/api/v2/scenes/"):
+                return HTTPStatus.OK, gateway.read_user_scene(path.removeprefix("/api/v2/scenes/"))
+            if path == "/api/v2/poses":
                 return HTTPStatus.OK, gateway.list_user_poses()
-            if path.startswith("/api/v1/poses/"):
-                return HTTPStatus.OK, gateway.read_user_pose(path.removeprefix("/api/v1/poses/"))
-            if path == "/api/v1/motions":
+            if path.startswith("/api/v2/poses/"):
+                return HTTPStatus.OK, gateway.read_user_pose(path.removeprefix("/api/v2/poses/"))
+            if path == "/api/v2/motions":
                 return HTTPStatus.OK, gateway.list_user_motions()
-            if path.startswith("/api/v1/motions/"):
-                return HTTPStatus.OK, gateway.read_user_motion(path.removeprefix("/api/v1/motions/"))
+            if path.startswith("/api/v2/motions/"):
+                return HTTPStatus.OK, gateway.read_user_motion(path.removeprefix("/api/v2/motions/"))
             raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
-            if path not in {"/api/v1/operations", "/api/v1/scenes", "/api/v1/poses", "/api/v1/motions"}:
+            if path == "/api/v2/speech":
+                request_id = self.headers.get("X-Orion-Voice-Request-ID", "")
+                return gateway.upload_speech(self._read_speech_wav(), request_id)
+            if path not in {"/api/v2/operations", "/api/v2/trajectory", "/api/v2/scenes", "/api/v2/poses", "/api/v2/motions"}:
                 raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
             payload = self._read_json()
-            if path == "/api/v1/scenes":
+            if path == "/api/v2/trajectory":
+                return HTTPStatus.OK, gateway.compile_trajectory_preview(payload)
+            if path == "/api/v2/scenes":
                 return gateway.publish_scene(payload)
-            if path == "/api/v1/poses":
+            if path == "/api/v2/poses":
                 return gateway.publish_pose(payload)
-            if path == "/api/v1/motions":
+            if path == "/api/v2/motions":
                 return gateway.publish_motion(payload)
             return gateway.submit(payload)
 
         def _put(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
-            if not path.startswith("/api/v1/scenes/"):
+            if not path.startswith("/api/v2/scenes/"):
                 raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
-            name = path.removeprefix("/api/v1/scenes/")
+            name = path.removeprefix("/api/v2/scenes/")
             return gateway.update_user_scene(name, self._read_json())
 
         def _read_json(self) -> Any:
@@ -1027,6 +1242,16 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return json.loads(self.rfile.read(length))
             except json.JSONDecodeError as error:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_json", "Request body is not valid JSON.") from error
+
+        def _read_speech_wav(self) -> bytes:
+            length_text = self.headers.get("Content-Length")
+            try:
+                length = int(length_text or "")
+            except ValueError as error:
+                raise GatewayError(HTTPStatus.LENGTH_REQUIRED, "missing_length", "Content-Length is required.") from error
+            if not 0 < length <= MAX_SPEECH_BYTES:
+                raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "invalid_speech_size", "Speech WAV is empty or exceeds 8 MiB.")
+            return self.rfile.read(length)
 
         def _handle(self, action) -> None:
             try:
@@ -1100,6 +1325,8 @@ def parse_args() -> argparse.Namespace:
     serve.add_argument("--bind", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=7447)
     serve.add_argument("--token-file", type=Path, required=True)
+    serve.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION)
+    serve.add_argument("--trajectory-compiler", type=Path)
     serve.add_argument(
         "--project-root",
         type=Path,
@@ -1125,7 +1352,12 @@ def main() -> None:
     project_root = args.project_root.resolve()
     if not (project_root / "AGENTS.md").is_file() or not (project_root / "scenes").is_dir():
         raise SystemExit(f"Not an Orion project root: '{project_root}'.")
-    gateway = OrionGateway(UnixOrionClient(args.socket), project_root)
+    gateway = OrionGateway(
+        UnixOrionClient(args.socket),
+        project_root,
+        calibration_file=args.calibration,
+        trajectory_compiler=args.trajectory_compiler,
+    )
     server = ThreadingHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)
     )

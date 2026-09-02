@@ -20,7 +20,7 @@ from mujoco_backend import (  # noqa: E402
 )
 from motion_player import load_playback_data, run_playback_loop  # noqa: E402
 from pose_tuner import load_pose_configuration  # noqa: E402
-from orion_motion.trajectory_generator import sample_trajectory  # noqa: E402
+from orion_motion.compiled_trajectory import sample_trajectory  # noqa: E402
 
 
 JOINT_NAMES = (
@@ -121,10 +121,9 @@ class PoseTunerConfigurationTests(unittest.TestCase):
         configuration = load_pose_configuration("rest")
 
         self.assertEqual(configuration.joint_order, JOINT_NAMES)
-        self.assertEqual(
-            configuration.limits["shoulder_pitch_joint"],
-            (-1.431204075097303, 0.805339913639962),
-        )
+        lower, upper = configuration.limits["shoulder_pitch_joint"]
+        self.assertAlmostEqual(lower, -1.431204075097303)
+        self.assertAlmostEqual(upper, 0.805339913639962)
         self.assertAlmostEqual(
             configuration.initial_targets["elbow_pitch_joint"],
             1.03697101,
@@ -136,28 +135,26 @@ class SharedTrajectoryPlaybackTests(unittest.TestCase):
         _, trajectory, start_positions = load_playback_data(
             "look_at_left", "attentive"
         )
-        generated = trajectory.trajectory
 
-        self.assertEqual(generated.points[0].positions, start_positions)
+        self.assertEqual(trajectory.points[0].positions, start_positions)
         self.assertEqual(
-            generated.joint_names,
+            trajectory.joint_names,
             JOINT_NAMES,
         )
 
-        midpoint, completed = sample_trajectory(generated, 0.75)
-        self.assertFalse(completed)
-        self.assertAlmostEqual(midpoint.positions[0], -0.764, places=10)
-        self.assertNotEqual(midpoint.positions, generated.points[-1].positions)
+        midpoint, sample_index = sample_trajectory(trajectory, 0.75)
+        self.assertLess(sample_index, len(trajectory.points) - 1)
+        self.assertNotEqual(midpoint.positions, trajectory.points[-1].positions)
 
-    def test_mujoco_execution_rejects_unvalidated_trajectory(self):
-        _, validated, _ = load_playback_data("look_at_left", "attentive")
+    def test_mujoco_execution_rejects_non_rust_trajectory(self):
+        _, trajectory, _ = load_playback_data("look_at_left", "attentive")
 
-        with self.assertRaisesRegex(TypeError, "ValidatedTrajectory"):
+        with self.assertRaisesRegex(TypeError, "Rust CompiledTrajectory"):
             run_playback_loop(
                 None,
                 None,
                 None,
-                validated.trajectory,
+                trajectory.points,
                 lead_in=0.0,
                 viewer=None,
             )

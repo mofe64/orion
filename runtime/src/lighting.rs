@@ -10,6 +10,17 @@ pub const ORION_LIGHT_HEIGHT: usize = 5;
 pub const ORION_WHITE_TEMPERATURE_K: u16 = 3000;
 pub const ORION_LIGHT_GPIO_BCM: u8 = 12;
 pub const PI5_NEOPIXEL_DEVICE_PATH: &str = "/dev/ws281x_pwm";
+pub const LIGHTING_EFFECT_NAMES: [&str; 9] = [
+    "warm_idle_breathe",
+    "attentive_focus",
+    "thinking_drift",
+    "speaking_energy",
+    "acknowledge_pulse",
+    "curious_sweep",
+    "delight_spark",
+    "settle_glow",
+    "off",
+];
 
 const NEOPIXEL_FREQUENCY_HZ: usize = 800_000;
 const NEOPIXEL_COLOR_CHANNELS: usize = 4;
@@ -55,6 +66,62 @@ impl Rgbw8 {
             white: interpolate_channel(self.white, target.white, progress),
         })
     }
+}
+
+pub fn render_effect(name: &str, elapsed_seconds: f64, intensity: f64) -> Result<Vec<Rgbw8>> {
+    if !elapsed_seconds.is_finite() || !intensity.is_finite() || !(0.0..=1.0).contains(&intensity) {
+        return Err(Error::InvalidArgument(
+            "Lighting effects require finite time and intensity from zero to one.".into(),
+        ));
+    }
+    if !LIGHTING_EFFECT_NAMES.contains(&name) {
+        return Err(Error::InvalidArgument(format!(
+            "Unknown Orion lighting effect: {name}"
+        )));
+    }
+    if name == "off" {
+        return Ok(vec![Rgbw8::OFF; ORION_LIGHT_PIXEL_COUNT]);
+    }
+    let mut pixels = Vec::with_capacity(ORION_LIGHT_PIXEL_COUNT);
+    for y in 0..ORION_LIGHT_HEIGHT {
+        for x in 0..ORION_LIGHT_WIDTH {
+            let nx = x as f64 / (ORION_LIGHT_WIDTH - 1) as f64;
+            let ny = y as f64 / (ORION_LIGHT_HEIGHT - 1) as f64;
+            let level = match name {
+                "warm_idle_breathe" => 0.42 + 0.16 * (elapsed_seconds * 0.9).sin(),
+                "attentive_focus" => 0.28 + 0.62 * (1.0 - ((nx - 0.5).abs() * 1.7).min(1.0)),
+                "thinking_drift" => {
+                    let centre = (elapsed_seconds * 0.16).sin() * 0.35 + 0.5;
+                    0.22 + 0.58 * (1.0 - ((nx - centre).abs() * 1.8).min(1.0))
+                }
+                "speaking_energy" => {
+                    0.18 + 0.78 * intensity * (0.68 + 0.32 * (ny * std::f64::consts::PI).sin())
+                }
+                "acknowledge_pulse" => 0.20 + 0.75 * (-elapsed_seconds * 2.4).exp(),
+                "curious_sweep" => {
+                    let centre = (elapsed_seconds * 0.55).sin() * 0.45 + 0.5;
+                    0.15 + 0.82 * (1.0 - ((nx - centre).abs() * 3.0).min(1.0))
+                }
+                "delight_spark" => {
+                    0.24 + if ((x * 13 + y * 7) as f64 + elapsed_seconds * 11.0).sin() > 0.72 {
+                        0.72
+                    } else {
+                        0.08
+                    }
+                }
+                "settle_glow" => 0.30 + 0.48 * (-elapsed_seconds * 1.5).exp(),
+                _ => unreachable!(),
+            } * intensity.max(0.05);
+            let warm = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
+            pixels.push(Rgbw8::new(
+                warm / 5,
+                warm / 10,
+                warm / 40,
+                (u16::from(warm) * 3 / 4) as u8,
+            ));
+        }
+    }
+    Ok(pixels)
 }
 
 fn interpolate_channel(start: u8, target: u8, progress: f64) -> u8 {
@@ -262,6 +329,15 @@ mod tests {
         device.render_uniform(Rgbw8::new(1, 2, 3, 4)).unwrap();
         assert_eq!(device.last_frame().unwrap(), &[Rgbw8::new(1, 2, 3, 4); 2]);
         assert!(device.render(&[Rgbw8::OFF]).is_err());
+    }
+
+    #[test]
+    fn every_named_effect_renders_exactly_the_orion_matrix() {
+        for name in LIGHTING_EFFECT_NAMES {
+            let frame = render_effect(name, 0.25, 0.8).unwrap();
+            assert_eq!(frame.len(), ORION_LIGHT_PIXEL_COUNT, "{name}");
+        }
+        assert!(render_effect("rainbow_party", 0.0, 1.0).is_err());
     }
 
     #[test]
