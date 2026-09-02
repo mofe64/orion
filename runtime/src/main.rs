@@ -914,6 +914,7 @@ fn serve_driver<D: RuntimeDriver>(
         } else {
             speaking_light_intensity = 0.0;
         }
+        let character_was_enabled = character.status().enabled;
         character.tick(
             now_seconds,
             &mut core,
@@ -925,6 +926,10 @@ fn serve_driver<D: RuntimeDriver>(
             speech.active_analysis(),
             speech.active_energy_frame(),
         )?;
+        if character_just_stopped(character_was_enabled, character.status().enabled) {
+            lighting.clear()?;
+            speaking_light_intensity = 0.0;
+        }
         if !scenes.is_active()
             && !speech.is_active()
             && let Some(effect) = character.background_lighting_effect(&core)
@@ -952,6 +957,10 @@ fn smooth_speaking_light(previous: f64, energy: f64) -> f64 {
     let target = (energy / 0.30).clamp(0.06, 0.72);
     let response = if target > previous { 0.18 } else { 0.07 };
     previous + (target - previous) * response
+}
+
+fn character_just_stopped(was_enabled: bool, is_enabled: bool) -> bool {
+    was_enabled && !is_enabled
 }
 
 fn handle_daemon_command_with_character<D: RuntimeDriver, A: AudioDevice + ?Sized>(
@@ -1568,6 +1577,14 @@ mod tests {
 
         let sustained = (0..100).fold(0.0, |level, _| smooth_speaking_light(level, 0.30));
         assert!((sustained - 0.72).abs() < 1e-6);
+    }
+
+    #[test]
+    fn only_the_character_enabled_to_off_transition_clears_its_latched_light() {
+        assert!(character_just_stopped(true, false));
+        assert!(!character_just_stopped(true, true));
+        assert!(!character_just_stopped(false, false));
+        assert!(!character_just_stopped(false, true));
     }
 
     #[test]
