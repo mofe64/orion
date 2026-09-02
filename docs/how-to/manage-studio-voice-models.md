@@ -1,7 +1,8 @@
 # Manage Studio Voice models
 
 Studio Voice uses Hugging Face model repositories. Git contains adapter code
-and a 104 KB Rustpotter reference, but not the ASR, TTS, or tokenizer weights.
+and a 104 KB Rustpotter reference, but not the automatic speech recognition
+(ASR), text-to-speech (TTS), or tokenizer weights.
 
 ## Download the defaults
 
@@ -64,4 +65,3 @@ The downloader does not own the entire Hugging Face cache, which may contain
 models used by other applications. Inspect the cache and remove only the
 specific Qwen, Chatterbox, and tokenizer snapshots you intend to discard.
 Avoid deleting the whole cache as part of an Orion script.
-

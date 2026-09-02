@@ -1,21 +1,13 @@
 # Trajectory and joint-control reference
 
-| Document contract | Value |
-| --- | --- |
-| Status | Normative implementation reference |
-| Audience | Runtime, controls, simulation, safety, and motion-tooling engineers |
-| Owns | Trajectory construction, calibrated interruption, 50 Hz execution, settling, servo conversion, and module interfaces |
-| Defers to | [Motion asset reference](motion-assets.md) for authored inputs and [runtime operations](../../runtime/README.md) for commands |
-| Code authority | `runtime/src/{trajectory,motion,daemon,calibration,driver,transport,main}.rs` |
-
-This document traces the lowest-level path from an accepted semantic motion to
-five synchronized STS3215 goal positions. It describes the current Rust
-implementation; changing an algorithm or invariant requires changing this
-reference in the same commit.
+Orion's Rust runtime converts each accepted semantic motion into five
+synchronized STS3215 goal positions. The trajectory compiler constructs the
+continuous joint paths, `RuntimeCore` samples them at 50 Hz, and the hardware
+driver converts radians to calibrated servo values.
 
 ## Constants and authorities
 
-| Concern | Current authority |
+| Concern | Authority |
 | --- | --- |
 | Command rate | `50 Hz` (`20 ms` period) in `RuntimeCore` and the daemon loop |
 | Position limits | Active calibration loaded by the hardware driver |
@@ -28,8 +20,8 @@ reference in the same commit.
 | Settling timeout | `2.0 s` after authored trajectory completion |
 | Simulation reporting policy | `motion/config/stability_limits.yaml`; diagnostic, not a runtime gate |
 
-Voltage, current, temperature, and status telemetry are reported. Position
-calibration and the motor profile remain the command authorities.
+The driver reports voltage, current, temperature, and status telemetry.
+Position calibration and the motor profile remain the command authorities.
 
 ## Compilation entry points
 
@@ -146,9 +138,9 @@ Otherwise the compiler calculates a duration-weighted slope, bounds its
 magnitude to three times the smaller adjacent slope, and multiplies it by
 style tangent tension and joint-lag character.
 
-The through acceleration is based on the change between adjacent slopes over
-their combined duration, then scaled by tangent tension, joint-lag character,
-and overshoot character.
+The compiler bases through acceleration on the change between adjacent slopes
+over their combined duration, then scales it by tangent tension, joint-lag
+character, and overshoot character.
 
 Joint-lag character uses the ordered chain:
 
@@ -175,9 +167,9 @@ Local attenuation matters. Flattening one joint's derivatives globally would
 allow a difficult turn in one place to create stopped-looking movement in an
 unrelated part of a long performance.
 
-An authored overshoot pose is still an endpoint and is reached exactly. The
-overshoot guard prevents additional polynomial overshoot between authored
-endpoints.
+An authored overshoot pose remains an endpoint, and the trajectory reaches it
+exactly. The overshoot guard prevents additional polynomial overshoot between
+authored endpoints.
 
 ## Motor-speed retiming
 
@@ -227,7 +219,7 @@ Each joint calibration contains:
 - safe minimum and maximum raw deltas around neutral.
 
 The software converts safe raw deltas to an ordered radian range using the
-4096-count encoder. A commanded radian value is converted as:
+4096-count encoder. The driver converts a commanded radian value as follows:
 
 ```text
 steps_per_radian = 4096 / (2π)
@@ -347,11 +339,11 @@ torque is a separate command and cancels any active movement first.
 
 `MotionSequence` exposes:
 
-- current keyframe label and index;
+- active keyframe label and index;
 - total keyframe count;
 - progress through total compiled duration;
 - compiled marker arrival times; and
-- all markers reached at the current elapsed time.
+- all markers reached at the sampled elapsed time.
 
 Movement run IDs are daemon-local and reset at restart. Status retains only
 the active run and the most recent terminal run. Clients must retain the

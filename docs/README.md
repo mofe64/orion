@@ -1,10 +1,6 @@
 # Orion documentation
 
-Use this guide to set up, operate, understand, and develop Orion. The library
-follows a Diátaxis-style separation: tutorials teach, how-to guides complete a
-task, explanations build a mental model, and references define exact contracts.
-Project and decision records describe status and rationale without replacing
-current technical documentation.
+Choose the Orion task or subject you need.
 
 ## Tutorials
 
@@ -58,34 +54,3 @@ current technical documentation.
 - [Joint structure](learning_notes/orion_joints.md)
 - [MuJoCo model](learning_notes/orion_mujoco_model_basics.md)
 - [URDF basics](learning_notes/orion_urdf_basics.md)
-
-## Documentation ownership
-
-Documentation changes ship with the code or asset change they describe. Use
-these ownership rules to prevent contradictory explanations:
-
-- A concept has one canonical explanation and other documents link to it.
-- Exact fields, constants, states, and invariants belong in reference docs.
-- Operational sequences belong in how-to guides or the owning component
-  README.
-- Cross-component reasoning belongs in `docs/explanation/`.
-- Durable architectural choices belong in an accepted decision record.
-- Status, roadmap, and limitations describe project state; they are not API or
-  runtime contracts.
-- Package READMEs define local ownership and entry points, then link to
-  canonical cross-system documentation.
-
-New canonical documents should state their audience, scope, source of truth,
-and what they deliberately defer to. When implementation and documentation
-disagree, code and validated configuration are authoritative until both are
-corrected in the same change.
-
-Run the repository documentation gate before merging:
-
-```bash
-python3 scripts/check_docs.py
-```
-
-The gate checks every tracked and newly added Markdown file for one level-one
-heading, valid local links including section anchors, and prohibited
-motion-system terminology that would reintroduce superseded documentation.

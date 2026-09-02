@@ -1,5 +1,6 @@
 # URDF basics
 
+The Unified Robot Description Format (URDF) file at
 [`description/urdf/orion.urdf`](../../description/urdf/orion.urdf) defines
 Orion's link geometry, frames, axes, and model reference ranges. Physical servo
 calibration and runtime safety limits are separate.

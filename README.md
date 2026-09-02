@@ -28,6 +28,10 @@ Choose the path that matches what you want to do:
 
 ## System at a glance
 
+Studio Voice combines automatic speech recognition (ASR), an agent, and
+text-to-speech (TTS). Orion's RGBW light has red, green, blue, and dedicated
+white channels.
+
 ```text
 Workstation                                      Raspberry Pi
 
@@ -45,13 +49,14 @@ Orion Studio                                     authenticated HTTP gateway
                                                     └── ReSpeaker playback
 ```
 
-`oriond` is the sole authority for Raspberry Pi hardware. Studio and future
-agents submit semantic requests such as named poses, motions, scenes, and
-speech; they never write servo registers or GPIO directly.
+`oriond` is the sole authority for Raspberry Pi hardware. Studio submits
+semantic requests such as named poses, motions, scenes, and speech; it never
+writes servo registers or general-purpose input/output (GPIO) pins directly.
+Planned agent integrations must use the same semantic boundary.
 
 Studio Voice is the primary interactive voice path. It captures from the
 workstation microphone and runs Rustpotter, Qwen3-ASR, the configured agent,
-and Chatterbox locally around an authenticated loopback connection. The older
+and Chatterbox locally around an authenticated loopback connection. The
 Pi-local Piper/Sherpa/Moonshine stack remains available as a diagnostic and
 offline fallback. See the [voice architecture](docs/explanation/voice-architecture.md)
 for the distinction.
@@ -64,7 +69,7 @@ for the distinction.
 | `orion_studio/` | Tauri/React desktop application, Pi gateway, and primary voice worker |
 | `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
 | `scenes/` | Versioned multimodal scene documents |
-| `description/` | Neutral URDF and shared mesh assets |
+| `description/` | Neutral Unified Robot Description Format (URDF) model and shared mesh assets |
 | `simulation/mujoco/` | MuJoCo model, playback tools, and simulator checks |
 | `hardware/` | Commissioning and operating instructions for servos, audio, and lighting |
 | `voice/` | Raspberry Pi-local fallback wake, ASR, and Piper TTS processes |
@@ -82,6 +87,7 @@ Run these from the repository root unless a linked guide says otherwise:
 cargo test --manifest-path runtime/Cargo.toml --all-targets
 PYTHONPATH=motion .venv/bin/python -m pytest -q motion/test
 python3 -m unittest discover -s orion_studio/tests -v
+python3 scripts/check_docs.py
 
 cd orion_studio
 pnpm test
@@ -92,13 +98,13 @@ Some runtime integration tests expect the repository Python environment at
 `.venv/bin/python`. Model-independent voice-worker tests use the worker's own
 environment; see its [validation instructions](orion_studio/voice_worker/README.md#validation).
 
-## Current scope
+## Implementation status
 
-The runtime, simulator, Pi hardware path, scene system, Studio authoring and
-gateway, and Studio speech-response pipeline are implemented. Deterministic
-agent-to-robot capability routing, production network pairing, packaged voice
-models, and non-Apple-Silicon Studio inference remain incomplete. The
-remaining work is listed in [project status](docs/project/status.md).
+Orion implements the runtime, simulator, Pi hardware path, scene system, Studio
+authoring and gateway, and Studio speech-response pipeline. Deterministic
+agent-to-robot capability routing is planned. Production network pairing,
+packaged voice models, and non-Apple-Silicon Studio inference remain partial.
+See [project status](docs/project/status.md) for each capability boundary.
 
 ## Safety
 

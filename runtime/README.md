@@ -3,8 +3,9 @@
 `runtime` is Orion's ROS-independent native Rust runtime. It implements the
 `oriond` command protocol, lifecycle, pose and motion loading, whole-action
 piecewise-quintic trajectory compilation, calibration contract, STS3215
-profile, 50 Hz state snapshots, the Pi 5 RGBW output backend, ReSpeaker V2 WAV
-playback, character coordination, and multimodal scenes.
+profile, 50 Hz state snapshots, the Pi 5 red-green-blue-white (RGBW) output
+backend, ReSpeaker V2 WAV playback, character coordination, and multimodal
+scenes.
 
 See the [system architecture](../docs/explanation/system-architecture.md) for
 workstation/Pi boundaries and device ownership.
@@ -26,7 +27,8 @@ encoder/velocity conversions.
 
 ## Build and test
 
-Install a current Rust toolchain, then run from the repository root:
+Install a stable toolchain with Rust 2024 edition support (Rust 1.85 or newer),
+then run from the repository root:
 
 ```bash
 cargo build --manifest-path runtime/Cargo.toml
@@ -55,8 +57,8 @@ the script never disables host-key checking. The Pi user needs passwordless
 
 On the Pi, deployment requires the selected branch to already be checked out,
 then fetches and fast-forwards it. It never switches branches, stashes, resets,
-or cleans the Pi checkout. Deployment stops the gateway, returns the currently
-running Orion to `rest`, disables torque, runs gateway tests and the
+or cleans the Pi checkout. Deployment stops the gateway, returns the running
+Orion to `rest`, disables torque, runs gateway tests and the
 Pi-compatible Rust suite, and release-builds `oriond` while the old daemon
 remains safely torque-off. The simulator-only MuJoCo integration test remains a
 workstation pre-push gate.
@@ -195,20 +197,20 @@ executing/settling ----> cancelled
 `executing` means authored trajectory frames are still being sent. `settling`
 begins after the final target is sent and compares measured joint position and
 velocity against the completion tolerances. The measured state must remain
-within tolerance for the full settle duration. The current defaults are
+within tolerance for the full settle duration. The defaults are
 `0.05 rad`, `0.05 rad/s`, `0.25 s` settled, and a `2.0 s` settling timeout.
 
 Status JSON keeps only the active `motion` and the most recent terminal
-`last_motion`; there is no movement database or durable history. A future agent
-should submit semantic motion names, retain the returned `run_id`, and follow
-that ID through these fields. IDs reset when the daemon restarts.
+`last_motion`; there is no movement database or durable history. Planned agent
+integrations must submit semantic motion names, retain the returned `run_id`,
+and follow that ID through these fields. IDs reset when the daemon restarts.
 
 `--wait` is a thin client over the same status contract. It exits `0` for
 `completed`, `4` for `timed_out`, and `5` for `cancelled`. Daemon command
 rejection exits `3`, invalid CLI usage exits `2`, and transport/runtime errors
 exit `1`.
 
-Stop the current movement and hold its current commanded position:
+Stop the active movement and hold its commanded position:
 
 ```bash
 runtime/target/release/oriond --stop
@@ -252,9 +254,9 @@ trials.
 ## Lighting, audio, and local scenes
 
 The physical light adapter targets Orion's 40-pixel Adafruit RGBW shield on
-Pi 5 BCM12. After installing and reboot-verifying the persistent RP1 PWM setup
-described in `hardware/lighting/README.md`, direct output is available without
-starting the servo daemon:
+Pi 5 BCM12. After installing and reboot-verifying the persistent RP1
+pulse-width modulation (PWM) setup described in `hardware/lighting/README.md`,
+direct output is available without starting the servo daemon:
 
 ```bash
 runtime/target/release/oriond --light 8 3 0 20
@@ -263,11 +265,13 @@ runtime/target/release/oriond --lights-off
 ```
 
 Arguments are logical `RED GREEN BLUE WHITE` bytes from 0 through 255. The
-adapter performs the physical GRBW ordering and 800 kHz symbol encoding. This
+adapter performs the physical green-red-blue-white (GRBW) ordering and 800 kHz
+symbol encoding. This
 path has been commissioned on the physical robot, including all four channels,
 the full matrix, and all-off output.
 
-The physical audio adapter uses the stable ALSA PCM
+The physical audio adapter uses the stable Advanced Linux Sound Architecture
+(ALSA) pulse-code modulation (PCM) device
 `plughw:CARD=seeed2micvoicec,DEV=0`. It applies the confirmed ReSpeaker V2 JST
 mixer route whenever the hardware daemon starts. Named, local, stereo WAV
 cues live under `audio/cues/` and can be commissioned without starting the
@@ -339,8 +343,8 @@ libraries while no movement or scene is active. `scene reload` remains the
 narrower scene-only operation.
 
 The private `scene preview DOCUMENT` command is reserved for the authenticated
-Studio gateway. It parses one inline v2 scene against the currently
-loaded pose, motion, and audio libraries, then starts the normal scene
+Studio gateway. It parses one inline v2 scene against the loaded pose, motion,
+and audio libraries, then starts the normal scene
 coordinator without adding it to the library or filesystem. The gateway limits
 the compact document to 3,000 UTF-8 bytes so the complete command stays within
 the Unix protocol's fixed 4,096-byte input boundary. Preview still uses normal

@@ -6,19 +6,23 @@ diagnostic path.
 
 ## Primary path: Studio Voice
 
+Studio Voice represents microphone and playback samples as signed 16-bit
+pulse-code modulation (PCM16). It performs automatic speech recognition (ASR)
+with Qwen3-ASR and text-to-speech (TTS) generation with Chatterbox.
+
 ```text
 workstation microphone
   -> browser AudioWorklet
   -> native-rate conversion to 16 kHz mono PCM16
   -> authenticated loopback WebSocket
   -> Rustpotter reference wake detector
-  -> endpointing and in-memory pre-roll
+  -> endpointing (detect when speech ends) and in-memory pre-roll
   -> Qwen3-ASR wake confirmation and command transcription
   -> configured AgentProvider
   -> Chatterbox Turbo speech generation
   -> authenticated mono PCM16/24 kHz WAV upload
   -> oriond-owned ReSpeaker playback
-  -> energy-driven character motion and RGBW light
+  -> energy-driven character motion and red-green-blue-white (RGBW) light
 ```
 
 Studio begins capture only after the user selects **Enable microphone**. Raw
@@ -32,10 +36,10 @@ before the agent receives the command. This two-stage design allows a
 relatively permissive reference threshold without sending every sound to ASR
 or the agent.
 
-The current agent produces a spoken response only. It cannot request movement,
-lighting, cues, or scenes. Studio maps known voice-pipeline phases to the
-allowlisted listening, thinking, and neutral character states; agent-generated
-text never becomes a raw robot command.
+The implemented Codex agent produces a spoken response only. It cannot request
+movement, lighting, cues, or scenes. Studio maps known voice-pipeline phases to
+the allowlisted listening, thinking, and neutral character states;
+agent-generated text never becomes a raw robot command.
 
 Once a validated response reaches `oriond`, waveform energy and phrase peaks
 drive one utterance-length head-led performance. That animation path is
@@ -47,12 +51,12 @@ Microphone audio, wake detection, transcription, and speech generation remain
 on the workstation with the default model adapters. The configured agent is a
 separate boundary:
 
-- With the current Codex provider, the confirmed text command is sent to the
-  configured Codex service. Raw microphone audio is not sent.
-- A future local-LLM provider can keep confirmed text local without changing
+- With the implemented Codex provider, the confirmed text command is sent to
+  the configured Codex service. Raw microphone audio is not sent.
+- A planned local-LLM provider can keep confirmed text local without changing
   wake detection, ASR, TTS, or playback.
-- An OpenAI Platform provider can use the same `AgentProvider` contract with
-  separately configured credentials.
+- A planned OpenAI Platform provider can use the same `AgentProvider` contract
+  with separately configured credentials.
 
 Cloud-backed agent use is therefore optional application behaviour, not a
 requirement for the Pi runtime, scenes, or manual Studio control. The Voice UI
@@ -68,13 +72,16 @@ Starting Studio alone does not proactively download the weights. If Voice is
 enabled without the prefetch step, the model libraries may try to download
 them during worker startup. That first load can exceed Studio's startup
 timeout and is not the supported first-run path. Follow the
-[Studio Voice tutorial](../tutorials/first-studio-voice-run.md) on every new
+[Studio Voice tutorial](../tutorials/first-studio-voice-run.md) on each
 development device.
 
 See [model management](../how-to/manage-studio-voice-models.md) for cache
 locations, overrides, and offline preparation.
 
 ## Fallback path: Raspberry Pi-local voice
+
+Silero provides voice activity detection (VAD), which separates speech from
+silence before Moonshine transcribes the utterance.
 
 ```text
 ReSpeaker microphones

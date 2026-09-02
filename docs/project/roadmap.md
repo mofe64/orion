@@ -1,14 +1,14 @@
 # Orion roadmap
 
-The roadmap orders Orion's remaining product outcomes.
+Orion pursues the remaining product outcomes in the order below.
 
-## Foundation already established
+## Implemented foundation
 
 Orion has a neutral robot description, shared motion assets, a Rust runtime,
 MuJoCo parity, commissioned Pi hardware, multimodal scenes, a desktop authoring
 tool, and primary and fallback voice paths.
 
-These foundations are retained and hardened rather than replaced by parallel
+Orion retains and hardens these foundations instead of creating parallel
 control systems.
 
 ## Ordered outcomes
@@ -22,7 +22,7 @@ control systems.
    installation, commission supported platforms, and replace the
    development LAN bearer-token arrangement.
 4. **Measure voice quality.** Evaluate wake false accepts/rejects, endpointing,
-   ASR accuracy, response latency, playback interruption, and echo behaviour
+   speech-recognition accuracy, response latency, playback interruption, and echo behaviour
    using retained test evidence outside the runtime repository.
 5. **Add perception and attention state.** Establish explicit observations and
    confidence before introducing autonomous attention behaviours.

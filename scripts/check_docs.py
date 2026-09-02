@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Orion-owned Markdown structure, local links, and current terminology."""
+"""Validate Orion-owned Markdown structure, links, and reader-first language."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_PARTS = {".scratch", ".venv", "node_modules", "target"}
+READER_LANGUAGE_EXCLUDED = {Path("AGENTS.md")}
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:")
@@ -21,6 +22,32 @@ OBSOLETE_MOTION_DOCUMENTATION = (
     re.compile(r"\b(?:pose|motion|scene)s?\s+v1\b", re.IGNORECASE),
     re.compile(r"\bv1\s+(?:pose|motion|scene)s?\b", re.IGNORECASE),
     re.compile(r"\blegacy\s+(?:pose|motion|scene|movement)s?\b", re.IGNORECASE),
+)
+PROHIBITED_READER_LANGUAGE = (
+    re.compile(r"\bsource of truth\b", re.IGNORECASE),
+    re.compile(r"\bthe following documentation\b", re.IGNORECASE),
+    re.compile(r"\bcurrently\b", re.IGNORECASE),
+    re.compile(r"\bnot yet\b", re.IGNORECASE),
+    re.compile(r"\bat present\b", re.IGNORECASE),
+    re.compile(r"\bfor now\b", re.IGNORECASE),
+    re.compile(
+        r"\bnew (?:architecture|behavior|capability|feature|implementation|"
+        r"release|system|version|workflow)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bnext (?:architecture|behavior|capability|feature|implementation|"
+        r"release|system|version)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^\s*\|?\s*document contract\b", re.IGNORECASE),
+)
+META_OPENING = re.compile(
+    r"^(?:(?:this|use this|read this) "
+    r"(?:page|tutorial|guide|document|reference|readme|package|directory)|"
+    r"(?:the )?(?:purpose|goal) of this (?:page|tutorial|guide|document)|"
+    r"in this (?:page|tutorial|guide|document))\b",
+    re.IGNORECASE,
 )
 
 
@@ -67,6 +94,10 @@ def anchors(path: Path) -> set[str]:
     return result
 
 
+def has_prohibited_reader_language(line: str) -> bool:
+    return any(pattern.search(line) for pattern in PROHIBITED_READER_LANGUAGE)
+
+
 def main() -> int:
     files = markdown_files()
     failures: list[str] = []
@@ -81,10 +112,35 @@ def main() -> int:
                 f"{relative}: expected exactly one level-one heading, found {len(h1_lines)}"
             )
 
+        first_body = next(
+            (
+                (number, line)
+                for number, line in enumerate(lines, 1)
+                if line.strip() and not line.startswith("#")
+            ),
+            None,
+        )
+        if (
+            relative not in READER_LANGUAGE_EXCLUDED
+            and first_body
+            and META_OPENING.search(first_body[1])
+        ):
+            failures.append(
+                f"{relative}:{first_body[0]}: opening narrates the document "
+                "instead of leading with an Orion fact or action"
+            )
+
         for number, line in enumerate(lines, 1):
             if any(pattern.search(line) for pattern in OBSOLETE_MOTION_DOCUMENTATION):
                 failures.append(
                     f"{relative}:{number}: obsolete motion-system documentation"
+                )
+            if (
+                relative not in READER_LANGUAGE_EXCLUDED
+                and has_prohibited_reader_language(line)
+            ):
+                failures.append(
+                    f"{relative}:{number}: prohibited reader-first documentation language"
                 )
             for raw_target in LINK.findall(line):
                 target = raw_target.strip().strip("<>")

@@ -4,6 +4,8 @@
 
 Orion is split between a workstation and a Raspberry Pi:
 
+RGBW means the red, green, blue, and dedicated white channels in Orion's light.
+
 ```text
 Workstation                                              Raspberry Pi
 

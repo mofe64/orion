@@ -1,7 +1,7 @@
 # Orion motion assets
 
-This package owns Orion's built-in and user-authored pose and motion source
-files. Runtime parsing and trajectory compilation live in Rust.
+Orion loads built-in and user-authored pose and motion files from this
+directory. The Rust runtime parses those assets and compiles their trajectories.
 
 ## Ownership
 

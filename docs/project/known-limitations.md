@@ -16,9 +16,9 @@
 
 - The gateway bearer token and HTTP transport are suitable only for a trusted
   development LAN. Traffic is not encrypted.
-- Studio's complete local ASR/TTS path requires Apple Silicon because the
-  current adapters use MLX.
-- Signed desktop installers do not yet package the Python worker, native wake
+- Studio's implemented local speech-recognition and speech-synthesis adapters
+  require Apple Silicon because they use Apple's MLX machine-learning framework.
+- Signed desktop installers omit the Python worker, native wake
   extension, or large model weights.
 - Offline desktop user assets are staging copies. The Pi library becomes
   authoritative after connection.

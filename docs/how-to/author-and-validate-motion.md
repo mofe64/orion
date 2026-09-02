@@ -1,16 +1,14 @@
 # Author and validate Orion motion
 
-| Document contract | Value |
-| --- | --- |
-| Status | Current engineering workflow |
-| Audience | Motion designers and engineers changing poses, motions, styles, character behavior, or trajectory code |
-| Owns | The repeatable change, review, and validation procedure |
-| Prerequisites | A working Rust toolchain and repository Python environment; physical steps require a commissioned Orion and an operator |
-| Read first | [Character animation design](../explanation/character-animation.md), [motion asset reference](../reference/motion-assets.md), and [trajectory reference](../reference/trajectory-and-joint-control.md) |
+Install a working Rust toolchain and the repository Python environment before
+changing movement. Physical validation also requires a commissioned Orion and
+an operator with access to the hardware power or torque interruption.
 
-Use this workflow for every movement change. The amount of artistic review may
-vary, but schema validation, calibrated compilation, simulator validation, and
-documentation ownership do not.
+Follow the [character animation design](../explanation/character-animation.md),
+[motion asset reference](../reference/motion-assets.md), and
+[trajectory reference](../reference/trajectory-and-joint-control.md) throughout
+the change. The amount of artistic review may vary, but schema validation,
+calibrated compilation, simulator validation, and documentation updates do not.
 
 ## 1. Write the behavior brief
 
@@ -87,7 +85,7 @@ after speed retiming.
 
 Select the style whose character matches the action. First adjust authored
 pose relationships and segment timing; change the global style table only when
-several motions need the same new timing vocabulary.
+several motions need the same additional timing vocabulary.
 
 A style change affects every asset using it and therefore requires catalog-wide
 validation. Never add calibration ranges or motor limits to a style.
@@ -222,16 +220,16 @@ Review at normal speed before using slow motion. Check:
 Slow-motion inspection is for diagnosing a problem, not judging overall
 timing.
 
-## 9. Update the animation review and canonical docs
+## 9. Update the animation review and technical references
 
 For a built-in asset, update
 [`animation-principles-review.md`](../reference/animation-principles-review.md)
 with its primary action, anticipation/follow-through, timing, secondary action,
 and intended silhouette.
 
-Update the owning canonical document when changing:
+Update the maintained reference for each changed behavior:
 
-| Change | Documentation owner |
+| Change | Reference to update |
 | --- | --- |
 | Pose or motion fields and invariants | `docs/reference/motion-assets.md` |
 | Compiler, retiming, calibration, runtime, or servo behavior | `docs/reference/trajectory-and-joint-control.md` |
@@ -240,12 +238,12 @@ Update the owning canonical document when changing:
 | Commands and deployment operations | `runtime/README.md` |
 | Physical acceptance gates | `docs/how-to/validate-character-v2.md` |
 
-Avoid copying an explanation into several package READMEs. Package READMEs
-should identify ownership and link to the canonical cross-system document.
+Maintain one technical description for each behavior and link to it from any
+affected component README.
 
 ## 10. Run supervised physical acceptance
 
-Physical execution is required when perceived timing, gravity load, sound,
+Run the motion on physical Orion when perceived timing, gravity load, sound,
 lighting, cable clearance, or joint prominence changes. Follow
 [Validate Orion character on physical hardware](validate-character-v2.md).
 
@@ -278,5 +276,5 @@ Before merging, verify:
 - [ ] Python consumers and relevant MuJoCo tests pass.
 - [ ] Documentation links and headings pass `scripts/check_docs.py`.
 - [ ] The animation-principles review reflects the changed catalog.
-- [ ] Supervised physical acceptance is recorded when required.
-- [ ] The robot is returned to mechanical rest and torque is off after testing.
+- [ ] Record supervised physical acceptance when required.
+- [ ] Return the robot to mechanical rest and disable torque after testing.

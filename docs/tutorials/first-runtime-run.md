@@ -7,7 +7,7 @@ without accessing physical hardware.
 
 Install:
 
-- A current stable Rust toolchain.
+- A stable Rust toolchain with Rust 2024 edition support (Rust 1.85 or newer).
 - Python 3.11 or newer.
 - `uv`, or another way to create a Python virtual environment.
 
@@ -73,7 +73,7 @@ runtime/target/debug/oriond --disable
 
 Stop the first terminal with `Ctrl+C`.
 
-You have now used Orion's normal lifecycle, named asset library, interpolation,
+You have used Orion's normal lifecycle, named asset library, interpolation,
 and completion logic without opening a serial or GPIO device. Continue with
 the [runtime reference](../../runtime/README.md) or
 [run Orion Studio](first-studio-run.md).

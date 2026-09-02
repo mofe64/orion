@@ -1,7 +1,7 @@
 # Run Studio Voice for the first time
 
-On a new Apple Silicon development device, install the persistent worker and
-download its models before enabling Studio microphone capture.
+Before enabling Studio microphone capture on an Apple Silicon development
+device, install the persistent worker and download its models.
 
 Starting Studio does not download the models proactively. Model libraries may
 attempt an implicit download when Voice starts, but the first load can exceed
@@ -17,8 +17,9 @@ of the required first-time setup.
 - The Studio prerequisites from [Run Orion Studio](first-studio-run.md).
 - A completed `codex login` if you intend to use the default Codex agent.
 
-Qwen3-ASR and Chatterbox currently use MLX. The complete voice pipeline is not
-supported on Intel macOS, Windows, or Linux workstations yet.
+The implemented Qwen3-ASR automatic speech-recognition adapter and Chatterbox
+text-to-speech adapter use Apple's MLX machine-learning framework. Intel macOS,
+Windows, and Linux workstations do not support the complete voice pipeline.
 
 ## 1. Install the worker
 
@@ -87,8 +88,8 @@ sample rate, level, wake state, transcript, agent response, and playback.
 
 Say “Hey Orion” followed by a command. Rustpotter proposes the wake candidate;
 Qwen confirms the phrase and transcribes it before the selected agent sees the
-text. The current agent may generate speech but cannot move Orion or invoke
-other physical capabilities.
+text. The implemented Codex agent may generate speech but cannot move Orion or
+invoke other physical capabilities.
 
 ## Troubleshooting
 

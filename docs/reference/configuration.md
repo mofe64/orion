@@ -5,6 +5,8 @@ environment variables.
 
 ## Orion Studio
 
+`ASR` means automatic speech recognition, and `TTS` means text-to-speech.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ORION_PROJECT_ROOT` | Resolved from the Tauri crate during development | Points a packaged or relocated Studio build at an Orion checkout |

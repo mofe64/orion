@@ -118,7 +118,7 @@ of the lamp head depends on every joint before it.
 
 For example, a head tilt can look different after base yaw and elbow pitch have
 already changed. The same `head_pitch_joint` angle is still used, but its parent
-frame now has a different world position and orientation.
+frame then has a different world position and orientation.
 
 This is why Orion sends and records all five joint values together. Joint
 names and parent-child relationships must agree across the URDF, MJCF, runtime,

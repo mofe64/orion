@@ -13,8 +13,8 @@ Install:
 - The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for
   your operating system.
 
-The current repository is commissioned on macOS Apple Silicon. Windows and
-Linux are build targets but are not yet fully commissioned; see
+The repository is commissioned on macOS Apple Silicon. Windows and Linux are
+uncommissioned build targets; see
 [platform support](../reference/platform-support.md).
 
 ## 1. Install the Studio dependencies

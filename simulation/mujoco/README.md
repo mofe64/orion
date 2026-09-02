@@ -46,8 +46,8 @@ resolution in the selected physical calibration file. Exact-value entries are
 checked against those same bounds. The editor validates all poses at startup
 and writes only the five numeric lines belonging to the selected pose.
 
-Pass `--calibration` only when deliberately testing a different capture. A new
-accepted physical zero also requires regenerating the MJCF joint references;
+Pass `--calibration` only when deliberately testing a different capture. If you
+accept a different physical zero, regenerate the MJCF joint references;
 changing the editor's calibration alone updates limits but not model geometry.
 
 Servo encoder indices do not encode the absolute angle between a mounted horn

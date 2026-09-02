@@ -27,7 +27,8 @@ the user, risks hardware, or makes failure harder to understand.
 - **Explicit state:** lifecycle, ownership, and failure are observable rather
   than inferred from animation or timing.
 - **Local-first operation:** manual control, scenes, runtime safety, raw voice
-  audio, ASR, and TTS do not require a cloud service.
+  audio, speech recognition, and speech synthesis do not require a cloud
+  service.
 - **Optional provider boundary:** a configured cloud agent may receive a
   confirmed text command only after the user enables that mode. The selected
   provider and data boundary must be visible.

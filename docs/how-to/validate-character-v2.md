@@ -1,10 +1,9 @@
 # Validate Orion character v2 on physical hardware
 
-This focused acceptance pass verifies the character behavior that simulation
-cannot prove: readable motion under load, holding drift, interruption quality,
-ReSpeaker playback, and the final mechanical release. Run it after the atomic
-v2 deployment succeeds. It is an operational check, not a new commissioning
-programme.
+Run this focused acceptance pass after the atomic v2 deployment succeeds. It
+verifies the character behavior that simulation cannot prove: readable motion
+under load, holding drift, interruption quality, ReSpeaker playback, and the
+final mechanical release. It does not replace servo commissioning.
 
 ## Safety and evidence
 
@@ -25,8 +24,8 @@ runtime/target/release/oriond --status
 
 The initial status must report torque disabled and character mode off. Keep a
 screen recording of Studio diagnostics or save status JSON at each numbered
-gate. A result is accepted only when the observed behavior and terminal state
-both match the expectations below.
+gate. Accept a result only when the observed behavior and terminal state both
+match the expectations below.
 
 ## 1. Start and expressive arcs
 
@@ -73,7 +72,7 @@ Wait until Studio diagnostics shows a non-empty idle `active_clip`, then
 immediately run `curiosity` or `acknowledge_left`. Verify that the foreground
 scene begins from the measured in-flight state without first snapping back to
 the old anchor. The idle must become cancelled, the scene must complete, and
-its measured final position must become the new idle anchor.
+its measured final position must become the idle anchor.
 
 ## 4. Studio Voice through Orion
 

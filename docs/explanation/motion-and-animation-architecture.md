@@ -1,25 +1,21 @@
 # Motion and animation architecture
 
-| Document contract | Value |
-| --- | --- |
-| Status | Current architecture |
-| Audience | Motion designers, runtime engineers, Studio engineers, and reviewers |
-| Owns | The end-to-end mental model, component boundaries, and control flow |
-| Defers to | [Motion asset reference](../reference/motion-assets.md) for schemas and [trajectory and joint-control reference](../reference/trajectory-and-joint-control.md) for exact algorithms |
-| Code authority | `runtime/src/{character,motion,trajectory,daemon,driver,transport}.rs` |
-
 Orion separates **what the character intends to do** from **how the motors are
-commanded**. A semantic action such as “acknowledge the person on the left” is
-selected at the character or scene layer. The Rust runtime resolves that action
+commanded**. The character or scene layer selects a semantic action such as
+“acknowledge the person on the left.” The Rust runtime resolves that action
 into joint-space waypoints, compiles the whole action into one continuous
 trajectory, and samples it at 50 Hz. Only the hardware driver knows how radians
-map to STS3215 encoder values.
+map to STS3215 servo encoder values.
 
 That separation is the central architectural rule. Character code never writes
 servo registers, and the servo layer never decides which expression Orion
 should perform.
 
 ## The motion stack
+
+An **immutable anchor** is a complete measured pose that idle and speech
+animation use as a fixed reference. Relative animation may move away from the
+anchor, but it cannot move the reference itself.
 
 ```text
 User or voice event
@@ -42,7 +38,7 @@ resolve targets + uniform relative scale + markers
         │
         ▼
 CompiledTrajectory
-piecewise quintic position/velocity/acceleration functions
+piecewise fifth-degree (quintic) position/velocity/acceleration functions
         │
         ▼
 RuntimeCore at 50 Hz
@@ -106,8 +102,8 @@ Every keyframe declares one of two arrival modes:
 
 This is more than file syntax. Arrival intent determines the boundary
 conditions passed to the trajectory compiler. An internal `through` drawing is
-not compiled as a stop followed by a new move. A `settle` drawing is a real
-stop and is the only kind that may hold.
+not compiled as a stop followed by a subsequent move. A `settle` drawing is a
+real stop and is the only kind that may hold.
 
 ### Styles are artistic policy
 
@@ -134,32 +130,34 @@ The command handler enforces ownership and priority before starting motion. A
 foreground scene cancels lower-priority speech and preempts an autonomous idle.
 Character shutdown cancels scene and speech work before returning home.
 
-### 2. Targets are resolved from measured state
+### 2. The runtime resolves targets from measured state
 
 `RuntimeCore` uses the most recent measured position and velocity as the start
-of a new trajectory. It does not assume that the preceding command reached an
-ideal pose.
+of a replacement trajectory. It does not assume that the preceding command
+reached an ideal pose.
 
 For an absolute motion, keyframes already contain complete pose targets. For a
-character-owned relative motion, every offset is resolved from the immutable
-idle or speech anchor even when the interruption begins elsewhere. This gives
+character-owned relative motion, the coordinator resolves every offset from
+the immutable idle or speech anchor even when the interruption begins
+elsewhere. This gives
 two simultaneous guarantees:
 
 - the blend starts from physical reality; and
 - repeated relative animation cannot move its reference point or accumulate
   drift.
 
-Before compilation, relative motion is uniformly scaled if the full offsets
-would exceed live calibrated ranges. Scaling the entire clip preserves its
-shape. Individual joints are not independently clipped into a distorted pose.
+Before compilation, the coordinator uniformly scales relative motion if its
+full offsets would exceed live calibrated ranges. Scaling the entire clip
+preserves its shape. The coordinator does not clip individual joints into a
+distorted pose.
 
-### 3. The complete action is compiled once
+### 3. The compiler builds the complete action once
 
 `MotionSequence` converts resolved keyframes to trajectory waypoints and calls
-the Rust `CompiledTrajectory`. The compiler sees the start state and every
-future drawing at the same time. It can therefore derive compatible internal
-velocities and accelerations instead of restarting an easing curve at each
-keyframe.
+the Rust `CompiledTrajectory`. The compiler sees the start state and all
+remaining drawings at the same time. It can therefore derive compatible
+internal velocities and accelerations instead of restarting an easing curve at
+each keyframe.
 
 Each joint and each segment receives a quintic polynomial constrained by
 position, velocity, and acceleration at both ends. Neighboring segments share
@@ -190,14 +188,14 @@ cycle, `RuntimeCore`:
 6. publishes the sampled feedback snapshot.
 
 Reading before writing preserves a consistent snapshot of the state that
-preceded the cycle's new command. Scene, speech, lighting, character, and Unix
+preceded the cycle's command. Scene, speech, lighting, character, and Unix
 command processing then run around the same monotonic loop.
 
 Hardware and MuJoCo implement the same `RuntimeDriver` interface. They receive
 the same joint-space samples and run under the same daemon lifecycle. MuJoCo
 is therefore a physics backend, not a second animation implementation.
 
-### 5. Completion is measured, not assumed
+### 5. Measured feedback determines completion
 
 Finishing the authored duration moves a run from `executing` to `settling`.
 The runtime continues reading feedback and requires every joint to remain
@@ -221,8 +219,8 @@ Fluidity is the result of several layers working together:
   identical path shape.
 - Coordinated joint targets create visual arcs in the head and lamp body.
 - Interruption begins from measured position and velocity.
-- Speech is compiled as one utterance-length performance rather than a queue of
-  independently settled gestures.
+- The compiler builds speech as one utterance-length performance rather than a
+  queue of independently settled gestures.
 - Secondary joints follow the primary action instead of moving as an unrelated
   periodic oscillator.
 
@@ -252,7 +250,7 @@ Completing a foreground scene may establish its final measured pose as the
 next idle anchor. A direct foreground motion captures the measured pose it
 leaves holding when the run terminates. Speech and idle always return to the
 anchor they inherited; they never replace it. Failed or cancelled scenes do
-not establish a new anchor.
+not establish a replacement anchor.
 
 ## Failure containment
 
@@ -264,7 +262,8 @@ The layers fail independently where product behavior requires it:
   mode off.
 - A scene movement timeout makes the scene terminal and stops its owned audio.
 - Invalid assets fail catalog loading or transactional reload before execution.
-- A target outside calibration is rejected before any joint command is sent.
+- The runtime rejects a target outside calibration before sending any joint
+  command.
 - Driver activation seeds goal registers from present encoder positions before
   enabling torque, preventing an activation jump.
 

@@ -8,7 +8,7 @@
 Orion needs deterministic device ownership, explicit lifecycle state, bounded
 motion execution, and a simulator path that exercises the same control logic
 as physical hardware. Earlier framework experiments introduced boundaries that
-were not required by the current single-robot product.
+were not required by the single-robot product.
 
 ## Decision
 
@@ -23,6 +23,5 @@ coordination, and run lifecycle inside this runtime boundary.
 - The Pi has one long-running owner for motion and device state.
 - Other processes integrate through a small command protocol rather than
   importing or reimplementing control logic.
-- A future distributed robotics framework must adapt to this boundary instead
+- Any distributed robotics framework must adapt to this boundary instead
   of replacing it implicitly.
-

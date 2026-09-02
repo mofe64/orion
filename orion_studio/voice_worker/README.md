@@ -1,7 +1,9 @@
 # Orion Studio voice worker
 
 The worker keeps Orion's wake, transcription, agent, and speech models behind
-one authenticated loopback WebSocket:
+one authenticated loopback WebSocket. Qwen3-ASR provides automatic speech
+recognition (ASR), Chatterbox provides text-to-speech (TTS), and
+`AgentProvider` is the small adapter contract between them:
 
 ```text
 Rustpotter -> Qwen3-ASR -> AgentProvider -> Chatterbox Turbo -> Orion ReSpeaker
@@ -9,12 +11,12 @@ Rustpotter -> Qwen3-ASR -> AgentProvider -> Chatterbox Turbo -> Orion ReSpeaker
 
 Rustpotter proposes a wake candidate. Qwen confirms that the transcript starts
 with “Hey Orion” and returns the remaining command. The configured agent sees
-only that confirmed text, and Chatterbox converts its reply to PCM audio.
+only that confirmed text, and Chatterbox converts its reply to digital audio.
 
 ## Setup on Apple Silicon
 
-The Qwen and Chatterbox adapters use MLX and currently require an Apple Silicon
-Mac with Python 3.10–3.13, `uv`, and a Rust toolchain:
+The Qwen and Chatterbox adapters use Apple's MLX machine-learning framework and
+require an Apple Silicon Mac with Python 3.10–3.13, `uv`, and a Rust toolchain:
 
 ```bash
 cd orion_studio/voice_worker
@@ -22,14 +24,14 @@ uv sync --python 3.12
 .venv/bin/orion-voice-models
 ```
 
-Run both commands on every new development device before enabling Voice.
+Run both commands on each development device before enabling Voice.
 Starting Studio does not proactively fetch the models. If they are absent when
 Voice starts, the libraries may download them during worker startup and exceed
 Studio's three-minute connection timeout. The explicit downloader is the
 supported, observable first-run path.
 
 The download command places the weights in the user's Hugging Face cache. The
-current cache footprint is about 1.8 GB for Qwen, 675 MB for Chatterbox Turbo
+commissioned models use about 1.8 GB for Qwen, 675 MB for Chatterbox Turbo
 8-bit, and 472 MB for its tokenizer. The weights are not included in Git or the
 Studio bundle. See [model management](../../docs/how-to/manage-studio-voice-models.md)
 for cache and offline preparation. Select other compatible models for one
@@ -59,19 +61,20 @@ pnpm tauri dev
 
 ## Runtime flow
 
-Studio sends continuous 16 kHz mono PCM16 frames after the user enables Voice.
+Studio sends continuous 16 kHz mono signed 16-bit pulse-code modulation (PCM16)
+frames after the user enables Voice.
 The worker keeps a three-second in-memory pre-roll and follows this sequence:
 
 ```text
 Rustpotter candidate
-    -> endpoint current utterance
+    -> endpoint active utterance
     -> Qwen transcript
     -> reject if it does not start with "Hey Orion"
     -> otherwise remove the wake phrase
     -> configured agent provider
     -> Chatterbox PCM16
     -> Studio validates and uploads PCM16 WAV to Orion
-    -> Pi ReSpeaker + speaking motion + warm RGBW light
+    -> Pi ReSpeaker + speaking motion + warm red-green-blue-white (RGBW) light
     -> terminal playback acknowledgement
 ```
 

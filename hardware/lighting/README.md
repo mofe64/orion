@@ -2,7 +2,8 @@
 
 Orion's installed light is an Adafruit NeoPixel Shield, product 2864:
 
-- 40 individually addressable SK6812-compatible RGBW pixels.
+- 40 individually addressable SK6812-compatible red-green-blue-white (RGBW)
+  pixels.
 - Physical 5 by 8 matrix.
 - Dedicated approximately 3000 K warm-white channel.
 - 8-bit red, green, blue, and white channels.
@@ -16,9 +17,10 @@ Pi physical pin 30 / ground -> shield ground
 Pi physical pin 32 / BCM12 -> shield D6 / DIN
 ```
 
-There is currently no 3.3 V-to-5 V data level shifter. The physical backend
-must therefore use BCM12, PWM channel 0, non-inverted output, 40 pixels, and an
-initial GRBW/800 kHz configuration.
+The assembled robot has no 3.3 V-to-5 V data level shifter. The physical
+backend must therefore use BCM12, pulse-width modulation (PWM) channel 0,
+non-inverted output, 40 pixels,
+and an initial green-red-blue-white (GRBW)/800 kHz configuration.
 
 Physical commissioning on Orion confirmed a non-serpentine, row-major 8 by 5
 matrix. Every row runs left to right, starting at the top:

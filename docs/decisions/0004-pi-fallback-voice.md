@@ -18,7 +18,7 @@ which remains the owner of ReSpeaker playback and speech lifecycle.
 
 ## Consequences
 
-- The robot can validate local capture, wake, ASR, generation, and playback
+- The robot can validate local capture, wake, speech recognition, generation, and playback
   without Studio.
 - Pi model installation and Studio model installation remain separate.
 - The fallback does not become a second agent or hardware-control authority.

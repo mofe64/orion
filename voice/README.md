@@ -1,7 +1,9 @@
 # Orion Raspberry Pi-local fallback voice runtime
 
 `voice/` contains Orion's Raspberry Pi-local fallback and diagnostic speech
-processes. Studio Voice is the primary interactive path; see the
+processes. It uses automatic speech recognition (ASR), voice activity
+detection (VAD), and text-to-speech (TTS). Studio Voice is the primary
+interactive path; see the
 [voice architecture](../docs/explanation/voice-architecture.md). The Pi path
 has two narrow runtime boundaries:
 
@@ -12,7 +14,7 @@ microphones -> Sherpa wake/VAD/Moonshine -> /tmp/orion-wake.sock -> voice events
 
 Piper owns text-to-speech model inference. `oriond` remains the only owner of
 physical playback, so generated speech keeps the same speech IDs, status,
-`--wait`, cancellation, and ALSA lifecycle as cues and scenes.
+`--wait`, cancellation, and audio-device lifecycle as cues and scenes.
 
 The listener owns transient 16 kHz mono microphone capture, detects the
 phrase `HELLO WORLD`, segments the following command with Silero VAD, and
@@ -50,7 +52,7 @@ It performs six bounded operations:
 
 1. Downloads `en_US-ryan-medium`, Orion's selected production voice.
 2. Downloads Sherpa's English 3.3-million-parameter GigaSpeech keyword model.
-3. Generates the model-specific BPE tokens for `HELLO WORLD`.
+3. Generates the model-specific byte-pair encoding (BPE) tokens for `HELLO WORLD`.
 4. Downloads the quantized Moonshine Tiny English speech-recognition model.
 5. Downloads the Silero VAD model used to delimit commands.
 6. Removes other top-level Piper voice files while retaining nested voice models.
@@ -136,8 +138,9 @@ voice/.venv/bin/orion-voice wake-worker
 ```
 
 The worker first applies Orion's ReSpeaker V2 capture contract: the two
-single-ended microphone routes, fixed 50 dB PGA gain, and codec AGC disabled.
-It then opens the stable ALSA capture device at 16 kHz mono.
+single-ended microphone routes, fixed 50 dB programmable-gain amplifier (PGA)
+gain, and codec automatic gain control (AGC) disabled. It then opens the stable
+Advanced Linux Sound Architecture (ALSA) capture device at 16 kHz mono.
 
 Wait for:
 
@@ -159,7 +162,8 @@ Say **“Hello world.”** A successful detection returns:
 ```
 
 The worker continues listening and increments `event_id`. A subscriber receives
-future events only; the socket is an event stream, not a history database.
+events emitted after subscription only; the socket is an event stream, not a
+history database.
 
 To commission a different phrase without reinstalling the model, stop the wake
 worker and regenerate its small BPE keyword file:
@@ -238,8 +242,9 @@ Silero requires 0.8 seconds of trailing silence to close the command and limits
 one speech segment to 10 seconds. Completed samples are released after
 transcription; no WAV or transcript history is stored by the worker.
 
-This slice stops at transcript publication. It does not yet interpret the text,
-invoke Orion capabilities, move Orion, or synthesize a response.
+The implemented fallback listener stops at transcript publication. It does not
+interpret the text, invoke Orion capabilities, move Orion, or synthesize a
+response.
 
 ## Tests
 

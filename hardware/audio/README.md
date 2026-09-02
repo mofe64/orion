@@ -1,25 +1,27 @@
 # Orion audio hardware
 
-Orion's current audio HAT is the Seeed Studio ReSpeaker 2-Mics Pi HAT V2,
-identified electrically by its TLV320AIC3104 codec at I2C address `0x18`. The
-HAT provides two microphones plus playback through its 3.5 mm jack and JST 2.0
-speaker output.
+Orion's installed audio board is the Seeed Studio ReSpeaker 2-Mics Pi HAT V2,
+a Raspberry Pi Hardware Attached on Top (HAT). Its TLV320AIC3104 codec uses
+Inter-Integrated Circuit (I2C) address `0x18`. The HAT provides two microphones
+plus playback through its 3.5 mm jack and JST 2.0 speaker output.
 
 Orion uses Seeed's V2 device-tree overlay with the Raspberry Pi kernel's
 `snd_soc_tlv320aic3x`, `snd_soc_tlv320aic3x_i2c`, and
-`snd_soc_simple_card` modules. The overlay selects the Pi 5 I2S
-clock-consumer block and registers the stable ALSA card name
-`seeed2micvoicec`. No custom audio kernel module is installed.
+`snd_soc_simple_card` modules. The overlay selects the Pi 5 Inter-IC Sound
+(I2S) clock-consumer block and registers the stable Advanced Linux Sound
+Architecture (ALSA) card name `seeed2micvoicec`. No custom audio kernel module
+is installed.
 
-## GPIO integration
+## General-purpose input/output integration
 
 The audio path uses I2C and I2S. The HAT also exposes BCM12 and BCM13 on its
-Grove digital connector, but the audio overlay does not claim them. Orion
+general-purpose input/output (GPIO) Grove digital connector, but the audio
+overlay does not claim them. Orion
 already owns BCM12 for the 40-pixel NeoPixel shield, so nothing may be attached
 to the ReSpeaker Grove digital connector while that lighting wiring is in use.
 
 The HAT's three APA102 LEDs and user button are not used. Orion uses the
-40-pixel RGBW shield as its expressive-light device.
+40-pixel red-green-blue-white (RGBW) shield as its expressive-light device.
 
 ## Persistent Raspberry Pi 5 setup
 
@@ -78,8 +80,8 @@ hardware/audio/configure-playback.sh
 ```
 
 The script selects `DAC_R1`, sends it through the right line mixer, keeps both
-analogue stages at unity gain, and sets PCM to the current physical-acceptance
-target of `0 dB`.
+analogue stages at unity gain, and sets PCM to the commissioned
+physical-acceptance target of `0 dB`.
 The right differential line output feeds the V2 HAT's mono amplifier and JST
 connector; the `HP` controls instead serve the 3.5 mm jack.
 
@@ -104,11 +106,12 @@ hardware/audio/configure-capture.sh
 ```
 
 The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
-routes, disables the codec's automatic gain controller, and applies a fixed
-50 dB PGA capture gain. The wake worker runs this script automatically before
-opening `arecord`; direct recording tests can run it explicitly. This prevents
-wake-word behavior from depending on whatever capture level a previous process
-left in the codec. Physical commissioning found that 50 dB recognized the wake
+routes, disables the codec's automatic gain control (AGC), and applies a fixed
+50 dB programmable-gain amplifier (PGA) capture gain. The wake worker runs this
+script automatically before opening `arecord`; direct recording tests can run
+it explicitly. This prevents wake-word behavior from depending on whatever
+capture level a previous process left in the codec. Physical commissioning
+found that 50 dB recognized the wake
 phrase reliably, while the codec's 59.5 dB maximum degraded detection through
 excess noise or clipping. Codec AGC remains disabled.
 
@@ -116,11 +119,13 @@ excess noise or clipping. Codec AGC remains disabled.
 
 The assembled Pi 5 passed the persistent V2 verification with playback and
 capture registered as `seeed2micvoicec`, while BCM12 remained assigned to the
-NeoPixel PWM output. The JST route produced the 440 Hz right-channel test tone,
+NeoPixel pulse-width modulation (PWM) output. The JST route produced the 440 Hz
+right-channel test tone,
 the direct cue command played Orion's local chime, and both expressive
 acknowledgement scenes exercised that ReSpeaker playback path successfully.
-The current acceptance target is `0 dB`; final listening acceptance must confirm
-that speech is clear without audible clipping at the assembled JST speaker.
+The commissioned acceptance target is `0 dB`; final listening acceptance must
+confirm that speech is clear without audible clipping at the assembled JST
+speaker.
 
 ## Planned audio-front-end upgrade
 

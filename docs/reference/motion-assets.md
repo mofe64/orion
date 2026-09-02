@@ -1,16 +1,8 @@
 # Motion asset reference
 
-| Document contract | Value |
-| --- | --- |
-| Status | Normative repository reference |
-| Audience | Motion authors, reviewers, Studio implementers, and runtime maintainers |
-| Owns | Pose and motion file contracts, style values, catalog layout, and validation invariants |
-| Defers to | [Scene reference](../../scenes/README.md) for multimodal tracks and [trajectory reference](trajectory-and-joint-control.md) for compilation |
-| Code authority | `runtime/src/pose.rs`, `runtime/src/motion.rs`, and `runtime/src/style.rs` |
-
 Orion loads one pose schema and one motion schema. Both use
-`format_version: 2`. Unknown fields are rejected, so examples in this document
-may be copied without relying on ignored compatibility fields.
+`format_version: 2`. The loaders reject unknown fields, so copied examples do
+not rely on ignored compatibility fields.
 
 ## Repository layout
 
@@ -28,9 +20,9 @@ motion/
     └── user/**/*.yaml              Studio-authored motions
 ```
 
-Built-in and user files are loaded recursively in sorted path order. Semantic
-names are global within each asset type. A user asset cannot shadow a built-in
-or another user asset.
+The loaders traverse built-in and user files recursively in sorted path order.
+Semantic names are global within each asset type. A user asset cannot shadow a
+built-in or another user asset.
 
 ## Joint vocabulary
 
@@ -95,7 +87,7 @@ Tags communicate intended use:
 
 Tags are descriptive except where character code explicitly checks
 `shutdown_only` or `mechanical`. Authors must not infer unimplemented policy
-from a new tag.
+from an unrecognized tag.
 
 ## Motion schema
 
@@ -177,7 +169,7 @@ a scale of one.
 
 Use relative motion for ambient idle, speaking, and reusable detail that must
 work around several powered poses. Relative motion must return to its anchor;
-it cannot establish a new one.
+it cannot establish another anchor.
 
 ## Arrival semantics
 
@@ -186,7 +178,7 @@ it cannot establish a new one.
 The compiler derives internal velocity and acceleration from the neighboring
 segments and style. Position, velocity, and acceleration match on both sides
 of the keyframe. A direction reversal may have zero instantaneous velocity,
-but no hold is inserted.
+but the compiler inserts no hold.
 
 ### `settle`
 
@@ -199,8 +191,8 @@ retimed keyframe arrival so scene light and audio remain synchronized.
 
 ## Motion styles
 
-Styles are compiled constants. They are artistic policy and contain no
-calibration or motor limits.
+Rust defines styles as compiled constants. They are artistic policy and contain
+no calibration or motor limits.
 
 | Style | Tempo | Tangent tension | Joint lag | Amplitude | Overshoot scale | Settle character | Intended use |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |

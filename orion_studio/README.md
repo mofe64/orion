@@ -15,7 +15,7 @@ Studio / Chatterbox ── authenticated HTTP v2 ──> Pi gateway
 Editing is inert. A slider, keyframe, or timeline drag never moves Orion.
 Explicit **Run on Orion** and **Publish v2 asset** actions cross the gateway.
 
-## Current editor model
+## Editor model
 
 - **Pose** — all five joints, semantic tags, idle profile, default lighting,
   and live calibrated ranges while connected.
@@ -86,12 +86,12 @@ The workstation still performs wake detection, Qwen transcription, agent
 response, and Chatterbox Turbo synthesis. Playback is Pi-owned:
 
 ```text
-Chatterbox PCM16
+Chatterbox signed 16-bit pulse-code modulation (PCM16)
   -> exact mono 24 kHz RIFF/WAV
   -> authenticated POST /api/v2/speech
   -> random Pi spool identifier
   -> oriond/ReSpeaker playback
-  -> energy-driven speaking motion + warm RGBW light
+  -> energy-driven speaking motion + warm red-green-blue-white (RGBW) light
   -> terminal status
   -> Studio playback acknowledgement
 ```

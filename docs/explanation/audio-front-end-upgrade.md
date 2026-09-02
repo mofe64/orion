@@ -4,9 +4,9 @@
 - **Commissioned path:** [Raspberry Pi audio hardware](../../hardware/audio/README.md)
 
 The ReSpeaker mixer enables both physical microphone routes, but Orion's
-commissioned Pi listener requests 16 kHz, 16-bit, one-channel PCM. Wake
-detection, VAD, and transcription therefore do not receive the microphones as
-separate signals.
+commissioned Pi listener requests 16 kHz, 16-bit, one-channel pulse-code
+modulation (PCM). Wake detection, voice activity detection (VAD), and
+transcription therefore do not receive the microphones as separate signals.
 
 The intended upgrade keeps both channels long enough to produce a cleaner mono
 signal for the existing voice models:
@@ -24,19 +24,20 @@ ReSpeaker left + right microphones
  noise suppression and optional echo cancellation
                 │
                 ▼
-       16 kHz mono wake/VAD/STT
+       16 kHz mono wake/VAD/speech-to-text
 ```
 
-Wake detection, Silero VAD, and ASR continue to consume 16 kHz mono audio.
-Stereo handling belongs in one front-end component between ALSA capture and
-the voice controller; individual models must not implement independent
-downmixing.
+Wake detection, Silero VAD, and automatic speech recognition (ASR) continue to
+consume 16 kHz mono audio. Stereo handling belongs in one front-end component
+between Advanced Linux Sound Architecture (ALSA) capture and the voice
+controller; individual models must not implement independent downmixing.
 
 ## Upgrade phases
 
 1. **Stereo capture and diagnostics.** Capture 48 kHz, 16-bit interleaved
-   stereo. Commission channel identity and record per-channel RMS, clipping,
-   and noise floor so wiring, obstruction, or microphone failure is visible.
+   stereo. Commission channel identity and record per-channel root-mean-square
+   (RMS) level, clipping, and noise floor so wiring, obstruction, or microphone
+   failure is visible.
 2. **Adaptive mono combination.** Calibrate persistent gain mismatch and
    smoothly weight the cleaner channel. This improves obstruction and local
    noise handling without requiring direction estimation.
@@ -48,10 +49,10 @@ downmixing.
    beamforming. Do not assume an unaligned average is safe.
 5. **Playback-reference echo cancellation.** Provide the exact PCM played by
    `oriond` to an acoustic echo canceller alongside the microphone stream.
-   Local cues, generated speech, and future streamed speech need the same
+   Local cues, generated speech, and planned streamed speech need the same
    synchronized reference. WebRTC Audio Processing Module is one candidate.
-6. **Digital level control.** Keep codec AGC disabled. Apply slow digital gain
-   and limiting only after channel alignment and combination; retain the
+6. **Digital level control.** Keep codec automatic gain control (AGC) disabled.
+   Apply slow digital gain and limiting only after channel alignment and combination; retain the
    commissioned fixed 50 dB PGA baseline.
 
 ## Expected benefits and limits
@@ -80,4 +81,4 @@ microphone covered, and during Orion speech playback. Track:
 
 Promote the stereo path only when it improves the target metrics without
 dropouts. Retain a configuration switch to the commissioned mono path until
-the new path has equivalent physical evidence.
+the upgraded path has equivalent physical evidence.

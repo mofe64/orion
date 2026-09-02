@@ -7,7 +7,8 @@ runtime inputs.
 MuJoCo needs a model that describes Orion's bodies, joints, mass, shapes,
 motors, sensors, and surroundings. MuJoCo's XML format is called MJCF.
 
-Orion's URDF and MJCF describe the same robot for different systems:
+Orion's Unified Robot Description Format (URDF) and MJCF describe the same
+robot for different systems:
 
 ```text
 URDF = the neutral kinematic and geometry description
@@ -506,8 +507,8 @@ Orion has an `imu_site` with two MuJoCo sensors:
 As the body moves, the site moves with it. The accelerometer and gyroscope
 therefore measure motion at the IMU's location.
 
-These MuJoCo IMU sensors are part of the model but are not yet exposed through
-Orion's native status interface.
+The model includes these MuJoCo IMU sensors, but `RuntimeDriver` does not expose
+them through Orion's native status interface.
 
 ## Joint and Actuator Lookup
 

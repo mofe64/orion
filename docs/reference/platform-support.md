@@ -20,10 +20,10 @@ that operating system. “Supported” means automated tests cover the path.
 “Commissioned” means it has also been exercised on the named physical
 platform.
 
-The current Qwen3-ASR and Chatterbox adapters depend on MLX and therefore need
-an Apple Silicon Mac. Supporting Studio Voice on Windows or Linux requires a
-non-MLX inference adapter; the worker protocol and `AgentProvider` boundary do
-not otherwise require macOS.
+The implemented Qwen3-ASR and Chatterbox adapters depend on Apple's MLX
+machine-learning framework and therefore need an Apple Silicon Mac. Supporting
+Studio Voice on Windows or Linux requires a non-MLX inference adapter; the
+worker protocol and `AgentProvider` boundary do not otherwise require macOS.
 
 Version-specific dependencies live in their manifests:
 

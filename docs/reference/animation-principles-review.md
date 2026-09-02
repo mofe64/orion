@@ -1,9 +1,9 @@
 # Orion v2 animation-principles review
 
-This is the commissioning review for the built-in v2 character catalog. The
-physical model does not deform: “squash and stretch” means coordinated joint
-compression and extension. Every action is staged around one readable primary
-idea; light, sound, and secondary joints support rather than compete with it.
+The commissioned v2 character catalog stages every action around one readable
+primary idea; light, sound, and secondary joints support rather than compete
+with it. The physical model does not deform, so “squash and stretch” means
+coordinated joint compression and extension.
 
 The design rules behind this review are explained in
 [Character animation design](../explanation/character-animation.md). Asset

@@ -1,7 +1,7 @@
 # Orion STS3215 Servo Setup
 
-This tool performs the first hardware operation in Orion's physical-prototype
-milestone: assigning one persistent bus ID to each STS3215 servo.
+The Orion servo setup tool assigns one persistent bus ID to each STS3215 servo
+before runtime commissioning.
 
 It is an Orion-native equivalent of LeLamp's `lelamp.setup_motors` workflow.
 The implementation uses LeRobot's supported `FeetechMotorsBus` API rather than
@@ -11,9 +11,9 @@ provisioning separate from Orion's native runtime.
 ## Why setup is necessary
 
 STS3215 servos share one serial bus. Commands contain a numeric destination ID
-so that only the intended servo responds. New servos commonly have the same
-factory ID. If several identically addressed servos are daisy-chained, Orion
-cannot reliably command or read them individually.
+so that only the intended servo responds. Unconfigured servos commonly have
+the same factory ID. If several identically addressed servos are daisy-chained,
+Orion cannot reliably command or read them individually.
 
 Setup writes two persistent values to each servo:
 
@@ -69,9 +69,9 @@ cd hardware/servo_setup
 uv sync
 ```
 
-The local `.python-version` asks `uv` to use Python 3.12 because the current
-LeRobot package requires Python 3.12 or newer and is not yet declared compatible
-with Python 3.14.
+The local `.python-version` asks `uv` to use Python 3.12 because the installed
+LeRobot package requires Python 3.12 or newer and does not declare Python 3.14
+compatibility.
 
 ## Find the controller port
 
@@ -134,8 +134,8 @@ opens the bus immediately; it does not prompt or write servo registers. It:
 5. Prints a compact live-state table and a raw register matrix for comparison.
 6. Closes the serial port without writing a torque or configuration register.
 
-The raw encoder position is not yet an Orion joint angle. Mechanical zero,
-direction, and safe ranges are established during calibration after assembly.
+The raw encoder position becomes an Orion joint angle only after calibration
+establishes mechanical zero, direction, and safe ranges for the assembly.
 
 To list the selected bus IDs without opening hardware:
 
@@ -147,7 +147,7 @@ uv run orion-verify-servos --port /dev/not-opened --dry-run
 
 The first-motion nudge and direct named-pose commands were commissioning tools,
 not runtime control. Their installed entry points have been removed and their
-source now lives in `orion_servo_setup/archived/`. New physical movement runs
+source lives in `orion_servo_setup/archived/`. Supervised physical movement runs
 through the Rust `oriond` runtime.
 
 ## Calibrate all five joints in one session

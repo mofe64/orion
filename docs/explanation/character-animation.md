@@ -1,13 +1,5 @@
 # Character animation design
 
-| Document contract | Value |
-| --- | --- |
-| Status | Current character behavior |
-| Audience | Character designers, motion authors, interaction engineers, and reviewers |
-| Owns | Orion's animation language, the 12 principles, idle behavior, and speech-driven performance |
-| Defers to | [Motion and animation architecture](motion-and-animation-architecture.md) for system flow and [motion asset reference](../reference/motion-assets.md) for exact file contracts |
-| Code authority | `runtime/src/character.rs`, `runtime/src/speech.rs`, and the built-in motion catalog |
-
 Orion's animation goal is not constant motion. Orion should feel calm, curious,
 warm, and attentive: alive enough that a person can read intention, restrained
 enough that movement never competes with the lamp's task or the conversation.
@@ -120,9 +112,9 @@ reschedules only that category, preserving the other deadline. Speech, a
 foreground action, or a reaction-state change resets the schedule so Orion
 does not immediately add ambient movement after a user-facing action.
 
-The pseudorandom generator is seeded. Physical runs still vary, while tests
-and previews can reproduce the exact selection sequence. The immediately
-preceding clip is removed from the candidate set.
+The scheduler seeds its pseudorandom generator. Physical runs still vary,
+while tests and previews can reproduce the exact selection sequence. The
+scheduler removes the immediately preceding clip from the candidate set.
 
 ### Profile-aware selection
 
@@ -140,16 +132,16 @@ idles redistribute more of the body and happen less often.
 
 ### Safe amplitude and no drift
 
-Before a relative clip is compiled, the runtime computes the largest single
+Before compiling a relative clip, the runtime computes the largest single
 scale in `[0, 1]` that keeps every styled offset inside the live calibrated
-range around the anchor. One scale is applied to the whole clip. This retains
-the authored relationship among joints instead of flattening whichever joint
-reaches its limit first.
+range around the anchor. The runtime applies one scale to the whole clip. This
+retains the authored relationship among joints instead of flattening whichever
+joint reaches its limit first.
 
 The motion starts from measured position and velocity but resolves every
 target from the immutable anchor. If foreground work arrives, `stop` cancels
 the idle lifecycle and the foreground trajectory blends from the measured
-interruption state. There is no forced trip back to the anchor before the new
+interruption state. There is no forced trip back to the anchor before the
 action.
 
 ### Idle light and sound
@@ -166,18 +158,20 @@ are sufficient to communicate life.
 
 Speech is an utterance-length performance generated before its movement
 begins. Orion does not play a short gesture, stop, choose another, and restart.
-The complete sequence of phrase drawings is compiled into one motion spline
-with one final settle.
+The trajectory compiler combines the complete sequence of phrase drawings into
+one motion spline with one final settle.
 
 ### Audio ownership and analysis
 
 Studio synthesizes a whole response and uploads a validated RIFF/WAV file to
-the Pi. The gateway requires PCM16, mono, 24 kHz audio, applies size and duration
-limits, writes an atomic random spool item, and asks the speech coordinator to
-play that identifier. The coordinator never accepts an arbitrary path.
+the Pi. The gateway requires mono, 24 kHz, signed 16-bit pulse-code modulation
+(PCM16). It applies size and duration limits, writes an atomic random spool
+item, and asks the speech coordinator to play that identifier. The coordinator
+never accepts an arbitrary path.
 
 The runtime divides PCM into 20 ms frames, matching its 50 Hz loop. For each
-frame it calculates RMS energy and applies exponential smoothing:
+frame it calculates root-mean-square (RMS) energy and applies exponential
+smoothing:
 
 ```text
 smoothed[n] = 0.65 × smoothed[n-1] + 0.35 × rms[n]
@@ -185,9 +179,9 @@ smoothed[n] = 0.65 × smoothed[n-1] + 0.35 × rms[n]
 
 It derives:
 
-- quiet regions below `max(12% of maximum energy, 0.004)`; internal runs
-  shorter than three frames are discarded, while a trailing quiet run is
-  retained; and
+- quiet regions below `max(12% of maximum energy, 0.004)`; the analyzer
+  discards internal runs shorter than three frames but retains a trailing quiet
+  run; and
 - phrase peaks above `1.35 × mean energy`, locally maximal, and separated by
   at least ten frames (200 ms).
 
@@ -225,13 +219,13 @@ Every planned phrase is divided into two `through` drawings:
    toward the next phrase's arc.
 
 The head lead receives roughly two-thirds of the phrase duration. During the
-body follow, the current head target already includes a small look-ahead toward
-the next head target (currently 18%). That staging creates anticipation and
-overlap inside the same continuous spline.
+body follow, the head target includes an 18% look-ahead toward the following
+phrase's head target. That staging creates anticipation and overlap inside the
+same continuous spline.
 
-Ordinary shoulder and elbow offsets are scaled to remain visibly subordinate
-to the head. A larger explanatory body beat is allowed only when all of these
-conditions hold:
+The planner scales ordinary shoulder and elbow offsets to remain visibly
+subordinate to the head. It allows a larger explanatory body beat only when all
+of these conditions hold:
 
 - the drawing is associated with a detected phrase peak;
 - its peak energy is at least 72% of the utterance maximum;
@@ -253,11 +247,11 @@ The performance ends with one zero-offset `settle` around the pre-speech
 anchor. All internal drawings are `through`. There is no independent periodic
 elbow oscillator and no scheduler gap between gestures.
 
-### Current performance policy
+### Implemented performance policy
 
 These values are character policy, not hardware limits:
 
-| Policy | Current value |
+| Policy | Implemented value |
 | --- | --- |
 | Motion end lead before audio duration | `0.12 s` |
 | Nominal final settle budget | `0.55 s`, bounded for short utterances |
@@ -288,11 +282,11 @@ valid response. If movement cannot start, audio continues.
 When playback ends before the generated movement, the runtime cancels the
 performance and compiles a short anchor-relative settle from measured state.
 Cancellation does the same. If audio upload, validation, synthesis, or playback
-fails, the speech run becomes `failed`, its temporary file is removed, and
-character motion returns to the anchor. Idle resumes only after a newly
-randomized delay.
+fails, the speech run becomes `failed`, the coordinator removes its temporary
+file, and character motion returns to the anchor. Idle resumes only after the
+scheduler chooses another randomized delay.
 
-## Designing new animation
+## Designing animation
 
 Before adding an asset, answer these questions:
 
