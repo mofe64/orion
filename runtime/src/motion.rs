@@ -457,6 +457,35 @@ impl MotionSequence {
         anchor: JointPositions,
         amplitude_scale: f64,
     ) -> Result<Self> {
+        Self::compile_scaled_inner(motion, start, start_velocity, anchor, amplitude_scale, None)
+    }
+
+    pub fn compile_scaled_calibrated(
+        motion: &MotionDefinition,
+        start: JointPositions,
+        start_velocity: JointPositions,
+        anchor: JointPositions,
+        amplitude_scale: f64,
+        limits: &[JointLimit],
+    ) -> Result<Self> {
+        Self::compile_scaled_inner(
+            motion,
+            start,
+            start_velocity,
+            anchor,
+            amplitude_scale,
+            Some(limits),
+        )
+    }
+
+    fn compile_scaled_inner(
+        motion: &MotionDefinition,
+        start: JointPositions,
+        start_velocity: JointPositions,
+        anchor: JointPositions,
+        amplitude_scale: f64,
+        limits: Option<&[JointLimit]>,
+    ) -> Result<Self> {
         if !amplitude_scale.is_finite() || !(0.0..=1.0).contains(&amplitude_scale) {
             return Err(Error::InvalidArgument(
                 "Motion amplitude scale must be between zero and one.".into(),
@@ -479,16 +508,27 @@ impl MotionSequence {
                 marker: keyframe.marker.clone(),
             })
             .collect();
-        Ok(Self {
-            trajectory: CompiledTrajectory::compile(
+        let trajectory = if let Some(limits) = limits {
+            CompiledTrajectory::compile_calibrated(
                 motion.name.clone(),
                 start,
                 start_velocity,
                 waypoints,
                 motion.style,
                 STS3215_MAX_SPEED_RAD_S,
-            )?,
-        })
+                limits,
+            )?
+        } else {
+            CompiledTrajectory::compile(
+                motion.name.clone(),
+                start,
+                start_velocity,
+                waypoints,
+                motion.style,
+                STS3215_MAX_SPEED_RAD_S,
+            )?
+        };
+        Ok(Self { trajectory })
     }
 
     pub fn sample(&self, elapsed_seconds: f64) -> Result<JointPositions> {

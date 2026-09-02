@@ -119,8 +119,14 @@ fn run() -> Result<()> {
     validate_state_against_calibration("start", &start, &limits)?;
     validate_state_against_calibration("anchor", &anchor, &limits)?;
     let amplitude_scale = motion.uniform_amplitude_scale(&anchor, &limits)?;
-    let sequence =
-        MotionSequence::compile_scaled(motion, start, start_velocity, anchor, amplitude_scale)?;
+    let sequence = MotionSequence::compile_scaled_calibrated(
+        motion,
+        start,
+        start_velocity,
+        anchor,
+        amplitude_scale,
+        &limits,
+    )?;
 
     let sample_times =
         fixed_rate_sample_times(sequence.duration_seconds(), arguments.control_rate_hz);

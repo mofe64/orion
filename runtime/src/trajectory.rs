@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
+use crate::driver::JointLimit;
 use crate::pose::JointPositions;
 use crate::style::MotionStyle;
 use crate::{Error, Result};
@@ -8,6 +10,8 @@ use crate::{Error, Result};
 pub const STS3215_MAX_SPEED_RAD_S: f64 = 5.445_427_266_222_309;
 const RETIME_ITERATIONS: usize = 12;
 const OVERSHOOT_SAMPLES: usize = 80;
+const CALIBRATION_BLEND_ITERATIONS: usize = 18;
+const COMMAND_RATE_HZ: f64 = 50.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WaypointArrival {
@@ -146,6 +150,53 @@ impl CompiledTrajectory {
         Ok(candidate)
     }
 
+    /// Compile an interruption blend whose 50 Hz command samples remain inside
+    /// calibration. Measured start velocity is preserved joint-by-joint when
+    /// it is safe. Only joints whose blend would leave their calibrated range
+    /// are progressively attenuated; authored targets and all other joints are
+    /// unchanged.
+    pub fn compile_calibrated(
+        name: impl Into<String>,
+        start: JointPositions,
+        start_velocity: JointPositions,
+        waypoints: Vec<TrajectoryWaypoint>,
+        style: MotionStyle,
+        maximum_velocity_rad_s: f64,
+        limits: &[JointLimit],
+    ) -> Result<Self> {
+        let name = name.into();
+        validate_limits(&start, limits)?;
+        let mut blended_velocity = start_velocity;
+        for _ in 0..CALIBRATION_BLEND_ITERATIONS {
+            let candidate = Self::compile(
+                name.clone(),
+                start.clone(),
+                blended_velocity.clone(),
+                waypoints.clone(),
+                style,
+                maximum_velocity_rad_s,
+            )?;
+            let violations = candidate.calibration_violations(limits)?;
+            if violations.is_empty() {
+                return Ok(candidate);
+            }
+            for joint in violations {
+                let velocity = blended_velocity.get_mut(&joint).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "Calibration limit references unknown trajectory joint '{joint}'."
+                    ))
+                })?;
+                *velocity *= 0.5;
+                if velocity.abs() < 1e-6 {
+                    *velocity = 0.0;
+                }
+            }
+        }
+        Err(Error::Runtime(format!(
+            "Trajectory '{name}' could not preserve a calibration-safe interruption blend."
+        )))
+    }
+
     pub fn sample_state(&self, elapsed_seconds: f64) -> Result<TrajectorySample> {
         let index = self.segment_index(elapsed_seconds)?;
         let segment = &self.segments[index];
@@ -226,6 +277,27 @@ impl CompiledTrajectory {
             .filter(|segment| elapsed_seconds >= segment.arrives_at)
             .filter_map(|segment| segment.marker.clone())
             .collect()
+    }
+
+    fn calibration_violations(&self, limits: &[JointLimit]) -> Result<BTreeSet<String>> {
+        let steps = (self.duration_seconds * COMMAND_RATE_HZ).ceil() as usize;
+        let mut violations = BTreeSet::new();
+        for step in 0..=steps {
+            let elapsed = (step as f64 / COMMAND_RATE_HZ).min(self.duration_seconds);
+            let positions = self.sample(elapsed)?;
+            for limit in limits {
+                let value = positions.get(&limit.name).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "Calibration limit references unknown trajectory joint '{}'.",
+                        limit.name
+                    ))
+                })?;
+                if *value < limit.lower_rad || *value > limit.upper_rad {
+                    violations.insert(limit.name.clone());
+                }
+            }
+        }
+        Ok(violations)
     }
 
     fn segment_peak_velocities(&self) -> Vec<f64> {
@@ -475,6 +547,36 @@ fn validate_inputs(
     Ok(())
 }
 
+fn validate_limits(start: &JointPositions, limits: &[JointLimit]) -> Result<()> {
+    if limits.len() != start.len() {
+        return Err(Error::InvalidArgument(
+            "Calibrated trajectory requires exactly one limit for every joint.".into(),
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for limit in limits {
+        if !names.insert(limit.name.clone())
+            || !start.contains_key(&limit.name)
+            || !limit.lower_rad.is_finite()
+            || !limit.upper_rad.is_finite()
+            || limit.lower_rad >= limit.upper_rad
+        {
+            return Err(Error::InvalidArgument(
+                "Calibrated trajectory limits must be unique, finite, ordered, and match every joint."
+                    .into(),
+            ));
+        }
+        let value = start[&limit.name];
+        if value < limit.lower_rad || value > limit.upper_rad {
+            return Err(Error::InvalidArgument(format!(
+                "Trajectory start for '{}' is outside its calibrated range.",
+                limit.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// One-target `goto` commands use the same compiler as authored motion.
 #[derive(Clone, Debug)]
 pub struct JointTrajectory(CompiledTrajectory);
@@ -497,6 +599,35 @@ impl JointTrajectory {
         target: JointPositions,
         duration_seconds: f64,
     ) -> Result<Self> {
+        Self::compile(name, start, start_velocity, target, duration_seconds, None)
+    }
+
+    pub fn with_start_velocity_calibrated(
+        name: impl Into<String>,
+        start: JointPositions,
+        start_velocity: JointPositions,
+        target: JointPositions,
+        duration_seconds: f64,
+        limits: &[JointLimit],
+    ) -> Result<Self> {
+        Self::compile(
+            name,
+            start,
+            start_velocity,
+            target,
+            duration_seconds,
+            Some(limits),
+        )
+    }
+
+    fn compile(
+        name: impl Into<String>,
+        start: JointPositions,
+        start_velocity: JointPositions,
+        target: JointPositions,
+        duration_seconds: f64,
+        limits: Option<&[JointLimit]>,
+    ) -> Result<Self> {
         let style = MotionStyle {
             name: "goto",
             tempo: 1.0,
@@ -508,21 +639,35 @@ impl JointTrajectory {
             // by a direct goto command; authored motions can still stylize settles.
             settle_character: 0.5,
         };
-        Ok(Self(CompiledTrajectory::compile(
-            name,
-            start,
-            start_velocity,
-            vec![TrajectoryWaypoint {
-                label: "target".into(),
-                positions: target,
-                duration_seconds,
-                arrival: WaypointArrival::Settle,
-                hold_seconds: 0.0,
-                marker: None,
-            }],
-            style,
-            STS3215_MAX_SPEED_RAD_S,
-        )?))
+        let waypoints = vec![TrajectoryWaypoint {
+            label: "target".into(),
+            positions: target,
+            duration_seconds,
+            arrival: WaypointArrival::Settle,
+            hold_seconds: 0.0,
+            marker: None,
+        }];
+        let trajectory = if let Some(limits) = limits {
+            CompiledTrajectory::compile_calibrated(
+                name,
+                start,
+                start_velocity,
+                waypoints,
+                style,
+                STS3215_MAX_SPEED_RAD_S,
+                limits,
+            )?
+        } else {
+            CompiledTrajectory::compile(
+                name,
+                start,
+                start_velocity,
+                waypoints,
+                style,
+                STS3215_MAX_SPEED_RAD_S,
+            )?
+        };
+        Ok(Self(trajectory))
     }
     pub fn sample(&self, elapsed_seconds: f64) -> Result<JointPositions> {
         self.0.sample(elapsed_seconds)
@@ -662,5 +807,52 @@ mod tests {
         assert_eq!(first.velocities, velocity);
         let next = trajectory.sample_state(1e-6).unwrap();
         assert!((next.positions["joint"] - (0.4 - 0.3e-6)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn calibrated_interruption_attenuates_only_velocity_that_would_leave_range() {
+        let start = positions(&[("safe", 0.0), ("edge", 0.99)]);
+        let measured_velocity = positions(&[("safe", 0.3), ("edge", 1.0)]);
+        let trajectory = CompiledTrajectory::compile_calibrated(
+            "calibrated-interruption",
+            start.clone(),
+            measured_velocity.clone(),
+            vec![TrajectoryWaypoint {
+                label: "new_target".into(),
+                positions: positions(&[("safe", 0.6), ("edge", 0.0)]),
+                duration_seconds: 0.8,
+                arrival: WaypointArrival::Settle,
+                hold_seconds: 0.0,
+                marker: None,
+            }],
+            style(),
+            STS3215_MAX_SPEED_RAD_S,
+            &[
+                JointLimit {
+                    name: "safe".into(),
+                    lower_rad: -1.0,
+                    upper_rad: 1.0,
+                },
+                JointLimit {
+                    name: "edge".into(),
+                    lower_rad: -1.0,
+                    upper_rad: 1.0,
+                },
+            ],
+        )
+        .unwrap();
+
+        let first = trajectory.sample_state(0.0).unwrap();
+        assert_eq!(first.positions, start);
+        assert_eq!(first.velocities["safe"], measured_velocity["safe"]);
+        assert!(first.velocities["edge"] < measured_velocity["edge"]);
+        let steps = (trajectory.duration_seconds() * COMMAND_RATE_HZ).ceil() as usize;
+        for step in 0..=steps {
+            let positions = trajectory
+                .sample((step as f64 / COMMAND_RATE_HZ).min(trajectory.duration_seconds()))
+                .unwrap();
+            assert!((-1.0..=1.0).contains(&positions["safe"]));
+            assert!((-1.0..=1.0).contains(&positions["edge"]));
+        }
     }
 }

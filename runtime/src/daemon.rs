@@ -223,12 +223,14 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             let target = self.poses.pose(fields[0])?.clone();
             self.driver.validate_positions(&target)?;
             let start = self.measured_positions();
-            self.trajectory = Some(JointTrajectory::with_start_velocity(
+            let limits = self.driver.joint_limits()?;
+            self.trajectory = Some(JointTrajectory::with_start_velocity_calibrated(
                 fields[0],
                 self.driver.clamp_positions_to_safe_range(&start)?,
                 self.measured_velocities(),
                 target,
                 duration,
+                &limits,
             )?);
             self.motion_sequence = None;
             self.movement_started_at = now_seconds;
@@ -261,12 +263,13 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             for target in &targets {
                 self.driver.validate_positions(target)?;
             }
-            let sequence = MotionSequence::compile_scaled(
+            let sequence = MotionSequence::compile_scaled_calibrated(
                 &definition,
                 start.clone(),
                 start_velocity,
                 start,
                 amplitude_scale,
+                &limits,
             )?;
             let duration = sequence.duration_seconds();
             let keyframes = sequence.keyframe_count();
@@ -499,12 +502,13 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         for target in &targets {
             self.driver.validate_positions(target)?;
         }
-        let sequence = MotionSequence::compile_scaled(
+        let sequence = MotionSequence::compile_scaled_calibrated(
             &definition,
             start,
             self.measured_velocities(),
             anchor,
             amplitude_scale,
+            &limits,
         )?;
         let target = targets
             .last()

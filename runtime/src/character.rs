@@ -62,6 +62,7 @@ pub struct CharacterCoordinator {
     next_large_at: f64,
     last_idle: Option<String>,
     active_idle_run_id: Option<u64>,
+    active_idle_category: Option<NextIdleCategory>,
     starting_run_id: Option<u64>,
     foreground_pending: bool,
     speech_motion_run_id: Option<u64>,
@@ -84,6 +85,7 @@ impl CharacterCoordinator {
             next_large_at: f64::INFINITY,
             last_idle: None,
             active_idle_run_id: None,
+            active_idle_category: None,
             starting_run_id: None,
             foreground_pending: false,
             speech_motion_run_id: None,
@@ -211,6 +213,7 @@ impl CharacterCoordinator {
             checked(core.handle_command("stop", now))?;
         }
         self.active_idle_run_id = None;
+        self.active_idle_category = None;
         self.status.active_clip = None;
         Ok(())
     }
@@ -301,9 +304,12 @@ impl CharacterCoordinator {
                     ));
                 }
                 self.active_idle_run_id = None;
+                let category = self.active_idle_category.take().ok_or_else(|| {
+                    Error::Runtime("Autonomous idle lost its scheduling category.".into())
+                })?;
                 self.status.active_clip = None;
                 self.status.state = self.idle_state();
-                self.reset_timers(now);
+                self.reschedule_idle(category, now);
             }
             return Ok(());
         }
@@ -343,6 +349,7 @@ impl CharacterCoordinator {
             })?;
         let run_id = core.play_anchored_relative(&clip, anchor, now)?;
         self.active_idle_run_id = Some(run_id);
+        self.active_idle_category = Some(category);
         self.status.active_clip = Some(clip.clone());
         self.last_idle = Some(clip);
         Ok(())
@@ -475,6 +482,28 @@ impl CharacterCoordinator {
             + self
                 .rng
                 .range(LARGE_IDLE_MIN_SECONDS, LARGE_IDLE_MAX_SECONDS);
+        self.update_next_idle_category();
+    }
+
+    fn reschedule_idle(&mut self, category: NextIdleCategory, now: f64) {
+        match category {
+            NextIdleCategory::Micro => {
+                self.next_micro_at = now
+                    + self
+                        .rng
+                        .range(MICRO_IDLE_MIN_SECONDS, MICRO_IDLE_MAX_SECONDS);
+            }
+            NextIdleCategory::Large => {
+                self.next_large_at = now
+                    + self
+                        .rng
+                        .range(LARGE_IDLE_MIN_SECONDS, LARGE_IDLE_MAX_SECONDS);
+            }
+        }
+        self.update_next_idle_category();
+    }
+
+    fn update_next_idle_category(&mut self) {
         self.status.next_idle_category = Some(if self.next_micro_at <= self.next_large_at {
             NextIdleCategory::Micro
         } else {
@@ -491,6 +520,7 @@ impl CharacterCoordinator {
             next_idle_category: None,
         };
         self.active_idle_run_id = None;
+        self.active_idle_category = None;
         self.starting_run_id = None;
         self.foreground_pending = false;
         self.speech_motion_run_id = None;
@@ -688,6 +718,22 @@ mod tests {
             assert!((8.0..=20.0).contains(&random.range(8.0, 20.0)));
             assert!((35.0..=75.0).contains(&random.range(35.0, 75.0)));
         }
+    }
+
+    #[test]
+    fn completing_one_idle_category_preserves_the_other_deadline() {
+        let mut character = CharacterCoordinator::new(42);
+        character.next_micro_at = 10.0;
+        character.next_large_at = 40.0;
+
+        character.reschedule_idle(NextIdleCategory::Micro, 12.0);
+        assert_eq!(character.next_large_at, 40.0);
+        assert!((20.0..=32.0).contains(&character.next_micro_at));
+
+        let micro_deadline = character.next_micro_at;
+        character.reschedule_idle(NextIdleCategory::Large, 41.0);
+        assert_eq!(character.next_micro_at, micro_deadline);
+        assert!((76.0..=116.0).contains(&character.next_large_at));
     }
 
     #[test]
