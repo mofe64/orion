@@ -326,11 +326,6 @@ impl CharacterCoordinator {
 
         if let Some(run_id) = self.active_idle_run_id {
             if let Some(phase) = terminal_phase(core, run_id) {
-                if phase != MovementPhase::Completed {
-                    return Err(Error::Runtime(
-                        "Autonomous idle did not return cleanly to its anchor.".into(),
-                    ));
-                }
                 self.active_idle_run_id = None;
                 let category = self.active_idle_category.take().ok_or_else(|| {
                     Error::Runtime("Autonomous idle lost its scheduling category.".into())
@@ -338,6 +333,15 @@ impl CharacterCoordinator {
                 self.status.active_clip = None;
                 self.status.state = self.idle_state();
                 self.reschedule_idle(category, now);
+
+                // A completion timeout is a terminal result for this animation,
+                // not a daemon-fatal condition. RuntimeCore continues holding the
+                // clip's final target (the immutable anchor), and exposes the
+                // timeout through last_motion for diagnostics. Keeping character
+                // mode alive avoids dropping torque and losing the anchor because
+                // one low-priority idle took too long to satisfy the telemetry
+                // settle gate.
+                debug_assert!(phase.is_terminal());
             }
             return Ok(());
         }
@@ -763,6 +767,48 @@ mod tests {
         character.reschedule_idle(NextIdleCategory::Large, 41.0);
         assert_eq!(character.next_micro_at, micro_deadline);
         assert!((76.0..=116.0).contains(&character.next_large_at));
+    }
+
+    #[test]
+    fn idle_timeout_is_recoverable_and_preserves_the_anchor() {
+        let mut core = core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let run_id = core
+            .play_anchored_relative("idle_breathe", anchor.clone(), 0.0)
+            .unwrap();
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.state = CharacterState::HomeIdle;
+        character.status.active_anchor = Some(anchor.clone());
+        character.status.active_clip = Some("idle_breathe".into());
+        character.active_idle_run_id = Some(run_id);
+        character.active_idle_category = Some(NextIdleCategory::Micro);
+        character.next_large_at = 40.0;
+
+        let mut now = 0.0;
+        while terminal_phase(&core, run_id).is_none() {
+            now += 0.1;
+            core.tick(now).unwrap();
+            assert!(now < 30.0, "idle did not reach a terminal phase");
+        }
+        assert_eq!(terminal_phase(&core, run_id), Some(MovementPhase::TimedOut));
+
+        character
+            .tick(now, &mut core, false, None, false, None, None)
+            .unwrap();
+
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+        assert_eq!(character.status.state, CharacterState::HomeIdle);
+        assert!(character.active_idle_run_id.is_none());
+        assert!(character.status.active_clip.is_none());
+        assert!(
+            (now + MICRO_IDLE_MIN_SECONDS..=now + MICRO_IDLE_MAX_SECONDS)
+                .contains(&character.next_micro_at)
+        );
+        assert_eq!(character.next_large_at, 40.0);
     }
 
     #[test]
