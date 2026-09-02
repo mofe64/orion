@@ -2,8 +2,7 @@
 
 Scenes coordinate named motion, RGBW effects, and local audio under one
 monotonic clock. They never contain raw servo commands. All commissioned and
-Studio-authored scenes use `format_version: 2`; there is no legacy execution
-path.
+Studio-authored scenes use `format_version: 2`.
 
 ```yaml
 format_version: 2

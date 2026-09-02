@@ -132,6 +132,10 @@ shutdown before torque release.
 
 ## Related components
 
+- [Motion and animation architecture](motion-and-animation-architecture.md)
+- [Character animation design](character-animation.md)
+- [Trajectory and joint-control reference](../reference/trajectory-and-joint-control.md)
+- [Motion asset reference](../reference/motion-assets.md)
 - [Rust runtime](../../runtime/README.md)
 - [Orion Studio](../../orion_studio/README.md)
 - [Motion assets](../../motion/README.md)

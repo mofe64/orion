@@ -34,3 +34,6 @@ Expression belongs above the validated capability boundary. It may choose or
 modulate approved semantic behaviour, but it must not own servos, GPIO, audio
 devices, calibration, or safety limits.
 
+See [Character animation design](character-animation.md) for the concrete
+motion language, 12-principles mapping, idle behavior, and speech hierarchy
+that implement these dimensions.

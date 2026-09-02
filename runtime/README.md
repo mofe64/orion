@@ -1,17 +1,25 @@
 # Orion Rust runtime
 
 `runtime` is Orion's ROS-independent native Rust runtime. It implements the
-`oriond` command protocol, lifecycle, pose and motion loading, quintic
-interpolation, calibration contract, STS3215 profile, 50 Hz state snapshots,
-the Pi 5 RGBW output backend, ReSpeaker V2 WAV playback, and multimodal scene
-coordination.
+`oriond` command protocol, lifecycle, pose and motion loading, whole-action
+piecewise-quintic trajectory compilation, calibration contract, STS3215
+profile, 50 Hz state snapshots, the Pi 5 RGBW output backend, ReSpeaker V2 WAV
+playback, character coordination, and multimodal scenes.
 
 See the [system architecture](../docs/explanation/system-architecture.md) for
 workstation/Pi boundaries and device ownership.
 
+For movement internals, use the canonical cross-system documents:
+
+- [Motion and animation architecture](../docs/explanation/motion-and-animation-architecture.md)
+- [Character animation design](../docs/explanation/character-animation.md)
+- [Trajectory and joint-control reference](../docs/reference/trajectory-and-joint-control.md)
+- [Motion asset reference](../docs/reference/motion-assets.md)
+
 The physical transport uses
-[`rustypot`](https://github.com/pollen-robotics/rustypot) for protocol-v1 packet
-parsing, synchronized reads/writes, and serial communication. Orion retains its
+[`rustypot`](https://github.com/pollen-robotics/rustypot) for the STS3215
+serial packet format, synchronized reads/writes, and communication. This
+servo-wire protocol is unrelated to Orion's asset format. Orion retains its
 own raw register map and conversions for firmware bytes at addresses 0/1, a
 one-byte maximum-acceleration register at address 85, and project-specific
 encoder/velocity conversions.
@@ -369,6 +377,15 @@ Speech states are `synthesizing`, `playing`, `completed`, `failed`, and
 `cancelled`. Only the active run and most recent terminal result are retained.
 The generated WAV is temporary and removed after playback. A failed `--wait`
 returns exit code `7`; cancellation returns `5`.
+
+Authenticated Studio Voice WAV uploads enter the same `SpeechCoordinator`.
+The coordinator validates and analyzes the waveform, while
+`CharacterCoordinator` composes one anchor-relative utterance performance and
+the daemon drives the `speaking_energy` light. Both Studio Chatterbox and local
+Piper therefore share movement, lighting, cancellation, anchor restoration,
+run status, and temporary-file cleanup. See
+[Character animation design](../docs/explanation/character-animation.md#speech-driven-animation)
+for the exact animation policy.
 
 The separate Pi-local listener captures transient microphone PCM, detects
 `HELLO WORLD`, performs Moonshine speech-to-text, and publishes ordered wake

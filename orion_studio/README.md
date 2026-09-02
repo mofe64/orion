@@ -114,14 +114,15 @@ The agent receives confirmed text only. Agent-generated prose cannot issue raw
 robot commands; Studio maps known voice phases deterministically to listening,
 thinking, and neutral character states.
 
-## Breaking-release deployment
+## Atomic deployment
 
 `scripts/deploy_pi.sh` validates this Studio build before updating the Pi. The
-remote phase returns the old runtime to mechanical rest, releases torque,
-fast-forwards the selected branch, archives non-v2 user YAML, builds runtime
-and trajectory binaries, installs both services, and runs v2 light/audio plus
-left/right expressive physical smoke tests. All components therefore come from
-one Git revision.
+remote phase returns the running robot to mechanical rest, releases torque,
+fast-forwards the selected branch, validates the user asset catalog, builds
+runtime and trajectory binaries, installs both services, and runs light/audio
+plus left/right expressive physical smoke tests. All components therefore come
+from one Git revision.
 
 See the [system architecture](../docs/explanation/system-architecture.md),
-[motion v2](../motion/README.md), and [scene v2](../scenes/README.md).
+[motion architecture](../docs/explanation/motion-and-animation-architecture.md),
+and [scene reference](../scenes/README.md).

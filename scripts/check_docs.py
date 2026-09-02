@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Orion-owned Markdown structure and local links."""
+"""Validate Orion-owned Markdown structure, local links, and current terminology."""
 
 from __future__ import annotations
 
@@ -16,6 +16,12 @@ EXCLUDED_PARTS = {".scratch", ".venv", "node_modules", "target"}
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:")
+OBSOLETE_MOTION_DOCUMENTATION = (
+    re.compile(r"\bmotion_limits\.yaml\b", re.IGNORECASE),
+    re.compile(r"\b(?:pose|motion|scene)s?\s+v1\b", re.IGNORECASE),
+    re.compile(r"\bv1\s+(?:pose|motion|scene)s?\b", re.IGNORECASE),
+    re.compile(r"\blegacy\s+(?:pose|motion|scene|movement)s?\b", re.IGNORECASE),
+)
 
 
 def markdown_files() -> list[Path]:
@@ -76,6 +82,10 @@ def main() -> int:
             )
 
         for number, line in enumerate(lines, 1):
+            if any(pattern.search(line) for pattern in OBSOLETE_MOTION_DOCUMENTATION):
+                failures.append(
+                    f"{relative}:{number}: obsolete motion-system documentation"
+                )
             for raw_target in LINK.findall(line):
                 target = raw_target.strip().strip("<>")
                 if not target or target.startswith(EXTERNAL_PREFIXES):
@@ -112,4 +122,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

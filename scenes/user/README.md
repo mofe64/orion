@@ -9,7 +9,3 @@ the parent directory are immutable and cannot be shadowed.
 - Finish policy is `final_pose` plus `pose_default`.
 - Updates require the exact content revision Studio loaded.
 - `oriond` validates the complete catalog before accepting a reload.
-
-The v2 deployment migrator moves any legacy, malformed, or non-v2 user YAML to
-a timestamped directory under `~/.local/share/orion/backups/`. It never treats
-the archive as executable content.

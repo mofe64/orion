@@ -37,6 +37,10 @@ lighting, cues, or scenes. Studio maps known voice-pipeline phases to the
 allowlisted listening, thinking, and neutral character states; agent-generated
 text never becomes a raw robot command.
 
+Once a validated response reaches `oriond`, waveform energy and phrase peaks
+drive one utterance-length head-led performance. That animation path is
+documented in [Character animation design](character-animation.md#speech-driven-animation).
+
 ## Agent and privacy boundary
 
 Microphone audio, wake detection, transcription, and speech generation remain

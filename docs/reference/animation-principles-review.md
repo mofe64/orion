@@ -5,6 +5,11 @@ physical model does not deform: “squash and stretch” means coordinated joint
 compression and extension. Every action is staged around one readable primary
 idea; light, sound, and secondary joints support rather than compete with it.
 
+The design rules behind this review are explained in
+[Character animation design](../explanation/character-animation.md). Asset
+fields and runtime invariants are defined in the
+[motion asset reference](motion-assets.md).
+
 ## Motion review
 
 | Asset | Primary action and silhouette | Anticipation / follow-through | Timing and secondary action |

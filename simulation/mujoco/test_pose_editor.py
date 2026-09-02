@@ -97,9 +97,9 @@ class PoseLibraryTests(unittest.TestCase):
             updated_after_home.split("  attentive:", 1)[1],
             after_home.split("  attentive:", 1)[1],
         )
-        self.assertIn(
-            "description: Compact powered resting pose and default character anchor.",
-            updated,
+        self.assertEqual(
+            updated_after_home.split("    positions:", 1)[0],
+            after_home.split("    positions:", 1)[0],
         )
 
     def test_save_is_reloadable_and_preserves_other_poses(self):

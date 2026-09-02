@@ -10,6 +10,11 @@ Choose the path that matches what you want to do:
 
 - [Understand the system](docs/explanation/system-architecture.md) — component
   boundaries, data flow, and safety ownership.
+- [Understand motion and animation](docs/explanation/motion-and-animation-architecture.md)
+  — character intent, continuous trajectories, runtime execution, and joint
+  control.
+- [Understand character animation](docs/explanation/character-animation.md) —
+  the 12 principles, autonomous idle, and speech-driven performance.
 - [Build and run the simulator](docs/tutorials/first-runtime-run.md) — the
   shortest hardware-free path to a working Orion runtime.
 - [Run Orion Studio](docs/tutorials/first-studio-run.md) — install the desktop
@@ -30,10 +35,11 @@ Orion Studio                                     authenticated HTTP gateway
 ├── scene and motion editor     semantic API     ├── named assets and actions
 ├── local microphone          ────────────────▶  └── private Unix socket
 ├── wake + ASR + agent + TTS                            │
-└── local speaker                                      ▼
+└── validated WAV upload                               ▼
                                                     oriond
                                                     ├── lifecycle and safety
-                                                    ├── motion and scenes
+                                                    ├── character + scenes
+                                                    ├── continuous motion
                                                     ├── STS3215 servos
                                                     ├── RGBW lighting
                                                     └── ReSpeaker playback
@@ -56,7 +62,7 @@ for the distinction.
 | --- | --- |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `orion_studio/` | Tauri/React desktop application, Pi gateway, and primary voice worker |
-| `motion/` | Shared poses, motions, limits, trajectory logic, and tests |
+| `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
 | `scenes/` | Versioned multimodal scene documents |
 | `description/` | Neutral URDF and shared mesh assets |
 | `simulation/mujoco/` | MuJoCo model, playback tools, and simulator checks |

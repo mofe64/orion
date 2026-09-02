@@ -534,7 +534,7 @@ Orion drives the MJCF model through its native adapter:
 
 ```text
 shared motion YAML
-    -> backend-independent trajectory generator
+    -> Rust trajectory compiler
     -> native MuJoCo player
     -> MuJoCo position actuators
 ```
@@ -543,7 +543,7 @@ The adapter keeps the free root unactuated and uses measured simulated state
 for completion and stability checks.
 
 The shared movement path is explained in
-[How Orion Moves](orion_motion_system.md).
+[Motion and animation architecture](../explanation/motion-and-animation-architecture.md).
 
 ## Quick Reference
 

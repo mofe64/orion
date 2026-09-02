@@ -13,12 +13,12 @@ Status meanings:
 | Area | Evidence and scope |
 | --- | --- |
 | Robot description | Neutral URDF and shared STL meshes under `description/` |
-| Motion foundation | V2 named poses and motions, commissioned calibration limits, one continuous Rust spline compiler, and validation under `motion/` and `runtime/` |
+| Motion foundation | V2 named poses and motions, commissioned calibration limits, one continuous Rust spline compiler, and the documented [motion architecture](../explanation/motion-and-animation-architecture.md) and [control reference](../reference/trajectory-and-joint-control.md) |
 | Native runtime | Rust `oriond` daemon with lifecycle, run IDs, status, settling, cancellation, and hardware/MuJoCo backends |
 | Physical servo path | Five STS3215 servos through the commissioned calibration and `rustypot` transport |
 | Lighting | Pi 5 BCM12 RGBW output, logical RGBW conversion, fades, and all-off handling |
 | Local audio | Named WAV cues and `oriond`-owned ReSpeaker playback |
-| Character coordinator | Explicit disabled/idle/listening/thinking/speaking states, priority, anchor-relative idles, speech gestures, and background lighting |
+| Character coordinator | Explicit disabled/idle/listening/thinking/speaking states, priority, anchor-relative idles, head-led utterance-length speech performance, and background lighting |
 | Multimodal scenes | V2 parallel motion, RGBW effect, marker, audio, and exact finish-policy coordination under one clock |
 | Pi services and deployment | Source-backed `oriond` and Studio gateway systemd units plus bounded deployment smoke test |
 | Orion Studio authoring | Responsive dark creative workspace, URDF preview, v2 pose/motion/scene editors, Rust-compiled preview, calibrated controls, and revisioned publishing |

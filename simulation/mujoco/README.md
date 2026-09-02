@@ -1,5 +1,16 @@
 # Orion MuJoCo tools
 
+MuJoCo implements Orion's simulation `RuntimeDriver`. It receives the same
+Rust-compiled joint targets, 50 Hz lifecycle, markers, cancellation, and
+measured-settling logic as the hardware runtime. It adds physics and diagnostic
+reporting; it does not own a second interpolation algorithm.
+
+Read the [motion and animation architecture](../../docs/explanation/motion-and-animation-architecture.md)
+and [trajectory and joint-control reference](../../docs/reference/trajectory-and-joint-control.md)
+before changing the backend or motion-player contract. Follow
+[Author and validate Orion motion](../../docs/how-to/author-and-validate-motion.md)
+for the complete engineering workflow.
+
 ## Calibrated pose editor
 
 `pose_editor.py` is the visual editor for Orion's existing named poses. It is
