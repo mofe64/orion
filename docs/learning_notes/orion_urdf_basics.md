@@ -314,9 +314,10 @@ In a production URDF, these values should describe meaningful actuator limits.
 Orion's imported `effort="10"` and `velocity="10"` values are generic
 placeholders; they are not commissioned STS3215 limits and must not be used to
 infer safe hardware commands. Physical position conversion comes from the
-accepted servo calibration, while tracked operational and provisional dynamic
-limits live in
-the active Pi calibration (or its tracked MuJoCo copy for offline work).
+accepted servo calibration, which is also the sole authority for safe position
+bounds. Motion compilation uses the 7.4 V STS3215 hardware profile's published
+52 RPM (about 5.45 rad/s) no-load speed as its capability ceiling. MuJoCo uses
+the tracked calibration copy and the same Rust-compiled trajectory.
 
 ## Fixed Joints
 
