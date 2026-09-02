@@ -71,7 +71,12 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
         .iter()
         .map(|name| ((*name).to_owned(), JointServoProfile::default()))
         .collect();
+    // The elbow and head pitch axes carry gravity loads while holding Orion's
+    // powered poses. Matching their proportional gain keeps steady-state pose
+    // error inside the measured completion tolerance without relaxing that
+    // tolerance for every joint.
     profiles.get_mut("elbow_pitch_joint").unwrap().p_coefficient = 32;
+    profiles.get_mut("head_pitch_joint").unwrap().p_coefficient = 32;
     profiles
 }
 
@@ -687,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn applies_orion_profile_with_elbow_override() {
+    fn applies_orion_profile_with_gravity_loaded_joint_overrides() {
         let mut transport = FakeTransport::default();
         transport.add_servo(1, 904);
         transport.add_servo(3, 1259);
@@ -715,7 +720,7 @@ mod tests {
         );
         assert_eq!(
             driver.transport().registers[&(5, Register::PCoefficient)],
-            16
+            32
         );
         assert!(
             driver
