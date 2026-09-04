@@ -5,9 +5,11 @@ import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
 import hmac
-from pathlib import Path
 import signal
 import time
+import os
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 
 from . import PROTOCOL_VERSION
 from .agent import AgentProvider, CodexAgentProvider
@@ -16,13 +18,11 @@ from .protocol import ProtocolError, event, parse_hello, parse_json_message
 from .providers import Qwen3AsrTranscriber
 from .session import PendingTranscription, SessionEvent, VoiceSession
 from .tts import ChatterboxSynthesizer
-from .wake import RustpotterWakeDetector
 
 
 @dataclass(frozen=True)
 class VoiceModels:
     asr: Qwen3AsrTranscriber
-    wake: RustpotterWakeDetector
     agent: AgentProvider
     tts: ChatterboxSynthesizer
 
@@ -37,8 +37,10 @@ async def transcribe_utterance(
     pending: PendingTranscription,
     models: VoiceModels,
     request_id: int,
+    pi=None,
 ) -> None:
     started = time.monotonic()
+    session_id = session.session_id
     try:
         result = await asyncio.to_thread(session.asr.transcribe, pending.pcm)
         duration_ms = round((time.monotonic() - started) * 1_000)
@@ -48,14 +50,20 @@ async def transcribe_utterance(
                 "language": result.language,
                 "durationMs": duration_ms,
             } if message.type == "transcript.final" else {}
+            if pi is not None and message.type in {"wake.confirmed", "wake.rejected"}:
+                await pi.send(event("wake.confirmed" if message.type == "wake.confirmed" else "session.reject",
+                                    sessionId=session_id, followup=not message.fields.get("hasCommand", False)))
             await send_session_event(websocket, message, **extra)
             if message.type == "transcript.final":
                 command = str(message.fields["text"])
         if command is not None:
-            await generate_response(websocket, session, models, command, request_id)
+            if pi is not None:
+                await pi.send(event("session.processing", sessionId=session_id))
+            await generate_response(websocket, session, models, command, request_id, pi)
     except Exception as error:
-        with suppress(ValueError):
-            session.fail_transcription(pending.purpose)
+        session.reset()
+        if pi is not None:
+            await pi.send(event("session.cancel", sessionId=session_id))
         await websocket.send(event(
             "worker.error",
             code="transcription_failed",
@@ -70,7 +78,9 @@ async def generate_response(
     models: VoiceModels,
     command: str,
     request_id: int,
+    pi=None,
 ) -> None:
+    session_id = session.session_id
     try:
         await websocket.send(event("agent.started", requestId=request_id))
         started = time.monotonic()
@@ -83,6 +93,8 @@ async def generate_response(
         ))
     except Exception as error:
         session.fail_response()
+        if pi is not None:
+            await pi.send(event("session.cancel", sessionId=session_id))
         await websocket.send(event(
             "worker.error",
             code="agent_failed",
@@ -96,6 +108,8 @@ async def generate_response(
         started = time.monotonic()
         audio = await asyncio.to_thread(models.tts.synthesize, response)
         session.begin_playback(request_id)
+        if pi is not None:
+            await pi.send(event("session.playing", sessionId=session_id))
         await websocket.send(event(
             "speech.audio",
             requestId=request_id,
@@ -106,8 +120,9 @@ async def generate_response(
         ))
         await websocket.send(audio.pcm)
     except Exception as error:
-        with suppress(ValueError):
-            session.fail_response()
+        session.fail_response()
+        if pi is not None:
+            await pi.send(event("session.cancel", sessionId=session_id))
         await websocket.send(event(
             "worker.error",
             code="synthesis_failed",
@@ -116,84 +131,101 @@ async def generate_response(
         ))
 
 
-async def handle_connection(websocket: object, token: str, models: VoiceModels) -> None:
-    transcription: asyncio.Task[None] | None = None
-    next_request_id = 1
-    try:
-        first = await asyncio.wait_for(websocket.recv(), timeout=10)
-        if not isinstance(first, str):
-            raise ProtocolError("The first message must be a JSON handshake.")
-        hello = parse_hello(first)
-        if not hmac.compare_digest(hello.token, token):
-            await websocket.close(4003, "Invalid worker token")
-            return
+def validate_pi_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Listener URL must not contain credentials, query or fragment")
+    if parsed.scheme != "ws" or not parsed.hostname:
+        raise ValueError("Pi listener URL must use ws:// with a hostname")
 
-        session = VoiceSession(models.asr, models.wake)
-        await websocket.send(event(
-            "ready",
-            protocol=PROTOCOL_VERSION,
+
+async def handle_connection(websocket, token, models, pi_url, pi_token):
+    from websockets.asyncio.client import connect
+    first = await asyncio.wait_for(websocket.recv(), 10)
+    if not isinstance(first, str) or not hmac.compare_digest(parse_hello(first).token, token):
+        await websocket.close(4003, "Invalid worker token")
+        return
+    validate_pi_url(pi_url)
+    async with connect(pi_url, max_size=18 * 32000, max_queue=16,
+                       compression=None, open_timeout=10) as pi:
+        await pi.send(event("hello", protocol=1, token=pi_token))
+        ready = parse_json_message(await asyncio.wait_for(pi.recv(), 10))
+        if (ready.get("type") != "ready" or ready.get("protocol") != 1
+                or ready.get("sampleRate") != 16000 or ready.get("channels") != 1
+                or ready.get("encoding") != "pcm_s16le" or not isinstance(ready.get("wake"), dict)):
+            raise ProtocolError("Unsupported Pi listener contract")
+        session = VoiceSession(models.asr)
+        await websocket.send(event("ready", protocol=PROTOCOL_VERSION,
             asr={"provider": models.asr.provider, "model": models.asr.model_name},
-            wake={
-                "provider": models.wake.provider,
-                "model": models.wake.model_name,
-                "threshold": models.wake.threshold,
-            },
+            wake=ready["wake"],
             agent={"provider": models.agent.provider, "model": models.agent.model_name},
-            tts={"provider": models.tts.provider, "model": models.tts.model_name},
-        ))
+            tts={"provider": models.tts.provider, "model": models.tts.model_name}))
+        transcription = None
+        next_request_id = 1
 
-        async for raw in websocket:
-            if isinstance(raw, bytes):
-                events, pending = session.accept_audio(raw)
-                for session_event in events:
-                    await send_session_event(websocket, session_event)
-                if pending is not None:
+        async def receive_pi():
+            nonlocal transcription, next_request_id
+            async for raw in pi:
+                if not isinstance(raw, str):
+                    raise ProtocolError("Unexpected Pi audio frame")
+                message = parse_json_message(raw)
+                kind = message["type"]
+                session_id = message.get("sessionId")
+                if kind == "wake.candidate":
+                    session.begin(session_id)
+                    await websocket.send(raw)
+                elif kind == "utterance":
+                    size = message.get("bytes")
+                    if type(size) is not int or not 0 < size <= 18 * 32000 or size % 2:
+                        raise ProtocolError("Invalid Pi utterance length")
+                    pcm = await asyncio.wait_for(pi.recv(), 5)
+                    if not isinstance(pcm, bytes) or len(pcm) != size:
+                        raise ProtocolError("Pi utterance does not match its metadata")
+                    pending = session.accept_utterance(session_id, message.get("purpose"), pcm)
                     await websocket.send(event("transcription.started", purpose=pending.purpose.value))
-                    transcription = asyncio.create_task(
-                        transcribe_utterance(
-                            websocket,
-                            session,
-                            pending,
-                            models,
-                            next_request_id,
-                        )
-                    )
+                    transcription = asyncio.create_task(transcribe_utterance(
+                        websocket, session, pending, models, next_request_id, pi))
                     next_request_id += 1
-                continue
+                elif kind == "session.expired":
+                    if session_id != session.session_id:
+                        raise ProtocolError("Stale Pi expiry")
+                    if transcription:
+                        transcription.cancel()
+                        await asyncio.gather(transcription, return_exceptions=True)
+                    session.reset()
+                    await websocket.send(event("worker.error", code="session_expired",
+                        message="Orion voice session timed out. Re-enable the microphone to continue.", recoverable=False))
+                    return
+                else:
+                    raise ProtocolError("Unknown Pi event")
 
-            message = parse_json_message(raw)
-            if message["type"] == "stop":
-                await websocket.close(1000, "Studio voice stopped")
-                return
-            if message["type"] in {"playback.finished", "playback.failed"}:
-                request_id = message.get("requestId")
-                if not isinstance(request_id, int) or isinstance(request_id, bool):
-                    raise ProtocolError("Playback acknowledgement requires an integer requestId.")
-                try:
-                    session.finish_playback(request_id)
-                except ValueError as error:
-                    raise ProtocolError(str(error)) from error
-                await websocket.send(event("speech.completed", requestId=request_id))
+        async def receive_studio():
+            async for raw in websocket:
+                if not isinstance(raw, str):
+                    raise ProtocolError("Studio microphone capture is not supported; audio comes from Orion")
+                message = parse_json_message(raw)
+                if message["type"] == "stop":
+                    return
+                if message["type"] not in {"playback.finished", "playback.failed"} or type(message.get("requestId")) is not int:
+                    raise ProtocolError("Invalid playback acknowledgement")
+                session_id = session.session_id
+                session.finish_playback(message["requestId"])
+                await pi.send(event("session.finish", sessionId=session_id))
+                await websocket.send(event("speech.completed", requestId=message["requestId"]))
                 if message["type"] == "playback.failed":
-                    detail = message.get("message")
-                    await websocket.send(event(
-                        "worker.error",
-                        code="playback_failed",
-                        message=detail if isinstance(detail, str) else "Studio could not play speech audio.",
-                        recoverable=True,
-                    ))
-                continue
-            raise ProtocolError(f"Unsupported client message {message['type']!r}.")
-    except ProtocolError as error:
-        await websocket.send(event(
-            "worker.error", code="protocol_error", message=str(error), recoverable=False,
-        ))
-        await websocket.close(4002, "Protocol error")
-    finally:
-        if transcription:
-            transcription.cancel()
-            with suppress(asyncio.CancelledError):
-                await transcription
+                    await websocket.send(event("worker.error", code="playback_failed",
+                        message=str(message.get("message", "Pi playback failed")), recoverable=True))
+
+        tasks = [asyncio.create_task(receive_pi()), asyncio.create_task(receive_studio())]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        finally:
+            for task in tasks + ([transcription] if transcription else []):
+                task.cancel()
+            await asyncio.gather(*tasks, *([transcription] if transcription else []), return_exceptions=True)
+            await websocket.close()
 
 
 def load_models(args: argparse.Namespace) -> VoiceModels:
@@ -201,7 +233,6 @@ def load_models(args: argparse.Namespace) -> VoiceModels:
         raise RuntimeError(f"Unsupported agent provider: {args.agent_provider}")
     return VoiceModels(
         asr=Qwen3AsrTranscriber(args.asr_model),
-        wake=RustpotterWakeDetector(Path(args.wake_model), args.wake_threshold),
         agent=CodexAgentProvider(args.agent_model),
         tts=ChatterboxSynthesizer(args.tts_model),
     )
@@ -243,7 +274,14 @@ async def serve(args: argparse.Namespace) -> None:
                 ))
                 await websocket.close(4010, "Model load failed")
                 return
-            await handle_connection(websocket, args.token, models)
+            try:
+                await handle_connection(websocket, args.token, models, args.pi_url,
+                                        os.environ["ORION_PI_VOICE_TOKEN"])
+            except Exception as error:
+                with suppress(Exception):
+                    await websocket.send(event("worker.error", code="pi_connection_failed",
+                        message=str(error), recoverable=False))
+                    await websocket.close(4011, "Pi voice unavailable")
 
     try:
         async with websocket_serve(
@@ -266,8 +304,7 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--token", required=True)
     parser.add_argument("--asr-model", default=DEFAULT_ASR_MODEL)
-    parser.add_argument("--wake-model", required=True)
-    parser.add_argument("--wake-threshold", type=float, default=0.4)
+    parser.add_argument("--pi-url", required=True)
     parser.add_argument("--agent-provider", default="codex")
     parser.add_argument("--agent-model")
     parser.add_argument("--tts-model", default=DEFAULT_TTS_MODEL)
@@ -278,9 +315,12 @@ def main() -> None:
     args = argument_parser().parse_args()
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("The voice worker may bind only to a loopback address.")
-    if not 0 < args.wake_threshold <= 1:
-        raise SystemExit("The wake threshold must be in the range (0, 1].")
-    asyncio.run(serve(args))
+    # A cancelled request may finish inside a model library. Serialize inference
+    # so a following session cannot concurrently enter the same model instance.
+    async def run():
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+        await serve(args)
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

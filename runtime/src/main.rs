@@ -59,6 +59,7 @@ struct Options {
     operation: Operation,
     backend: Backend,
     help: bool,
+    character_on_start: bool,
     wait: bool,
     port: String,
     baud_rate: i32,
@@ -132,6 +133,7 @@ impl Default for Options {
             operation: Operation::None,
             backend: Backend::Hardware,
             help: false,
+            character_on_start: true,
             wait: false,
             port: "/dev/ttyACM0".into(),
             baud_rate: DEFAULT_BAUD_RATE,
@@ -219,9 +221,10 @@ fn usage() -> &'static str {
   --motions DIR       Motion-library directory used by --serve.\n\
   --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
+  --character-on-start on|off  Start character automatically (default: on).\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
   --help              Show this help.\n\n\
-Check and serve startup never enable torque or write servo registers.\n"
+Check never enables torque. Serve starts powered character mode unless --character-on-start off.\n"
 }
 
 fn main() {
@@ -636,6 +639,18 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             }
             "--scene" => options.scene_file = require_value(&mut arguments, &argument)?.into(),
             "--python" => options.python = require_value(&mut arguments, &argument)?.into(),
+            "--character-on-start" => {
+                options.character_on_start =
+                    match require_value(&mut arguments, &argument)?.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => {
+                            return Err(orion_runtime::Error::InvalidArgument(
+                                "--character-on-start must be on or off".into(),
+                            ));
+                        }
+                    };
+            }
             "--start-pose" => options.start_pose = require_value(&mut arguments, &argument)?,
             "--lighting-device" => {
                 options.lighting_device = require_value(&mut arguments, &argument)?.into()
@@ -892,10 +907,17 @@ fn serve_driver<D: RuntimeDriver>(
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stopping))?;
 
     println!(
-        "oriond: observing {backend} at 50 Hz on {}",
+        "oriond: serving {backend} at 50 Hz on {}",
         options.socket_path.display()
     );
     let started_at = Instant::now();
+    if options.character_on_start {
+        if let Err(error) = character.start(0.0, &mut core) {
+            eprintln!(
+                "oriond: character startup failed; remaining available for recovery: {error}"
+            );
+        }
+    }
     let mut next_sample = started_at;
     let mut speaking_light_intensity = 0.0;
     while !stopping.load(Ordering::Relaxed) {
@@ -1038,6 +1060,32 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
     if command == "character status" {
         let status = character.as_deref().map(CharacterCoordinator::status);
         return Ok(serde_json::json!({"ok": true, "character": status}).to_string());
+    }
+    if let Some(arguments) = command.strip_prefix("character attend ") {
+        if scenes.is_active() || speech.is_active() {
+            return Err(orion_runtime::Error::InvalidState(
+                "Attention cannot interrupt scene or speech.".into(),
+            ));
+        }
+        let parts: Vec<_> = arguments.split_whitespace().collect();
+        if parts.len() != 2 {
+            return Err(orion_runtime::Error::InvalidArgument(
+                "Use character attend left|right CONFIDENCE".into(),
+            ));
+        }
+        let confidence: f64 = parts[1].parse().map_err(|_| {
+            orion_runtime::Error::InvalidArgument("Invalid attention confidence".into())
+        })?;
+        let coordinator = character
+            .as_deref_mut()
+            .ok_or_else(|| orion_runtime::Error::InvalidState("Character is unavailable".into()))?;
+        let status = coordinator.attend(parts[0], confidence, now_seconds, core)?;
+        return Ok(serde_json::json!({"ok": true, "character": status}).to_string());
+    }
+    if matches!(command, "stop" | "disable") {
+        if let Some(coordinator) = character.as_deref_mut() {
+            coordinator.clear_attention();
+        }
     }
     if command == "character start" {
         let coordinator = character.as_deref_mut().ok_or_else(|| {
@@ -1409,6 +1457,27 @@ mod tests {
         bytes.extend_from_slice(&2_u32.to_le_bytes());
         bytes.extend_from_slice(&0_i16.to_le_bytes());
         std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn character_startup_defaults_on_and_supports_maintenance_override() {
+        assert!(
+            parse(&["--serve", "--backend", "mujoco"])
+                .unwrap()
+                .character_on_start
+        );
+        assert!(
+            !parse(&[
+                "--serve",
+                "--backend",
+                "mujoco",
+                "--character-on-start",
+                "off"
+            ])
+            .unwrap()
+            .character_on_start
+        );
+        assert!(parse(&["--serve", "--character-on-start", "maybe"]).is_err());
     }
 
     #[test]

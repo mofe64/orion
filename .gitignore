@@ -5,7 +5,11 @@ __pycache__/
 *.egg-info/
 docs/milestones/
 runtime/target/
-voice/models/
+voice/models/*
+!voice/models/wake/
+voice/models/wake/*
+!voice/models/wake/hey_orion_reference.rpw
+voice/rustpotter_native/target/
 orion_studio/voice_worker/models/*
 !orion_studio/voice_worker/models/README.md
 !orion_studio/voice_worker/models/*.rpw

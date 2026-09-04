@@ -62,10 +62,16 @@ export interface UserAssetSource {
   yaml: string;
 }
 
+export class GatewayError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); }
+}
+
 async function request<T>(connection: GatewayConnection, path: string, init?: RequestInit): Promise<T> {
   const jsonBody = typeof init?.body === "string";
   const response = await fetch(`${connection.url.replace(/\/$/, "")}${path}`, {
     ...init,
+    signal: init?.signal ?? AbortSignal.timeout(5000),
+    redirect: "error",
     headers: {
       Authorization: `Bearer ${connection.token}`,
       ...(jsonBody ? { "Content-Type": "application/json" } : {}),
@@ -73,7 +79,7 @@ async function request<T>(connection: GatewayConnection, path: string, init?: Re
     },
   });
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error?.message ?? `Gateway returned ${response.status}.`);
+  if (!response.ok) throw new GatewayError(body.error?.message ?? `Gateway returned ${response.status}.`, response.status);
   return body as T;
 }
 

@@ -25,10 +25,10 @@ machine-learning framework.
 | Local audio | Named WAV cues and `oriond`-owned ReSpeaker playback |
 | Character coordinator | Explicit disabled/idle/listening/thinking/speaking states, priority, anchor-relative idles, head-led utterance-length speech performance, and background lighting |
 | Multimodal scenes | V2 parallel motion, RGBW effect, marker, audio, and exact finish-policy coordination under one clock |
-| Pi services and deployment | Source-backed `oriond` and Studio gateway systemd units plus bounded deployment smoke test |
+| Pi services and deployment | Source-backed runtime/gateway/listener services, automatic Rustpotter installation and legacy voice retirement, plus bounded deployment smoke test |
 | Orion Studio authoring | Responsive dark creative workspace, URDF preview, v2 pose/motion/scene editors, Rust-compiled preview, calibrated controls, and revisioned publishing |
-| Studio-to-Pi control | Authenticated semantic HTTP gateway over the private `oriond` Unix socket |
-| Studio Voice response | Workstation Rustpotter/Qwen ASR/agent/Chatterbox pipeline, authenticated Pi playback, and completion reporting |
+| Studio-to-Pi control | Authenticated semantic HTTP gateway over the private `oriond` Unix socket; OS-stored desktop pairing and automatic reconnect |
+| Studio Voice response | Pi Rustpotter capture transport, Studio Qwen confirmation/agent/Chatterbox, authenticated Pi playback, and completion reporting |
 | Pi-local fallback voice | Sherpa wake detection, Silero endpointing, Moonshine transcription, Piper speech generation, and `oriond` playback integration |
 
 ## Partial
@@ -39,8 +39,8 @@ machine-learning framework.
 | Agent abstraction | A small `AgentProvider` boundary and Codex provider exist | OpenAI Platform and local-LLM providers are not implemented |
 | Conversational privacy | Raw audio, ASR, and TTS stay local | Codex receives confirmed text; provider disclosure must remain explicit |
 | Voice packaging | Source development starts a persistent local worker | Signed installers do not package Python, the native extension, or model weights |
-| Pi audio front end | Commissioned 16 kHz mono ReSpeaker capture | Stereo capture, beamforming, echo cancellation, and noise suppression remain planned |
-| Studio network security | Bearer-token authentication and exact development origins | Production pairing, encrypted transport, certificate identity, and token lifecycle hardening remain |
+| Pi audio front end | Stereo capture and coarse direction software; earlier mono hardware commissioning | Stereo orientation, Pi Rustpotter performance and physical attention acceptance; echo cancellation and noise suppression remain |
+| Studio network security | Bearer tokens and development origins; plain LAN WebSocket microphone transport | Device-approved initial pairing, encrypted voice/gateway transport and token lifecycle hardening remain |
 
 ## Planned
 

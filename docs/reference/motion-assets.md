@@ -222,6 +222,8 @@ Interpretation:
 
 - `look_at_left_expressive`
 - `look_at_right_expressive`
+- `attention_left`
+- `attention_right`
 - `attentive_entry`
 - `acknowledge_nod`
 - `disagree_soft`

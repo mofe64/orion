@@ -33,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for service in oriond orion-studio-gateway; do
+for service in oriond orion-studio-gateway orion-listener; do
   template="${template_directory}/${service}.service.in"
   output="${temporary_directory}/${service}.service"
   if [[ ! -f "${template}" ]]; then
@@ -50,3 +50,6 @@ done
 
 sudo -n systemctl daemon-reload
 sudo -n systemctl enable oriond.service orion-studio-gateway.service
+if [[ -x "${project_root}/voice/.venv/bin/orion-listener" && -f "${user_home}/.config/orion/studio-token" ]]; then
+  sudo -n systemctl enable orion-listener.service
+fi

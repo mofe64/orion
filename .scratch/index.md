@@ -2,8 +2,8 @@
 
 > This index is the retrieval layer for Orion handovers. Reports are ordered newest first; use the topic and status sections to find the authoritative context for the work in front of you.
 
-**Last Updated:** 2026-08-31
-**Total Reports:** 4
+**Last Updated:** 2026-09-04
+**Total Reports:** 5
 
 ---
 
@@ -32,6 +32,22 @@
 ---
 
 ## All Reports (Reverse Chronological)
+
+### 2026-09-04 - Pi Rustpotter, Studio processing and character attention ⏳
+
+**File:** [handover-2026-09-04.md](./handover-2026-09-04.md)
+
+**Primary Task:** Implement Pi-owned capture/wake, Studio Qwen confirmation and processing, default character startup and ELEGNT attention.
+
+**Tags:** `voice`, `rustpotter`, `raspberry-pi`, `attention`, `animation`, `elegnt`, `testing`
+
+**Key Deliverables:** Pi token-authenticated LAN listener, complete voice deployment/legacy retirement, persistent OS pairing/reconnect, Studio home audit, processing-only Studio, character startup and authored attention previews.
+
+**Bugs Fixed:** Startup failure classification, follow-up buffering, delayed attention return, upload cancellation and stale UI readiness.
+
+**Files Changed:** Voice packages, Studio integration, runtime, motion assets, service/deployment scripts and documentation; pre-existing user edits retained.
+
+**Next Steps:** Deploy through the updated single-command workflow, validate Pi pairing/reconnect and stereo/wake/physical attention; review the nine prioritized home UI proposals.
 
 ### 2026-08-31 - Movement lifecycle, multimodal runtime, and local voice foundation complete ⏳
 
@@ -119,6 +135,8 @@
 
 ### Testing
 
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
+
 - [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Records the 239-test matrix, deterministic lifecycle/scene/voice coverage, physical light/audio/scene evidence, and successful but imperfect Pi transcription samples.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Records 182 passing workstation tests, the optional Pi MuJoCo/Python distinction, and successful Rust hardware pose, motion, stop, rest, and disable evidence.
 - [2026-08-29](./handover-2026-08-29.md) - Records 174 passing tests, a ROS-free native build, a valid MuJoCo load, and the successful post-cleanup physical smoke sequence.
@@ -126,12 +144,16 @@
 
 ### Bug Fixes
 
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
+
 - [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Fixes busy-motion reporting, persistent NeoPixel setup, wrong ReSpeaker generation, unstable mixer state, Chatterbox performance, Sherpa dependencies, ALSA microphone ownership, and overdriven capture gain.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Resolves the parallel runtime tree, old MuJoCo bridge path, stale C++ ownership documentation, shutdown ordering, and optional Python-environment diagnosis.
 - [2026-08-29](./handover-2026-08-29.md) - Fixes calibration display/range handling, supported endpoints, margin starts, simulation reference alignment, stale pose families, command errors, Pi Git divergence, and backend paths.
 - [2026-08-28](./handover-2026-08-28.md) - Fixes early yaw calibration rejection, rest shutdown behaviour, shared rest ranges, Ctrl+C parking, and temperature diagnostics.
 
 ### Features
+
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
 
 - [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Adds movement acknowledgement, RGBW control, WAV playback, local multimodal scenes, Piper speech, wake detection, VAD, and command transcription.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Rust daemon, `rustypot` hardware transport, shared hardware/MuJoCo boundary, source-tree Pi workflow, and verified physical feature parity.
@@ -144,6 +166,8 @@
 - [2026-08-29](./handover-2026-08-29.md) - Moves shared assets to `motion/` and `description/`, removes `ros2_ws/`, archives ROS documents, and deduplicates meshes.
 
 ### Documentation
+
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
 
 - [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Current source of truth for movement completion, lighting/audio hardware, scenes, local voice, physical evidence, known limitations, and the Studio continuation.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Current source of truth for the Rust-only architecture, Pi source workflow, optional MuJoCo Python dependency, shutdown, and continuation order.
@@ -169,9 +193,13 @@
 
 ### Voice and Orion Studio
 
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
+
 - [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Records Chatterbox rejection, Piper Ryan Medium selection, Pi wake/STT implementation and limitations, and the proposed Mac-hosted Studio voice/agent architecture.
 
 ### Simulation
+
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
 
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Records the Rust-owned MuJoCo backend, Python bridge boundary, integration test, and why Python is optional on the hardware Pi.
 - [2026-08-29](./handover-2026-08-29.md) - Aligns MuJoCo with captured physical zero/rest, shared meshes, constrained pose editing, and torque analysis.
@@ -193,6 +221,8 @@
 - [2026-08-29](./handover-2026-08-29.md) - Recalibration, shared-motion rebuild, native runtime, MuJoCo alignment, physical proof, and ROS removal are complete for this phase.
 
 ### In Progress
+
+- [2026-09-04](./handover-2026-09-04.md) — Pi voice, startup and attention; physical acceptance pending.
 
 - [2026-08-31 multimodal/voice handover](./handover-2026-08-31-multimodal-voice.md) - Conversational reliability remains in progress; Studio transport, Mac transcription/wake detection, intent routing, and agent integration are not implemented.
 - [2026-08-29 Rust handover](./handover-2026-08-29-rust-runtime.md) - Product continuation is unselected; lighting/audio integration, scene playback, and Orion Studio remain planned.

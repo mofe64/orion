@@ -50,6 +50,20 @@ describe("OrionSpeechPlayer", () => {
     ]);
   });
 
+  it("cancels a run accepted after stop was pressed during upload", async () => {
+    let accept: (value: unknown) => void = () => undefined;
+    gateway.uploadSpeech.mockReturnValue(new Promise((resolve) => { accept = resolve; }));
+    gateway.cancelRun.mockResolvedValue({ ok: true });
+    const connection = { url: "http://orion.local:7447", token: "secret" };
+    const player = new OrionSpeechPlayer(() => connection);
+    const playback = player.play(Int16Array.of(100, -100), 24_000);
+    await player.stop();
+    accept({ run_id: 12, state: "queued" });
+    await expect(playback).rejects.toThrow("cancelled during upload");
+    expect(gateway.cancelRun).toHaveBeenCalledWith(connection, "speech", 12);
+    expect(gateway.getSpeechRun).not.toHaveBeenCalled();
+  });
+
   it("cancels the matching Pi run when Studio playback is stopped", async () => {
     gateway.cancelRun.mockResolvedValue({ ok: true });
     gateway.uploadSpeech.mockResolvedValue({

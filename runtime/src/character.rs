@@ -73,6 +73,14 @@ pub struct CharacterStatus {
 }
 
 #[derive(Debug)]
+struct Attention {
+    previous: JointPositions,
+    run_id: Option<u64>,
+    returning: bool,
+    expires_at: f64,
+}
+
+#[derive(Debug)]
 pub struct CharacterCoordinator {
     status: CharacterStatus,
     rng: SeededRandom,
@@ -87,6 +95,7 @@ pub struct CharacterCoordinator {
     speech_motion_run_id: Option<u64>,
     speech_motion_started: bool,
     last_speech_clip: Option<String>,
+    attention: Option<Attention>,
 }
 
 impl CharacterCoordinator {
@@ -111,7 +120,88 @@ impl CharacterCoordinator {
             speech_motion_run_id: None,
             speech_motion_started: false,
             last_speech_clip: None,
+            attention: None,
         }
+    }
+
+    pub fn clear_attention(&mut self) {
+        self.attention = None;
+    }
+
+    /// Confirmed, coarse speaker attention through the ordinary motion executor.
+    pub fn attend<D: RuntimeDriver>(
+        &mut self,
+        side: &str,
+        confidence: f64,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<CharacterStatus> {
+        if !matches!(side, "left" | "right")
+            || !confidence.is_finite()
+            || !(0.75..=1.0).contains(&confidence)
+        {
+            return Err(Error::InvalidArgument(
+                "Attention requires left/right and confidence in [0.75, 1].".into(),
+            ));
+        }
+        if !self.status.enabled
+            || self.starting_run_id.is_some()
+            || self.foreground_pending
+            || self.foreground_scene_run_id.is_some()
+            || self.speech_motion_run_id.is_some()
+            || !matches!(
+                self.status.state,
+                CharacterState::HomeIdle
+                    | CharacterState::PoseIdle
+                    | CharacterState::Listening
+                    | CharacterState::Thinking
+            )
+            || (core.mode() == RuntimeMode::Moving && self.active_idle_run_id.is_none())
+        {
+            return Err(Error::InvalidState(
+                "Attention requires an available powered character.".into(),
+            ));
+        }
+        if self.attention.is_some() {
+            return Ok(self.status.clone()); // One facing decision per conversation.
+        }
+        let previous = self
+            .status
+            .active_anchor
+            .clone()
+            .ok_or_else(|| Error::InvalidState("Attention needs an anchor.".into()))?;
+        let target_yaw = if side == "left" { -0.35 } else { 0.35 };
+        if (core
+            .snapshot()
+            .joints
+            .iter()
+            .find(|joint| joint.name == "base_yaw_joint")
+            .ok_or_else(|| Error::Runtime("Missing base feedback".into()))?
+            .position
+            - target_yaw)
+            .abs()
+            > 0.65
+        {
+            return Err(Error::InvalidState(
+                "Attention would require a broad turn from this pose.".into(),
+            ));
+        }
+        self.preempt_idle(now, core)?;
+        let response = checked(core.handle_command(&format!("play attention_{side}"), now))?;
+        let run_id = response
+            .get("run_id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| Error::Runtime("Attention has no run ID.".into()))?;
+        self.attention = Some(Attention {
+            previous,
+            run_id: Some(run_id),
+            returning: false,
+            expires_at: now + 120.0,
+        });
+        self.status.state = CharacterState::Listening;
+        self.status.active_clip = Some(format!("attention_{side}"));
+        self.reset_timers(now);
+        Ok(self.status.clone())
     }
 
     pub fn status(&self) -> &CharacterStatus {
@@ -183,6 +273,7 @@ impl CharacterCoordinator {
         if !self.status.enabled {
             return Err(Error::InvalidState("Character mode is not enabled.".into()));
         }
+        self.clear_attention();
         self.preempt_idle(now, core)?;
         if core.mode() == RuntimeMode::Moving {
             checked(core.handle_command("stop", now))?;
@@ -209,8 +300,19 @@ impl CharacterCoordinator {
                 "Enable character mode before setting character state.".into(),
             ));
         }
+        if self.starting_run_id.is_some()
+            || self.foreground_pending
+            || self.foreground_scene_run_id.is_some()
+        {
+            return Err(Error::InvalidState(
+                "Character transition has priority over a reaction.".into(),
+            ));
+        }
         self.preempt_idle(now, core)?;
         self.reset_timers(now);
+        if let Some(attention) = self.attention.as_mut() {
+            attention.expires_at = now + if reaction == "neutral" { 15.0 } else { 120.0 };
+        }
         match reaction {
             "neutral" => self.status.state = self.idle_state(),
             "listening" => self.status.state = CharacterState::Listening,
@@ -232,13 +334,16 @@ impl CharacterCoordinator {
         if self.active_idle_run_id.is_some() && core.mode() == RuntimeMode::Moving {
             checked(core.handle_command("stop", now))?;
         }
-        self.active_idle_run_id = None;
+        if self.active_idle_run_id.take().is_some() {
+            self.status.active_clip = None;
+        }
         self.active_idle_category = None;
-        self.status.active_clip = None;
         Ok(())
     }
 
     pub fn note_foreground_started(&mut self, now: f64) {
+        self.clear_attention();
+        self.starting_run_id = None;
         if !self.status.enabled {
             return;
         }
@@ -249,7 +354,7 @@ impl CharacterCoordinator {
     }
 
     pub fn note_speech_started(&mut self, now: f64) {
-        if !self.status.enabled {
+        if !self.status.enabled || self.starting_run_id.is_some() {
             return;
         }
         self.status.state = CharacterState::Speaking;
@@ -259,6 +364,8 @@ impl CharacterCoordinator {
     }
 
     pub fn note_foreground_scene_started(&mut self, now: f64, run_id: u64) {
+        self.clear_attention();
+        self.starting_run_id = None;
         if !self.status.enabled {
             return;
         }
@@ -281,6 +388,25 @@ impl CharacterCoordinator {
         if !self.status.enabled {
             return Ok(());
         }
+        if let Some(run_id) = self.starting_run_id {
+            if let Some(phase) = terminal_phase(core, run_id) {
+                self.starting_run_id = None;
+                if self.status.state == CharacterState::ShuttingDown {
+                    self.finish_stop();
+                    return Ok(());
+                }
+                if phase != MovementPhase::Completed {
+                    self.finish_stop();
+                    return Ok(());
+                }
+                self.capture_anchor(core);
+                self.status.state = CharacterState::HomeIdle;
+                self.status.active_clip = None;
+                self.reset_timers(now);
+            }
+            return Ok(());
+        }
+
         if scene_active {
             self.status.state = CharacterState::ForegroundScene;
             return Ok(());
@@ -308,6 +434,46 @@ impl CharacterCoordinator {
         {
             self.finish_stop();
             return Ok(());
+        }
+        if let Some(mut attention) = self.attention.take() {
+            if let Some(run_id) = attention.run_id {
+                if let Some(phase) = terminal_phase(core, run_id) {
+                    attention.run_id = None;
+                    self.status.active_clip = None;
+                    if phase == MovementPhase::Completed {
+                        if attention.returning {
+                            self.status.active_anchor = Some(attention.previous.clone());
+                            self.status.state = self.idle_state();
+                            self.reset_timers(now);
+                        } else {
+                            self.capture_anchor(core);
+                            self.attention = Some(attention);
+                        }
+                    }
+                } else if speech_active {
+                    checked(core.handle_command("stop", now))?;
+                    self.status.active_clip = None;
+                } else {
+                    self.attention = Some(attention);
+                    return Ok(());
+                }
+            } else if !speech_active
+                && now >= attention.expires_at
+                && core.mode() == RuntimeMode::Holding
+            {
+                attention.run_id = Some(core.play_generated_anchored_relative(
+                    attention_return_motion(),
+                    attention.previous.clone(),
+                    now,
+                )?);
+                attention.returning = true;
+                self.status.active_clip = Some("attention_return".into());
+                self.status.state = CharacterState::Settling;
+                self.attention = Some(attention);
+                return Ok(());
+            } else {
+                self.attention = Some(attention);
+            }
         }
         if speech_active {
             if self.status.state != CharacterState::Speaking {
@@ -360,21 +526,6 @@ impl CharacterCoordinator {
             self.reset_timers(now);
         }
 
-        if let Some(run_id) = self.starting_run_id {
-            if terminal_phase(core, run_id).is_some() {
-                self.starting_run_id = None;
-                if self.status.state == CharacterState::ShuttingDown {
-                    self.finish_stop();
-                    return Ok(());
-                }
-                self.capture_anchor(core);
-                self.status.state = CharacterState::HomeIdle;
-                self.status.active_clip = None;
-                self.reset_timers(now);
-            }
-            return Ok(());
-        }
-
         if let Some(run_id) = self.active_idle_run_id {
             if let Some(phase) = terminal_phase(core, run_id) {
                 self.active_idle_run_id = None;
@@ -410,6 +561,10 @@ impl CharacterCoordinator {
             CharacterState::HomeIdle | CharacterState::PoseIdle
         ) || core.mode() != RuntimeMode::Holding
         {
+            return Ok(());
+        }
+        // A conversation holds a deliberate eyeline; avoid an idle delaying its return.
+        if self.attention.is_some() {
             return Ok(());
         }
         let category = if self.next_micro_at <= self.next_large_at {
@@ -825,6 +980,7 @@ impl CharacterCoordinator {
     }
 
     fn finish_stop(&mut self) {
+        self.clear_attention();
         self.status = CharacterStatus {
             enabled: false,
             state: CharacterState::Off,
@@ -840,6 +996,16 @@ impl CharacterCoordinator {
         self.speech_motion_run_id = None;
         self.speech_motion_started = false;
     }
+}
+
+fn attention_return_motion() -> MotionDefinition {
+    let mut motion = speech_settle_motion();
+    motion.name = "attention_return".into();
+    motion.style = MotionStyle::named("return_home").expect("built-in return style exists");
+    motion.description = "Return from conversational attention to the previous anchor.".into();
+    motion.keyframes[0].duration_seconds = 1.2;
+    motion.keyframes[0].marker = Some("attention_returned".into());
+    motion
 }
 
 fn merge_speech_layers(
@@ -1067,6 +1233,129 @@ mod tests {
             PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
         RuntimeCore::new(CharacterTestDriver, poses, motions).unwrap()
+    }
+
+    struct FollowingDriver {
+        positions: JointPositions,
+    }
+    impl RuntimeDriver for FollowingDriver {
+        fn apply_servo_profile(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn activate(&mut self) -> Result<Vec<JointState>> {
+            self.read()
+        }
+        fn deactivate(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn read(&mut self) -> Result<Vec<JointState>> {
+            let mut states = CharacterTestDriver.read()?;
+            for state in &mut states {
+                state.position = self.positions[&state.name];
+            }
+            Ok(states)
+        }
+        fn write(&mut self, positions: &JointPositions) -> Result<()> {
+            self.positions = positions.clone();
+            Ok(())
+        }
+        fn joint_limits(&self) -> Result<Vec<JointLimit>> {
+            CharacterTestDriver.joint_limits()
+        }
+        fn validate_positions(&self, positions: &JointPositions) -> Result<()> {
+            CharacterTestDriver.validate_positions(positions)
+        }
+        fn clamp_positions_to_safe_range(
+            &self,
+            positions: &JointPositions,
+        ) -> Result<JointPositions> {
+            Ok(positions.clone())
+        }
+    }
+
+    fn following_core() -> RuntimeCore<FollowingDriver> {
+        let source = core();
+        let poses = source.poses().clone();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let positions = poses.pose("home").unwrap().clone();
+        RuntimeCore::new(FollowingDriver { positions }, poses, motions).unwrap()
+    }
+
+    fn advance<D: RuntimeDriver>(
+        character: &mut CharacterCoordinator,
+        core: &mut RuntimeCore<D>,
+        start: f64,
+        end: f64,
+    ) {
+        for step in 1..=((end - start) * 50.0) as usize {
+            let now = start + step as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, core, false, None, false, None, None)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn cancelled_and_timed_out_startup_never_become_home_idle() {
+        for cancel in [false, true] {
+            let mut core = core();
+            let mut character = CharacterCoordinator::new(1);
+            character.start(0.0, &mut core).unwrap();
+            if cancel {
+                checked(core.handle_command("stop", 0.1)).unwrap();
+            }
+            advance(&mut character, &mut core, 0.1, 20.1);
+            assert!(!character.status.enabled);
+            assert_eq!(character.status.state, CharacterState::Off);
+            assert!(character.status.active_anchor.is_none());
+        }
+    }
+
+    #[test]
+    fn attention_holds_conversation_anchor_and_returns_after_neutral() {
+        for side in ["left", "right"] {
+            let mut core = following_core();
+            let mut character = CharacterCoordinator::new(1);
+            character.start(0.0, &mut core).unwrap();
+            advance(&mut character, &mut core, 0.0, 3.0);
+            let original = character.status.active_anchor.clone().unwrap();
+            character.attend(side, 0.9, 3.0, &mut core).unwrap();
+            assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
+            advance(&mut character, &mut core, 3.0, 6.0);
+            let facing = character.status.active_anchor.clone().unwrap();
+            assert!((facing["base_yaw_joint"].abs() - 0.35).abs() < 0.001);
+            character.set_reaction("thinking", 6.0, &mut core).unwrap();
+            advance(&mut character, &mut core, 6.0, 10.0);
+            assert_eq!(character.status.active_anchor.as_ref(), Some(&facing));
+            character.set_reaction("neutral", 10.0, &mut core).unwrap();
+            advance(&mut character, &mut core, 10.0, 30.0);
+            assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
+            assert!(character.attention.is_none());
+        }
+    }
+
+    #[test]
+    fn attention_rejects_low_confidence_and_off_and_yields_to_foreground() {
+        let mut core = following_core();
+        let mut character = CharacterCoordinator::new(1);
+        assert!(character.attend("left", 0.9, 0.0, &mut core).is_err());
+        character.start(0.0, &mut core).unwrap();
+        advance(&mut character, &mut core, 0.0, 3.0);
+        assert!(character.attend("left", 0.5, 3.0, &mut core).is_err());
+        assert!(character.attend("right", f64::NAN, 3.0, &mut core).is_err());
+        character.attend("left", 0.9, 3.0, &mut core).unwrap();
+        let original = character.status.active_anchor.clone();
+        checked(core.handle_command("stop", 3.1)).unwrap();
+        advance(&mut character, &mut core, 3.1, 3.2);
+        assert_eq!(character.status.active_anchor, original);
+        assert!(character.attention.is_none());
+        character.attend("right", 0.9, 3.2, &mut core).unwrap();
+        character.note_foreground_started(3.3);
+        assert!(character.attention.is_none());
     }
 
     #[test]

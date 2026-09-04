@@ -97,6 +97,16 @@ def aggressive_trajectory():
 
 
 class NativeExecutionTests(unittest.TestCase):
+    def test_conversational_attention_settles_without_base_instability(self):
+        for name in ("attention_left", "attention_right"):
+            with self.subTest(motion=name):
+                _, trajectory, start = load_playback_data(name, "home")
+                model, data, mapping = make_simulation(trajectory, start)
+                result = run_playback_loop(model, data, mapping, trajectory, lead_in=0.2, viewer=None)
+                self.assertEqual(result.status, ExecutionStatus.SUCCEEDED)
+                self.assertLess(max(abs(v) for v in result.metrics.final_position_errors), 0.05)
+                self.assertLess(result.metrics.maximum_base_translation, 0.01)
+
     def test_slow_motion_records_feedback_and_settles(self):
         _, trajectory, start = load_playback_data("look_at_left", "attentive")
         model, data, mapping = make_simulation(trajectory, start)

@@ -1,0 +1,26 @@
+[Unit]
+Description=Orion Pi microphone and Rustpotter listener
+After=network-online.target sound.target oriond.service
+Wants=network-online.target oriond.service
+ConditionPathExists=@USER_HOME@/.config/orion/studio-token
+
+[Service]
+Type=simple
+User=@ORION_USER@
+WorkingDirectory=@PROJECT_ROOT@/voice
+Environment=PYTHONUNBUFFERED=1
+Environment=ORION_MIC_SPACING=0
+Environment=ORION_CHANNEL_SIGN=0
+EnvironmentFile=-@USER_HOME@/.config/orion/voice.env
+UMask=0077
+ExecStart=@PROJECT_ROOT@/voice/.venv/bin/orion-listener --host 0.0.0.0 --port 7448 --token-file @USER_HOME@/.config/orion/studio-token --mic-spacing ${ORION_MIC_SPACING} --channel-sign ${ORION_CHANNEL_SIGN}
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

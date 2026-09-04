@@ -1,113 +1,100 @@
 # Orion voice architecture
 
-Orion has two voice paths with different roles. Studio Voice is the primary
-interactive path. The Raspberry Pi-local stack remains an offline fallback and
-diagnostic path.
+The Raspberry Pi owns Orion's microphone and Rustpotter wake detector. Studio
+owns Qwen3-ASR, the configured agent and Chatterbox synthesis. Studio never opens
+its workstation microphone or loads a wake detector.
 
-## Primary path: Studio Voice
-
-Studio Voice represents microphone and playback samples as signed 16-bit
-pulse-code modulation (PCM16). It performs automatic speech recognition (ASR)
-with Qwen3-ASR and text-to-speech (TTS) generation with Chatterbox.
+## Audio and control flow
 
 ```text
-workstation microphone
-  -> browser AudioWorklet
-  -> native-rate conversion to 16 kHz mono PCM16
-  -> authenticated loopback WebSocket
-  -> Rustpotter reference wake detector
-  -> endpointing (detect when speech ends) and in-memory pre-roll
-  -> Qwen3-ASR wake confirmation and command transcription
-  -> configured AgentProvider
-  -> Chatterbox Turbo speech generation
-  -> authenticated mono PCM16/24 kHz WAV upload
-  -> oriond-owned ReSpeaker playback
-  -> energy-driven character motion and red-green-blue-white (RGBW) light
+Pi ReSpeaker stereo capture (16 kHz signed PCM16)
+  -> local coarse direction observation before downmixing
+  -> mono Rustpotter + three-second in-memory pre-roll
+  -> wake candidate notification over token-authenticated WebSocket
+  -> Pi speech endpoint -> bounded complete utterance upload
+  -> Studio Qwen ASR confirms "Hey Orion" and extracts command
+  -> configured AgentProvider -> Chatterbox Turbo
+  -> existing validated WAV upload -> oriond-owned playback
+  -> speech animation -> terminal playback acknowledgement -> rearm Pi
 ```
 
-Studio begins capture only after the user selects **Enable microphone**. Raw
-audio, endpoint buffers, and the three-second pre-roll remain transient in
-memory. The WebSocket accepts loopback connections only and uses a fresh token
-for every worker process.
+Rustpotter is the only active wake detector. Its reference and native adapter
+live under `voice/`; Studio does not depend on that package. Qwen retains the
+second-stage false-positive check. Rejected wake candidates never reach the
+agent or trigger directional attention. Qwen confirmation is not a guarantee
+that every false positive is eliminated.
 
-Rustpotter is deliberately a fast candidate detector rather than the final
-authority. Qwen3-ASR confirms that the transcript begins with “Hey Orion”
-before the agent receives the command. This two-stage design allows a
-relatively permissive reference threshold without sending every sound to ASR
-or the agent.
+## Capture ownership and session lifecycle
 
-The implemented Codex agent produces a spoken response only. It cannot request
-movement, lighting, cues, or scenes. Studio maps known voice-pipeline phases to
-the allowlisted listening, thinking, and neutral character states;
-agent-generated text never becomes a raw robot command.
+The Pi listener is an independent process, outside the 50 Hz motor loop. The
+service may run at boot, but opens capture only while an authenticated Studio
+owner has enabled the Orion microphone. Closing Voice or disconnecting ends
+capture. A single connection owns capture; additional connections are refused.
 
-Once a validated response reaches `oriond`, waveform energy and phrase peaks
-drive one utterance-length head-led performance. That animation path is
-documented in [Character animation design](character-animation.md#speech-driven-animation).
+Every interaction has a random session ID. The Pi captures continuously while
+enabled, keeps three seconds of pre-roll in memory and sends a candidate event
+immediately. Audio is uploaded as a complete endpointed utterance, not a
+continuous room-audio stream. An utterance is at most 18 seconds including
+pre-roll. Endpointing uses the existing deterministic energy detector: at least
+1.2 seconds of capture, 800 ms of trailing silence and a 15-second maximum.
+These workstation-origin thresholds require evaluation on the ReSpeaker.
 
-## Agent and privacy boundary
+If the first transcript is only the wake phrase, Studio requests a follow-up
+command. The Pi buffers up to one endpointed follow-up while Qwen is working,
+so the transition does not discard speech spoken during confirmation. Empty
+commands fail without invoking the agent.
 
-Microphone audio, wake detection, transcription, and speech generation remain
-on the workstation with the default model adapters. The configured agent is a
-separate boundary:
+Processing suppresses further wake triggers. Playback acknowledgement is sent
+only after the Pi reports terminal playback. This is turn-taking, not acoustic
+echo cancellation or barge-in. Session deadlines, bounded socket queues and
+strict state transitions prevent indefinite buffering and stale command replay.
+A disconnected session is discarded; the operator re-enables Voice to reconnect.
+Processing has a 120-second session lease; entering playback grants 180 seconds.
 
-- With the implemented Codex provider, the confirmed text command is sent to
-  the configured Codex service. Raw microphone audio is not sent.
-- A planned local-LLM provider can keep confirmed text local without changing
-  wake detection, ASR, TTS, or playback.
-- A planned OpenAI Platform provider can use the same `AgentProvider` contract
-  with separately configured credentials.
+## Transport and deployment
 
-Cloud-backed agent use is therefore optional application behaviour, not a
-requirement for the Pi runtime, scenes, or manual Studio control. The Voice UI
-must continue to disclose the selected provider before capture is enabled.
+Studio saves the paired gateway address and token in the OS credential store.
+Gateway reconnect restores read-only status/authoring connectivity without
+replaying robot operations or enabling Voice. The listener token is reused from
+that saved connection. See [pairing configuration](../reference/configuration.md#saved-pairing).
 
-## Model lifecycle
+The Pi listener uses plain WebSockets on port 7448 and the Pi's existing
+Studio token for authentication. Studio derives `ws://GATEWAY_HOST:7448/`
+from the gateway connection; `ORION_PI_VOICE_URL` can override it with another
+`ws://` endpoint. No certificate setup is required. Tokens and audio travel
+unencrypted, so this development connection is intended for a trusted LAN.
+Token authentication controls access but does not protect against network
+interception.
 
-Voice model weights are not stored in Git or bundled with a source checkout.
-The `orion-voice-models` command pre-downloads and verifies the configured ASR
-and TTS repositories in the user's Hugging Face cache.
+Studio's native launcher passes connection configuration to its Python worker.
+The worker connects directly to the Pi listener and exposes processing events
+to the UI through its existing authenticated loopback socket. Version 5 of that
+local protocol rejects workstation microphone frames. Pi protocol version 1
+uses JSON session messages and length-checked PCM16 utterances.
 
-Starting Studio alone does not proactively download the weights. If Voice is
-enabled without the prefetch step, the model libraries may try to download
-them during worker startup. That first load can exceed Studio's startup
-timeout and is not the supported first-run path. Follow the
-[Studio Voice tutorial](../tutorials/first-studio-voice-run.md) on each
-development device.
+The existing HTTP gateway still handles response WAV upload and robot control;
+both transports are unencrypted. Production pairing and encryption for voice
+and gateway transport remain separate work.
 
-See [model management](../how-to/manage-studio-voice-models.md) for cache
-locations, overrides, and offline preparation.
+Follow [Pi voice setup](../../voice/README.md) and the
+[Studio Voice tutorial](../tutorials/first-studio-voice-run.md).
 
-## Fallback path: Raspberry Pi-local voice
+## Agent and physical boundary
 
-Silero provides voice activity detection (VAD), which separates speech from
-silence before Moonshine transcribes the utterance.
+Raw microphone audio travels only between the Pi and Studio. Qwen and
+Chatterbox run on the workstation. With the Codex provider, confirmed command
+text is sent to the configured Codex service; audio is not. The agent produces
+spoken replies and has no motion or device command capability.
 
-```text
-ReSpeaker microphones
-  -> Sherpa keyword detection
-  -> Silero VAD
-  -> Moonshine Tiny English transcription
-  -> /tmp/orion-wake.sock transcript events
+The Pi may request allowlisted character reactions based on session events.
+Confirmed, confident direction observations request the existing runtime's
+semantic attention operation. Character Off prevents those movements while
+voice can remain enabled. See [Voice attention](voice-attention.md) for the
+animation brief, priority, commissioning and acceptance requirements.
 
-text request
-  -> /tmp/orion-tts.sock
-  -> Piper Ryan Medium
-  -> temporary WAV
-  -> oriond-owned ReSpeaker playback
-```
+## Legacy offline diagnostics
 
-This path performs wake detection and speech-to-text locally on the Pi, but it
-stops at transcript publication. It does not interpret commands or invoke an
-agent. Piper speech generation is integrated with `oriond` so playback retains
-normal run IDs, cancellation, and device ownership.
-
-The [Pi-local voice setup](../../voice/README.md) uses a model installer that is
-independent of the Studio model downloader.
-
-## Why both paths exist
-
-The workstation can run more capable ASR and TTS models and usually provides a
-better microphone. The Pi path keeps hardware diagnosis and offline operation
-possible without making the lower-powered Pi the quality ceiling for the main
-experience.
+Sherpa, Moonshine and Piper remain available only through the optional
+`fallback` dependency set and explicit legacy diagnostic commands. They are
+not started by `orion-listener` or Studio. Never run a legacy microphone worker
+concurrently with the primary listener. Piper remains usable for Pi-local TTS.

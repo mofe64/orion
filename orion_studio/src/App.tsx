@@ -1,5 +1,5 @@
-import { Activity, CircleStop, CloudUpload, Lightbulb, Link2, Mic, Move3d, Music2, Pause, Play, Plus, Power, Radio, Sparkles, Unplug, Waypoints } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, CircleStop, CloudUpload, Lightbulb, Link2, Mic, Move3d, Music2, Pause, Play, Plus, Power, Radio, Sparkles, Waypoints } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { EventInspector } from "./components/EventInspector";
 import { MotionEditor } from "./components/MotionEditor";
@@ -7,6 +7,8 @@ import { PoseEditor } from "./components/PoseEditor";
 import { RobotViewport } from "./components/RobotViewport";
 import { Timeline, type TrackSelection } from "./components/Timeline";
 import { VoicePanel } from "./components/VoicePanel";
+import { PairingController } from "./lib/pairing";
+import { PairingPanel } from "./components/PairingPanel";
 import { projectCatalog } from "./lib/catalog";
 import { firstSeededIdle } from "./lib/characterPreview";
 import { buildSceneDocument } from "./lib/sceneDocument";
@@ -15,13 +17,11 @@ import {
   sceneMarkers, validateSceneMotionSchedule, type SceneTrajectoryPreviews,
 } from "./lib/preview";
 import {
-  compileMotionPreview, getCapabilities, getStatus, gotoPose, previewScene, publishMotion,
+  compileMotionPreview, gotoPose, previewScene, publishMotion,
   publishPose, publishScene, runMotion, runScene, setCharacterMode, setCharacterState,
-  type GatewayConnection,
 } from "./lib/gateway";
-import type { StudioVoicePhase } from "./lib/studioVoicePipeline";
 import type {
-  CompiledTrajectoryPreview, GatewayCapabilities, GatewayStatus, JointPositions,
+  CompiledTrajectoryPreview, JointPositions,
   MotionDefinition, PoseDefinition, SceneDefinition, StoredMotionDocument, StoredPoseDocument,
 } from "./types";
 
@@ -64,11 +64,20 @@ export default function App() {
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [gatewayUrl, setGatewayUrl] = useState(() => localStorage.getItem("orionStudioGateway") ?? "http://orion.local:7447");
-  const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem("orionStudioToken") ?? "");
-  const [connection, setConnection] = useState<GatewayConnection | null>(null);
-  const [status, setStatus] = useState<GatewayStatus | null>(null);
-  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(null);
+  const [pairing] = useState(() => new PairingController());
+  const pairingState = useSyncExternalStore(pairing.subscribe, pairing.current);
+  const { connection, status, capabilities } = pairingState;
+  useEffect(() => {
+    // Retire the previous session-only credential; secrets live in the OS store.
+    sessionStorage.removeItem("orionStudioToken");
+    void pairing.start();
+    return () => pairing.dispose();
+  }, [pairing]);
+  const connectionLabel = connection ? "Orion connected"
+    : pairingState.phase === "auth_required" ? "Pair Orion again"
+    : ["connecting", "reconnecting", "loading"].includes(pairingState.phase) ? "Connecting to Orion…"
+    : pairingState.phase === "error" ? "Connection needs attention"
+    : pairingState.paired ? "Orion disconnected" : "Pair Orion";
   const frame = useRef(0);
 
   const catalog = useMemo(() => ({ ...projectCatalog, jointLimits: capabilities?.capabilities.joint_limits ?? projectCatalog.jointLimits }), [capabilities]);
@@ -98,26 +107,6 @@ export default function App() {
   const previewReady = kind === "pose"
     || (kind === "motion" && compiled !== null)
     || (kind === "scene" && scene.motion.length === compiledSceneValues.length);
-
-  const refresh = useCallback(async (target: GatewayConnection) => {
-    const [nextStatus, nextCapabilities] = await Promise.all([getStatus(target), getCapabilities(target)]);
-    setStatus(nextStatus); setCapabilities(nextCapabilities);
-  }, []);
-
-  const connect = async () => {
-    const target = { url: gatewayUrl, token: gatewayToken };
-    try {
-      await refresh(target); setConnection(target); setConnectionOpen(false);
-      localStorage.setItem("orionStudioGateway", gatewayUrl); sessionStorage.setItem("orionStudioToken", gatewayToken);
-      setNotice("Connected. Studio now uses Orion's live calibration and character state.");
-    } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
-  };
-
-  useEffect(() => {
-    if (!connection) return;
-    const timer = globalThis.setInterval(() => void refresh(connection).catch(() => setConnection(null)), 1000);
-    return () => globalThis.clearInterval(timer);
-  }, [connection, refresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,15 +210,11 @@ export default function App() {
     try {
       if (mode === "start" || mode === "stop") await setCharacterMode(connection, mode === "start");
       else await setCharacterState(connection, mode);
-      await refresh(connection); setNotice(`Character ${mode} accepted.`);
+      await pairing.refresh(); setNotice(`Character ${mode} accepted.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
   };
 
-  const voicePhase = useCallback((phase: StudioVoicePhase) => {
-    if (!connection || !status?.character.enabled) return;
-    const state = ["command_listening", "wake_candidate", "confirming_wake", "transcribing"].includes(phase) ? "listening" : ["thinking", "synthesizing"].includes(phase) ? "thinking" : "neutral";
-    void setCharacterState(connection, state).catch(() => undefined);
-  }, [connection, status?.character.enabled]);
+
 
   const addTrackEvent = (track: TrackSelection["track"]) => {
     const id = crypto.randomUUID();
@@ -259,12 +244,12 @@ export default function App() {
       <header className="topbar">
         <button className="brand-lockup" onClick={() => chooseAsset("scene", initialScene.name)} aria-label="Open Orion Studio home"><span className="brand-mark"><i /><i /><i /><i /><i /><i /><i /><i /></span><span><strong>ORION</strong><small>CHARACTER STUDIO</small></span></button>
         <div className="mode-tabs" role="tablist" aria-label="Asset editor">{(["scene", "motion", "pose"] as const).map((item) => <button role="tab" aria-selected={kind === item} className={kind === item ? "active" : ""} onClick={() => chooseAsset(item, Object.keys(catalog[`${item}s` as "scenes"])[0])} key={item}>{item === "scene" ? <Sparkles size={15} /> : item === "motion" ? <Waypoints size={15} /> : <Move3d size={15} />}{item}</button>)}</div>
-        <div className="topbar-actions"><button className="quiet-button" onClick={() => setVoiceOpen((open) => !open)}><Mic size={16} />Voice</button><button className={connection ? "connection-button connected" : "connection-button"} onClick={() => setConnectionOpen((open) => !open)}>{connection ? <Radio size={15} /> : <Link2 size={15} />}{connection ? "Orion connected" : "Connect Orion"}</button></div>
-        {connectionOpen && <section className="connection-popover" role="dialog" aria-label="Connect to Orion"><p className="eyebrow">Private Pi gateway</p><h2>Connect Orion</h2><label>Gateway URL<input value={gatewayUrl} onChange={(event) => setGatewayUrl(event.target.value)} /></label><label>Studio token<input type="password" value={gatewayToken} onChange={(event) => setGatewayToken(event.target.value)} /></label><button className="primary-button" onClick={() => void connect()}><Link2 size={15} />Use this Orion</button>{connection && <button className="secondary-button" onClick={() => { setConnection(null); setStatus(null); setCapabilities(null); }}><Unplug size={15} />Disconnect</button>}</section>}
-        <VoicePanel open={voiceOpen} connection={connection} onClose={() => setVoiceOpen(false)} onNotice={setNotice} onPhaseChange={voicePhase} />
+        <div className="topbar-actions"><button className="quiet-button" aria-label="Voice" title="Voice" onClick={() => setVoiceOpen((open) => !open)}><Mic size={16} />Voice</button><button className={connection ? "connection-button connected" : "connection-button"} aria-label={connectionLabel} title={connectionLabel} aria-expanded={connectionOpen} aria-controls="orion-pairing" onClick={() => setConnectionOpen((open) => !open)}>{connection ? <Radio size={15} /> : <Link2 size={15} />}{connectionLabel}</button></div>
+        {connectionOpen && <PairingPanel controller={pairing} state={pairingState} onClose={() => setConnectionOpen(false)} />}
+        <VoicePanel open={voiceOpen} connection={connection} onClose={() => setVoiceOpen(false)} onNotice={setNotice} />
       </header>
 
-      <section className="character-strip" aria-label="Character controls"><div><span className={`state-orb ${status?.character.enabled ? "alive" : ""}`} /><div><strong>{status ? displayName(status.character.state) : "Character offline"}</strong><span>{status?.character.enabled ? `Anchor ready · ${status.character.active_clip ? displayName(status.character.active_clip) : "waiting calmly"}` : "Starts disabled after every reboot"}</span></div></div><div className="character-actions"><button onClick={() => void setCharacter("start")} disabled={status?.character.enabled}><Power size={14} />Start character</button><button onClick={() => void setCharacter("listening")} disabled={!status?.character.enabled}><Radio size={14} />Listen</button><button onClick={() => void setCharacter("thinking")} disabled={!status?.character.enabled}><Activity size={14} />Think</button><button onClick={() => void setCharacter("stop")} disabled={!status?.character.enabled}><CircleStop size={14} />Stop</button><button onClick={() => setDiagnosticsOpen((open) => !open)}><Waypoints size={14} />Diagnostics</button></div></section>
+      <section className="character-strip" aria-label="Character controls"><div><span className={`state-orb ${status?.character.enabled ? "alive" : ""}`} /><div><strong>{status ? displayName(status.character.state) : "Character offline"}</strong><span>{status?.character.enabled ? `Anchor ready · ${status.character.active_clip ? displayName(status.character.active_clip) : "waiting calmly"}` : "Starts in character mode after a restart"}</span></div></div><div className="character-actions"><button onClick={() => void setCharacter("start")} disabled={status?.character.enabled}><Power size={14} />Start character</button><button onClick={() => void setCharacter("listening")} disabled={!status?.character.enabled}><Radio size={14} />Listen</button><button onClick={() => void setCharacter("thinking")} disabled={!status?.character.enabled}><Activity size={14} />Think</button><button onClick={() => void setCharacter("stop")} disabled={!status?.character.enabled}><CircleStop size={14} />Stop</button><button onClick={() => setDiagnosticsOpen((open) => !open)}><Waypoints size={14} />Diagnostics</button></div></section>
 
       <section className="workspace" id="workspace">
         <nav className="asset-library" aria-label="Character library"><header><p className="eyebrow">Character library</p><h1>{kind === "scene" ? "Expressions" : kind === "motion" ? "Movement" : "Poses"}</h1></header><div className="asset-list">{Object.values(kind === "scene" ? catalog.scenes : kind === "motion" ? catalog.motions : catalog.poses).map((asset) => { const selected = asset.name === (kind === "scene" ? scene.name : kind === "motion" ? motion.name : pose.name); return <button className={selected ? "selected" : ""} key={asset.name} onClick={() => chooseAsset(kind, asset.name)}><span>{displayName(asset.name)}</span><small>{asset.source === "built_in" ? "Orion" : "Yours"}</small></button>; })}</div></nav>

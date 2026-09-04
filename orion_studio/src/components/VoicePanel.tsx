@@ -14,7 +14,6 @@ interface VoicePanelProps {
   connection: GatewayConnection | null;
   onClose: () => void;
   onNotice: (notice: string) => void;
-  onPhaseChange: (phase: StudioVoicePhase) => void;
 }
 
 const PHASE_LABELS: Record<StudioVoicePhase, string> = {
@@ -32,33 +31,28 @@ const PHASE_LABELS: Record<StudioVoicePhase, string> = {
   error: "Needs attention",
 };
 
-function meterPercent(levelDbfs: number | null): number {
-  if (levelDbfs === null) return 0;
-  return Math.max(0, Math.min(100, ((levelDbfs + 60) / 60) * 100));
-}
-
-export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange }: VoicePanelProps) {
+export function VoicePanel({ open, connection, onClose, onNotice }: VoicePanelProps) {
   const [playback, setPlayback] = useState<OrionPlaybackSnapshot>({ runId: null, state: "idle" });
   const pipeline = useMemo(() => new StudioVoicePipeline({
+    connection: connection ?? undefined,
     speaker: new OrionSpeechPlayer(() => connection, setPlayback),
   }), [connection]);
   const [snapshot, setSnapshot] = useState<StudioVoiceSnapshot>(() => pipeline.current());
 
   useEffect(() => pipeline.subscribe(setSnapshot), [pipeline]);
-  useEffect(() => onPhaseChange(snapshot.phase), [onPhaseChange, snapshot.phase]);
   useEffect(() => () => { void pipeline.stop(); }, [pipeline]);
 
   const toggleCapture = async () => {
     if (!["off", "error"].includes(snapshot.phase)) {
       await pipeline.stop();
-      onNotice("Studio local voice pipeline stopped.");
+      onNotice("Orion microphone and Studio processing stopped.");
       return;
     }
     await pipeline.start();
     const result = pipeline.current();
     onNotice(result.phase === "ready"
-      ? `Local speech recognition is ready on ${result.deviceLabel}.`
-      : result.error ?? "Studio local voice could not start.");
+      ? `Speech recognition is ready for ${result.deviceLabel}.`
+      : result.error ?? "Orion voice could not start.");
   };
 
   if (!open) return null;
@@ -76,13 +70,7 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
         <div><strong>{PHASE_LABELS[snapshot.phase]}</strong><span>{snapshot.deviceLabel ?? (snapshot.phase === "starting" ? "Starting persistent worker…" : "No microphone open")}</span></div>
       </div>
 
-      <div className="voice-meter" role="meter" aria-label="Microphone input level" aria-valuemin={-60} aria-valuemax={0} aria-valuenow={snapshot.levelDbfs ?? -60}>
-        <span style={{ width: `${meterPercent(snapshot.levelDbfs)}%` }} />
-      </div>
-      <div className="voice-metadata">
-        <span>{snapshot.sampleRate ? `${Math.round(snapshot.sampleRate / 1000)} kHz native → 16 kHz` : "Awaiting audio"}</span>
-        <span>{snapshot.levelDbfs === null ? "— dBFS" : `${snapshot.levelDbfs.toFixed(1)} dBFS`}</span>
-      </div>
+      <p className="voice-metadata">16 kHz audio from Orion · local wake detection on the Pi</p>
 
       {snapshot.error && <p className="voice-error">{snapshot.error}</p>}
       {snapshot.transcript && <p className="voice-transcript"><span>Latest command</span>{snapshot.transcript}</p>}
@@ -95,7 +83,7 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
         onClick={() => { void toggleCapture(); }}
       >
         {active ? <MicOff size={15} /> : <Mic size={15} />}
-        {active ? "Stop microphone" : !connection ? "Connect Orion first" : snapshot.phase === "error" ? "Try again" : "Enable microphone"}
+        {active ? "Stop Orion microphone" : !connection ? "Connect Orion first" : snapshot.phase === "error" ? "Try again" : "Enable Orion microphone"}
       </button>
 
       <div className="voice-provider-list">
@@ -105,7 +93,7 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
         <div><span>Pre-roll</span><strong>3 seconds · memory only</strong></div>
         <div><span>Text to speech</span><strong>{snapshot.ttsModel ?? "Not loaded"}</strong></div>
       </div>
-      <small>Wake detection, transcription, and Chatterbox synthesis run locally. PCM16 audio is uploaded securely and plays through Orion's ReSpeaker with speaking motion and light.</small>
+      <small>Rustpotter and microphone capture run on Orion. Audio travels over the local network without encryption to Studio for Qwen confirmation and Chatterbox synthesis. The configured Codex agent receives confirmed command text. Replies play through Orion.</small>
     </section>
   );
 }

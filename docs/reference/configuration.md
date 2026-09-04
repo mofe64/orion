@@ -13,8 +13,7 @@ environment variables.
 | `ORION_STUDIO_VOICE_PYTHON` | `orion_studio/voice_worker/.venv/bin/python` on Unix; `.venv/Scripts/python.exe` on Windows | Overrides the Python executable used to start the voice worker |
 | `ORION_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-0.6B` | Qwen3-ASR repository ID or compatible local model path |
 | `ORION_STUDIO_TTS_MODEL` | `mlx-community/chatterbox-turbo-8bit` | Chatterbox repository ID or compatible local model path |
-| `ORION_STUDIO_WAKE_MODEL` | `voice_worker/models/hey_orion_reference.rpw` | Rustpotter reference file |
-| `ORION_STUDIO_WAKE_THRESHOLD` | `0.400` | Rustpotter candidate threshold in the range `(0, 1]` |
+| `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
 | `ORION_STUDIO_AGENT_PROVIDER` | `codex` | Agent adapter name; only `codex` is implemented |
 | `ORION_STUDIO_AGENT_MODEL` | Codex configured default | Optional Codex model override |
 | `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |
@@ -23,13 +22,34 @@ Set Studio variables on the same command that starts the Tauri process:
 
 ```bash
 cd orion_studio
-ORION_STUDIO_WAKE_THRESHOLD=0.385 \
 ORION_STUDIO_AGENT_MODEL=MODEL_NAME \
 pnpm tauri dev
 ```
 
 An accepted environment value changes process configuration; it does not prove
 that an alternative model or threshold has passed Orion's evaluation.
+
+## Saved pairing
+
+Desktop Studio stores one gateway address/token together in the OS credential
+store: macOS Keychain, Windows Credential Manager or Linux Secret Service.
+The native service name is `org.orion.studio.pairing` and account is
+`paired-orion`. No token is persisted in browser local/session storage.
+The UI-only development server keeps a connection in memory for the current
+tab only; use the Tauri app for saved pairing.
+
+Studio reconnects on launch and retries network failures with a delay increasing
+from 1 to 15 seconds. Each HTTP request has a five-second timeout. Rejected
+credentials pause automatic retries and show **Pair Orion again**. **Disconnect**
+pauses connection for the current session; **Forget Orion on this computer**
+removes the saved credential. Neither action changes Pi torque or character
+mode. Losing the connection stops Studio Voice; reconnect does not reopen the
+microphone automatically.
+
+Linux desktop builds require the Secret Service backend and D-Bus development
+libraries (`libdbus-1-dev` on Debian/Ubuntu), plus an unlocked desktop keyring
+at runtime. Native persistence was tested on macOS; Windows/Linux integration
+still requires platform validation.
 
 ## Raspberry Pi deployment
 
@@ -66,3 +86,15 @@ See [runtime commands](../../runtime/README.md) for the normal MuJoCo and
 hardware sequences. The ReSpeaker card, RGBW dimensions, GPIO, and executable
 paths are compiled into the runtime and cannot be overridden through the
 environment.
+
+## Pi listener and character startup
+
+The listener's `--wake-model` defaults to `voice/models/wake/hey_orion_reference.rpw`
+and `--threshold` defaults to 0.400. They are Pi settings; Studio has no wake
+model settings. Service microphone geometry uses `ORION_MIC_SPACING` (metres)
+and `ORION_CHANNEL_SIGN` (-1 or 1) from `~/.config/orion/voice.env`; zero defaults
+disable direction estimation pending commissioning. See [Pi voice setup](../../voice/README.md).
+
+`oriond --serve` defaults to `--character-on-start on`. Select `off` explicitly
+for torque-off maintenance startup. Studio Stop affects the current daemon
+session, not the next restart.

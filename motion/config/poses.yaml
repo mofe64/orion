@@ -166,3 +166,87 @@ poses:
       elbow_pitch_joint: -0.25
       head_roll_joint: -0.59
       head_pitch_joint: -0.05
+
+  attention_left_anticipation:
+    description: Restrained conversational left attention anticipation.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: 0.025
+      shoulder_pitch_joint: -0.025
+      elbow_pitch_joint: -0.280
+      head_roll_joint: 0.025
+      head_pitch_joint: -0.100
+
+  attention_left_lean:
+    description: Restrained conversational left attention lean.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: -0.270
+      shoulder_pitch_joint: -0.045
+      elbow_pitch_joint: -0.270
+      head_roll_joint: -0.045
+      head_pitch_joint: -0.070
+
+  attention_left_overshoot:
+    description: Restrained conversational left attention overshoot.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: -0.380
+      shoulder_pitch_joint: -0.025
+      elbow_pitch_joint: -0.290
+      head_roll_joint: -0.065
+      head_pitch_joint: -0.075
+
+  attention_left:
+    description: Restrained conversational left attention anchor.
+    tags: [powered, directional, idle_anchor]
+    idle_profile: directional
+    default_lighting: attentive_focus
+    positions:
+      base_yaw_joint: -0.350
+      shoulder_pitch_joint: -0.015
+      elbow_pitch_joint: -0.300
+      head_roll_joint: -0.050
+      head_pitch_joint: -0.080
+
+  attention_right_anticipation:
+    description: Restrained conversational right attention anticipation.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: -0.025
+      shoulder_pitch_joint: -0.025
+      elbow_pitch_joint: -0.280
+      head_roll_joint: -0.025
+      head_pitch_joint: -0.100
+
+  attention_right_lean:
+    description: Restrained conversational right attention lean.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: 0.270
+      shoulder_pitch_joint: -0.045
+      elbow_pitch_joint: -0.270
+      head_roll_joint: 0.045
+      head_pitch_joint: -0.070
+
+  attention_right_overshoot:
+    description: Restrained conversational right attention overshoot.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: 0.380
+      shoulder_pitch_joint: -0.025
+      elbow_pitch_joint: -0.290
+      head_roll_joint: 0.065
+      head_pitch_joint: -0.075
+
+  attention_right:
+    description: Restrained conversational right attention anchor.
+    tags: [powered, directional, idle_anchor]
+    idle_profile: directional
+    default_lighting: attentive_focus
+    positions:
+      base_yaw_joint: 0.350
+      shoulder_pitch_joint: -0.015
+      elbow_pitch_joint: -0.300
+      head_roll_joint: 0.050
+      head_pitch_joint: -0.080

@@ -1,12 +1,9 @@
 # Orion
 
-Orion is an expressive robotic lamp. A Raspberry Pi runs the safety-critical
-hardware runtime, while Orion Studio provides scene authoring, robot control,
-and the primary workstation voice experience.
+Orion is an expressive robotic lamp. It uses a Raspberry Pi as the onboard computer for running the safety-critical hardware runtime, while Orion Studio provides scene authoring, robot control,
+and acts as the external voice processing and agent runtime.
 
 ## Start here
-
-Choose the path that matches what you want to do:
 
 - [Understand the system](docs/explanation/system-architecture.md) — component
   boundaries, data flow, and safety ownership.
@@ -28,17 +25,17 @@ Choose the path that matches what you want to do:
 
 ## System at a glance
 
-Studio Voice combines automatic speech recognition (ASR), an agent, and
-text-to-speech (TTS). Orion's RGBW light has red, green, blue, and dedicated
+Orion Studio acts as the external processing station and enables its voice functionality, which combines automatic speech recognition (ASR), AI agent, and text-to-speech (TTS).
+Orion also posseses functional and expressive lighting via a led (adafruit neo pixel shield) with red, green, blue, and dedicated
 white channels.
 
 ```text
-Workstation                                      Raspberry Pi
+External Computer                                Onboard Computer (Raspberry Pi)
 
 Orion Studio                                     authenticated HTTP gateway
 ├── scene and motion editor     semantic API     ├── named assets and actions
-├── local microphone          ────────────────▶  └── private Unix socket
-├── wake + ASR + agent + TTS                            │
+├── Pi audio processing       ────────────────▶  └── private Unix socket
+├── Qwen ASR + agent + TTS                            │
 └── validated WAV upload                               ▼
                                                     oriond
                                                     ├── lifecycle and safety
@@ -49,17 +46,17 @@ Orion Studio                                     authenticated HTTP gateway
                                                     └── ReSpeaker playback
 ```
 
-`oriond` is the sole authority for Raspberry Pi hardware. Studio submits
-semantic requests such as named poses, motions, scenes, and speech; it never
-writes servo registers or general-purpose input/output (GPIO) pins directly.
-Planned agent integrations must use the same semantic boundary.
+`oriond` is the active runtime for Onboard computer. Studio submits
+semantic requests such as named poses, motions, scenes, and speech, but does not control
+hardware directly. AI agent integrations use the same semantic boundary.
 
-Studio Voice is the primary interactive voice path. It captures from the
-workstation microphone and runs Rustpotter, Qwen3-ASR, the configured agent,
-and Chatterbox locally around an authenticated loopback connection. The
-Pi-local Piper/Sherpa/Moonshine stack remains available as a diagnostic and
-offline fallback. See the [voice architecture](docs/explanation/voice-architecture.md)
-for the distinction.
+Studio Voice processes audio captured exclusively by the onboard Pi. The Pi
+runs Rustpotter and forwards bounded utterances over the local network; Studio confirms the
+wake with Qwen3-ASR, invokes the configured agent, and synthesizes replies with
+Chatterbox. The Pi plays replies and owns character animation. Legacy offline
+voice tools remain optional diagnostics. See the
+[voice architecture](docs/explanation/voice-architecture.md) and
+[Pi setup](voice/README.md).
 
 ## Repository map
 
@@ -76,8 +73,6 @@ for the distinction.
 | `audio/` | Named local audio cues |
 | `docs/` | Cross-system documentation, project status, decisions, and learning material |
 
-Training recordings and wake-word evaluation tools are not runtime
-dependencies. They live in the separate sibling `voice-model-lab` workspace.
 
 ## Common validation commands
 
@@ -96,6 +91,7 @@ pnpm build
 Some runtime integration tests expect the repository Python environment at
 `.venv/bin/python`. Model-independent voice-worker tests use the worker's own
 environment; see its [validation instructions](orion_studio/voice_worker/README.md#validation).
+- Will probably look into unifying various python environemnts later
 
 ## Implementation status
 

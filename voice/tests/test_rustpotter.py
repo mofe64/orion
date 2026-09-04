@@ -5,7 +5,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from orion_voice_worker.wake import RustpotterWakeDetector
+from orion_voice.rustpotter import RustpotterWakeDetector
 
 
 class FakeNativeDetector:

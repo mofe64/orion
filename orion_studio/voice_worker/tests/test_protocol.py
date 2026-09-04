@@ -7,7 +7,7 @@ from orion_voice_worker.protocol import ProtocolError, event, parse_hello
 def hello(**overrides: object) -> str:
     message = {
         "type": "hello",
-        "protocol": 4,
+        "protocol": 5,
         "token": "secret",
         "sampleRate": 16_000,
         "channels": 1,

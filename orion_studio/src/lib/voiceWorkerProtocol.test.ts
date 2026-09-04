@@ -22,7 +22,7 @@ class FakeSocket {
 
 const ready = JSON.stringify({
   type: "ready",
-  protocol: 4,
+  protocol: 5,
   asr: { provider: "qwen3-asr", model: "Qwen/Qwen3-ASR-0.6B" },
   wake: { provider: "rustpotter", model: "hey_orion_reference.rpw", threshold: 0.4 },
   agent: { provider: "codex", model: "configured-default" },
@@ -40,14 +40,12 @@ describe("VoiceWorkerClient", () => {
     const connected = client.connect();
     socket.open();
     expect(JSON.parse(socket.sent[0] as string)).toMatchObject({
-      type: "hello", protocol: 4, token: "secret", sampleRate: 16_000, frameSamples: 1_280,
+      type: "hello", protocol: 5, token: "secret", sampleRate: 16_000, frameSamples: 1_280,
     });
     socket.message(ready);
     await expect(connected).resolves.toMatchObject({ type: "ready" });
 
-    client.sendAudio(Int16Array.of(1, -2));
-    expect(socket.sent[1]).toBeInstanceOf(ArrayBuffer);
-    expect([...new Int16Array(socket.sent[1] as ArrayBuffer)]).toEqual([1, -2]);
+    expect(socket.sent).toHaveLength(1); // Studio sends no microphone frames.
   });
 
   it("pairs speech metadata with its binary PCM and acknowledges playback", async () => {

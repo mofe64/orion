@@ -12,9 +12,10 @@ Deploy and physically smoke-test Orion through SSH. Defaults:
 
 The Pi must already trust the workstation's SSH key, and the workstation must
 trust the Pi's SSH host key. The remote script installs and enables the oriond
-and Orion Studio gateway systemd services as part of the supervised physical
+Orion Studio gateway and Rustpotter listener systemd services as part of the supervised physical
 smoke test. The Pi user must have passwordless sudo for service installation
-and control.
+and control. It installs Pi voice dependencies, builds Rustpotter and retires
+the checkout's legacy voice workers/models. Qwen and Chatterbox stay on Studio.
 
 The matching Studio v2 frontend is tested and production-built locally before
 SSH deployment. Use --skip-studio-check only if the exact revision was already

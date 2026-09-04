@@ -13,6 +13,8 @@ export interface OrionPlaybackSnapshot {
 
 /** Routes synthesized speech to Orion and resolves only after Pi playback ends. */
 export class OrionSpeechPlayer implements SpeechPlayer {
+  private operation = 0;
+  private uploading = false;
   private active: { connection: GatewayConnection; runId: number; cancelled: boolean } | null = null;
 
   constructor(
@@ -21,13 +23,24 @@ export class OrionSpeechPlayer implements SpeechPlayer {
   ) {}
 
   async play(pcm: Int16Array, sampleRate: number): Promise<void> {
-    if (this.active) throw new Error("Orion speech playback is already active.");
+    if (this.active || this.uploading) throw new Error("Orion speech playback is already active.");
+    const operation = ++this.operation;
     const connection = this.connection();
     if (!connection) throw new Error("Connect Studio to Orion before enabling Voice playback.");
     const wav = pcm16MonoWav(pcm, sampleRate);
     const durationMs = Math.ceil((wav.byteLength - 44) / 2 / 24_000 * 1_000);
     this.onStatus({ runId: null, state: "uploading" });
-    const accepted = await uploadSpeech(connection, wav, crypto.randomUUID());
+    this.uploading = true;
+    let accepted;
+    try {
+      accepted = await uploadSpeech(connection, wav, crypto.randomUUID());
+    } finally {
+      this.uploading = false;
+    }
+    if (operation !== this.operation) {
+      await cancelRun(connection, "speech", accepted.run_id).catch(() => undefined);
+      throw new Error("Orion speech playback was cancelled during upload.");
+    }
     const run = { connection, runId: accepted.run_id, cancelled: false };
     this.active = run;
     this.onStatus({ runId: accepted.run_id, state: accepted.state });
@@ -50,53 +63,11 @@ export class OrionSpeechPlayer implements SpeechPlayer {
   }
 
   async stop(): Promise<void> {
+    ++this.operation;
     const active = this.active;
     if (active) active.cancelled = true;
     if (active) await cancelRun(active.connection, "speech", active.runId).catch(() => undefined);
     if (this.active === active) this.active = null;
     this.onStatus({ runId: active?.runId ?? null, state: active ? "cancelled" : "idle" });
-  }
-}
-
-export class StudioSpeaker implements SpeechPlayer {
-  private context: AudioContext | null = null;
-  private source: AudioBufferSourceNode | null = null;
-
-  async play(pcm: Int16Array, sampleRate: number): Promise<void> {
-    if (pcm.length === 0 || sampleRate <= 0) throw new Error("Speech audio is empty or invalid.");
-    if (this.source) throw new Error("Speech playback is already active.");
-
-    const context = this.context ?? new AudioContext();
-    this.context = context;
-    if (context.state === "suspended") await context.resume();
-
-    const buffer = context.createBuffer(1, pcm.length, sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let index = 0; index < pcm.length; index += 1) channel[index] = pcm[index] / 32_768;
-
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
-    this.source = source;
-    await new Promise<void>((resolve) => {
-      source.onended = () => {
-        if (this.source === source) this.source = null;
-        resolve();
-      };
-      source.start();
-    });
-  }
-
-  async stop(): Promise<void> {
-    const source = this.source;
-    this.source = null;
-    if (source) {
-      source.onended = null;
-      source.stop();
-      source.disconnect();
-    }
-    const context = this.context;
-    this.context = null;
-    if (context && context.state !== "closed") await context.close();
   }
 }

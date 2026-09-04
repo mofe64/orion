@@ -186,7 +186,7 @@ protect an intentional character rule.
 Run the real daemon against the MuJoCo driver:
 
 ```bash
-runtime/target/debug/oriond --serve --backend mujoco --start-pose home
+runtime/target/debug/oriond --serve --backend mujoco --start-pose home --character-on-start off
 ```
 
 From a second terminal:

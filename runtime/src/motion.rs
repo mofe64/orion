@@ -683,9 +683,21 @@ motion:
         let poses =
             PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-        for name in ["look_at_left_expressive", "look_at_right_expressive"] {
+        for name in [
+            "look_at_left_expressive",
+            "look_at_right_expressive",
+            "attention_left",
+            "attention_right",
+        ] {
             let definition = motions.motion(name).unwrap();
-            let start = poses.pose("attentive").unwrap().clone();
+            let start = poses
+                .pose(if name.starts_with("attention_") {
+                    "home"
+                } else {
+                    "attentive"
+                })
+                .unwrap()
+                .clone();
             let sequence = MotionSequence::new(definition, start).unwrap();
             for index in 0..sequence.keyframe_count() - 1 {
                 let arrival = sequence.keyframe_arrival_time(index).unwrap();

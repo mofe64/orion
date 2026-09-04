@@ -23,7 +23,7 @@ the user, risks hardware, or makes failure harder to understand.
 - **Semantic control:** higher layers request meaningful capabilities; the
   runtime owns physical execution.
 - **Simulation and hardware parity:** MuJoCo and physical drivers implement the
-  same daemon contract.
+  same contract.
 - **Explicit state:** lifecycle, ownership, and failure are observable rather
   than inferred from animation or timing.
 - **Local-first operation:** manual control, scenes, runtime safety, raw voice
@@ -37,14 +37,3 @@ the user, risks hardware, or makes failure harder to understand.
   observe, and cancel its requests.
 - **Evidence before expansion:** commission and evaluate each physical or
   interaction layer before adding another source of complexity.
-
-## Privacy boundary
-
-Orion does not upload raw microphone audio through the Studio Voice pipeline.
-Wake detection, ASR, and TTS run locally on the workstation. When the Codex
-agent provider is selected, the confirmed text command leaves the workstation
-for that service. A local-LLM provider is the intended option when text must
-also remain local.
-
-This preserves a fully local hardware and manual-control path while making the
-cloud text boundary explicit.

@@ -63,10 +63,10 @@ class FakeTts:
 class ServerPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_transcript_flows_through_agent_and_tts_to_binary_audio(self) -> None:
         asr = FakeAsr()
-        session = VoiceSession(asr, FakeWake())
+        session = VoiceSession(asr)
         session.phase = SessionPhase.TRANSCRIBING_COMMAND
         websocket = FakeWebSocket()
-        models = VoiceModels(asr=asr, wake=FakeWake(), agent=FakeAgent(), tts=FakeTts())
+        models = VoiceModels(asr=asr, agent=FakeAgent(), tts=FakeTts())
 
         await transcribe_utterance(
             websocket,

@@ -494,11 +494,6 @@ wheels = [
 ]
 
 [[package]]
-name = "orion-rustpotter"
-version = "0.1.0"
-source = { editable = "rustpotter_native" }
-
-[[package]]
 name = "orion-studio-voice-worker"
 version = "0.1.0"
 source = { editable = "." }
@@ -510,7 +505,6 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "openai-codex" },
-    { name = "orion-rustpotter" },
     { name = "websockets" },
 ]
 
@@ -521,7 +515,6 @@ requires-dist = [
     { name = "mlx-qwen3-asr", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.3.5,<0.4" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "openai-codex", specifier = ">=0.147,<0.148" },
-    { name = "orion-rustpotter", editable = "rustpotter_native" },
     { name = "websockets", specifier = ">=14.2,<16" },
 ]
 

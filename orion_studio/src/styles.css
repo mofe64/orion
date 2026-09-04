@@ -197,8 +197,8 @@ h1, h2 { color: var(--text); font-weight: 620; letter-spacing: -.025em; }
   .mode-tabs { order: 3; width: 100%; }
   .mode-tabs button { flex: 1; min-width: 0; justify-content: center; }
   .topbar-actions { margin-left: auto; }
-  .topbar-actions button { width: 2.75rem; overflow: hidden; padding: 0; color: transparent; gap: 0; }
-  .topbar-actions svg { color: var(--text); }
+  .topbar-actions button { width: 2.75rem; overflow: hidden; padding: 0; color: transparent; font-size: 0; gap: 0; }
+  .topbar-actions svg { color: var(--text); flex-shrink: 0; }
   .workspace { display: flex; flex-direction: column; }
   .asset-library { max-height: 15rem; border-right: 0; border-bottom: 1px solid var(--line); }
   .asset-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); height: auto; max-height: 10rem; }
@@ -223,3 +223,7 @@ h1, h2 { color: var(--text); font-weight: 620; letter-spacing: -.025em; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.connection-popover > header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.connection-popover form { display: grid; gap: 1rem; }
+.connection-popover { max-height: calc(100dvh - 5rem); overflow: auto; }

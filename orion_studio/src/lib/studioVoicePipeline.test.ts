@@ -2,28 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   StudioVoicePipeline,
+  piVoiceUrl,
   type VoiceWorkerConnection,
   type VoiceWorkerLauncher,
   type VoiceWorkerTransport,
 } from "./studioVoicePipeline";
 import type { VoiceWorkerEvent, VoiceWorkerListener, VoiceWorkerReadyEvent } from "./voiceWorkerProtocol";
-import type { VoiceAudioFrame, VoiceCaptureSource } from "./voiceRuntime";
 import type { SpeechPlayer } from "./studioSpeaker";
-
-class FakeSource implements VoiceCaptureSource {
-  onFrame: ((frame: VoiceAudioFrame) => void) | null = null;
-
-  async start(onFrame: (frame: VoiceAudioFrame) => void) {
-    this.onFrame = onFrame;
-    return { deviceLabel: "Mac microphone", sampleRate: 48_000, channels: 1 as const };
-  }
-
-  async stop() {}
-
-  emit(samples = new Float32Array(960).fill(0.2)) {
-    this.onFrame?.({ samples, sampleRate: 48_000, channels: 1, sequence: 0, capturedAtMs: 0 });
-  }
-}
 
 class FakeLauncher implements VoiceWorkerLauncher {
   stopCount = 0;
@@ -35,7 +20,7 @@ class FakeLauncher implements VoiceWorkerLauncher {
 
 const READY: VoiceWorkerReadyEvent = {
   type: "ready",
-  protocol: 4,
+  protocol: 5,
   asr: { provider: "qwen3-asr", model: "Qwen/Qwen3-ASR-0.6B" },
   wake: { provider: "rustpotter", model: "hey_orion_reference.rpw", threshold: 0.4 },
   agent: { provider: "codex", model: "configured-default" },
@@ -62,13 +47,21 @@ class FakeSpeaker implements SpeechPlayer {
 }
 
 describe("StudioVoicePipeline", () => {
-  it("streams continuously and publishes the confirmed command", async () => {
-    const source = new FakeSource();
+  it.each([
+    ["http://orion.local:7447", "ws://orion.local:7448/"],
+    ["https://192.168.1.50:7447", "ws://192.168.1.50:7448/"],
+    ["http://[::1]:7447", "ws://[::1]:7448/"],
+    ["http://user:password@orion.local:7447/api?token=secret#status", "ws://orion.local:7448/"],
+  ])("derives the plain Pi voice endpoint from %s", (gateway, expected) => {
+    expect(piVoiceUrl(gateway)).toBe(expected);
+  });
+
+  it("receives Pi events without microphone capture and publishes the confirmed command", async () => {
     const launcher = new FakeLauncher();
     const transport = new FakeTransport();
     const speaker = new FakeSpeaker();
     const pipeline = new StudioVoicePipeline({
-      source, launcher, speaker, createTransport: () => transport,
+      launcher, speaker, createTransport: () => transport,
     });
 
     await pipeline.start();
@@ -81,9 +74,8 @@ describe("StudioVoicePipeline", () => {
       ttsProvider: "chatterbox-turbo",
     });
 
-    for (let index = 0; index < 4; index += 1) source.emit();
-    expect(transport.audio).toHaveLength(1);
-    expect(transport.audio[0]).toHaveLength(1_280);
+    expect(pipeline.current().deviceLabel).toContain("Pi capture");
+    expect(transport.audio).toHaveLength(0);
 
     transport.emit({ type: "wake.candidate", name: "hey_orion", score: 0.62 });
     expect(pipeline.current().phase).toBe("wake_candidate");
@@ -115,7 +107,6 @@ describe("StudioVoicePipeline", () => {
   it("returns to listening after ASR rejects a wake candidate", async () => {
     const transport = new FakeTransport();
     const pipeline = new StudioVoicePipeline({
-      source: new FakeSource(),
       launcher: new FakeLauncher(),
       createTransport: () => transport,
     });
@@ -126,10 +117,9 @@ describe("StudioVoicePipeline", () => {
     expect(pipeline.current().phase).toBe("ready");
   });
 
-  it("stops both microphone and persistent worker", async () => {
+  it("stops playback and the persistent worker", async () => {
     const launcher = new FakeLauncher();
     const pipeline = new StudioVoicePipeline({
-      source: new FakeSource(),
       launcher,
       createTransport: () => new FakeTransport(),
     });
@@ -139,11 +129,11 @@ describe("StudioVoicePipeline", () => {
     expect(launcher.stopCount).toBe(1);
   });
 
-  it("closes capture and worker after a fatal worker error", async () => {
+  it("closes playback and worker after a fatal worker error", async () => {
     const launcher = new FakeLauncher();
     const transport = new FakeTransport();
     const pipeline = new StudioVoicePipeline({
-      source: new FakeSource(), launcher, createTransport: () => transport,
+      launcher, createTransport: () => transport,
     });
     await pipeline.start();
     transport.emit({

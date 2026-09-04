@@ -1,7 +1,7 @@
 # Manage Studio Voice models
 
 Studio Voice uses Hugging Face model repositories. Git contains adapter code
-and a 104 KB Rustpotter reference, but not the automatic speech recognition
+and a Pi-owned 104 KB Rustpotter reference, but not the automatic speech recognition
 (ASR), text-to-speech (TTS), or tokenizer weights.
 
 ## Download the defaults
@@ -28,8 +28,9 @@ HF_HOME=/absolute/path/to/hugging-face-cache \
   pnpm tauri dev
 ```
 
-Do not place downloaded weights under `voice_worker/models/`; that directory
-contains the small commissioned Rustpotter reference and remains tracked.
+Do not place downloaded weights under `voice_worker/models/`. The commissioned
+Rustpotter reference is tracked at `voice/models/wake/hey_orion_reference.rpw`
+and is loaded only by the Pi listener.
 
 ## Use a local or alternative compatible model
 

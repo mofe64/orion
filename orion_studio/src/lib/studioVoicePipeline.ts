@@ -1,19 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { StudioMicrophone } from "./studioMicrophone";
-import { StudioSpeaker, type SpeechPlayer } from "./studioSpeaker";
-import { VoiceAudioConditioner } from "./voiceAudio";
+import { OrionSpeechPlayer, type SpeechPlayer } from "./studioSpeaker";
 import {
   VoiceWorkerClient,
   type VoiceWorkerEvent,
   type VoiceWorkerListener,
   type VoiceWorkerReadyEvent,
 } from "./voiceWorkerProtocol";
-import {
-  VoiceCaptureRuntime,
-  type VoiceCaptureSnapshot,
-  type VoiceCaptureSource,
-} from "./voiceRuntime";
+import type { GatewayConnection } from "./gateway";
 
 export type StudioVoicePhase =
   | "off"
@@ -43,12 +37,14 @@ export interface VoiceWorkerLauncher {
 export interface VoiceWorkerTransport {
   connect(): Promise<VoiceWorkerReadyEvent>;
   subscribe(listener: VoiceWorkerListener): () => void;
-  sendAudio(pcm: Int16Array): void;
   finishPlayback(requestId: number, error?: string): void;
   close(): void;
 }
 
-export interface StudioVoiceSnapshot extends Omit<VoiceCaptureSnapshot, "phase"> {
+export interface StudioVoiceSnapshot {
+  deviceLabel: string | null;
+  sampleRate: number | null;
+  error: string | null;
   phase: StudioVoicePhase;
   asrProvider: string | null;
   asrModel: string | null;
@@ -64,16 +60,32 @@ export interface StudioVoiceSnapshot extends Omit<VoiceCaptureSnapshot, "phase">
 }
 
 export interface StudioVoicePipelineOptions {
-  source?: VoiceCaptureSource;
+  connection?: GatewayConnection;
   launcher?: VoiceWorkerLauncher;
   createTransport?: (connection: VoiceWorkerConnection) => VoiceWorkerTransport;
   speaker?: SpeechPlayer;
   retryDelayMs?: number;
 }
 
+export function piVoiceUrl(gatewayUrl: string): string {
+  const url = new URL(gatewayUrl);
+  url.protocol = "ws:";
+  url.port = "7448";
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  url.username = "";
+  url.password = "";
+  return url.toString();
+}
+
 class TauriVoiceWorkerLauncher implements VoiceWorkerLauncher {
+  constructor(private readonly connection?: GatewayConnection) {}
   start(): Promise<VoiceWorkerConnection> {
-    return invoke<VoiceWorkerConnection>("start_voice_worker");
+    if (!this.connection) throw new Error("Connect Orion before starting Voice.");
+    return invoke<VoiceWorkerConnection>("start_voice_worker", {
+      piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token,
+    });
   }
 
   stop(): Promise<void> {
@@ -85,8 +97,6 @@ const INITIAL_SNAPSHOT: StudioVoiceSnapshot = {
   phase: "off",
   deviceLabel: null,
   sampleRate: null,
-  levelDbfs: null,
-  frameCount: 0,
   error: null,
   asrProvider: null,
   asrModel: null,
@@ -101,12 +111,10 @@ const INITIAL_SNAPSHOT: StudioVoiceSnapshot = {
   response: null,
 };
 
-/** Owns the complete Studio-side path from microphone frame to worker event. */
+/** Studio processes Pi-triggered utterances; it never opens a microphone. */
 export class StudioVoicePipeline {
   private snapshot: StudioVoiceSnapshot = { ...INITIAL_SNAPSHOT };
   private listeners = new Set<(snapshot: StudioVoiceSnapshot) => void>();
-  private readonly conditioner = new VoiceAudioConditioner();
-  private readonly capture: VoiceCaptureRuntime;
   private readonly launcher: VoiceWorkerLauncher;
   private readonly createTransport: (connection: VoiceWorkerConnection) => VoiceWorkerTransport;
   private readonly retryDelayMs: number;
@@ -116,19 +124,14 @@ export class StudioVoicePipeline {
   private operation = 0;
 
   constructor(options: StudioVoicePipelineOptions = {}) {
-    this.launcher = options.launcher ?? new TauriVoiceWorkerLauncher();
+    this.launcher = options.launcher ?? new TauriVoiceWorkerLauncher(options.connection);
     this.createTransport = options.createTransport ?? ((connection) => new VoiceWorkerClient({
       url: connection.url,
       token: connection.token,
       connectTimeoutMs: 180_000,
     }));
     this.retryDelayMs = options.retryDelayMs ?? 100;
-    this.speaker = options.speaker ?? new StudioSpeaker();
-    this.capture = new VoiceCaptureRuntime(
-      options.source ?? new StudioMicrophone(),
-      (frame) => this.acceptMicrophoneFrame(frame.samples, frame.sampleRate),
-    );
-    this.capture.subscribe((capture) => this.acceptCaptureSnapshot(capture));
+    this.speaker = options.speaker ?? new OrionSpeechPlayer(() => options.connection ?? null);
   }
 
   current(): StudioVoiceSnapshot {
@@ -165,11 +168,8 @@ export class StudioVoicePipeline {
         ttsProvider: ready.tts.provider,
         ttsModel: ready.tts.model,
       });
-      await this.capture.start();
-      if (operation !== this.operation) return;
-      const capture = this.capture.current();
-      if (capture.phase === "error") throw new Error(capture.error ?? "Microphone capture failed.");
-      this.publish({ ...this.snapshot, phase: "ready", error: null });
+      this.publish({ ...this.snapshot, phase: "ready", error: null,
+        deviceLabel: "Orion ReSpeaker · Pi capture", sampleRate: 16_000 });
     } catch (error) {
       if (operation !== this.operation) return;
       await this.releaseResources();
@@ -184,9 +184,8 @@ export class StudioVoicePipeline {
   async stop(): Promise<void> {
     if (this.snapshot.phase === "off") return;
     ++this.operation;
-    this.publish({ ...this.snapshot, phase: "stopping", levelDbfs: null });
+    this.publish({ ...this.snapshot, phase: "stopping" });
     await this.releaseResources();
-    this.conditioner.reset();
     this.publish({ ...INITIAL_SNAPSHOT });
   }
 
@@ -219,27 +218,6 @@ export class StudioVoicePipeline {
         await new Promise((resolve) => globalThis.setTimeout(resolve, this.retryDelayMs));
       }
     }
-  }
-
-  private acceptMicrophoneFrame(samples: Float32Array, sampleRate: number): void {
-    const conditioned = this.conditioner.accept(samples, sampleRate);
-    for (const frame of conditioned.workerFrames) this.transport?.sendAudio(frame);
-  }
-
-  private acceptCaptureSnapshot(capture: VoiceCaptureSnapshot): void {
-    if (this.snapshot.phase === "off" || this.snapshot.phase === "stopping") return;
-    if (capture.phase === "error") {
-      void this.failPipeline(capture.error ?? "Microphone capture failed.");
-      return;
-    }
-    this.publish({
-      ...this.snapshot,
-      deviceLabel: capture.deviceLabel,
-      sampleRate: capture.sampleRate,
-      levelDbfs: capture.levelDbfs,
-      frameCount: capture.frameCount,
-      error: capture.error ?? this.snapshot.error,
-    });
   }
 
   private acceptWorkerEvent(event: VoiceWorkerEvent): void {
@@ -317,13 +295,11 @@ export class StudioVoicePipeline {
   private async failPipeline(message: string): Promise<void> {
     if (this.snapshot.phase === "off" || this.snapshot.phase === "stopping") return;
     ++this.operation;
-    this.publish({ ...this.snapshot, phase: "error", levelDbfs: null, error: message });
+    this.publish({ ...this.snapshot, phase: "error", error: message });
     await this.releaseResources();
-    this.conditioner.reset();
   }
 
   private async releaseResources(): Promise<void> {
-    await this.capture.stop().catch(() => undefined);
     await this.speaker.stop().catch(() => undefined);
     this.unsubscribeTransport?.();
     this.unsubscribeTransport = null;

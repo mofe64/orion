@@ -1,7 +1,7 @@
 # Run Studio Voice for the first time
 
-Before enabling Studio microphone capture on an Apple Silicon development
-device, install the persistent worker and download its models.
+Before enabling the Orion microphone from an Apple Silicon workstation,
+install the Pi listener and Studio processing worker.
 
 Starting Studio does not download the models proactively. Model libraries may
 attempt an implicit download when Voice starts, but the first load can exceed
@@ -13,7 +13,8 @@ of the required first-time setup.
 - An Apple Silicon Mac.
 - Python 3.10–3.13; Python 3.12 is the commissioned choice.
 - `uv`.
-- A Rust toolchain for the native Rustpotter extension.
+- The configured [Pi listener](../../voice/README.md), its token and a trusted
+  local network. Voice audio and the token travel unencrypted.
 - The Studio prerequisites from [Run Orion Studio](first-studio-run.md).
 - A completed `codex login` if you intend to use the default Codex agent.
 
@@ -30,9 +31,8 @@ cd orion_studio/voice_worker
 uv sync --python 3.12
 ```
 
-This creates `voice_worker/.venv`, installs the Python worker, and builds the
-editable native Rustpotter adapter. It does not download the large ASR and TTS
-weights.
+This creates `voice_worker/.venv` and installs the processing worker. It does
+not install Rustpotter or download the large ASR and TTS weights.
 
 ## 2. Download the configured models
 
@@ -61,19 +61,16 @@ codex login
 
 The worker reuses this cached sign-in. It does not require an OpenAI API key.
 With this provider, only the confirmed text command is sent to Codex; raw
-microphone audio remains on the workstation. Do not enable this provider if
+microphone audio travels only between the Pi and workstation. Do not enable this provider if
 that data boundary is inappropriate for the environment.
 
 ## 4. Run model-independent checks
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
-PYO3_PYTHON="$PWD/.venv/bin/python" \
-  cargo check --manifest-path rustpotter_native/Cargo.toml
 ```
 
-These checks validate the protocol and detector build without loading the
-large models.
+These checks validate processing and the Pi transport using fake models.
 
 ## 5. Start Studio
 
@@ -82,11 +79,14 @@ cd ..
 pnpm tauri dev
 ```
 
-Open **Voice** and select **Enable microphone**. Approve the operating-system
-permission when prompted. Studio shows worker startup, input device, native
-sample rate, level, wake state, transcript, agent response, and playback.
+Pair Studio with the Pi gateway once using its token. The desktop app saves
+the pairing in the OS credential store and reconnects automatically. Then open **Voice** and select
+**Enable Orion microphone**. Studio loads processing models and connects to
+`ws://GATEWAY_HOST:7448/`. No workstation microphone permission is needed.
+Studio reports Pi capture readiness, wake confirmation, transcription,
+response generation and playback.
 
-Say “Hey Orion” followed by a command. Rustpotter proposes the wake candidate;
+Say “Hey Orion” followed by a command. Rustpotter on the Pi proposes the wake candidate;
 Qwen confirms the phrase and transcribes it before the selected agent sees the
 text. The implemented Codex agent may generate speech but cannot move Orion or
 invoke other physical capabilities.
@@ -101,4 +101,9 @@ invoke other physical capabilities.
   the voice session.
 - **Voice works in neither browser nor Studio:** use `pnpm tauri dev`; the
   UI-only `pnpm dev` server cannot launch the worker.
-- **Unsupported platform:** check the [platform matrix](../reference/platform-support.md).
+- **Old TLS configuration:** remove `ORION_PI_VOICE_CA` from the launch
+  environment and unset an old `wss://` override in `ORION_PI_VOICE_URL`, or
+  replace it with `ws://PI_HOST:7448/`. Reinstall the Pi service template if
+  its command still contains `--cert` or `--key`.
+- **Pi unavailable:** check `orion-listener.service` and TCP 7448, then retry.
+- **Unsupported platform:** Qwen and Chatterbox adapters require Apple Silicon.

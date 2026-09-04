@@ -1,10 +1,10 @@
 import { VOICE_SAMPLE_RATE, WORKER_FRAME_SAMPLES } from "./voiceAudio";
 
-export const VOICE_WORKER_PROTOCOL_VERSION = 4;
+export const VOICE_WORKER_PROTOCOL_VERSION = 5;
 
 export interface VoiceWorkerReadyEvent {
   type: "ready";
-  protocol: 4;
+  protocol: 5;
   asr: { provider: "qwen3-asr"; model: string };
   wake: { provider: "rustpotter"; model: string; threshold: number };
   agent: { provider: string; model: string };
@@ -321,16 +321,12 @@ export class VoiceWorkerClient {
         globalThis.clearTimeout(timeout);
         this.socket = null;
         if (this.phase === "connecting") fail(new Error("Voice worker closed during startup."));
-        else if (this.phase !== "error") this.phase = "disconnected";
+        else if (this.phase !== "error" && this.phase !== "disconnected") {
+          this.phase = "disconnected";
+          this.emit({ type: "worker.error", code: "worker_closed", message: "Voice connection closed. Reconnect Orion to continue.", recoverable: false });
+        }
       };
     });
-  }
-
-  sendAudio(pcm: Int16Array): void {
-    const socket = this.requireReadySocket();
-    const bytes = new Uint8Array(pcm.byteLength);
-    bytes.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
-    socket.send(bytes.buffer);
   }
 
   finishPlayback(requestId: number, error?: string): void {

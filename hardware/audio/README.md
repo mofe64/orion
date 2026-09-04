@@ -127,11 +127,10 @@ The commissioned acceptance target is `0 dB`; final listening acceptance must
 confirm that speech is clear without audible clipping at the assembled JST
 speaker.
 
-## Planned audio-front-end upgrade
+## Stereo voice capture
 
-The commissioned Pi listener consumes 16 kHz mono audio even though the mixer
-enables both microphone routes. Stereo capture, channel diagnostics, adaptive
-combination, denoising, beamforming, and playback-reference echo cancellation
-are not implemented. See the
-[audio-front-end upgrade](../../docs/explanation/audio-front-end-upgrade.md)
-for its boundary, phases, expected limits, and validation gate.
+The primary Rustpotter listener requests synchronized stereo PCM16 at 16 kHz,
+retains stereo for coarse direction estimates, and downmixes to mono for wake
+and ASR. Stereo channel independence, orientation and direction accuracy still
+require physical commissioning; see [Pi voice setup](../../voice/README.md).
+The legacy diagnostic listener continues to consume mono.

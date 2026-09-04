@@ -65,8 +65,8 @@ class PoseLibraryTests(unittest.TestCase):
         self.assertEqual(
             configuration.pose_names[0:3], ("zero_reference", "rest", "home")
         )
-        self.assertEqual(configuration.pose_names[-1], "look_right_overshoot")
-        self.assertEqual(len(configuration.pose_names), 15)
+        self.assertEqual(configuration.pose_names[-1], "attention_right")
+        self.assertEqual(len(configuration.pose_names), 23)
 
     def test_rejects_pose_outside_physical_calibration(self):
         source = POSE_LIBRARY.read_text(encoding="utf-8")

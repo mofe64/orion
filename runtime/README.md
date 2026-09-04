@@ -63,29 +63,32 @@ Pi-compatible Rust suite, and release-builds `oriond` while the old daemon
 remains safely torque-off. The simulator-only MuJoCo integration test remains a
 workstation pre-push gate.
 
-The deployment then installs and enables `oriond.service` and
-`orion-studio-gateway.service`, starts the rebuilt runtime, verifies its
+The deployment installs the locked Pi Rustpotter environment, archives the
+checkout's retired voice stack, and installs/enables `oriond.service`,
+`orion-studio-gateway.service` and `orion-listener.service`. It starts the rebuilt runtime, verifies its
 embedded `build_revision`, configures and enables Orion, moves to
 `zero_reference`, and runs the no-motion `deployment_smoke` RGBW/audio scene.
 A successful trial returns to `rest`, fades lights off, disables torque, and
 starts the authenticated gateway on port 7447. Any post-start failure attempts
 the same resting shutdown.
 
-Both services start on reboot. `oriond` deliberately boots in torque-off
-observe mode. The authenticated gateway remains reachable, and Studio's first
-explicit movement Run uses the semantic `prepare_movement` operation to
-configure and enable torque. Lighting/audio-only scenes do not energize the
-servos. Use **Release torque** in Studio when holding is no longer needed.
+All three services start on reboot. `oriond` starts the powered character by default
+and moves home before scheduling idle. Studio can stop character mode for the
+current daemon session. Use `--character-on-start off` for maintenance that
+must remain torque-off; in that mode, an explicit movement request can prepare
+and enable the servos. Use **Release torque** only after mechanical rest is
+confirmed.
 
 Logs are owned by journald:
 
 ```bash
-sudo systemctl status oriond.service orion-studio-gateway.service
-journalctl -u oriond.service -u orion-studio-gateway.service
+sudo systemctl status oriond.service orion-studio-gateway.service orion-listener.service
+journalctl -u oriond.service -u orion-studio-gateway.service -u orion-listener.service
 ```
 
 Calibration and the Studio pairing token remain under `~/.config/orion/` and
-are never replaced during ordinary updates. The unit templates are under
+are never replaced during ordinary updates. See [Pi voice setup](../voice/README.md)
+for installation, rollback and capture checks. The unit templates are under
 `scripts/systemd/`; `scripts/install_pi_services.sh` renders the configured Pi
 user, home, and source-checkout paths into `/etc/systemd/system/`.
 
@@ -391,9 +394,23 @@ run status, and temporary-file cleanup. See
 [Character animation design](../docs/explanation/character-animation.md#speech-driven-animation)
 for the exact animation policy.
 
-The separate Pi-local listener captures transient microphone PCM, detects
-`HELLO WORLD`, performs Moonshine speech-to-text, and publishes ordered wake
-and transcribed-command events through `/tmp/orion-wake.sock`. It does not
-interpret the transcript or route intent to Orion capabilities. See the
-[Pi-local fallback voice guide](../voice/README.md) for the physical test
-sequence.
+The primary Pi listener captures stereo ReSpeaker audio and runs Rustpotter,
+then forwards endpointed mono utterances to Studio for Qwen confirmation and
+processing. The optional legacy offline tools remain separate. See
+[Pi voice setup](../voice/README.md).
+
+## Character startup and voice attention
+
+Serving starts character mode by default: configure servos, enable holding torque,
+move home, then enter idle after measured completion. Use
+`--serve --character-on-start off` for an observation-only maintenance startup.
+Studio Stop lasts until the next daemon restart. A timed-out or cancelled home
+movement leaves character off; the terminal movement remains visible in status.
+
+The Pi listener may send `character attend left CONFIDENCE` or
+`character attend right CONFIDENCE` on the local socket after Qwen confirmation.
+The coordinator requires confidence in [0.75, 1], a powered available character
+and a bounded yaw transition. It holds the completed attention anchor, then
+returns to the prior anchor 15 seconds after neutral inactivity. Explicit
+foreground work discards that pending return. See the
+[attention brief](../docs/explanation/voice-attention.md).

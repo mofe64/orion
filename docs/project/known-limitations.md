@@ -43,11 +43,3 @@
 - The runtime is not an audit log or durable movement database.
 - Voice audio and pre-roll are intentionally transient and are not recorded by
   the runtime.
-
-## Distribution
-
-- The Rust runtime declares `GPL-3.0-only`, but the repository has no root
-  licence file and contains upstream-derived mechanical assets and separately
-  licensed model dependencies. Complete the
-  [licensing and provenance release gate](../reference/licensing-and-provenance.md)
-  before distribution.

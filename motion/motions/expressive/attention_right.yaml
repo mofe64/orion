@@ -1,0 +1,21 @@
+format_version: 2
+motion:
+  name: attention_right
+  description: A small grounded turn toward the confirmed speaker on the right.
+  space: absolute
+  style: expressive_turn
+  keyframes:
+    - pose: attention_right_anticipation
+      duration: 0.22
+      arrival: through
+    - pose: attention_right_lean
+      duration: 0.42
+      arrival: through
+      marker: notice
+    - pose: attention_right_overshoot
+      duration: 0.28
+      arrival: through
+    - pose: attention_right
+      duration: 0.38
+      arrival: settle
+      marker: settled

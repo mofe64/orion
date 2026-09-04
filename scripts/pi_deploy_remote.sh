@@ -107,13 +107,17 @@ if [[ ! -x "${old_binary}" ]]; then
   exit 1
 fi
 
+if unit_exists orion-listener.service; then
+  sudo -n systemctl stop orion-listener.service
+fi
+
 if unit_exists orion-studio-gateway.service; then
   sudo -n systemctl stop orion-studio-gateway.service
 fi
 pkill -TERM -f 'orion_studio/gateway.py serve' 2>/dev/null || true
 
 if ! "${old_binary}" --status --socket "${runtime_socket}" >/dev/null 2>&1; then
-  echo "No daemon is running; starting the existing release temporarily in observe mode..."
+  echo "No daemon is running; starting the existing release temporarily for the resting shutdown..."
   start_temporary_daemon "${old_binary}"
 else
   daemon_available=true
@@ -177,6 +181,9 @@ if [[ ! -f "${token_file}" ]]; then
   python3 orion_studio/gateway.py create-token --token-file "${token_file}"
 fi
 
+echo "Installing Rustpotter voice and retiring the legacy voice stack..."
+scripts/install_pi_voice.sh "${project_root}" "${user_home}"
+
 echo "Installing and enabling Orion's boot services..."
 scripts/install_pi_services.sh "${project_root}" "${orion_user}" "${user_home}"
 sudo -n systemctl restart oriond.service
@@ -186,9 +193,19 @@ daemon_available=true
 status_json="$("${active_binary}" --status --socket "${runtime_socket}")"
 python3 -c 'import json,sys; value=json.loads(sys.argv[1]); expected=sys.argv[2]; actual=value.get("build_revision"); raise SystemExit(0 if actual == expected else f"running build {actual!r} does not match {expected!r}")' "${status_json}" "${revision}"
 
-echo "Configuring, enabling, and moving to zero_reference..."
-"${active_binary}" --configure --socket "${runtime_socket}"
-"${active_binary}" --enable --socket "${runtime_socket}"
+echo "Preparing the powered character for the supervised smoke sequence..."
+# Default startup may still be homing. Cancel that run explicitly before the
+# foreground test; configure/enable only if startup did not already do so.
+"${active_binary}" --stop --socket "${runtime_socket}"
+current_status="$("${active_binary}" --status --socket "${runtime_socket}")"
+current_mode="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["mode"])' "${current_status}")"
+if [[ "${current_mode}" == "observe" ]]; then
+  "${active_binary}" --configure --socket "${runtime_socket}"
+  current_mode="configured"
+fi
+if [[ "${current_mode}" == "configured" ]]; then
+  "${active_binary}" --enable --socket "${runtime_socket}"
+fi
 "${active_binary}" --goto zero_reference --duration 3.0 --wait --socket "${runtime_socket}"
 
 echo "Testing Orion's RGBW shield and acknowledge cue..."
@@ -207,6 +224,11 @@ final_status="$("${active_binary}" --status --socket "${runtime_socket}")"
 python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value.get("torque_enabled") is False, value; assert value.get("mode") == "configured", value' "${final_status}"
 
 sudo -n systemctl restart orion-studio-gateway.service
+sudo -n systemctl restart orion-listener.service
+sudo -n systemctl is-active --quiet orion-listener.service
+sudo -n systemctl is-enabled --quiet orion-listener.service
+# Verify the authenticated protocol with no real capture: a wrong token must be rejected.
+"${project_root}/voice/.venv/bin/python" "${project_root}/scripts/check_pi_listener.py"
 sudo -n systemctl is-active --quiet oriond.service
 sudo -n systemctl is-active --quiet orion-studio-gateway.service
 sudo -n systemctl is-enabled --quiet oriond.service
@@ -227,6 +249,6 @@ fi
 
 trap - ERR INT TERM
 echo "Deployment ${revision} passed. Orion is at rest, lights are off, and torque is disabled."
-echo "oriond and the Studio gateway are enabled for boot."
+echo "oriond, the Studio gateway and the Rustpotter listener are enabled for boot."
 echo "Studio gateway: http://orion.local:7447"
-echo "Logs: journalctl -u oriond.service -u orion-studio-gateway.service"
+echo "Logs: journalctl -u oriond.service -u orion-studio-gateway.service -u orion-listener.service"

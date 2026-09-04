@@ -6,8 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "orion-voice"
 version = "0.1.0"
 description = "Local speech workers for the Orion robot"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11,<3.14"
 dependencies = [
+  "numpy>=1.26,<3",
+  "websockets>=14.2,<16",
+  "orion-rustpotter",
+]
+
+[project.optional-dependencies]
+fallback = [
   # sherpa-onnx exposes sherpa-onnx-cli through Click but does not declare it.
   "click>=8.1,<9",
   "numpy>=1.26,<3",
@@ -21,7 +28,11 @@ dependencies = [
 
 [project.scripts]
 orion-voice = "orion_voice.__main__:main"
+orion-listener = "orion_voice.satellite:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["orion_voice*"]
+
+[tool.uv.sources]
+orion-rustpotter = { path = "rustpotter_native", editable = true }

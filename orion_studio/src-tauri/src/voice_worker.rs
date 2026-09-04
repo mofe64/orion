@@ -68,6 +68,8 @@ fn configured_python(root: &Path) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn start_voice_worker(
     manager: State<'_, VoiceWorkerManager>,
+    pi_url: String,
+    pi_token: String,
 ) -> Result<VoiceWorkerConnection, String> {
     let mut slot = manager
         .worker
@@ -95,22 +97,9 @@ pub fn start_voice_worker(
     let agent_model = std::env::var("ORION_STUDIO_AGENT_MODEL").ok();
     let tts_model = std::env::var("ORION_STUDIO_TTS_MODEL")
         .unwrap_or_else(|_| "mlx-community/chatterbox-turbo-8bit".to_owned());
-    let wake_model = std::env::var_os("ORION_STUDIO_WAKE_MODEL")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("models").join("hey_orion_reference.rpw"));
-    if !wake_model.is_file() {
-        return Err(format!(
-            "The commissioned Rustpotter wake reference was not found at {}.",
-            wake_model.display()
-        ));
-    }
-    let wake_threshold =
-        std::env::var("ORION_STUDIO_WAKE_THRESHOLD").unwrap_or_else(|_| "0.400".to_owned());
-    let parsed_threshold = wake_threshold
-        .parse::<f32>()
-        .map_err(|_| "ORION_STUDIO_WAKE_THRESHOLD must be a number.".to_owned())?;
-    if !(0.0 < parsed_threshold && parsed_threshold <= 1.0) {
-        return Err("ORION_STUDIO_WAKE_THRESHOLD must be in the range (0, 1].".to_owned());
+    let pi_url = std::env::var("ORION_PI_VOICE_URL").unwrap_or(pi_url);
+    if pi_token.len() < 32 {
+        return Err("Connect Orion with its configured token before starting Voice.".into());
     }
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|error| format!("Could not reserve a local voice-worker port: {error}"))?;
@@ -121,9 +110,6 @@ pub fn start_voice_worker(
     drop(listener);
 
     let token = uuid::Uuid::new_v4().simple().to_string();
-    let wake_model = wake_model
-        .to_str()
-        .ok_or_else(|| "The wake-model path is not valid UTF-8.".to_owned())?;
     let mut arguments = vec![
         "-m".to_owned(),
         "orion_voice_worker.server".to_owned(),
@@ -135,10 +121,8 @@ pub fn start_voice_worker(
         token.clone(),
         "--asr-model".to_owned(),
         asr_model.clone(),
-        "--wake-model".to_owned(),
-        wake_model.to_owned(),
-        "--wake-threshold".to_owned(),
-        wake_threshold,
+        "--pi-url".to_owned(),
+        pi_url,
         "--agent-provider".to_owned(),
         agent_provider,
         "--tts-model".to_owned(),
@@ -151,6 +135,7 @@ pub fn start_voice_worker(
         .args(arguments)
         .current_dir(&root)
         .env("PYTHONUNBUFFERED", "1")
+        .env("ORION_PI_VOICE_TOKEN", pi_token)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

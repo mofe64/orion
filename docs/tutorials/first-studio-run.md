@@ -15,7 +15,7 @@ Install:
 
 The repository is commissioned on macOS Apple Silicon. Windows and Linux are
 uncommissioned build targets; see
-[platform support](../reference/platform-support.md).
+[implementation status](../project/status.md).
 
 ## 1. Install the Studio dependencies
 
@@ -61,6 +61,6 @@ pnpm test
 pnpm build
 ```
 
-To use the workstation microphone, continue with
+To use Orion’s onboard microphone, continue with
 [the Studio Voice tutorial](first-studio-voice-run.md). To control physical
 hardware, follow [Connect Studio to the Pi](../../orion_studio/README.md#connect-studio-to-the-pi).

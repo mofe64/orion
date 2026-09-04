@@ -5,7 +5,8 @@ from dataclasses import dataclass
 import math
 import sys
 
-from . import FRAME_SAMPLES, SAMPLE_RATE
+FRAME_SAMPLES = 320
+SAMPLE_RATE = 16_000
 
 
 def pcm16_rms(pcm: bytes) -> float:

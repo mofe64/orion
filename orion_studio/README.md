@@ -75,15 +75,21 @@ python3 orion_studio/gateway.py serve \
   --trajectory-compiler /home/mofe/dev/orion/runtime/target/release/orion-trajectory
 ```
 
-Connect Studio to `http://orion.local:7447` and paste the token. The URL is
-stored locally; the token stays in session storage. The API accepts semantic
+In desktop Studio, select **Pair Orion**, enter `http://orion.local:7447` and
+paste the token once. **Pair and remember Orion** verifies the robot and saves
+the address/token in the OS credential store. Studio reconnects on later
+launches and after network loss. **Disconnect** pauses retries for this session;
+**Forget Orion on this computer** removes the saved pairing. The browser-only
+development UI supports an in-memory connection for the current tab, without
+persisting its token. The API accepts semantic
 v2 operations only and never exposes arbitrary paths, registers, or joint
 streams.
 
 ## Studio Voice playback
 
-The workstation still performs wake detection, Qwen transcription, agent
-response, and Chatterbox Turbo synthesis. Playback is Pi-owned:
+The Pi owns Rustpotter and microphone capture. Studio receives endpointed
+utterances over the local network, confirms them with Qwen, invokes the agent and synthesizes
+responses with Chatterbox. Playback is Pi-owned:
 
 ```text
 Chatterbox signed 16-bit pulse-code modulation (PCM16)
@@ -111,18 +117,24 @@ uv sync --python 3.12
 ```
 
 The agent receives confirmed text only. Agent-generated prose cannot issue raw
-robot commands; Studio maps known voice phases deterministically to listening,
-thinking, and neutral character states.
+robot commands. The Pi listener maps confirmed session events to allowlisted
+character reactions and optional commissioned attention. Follow
+[Pi voice setup](../voice/README.md) before enabling Voice.
 
 ## Atomic deployment
 
 `scripts/deploy_pi.sh` validates this Studio build before updating the Pi. The
 remote phase returns the running robot to mechanical rest, releases torque,
 fast-forwards the selected branch, validates the user asset catalog, builds
-runtime and trajectory binaries, installs both services, and runs light/audio
-plus left/right expressive physical smoke tests. All components therefore come
+runtime and trajectory binaries, installs the Pi Rustpotter environment,
+archives the old voice stack, installs all three services, and runs light/audio
+plus left/right expressive physical smoke tests. It verifies native wake-model
+loading and listener authentication as part of the same command. All components therefore come
 from one Git revision.
 
 See the [system architecture](../docs/explanation/system-architecture.md),
 [motion architecture](../docs/explanation/motion-and-animation-architecture.md),
 and [scene reference](../scenes/README.md).
+
+See the [Studio home audit](../docs/project/studio-home-audit-2026-09-04.md) for
+prioritised interface findings and proposed Home/Create separation.

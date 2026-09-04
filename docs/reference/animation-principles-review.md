@@ -1,9 +1,6 @@
-# Orion v2 animation-principles review
+# Orion Animation catalogue
 
-The commissioned v2 character catalog stages every action around one readable
-primary idea; light, sound, and secondary joints support rather than compete
-with it. The physical model does not deform, so “squash and stretch” means
-coordinated joint compression and extension.
+The Animation character catalog stages every action around one readable primary idea; light, sound, and secondary joints support rather than compete with it.
 
 The design rules behind this review are explained in
 [Character animation design](../explanation/character-animation.md). Asset
@@ -12,32 +9,46 @@ fields and runtime invariants are defined in the
 
 ## Motion review
 
-| Asset | Primary action and silhouette | Anticipation / follow-through | Timing and secondary action |
-|---|---|---|---|
-| `look_at_left_expressive` | One broad leftward lamp-body arc ending in an attentive directional silhouette | Small opposite yaw prepares the turn; shoulder/head lag and an exact authored overshoot flow into settle | Expressive-turn timing; warm marker expression supports the readable turn |
-| `look_at_right_expressive` | Mirrored rightward arc without mechanical symmetry in the supporting joints | Opposing preparation, layered lean, exact overshoot, weighted settle | Same dramatic beat as left while preserving calibrated right-side range |
-| `attentive_entry` | Upward opening into a forward attentive silhouette | Compact preparation releases into head/shoulder lift; elbow follows | Quick attentive style; light focus is the secondary action |
-| `acknowledge_nod` | Small clear nod around the held anchor | Head lead, restrained shoulder follow-through, clean return | Quick reaction with one phrase-scale beat, not repeated bobbing |
-| `disagree_soft` | Restrained asymmetric side-to-side refusal | First side prepares the reversal; smaller counterbeat dissipates energy | Calm readable disagreement; muted light/cue remain subordinate |
-| `curious_tilt` | Open diagonal head/body examination | Slight opposing base shift precedes the tilt; elbow settles last | Thinking-weighted timing and a spatial light sweep reinforce curiosity |
-| `delight_lift` | Compact upward lift with an open, appealing silhouette | Small compression precedes extension; head and elbow finish after the body | Quick but restrained; sparkle and tonal cue land on the authored marker |
-| `thinking_shift` | Asymmetric supported thinking pose | Lateral preparation and slow head follow-through avoid a generic lean | Slow thinking style; drifting warm light is the secondary action |
-| `return_home` | Weighted downward/central settle into powered home | No decorative overshoot; joints arrive with controlled overlap | Slow return-home style communicates weight and finality |
-| `look_at_left` | Functional direct left orientation | No expressive anticipation; continuous compiler still supplies slow-in/out | Utility motion keeps a clean directional silhouette |
-| `look_at_right` | Functional direct right orientation | No expressive anticipation; final settle is explicit | Utility motion respects the same calibrated and spline contracts |
-| `idle_breathe` | Coordinated visible rise and release | Compression/extension is restrained and always returns to the immutable anchor | Long living-idle timing; no sound |
-| `idle_head_curiosity` | Gentle pitch/roll examination | First tilt flows through a smaller counter-shape | Head detail stays subordinate to the held pose; no sound |
-| `idle_micro_glance` | Readable glance compatible with a held silhouette | Base starts the glance, head counters, both return | Short micro-idle with long randomized quiet interval |
-| `idle_shoulder_adjust` | Small internal weight redistribution | Shoulder initiates; elbow/head trail and settle | Quiet living-idle timing; does not change the anchor |
-| `idle_weight_shift` | Coordinated base/shoulder/elbow weight change | Body lead with head counterbalance and tapered return | Larger idle, selected less often; motion and light only |
-| `idle_soft_head_shake` | Restrained asymmetric shake | Small first side, larger counter, diminished final echo | Direction changes flow through spline points without stop plateaus |
-| `idle_attentive_hold` | Subtle upward energy within attentive anchors | Shoulder/head rise then diagonal secondary detail | Faster attentive character but low amplitude |
-| `idle_directional_hold` | Detail that preserves a left/right held silhouette | Pitch/shoulder lead; roll/elbow follow | Avoids yaw that would undermine the directional staging |
-| `speak_calm_sway` | Readable conversational head-and-body sway | Supplies a calm dominant drawing to the utterance-length spline | Weighted toward ordinary phrases; never settles independently |
-| `speak_emphasis_nod` | Clear phrase-boundary nod | Fast head drawing redirects the continuing body path | Selected near detected energy peaks without stopping the performance |
-| `speak_explanatory_lean` | Clear forward explanatory emphasis | Shoulder/head drawing carries momentum into the next phrase | Phrase-scale staging inside the continuous performance |
-| `speak_reflective_tilt` | Reflective diagonal thought shape | A mirrored variant supplies asymmetry and counter-shape | Calm timing without an isolated return or stop |
-| Generated `speaking_performance` | One fluid, head-led action spanning the whole utterance | Every phrase stages a head lead, then a delayed body follow while the head anticipates its next arc | Seeded scale/direction variation avoids a fixed cycle; energy-gated body beats have a three-phrase minimum interval; only the final anchor return settles |
+
+| Animation                        | Primary action and silhouette                                                  | Anticipation / follow-through                                                                            | Timing and secondary action                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `look_at_left_expressive`        | One broad leftward lamp-body arc ending in an attentive directional silhouette | Small opposite yaw prepares the turn; shoulder/head lag and an exact authored overshoot flow into settle | Expressive-turn timing; warm marker expression supports the readable turn                                                                                 |
+| `look_at_right_expressive`       | Mirrored rightward arc without mechanical symmetry in the supporting joints    | Opposing preparation, layered lean, exact overshoot, weighted settle                                     | Same dramatic beat as left while preserving calibrated right-side range                                                                                   |
+| `attentive_entry`                | Upward opening into a forward attentive silhouette                             | Compact preparation releases into head/shoulder lift; elbow follows                                      | Quick attentive style; light focus is the secondary action                                                                                                |
+| `acknowledge_nod`                | Small clear nod around the held anchor                                         | Head lead, restrained shoulder follow-through, clean return                                              | Quick reaction with one phrase-scale beat, not repeated bobbing                                                                                           |
+| `disagree_soft`                  | Restrained asymmetric side-to-side refusal                                     | First side prepares the reversal; smaller counterbeat dissipates energy                                  | Calm readable disagreement; muted light/cue remain subordinate                                                                                            |
+| `curious_tilt`                   | Open diagonal head/body examination                                            | Slight opposing base shift precedes the tilt; elbow settles last                                         | Thinking-weighted timing and a spatial light sweep reinforce curiosity                                                                                    |
+| `delight_lift`                   | Compact upward lift with an open, appealing silhouette                         | Small compression precedes extension; head and elbow finish after the body                               | Quick but restrained; sparkle and tonal cue land on the authored marker                                                                                   |
+| `thinking_shift`                 | Asymmetric supported thinking pose                                             | Lateral preparation and slow head follow-through avoid a generic lean                                    | Slow thinking style; drifting warm light is the secondary action                                                                                          |
+| `return_home`                    | Weighted downward/central settle into powered home                             | No decorative overshoot; joints arrive with controlled overlap                                           | Slow return-home style communicates weight and finality                                                                                                   |
+| `look_at_left`                   | Functional direct left orientation                                             | No expressive anticipation; continuous compiler still supplies slow-in/out                               | Utility motion keeps a clean directional silhouette                                                                                                       |
+| `look_at_right`                  | Functional direct right orientation                                            | No expressive anticipation; final settle is explicit                                                     | Utility motion respects the same calibrated and spline contracts                                                                                          |
+| `idle_breathe`                   | Coordinated visible rise and release                                           | Compression/extension is restrained and always returns to the immutable anchor                           | Long living-idle timing; no sound                                                                                                                         |
+| `idle_head_curiosity`            | Gentle pitch/roll examination                                                  | First tilt flows through a smaller counter-shape                                                         | Head detail stays subordinate to the held pose; no sound                                                                                                  |
+| `idle_micro_glance`              | Readable glance compatible with a held silhouette                              | Base starts the glance, head counters, both return                                                       | Short micro-idle with long randomized quiet interval                                                                                                      |
+| `idle_shoulder_adjust`           | Small internal weight redistribution                                           | Shoulder initiates; elbow/head trail and settle                                                          | Quiet living-idle timing; does not change the anchor                                                                                                      |
+| `idle_weight_shift`              | Coordinated base/shoulder/elbow weight change                                  | Body lead with head counterbalance and tapered return                                                    | Larger idle, selected less often; motion and light only                                                                                                   |
+| `idle_soft_head_shake`           | Restrained asymmetric shake                                                    | Small first side, larger counter, diminished final echo                                                  | Direction changes flow through spline points without stop plateaus                                                                                        |
+| `idle_attentive_hold`            | Subtle upward energy within attentive anchors                                  | Shoulder/head rise then diagonal secondary detail                                                        | Faster attentive character but low amplitude                                                                                                              |
+| `idle_directional_hold`          | Detail that preserves a left/right held silhouette                             | Pitch/shoulder lead; roll/elbow follow                                                                   | Avoids yaw that would undermine the directional staging                                                                                                   |
+| `speak_calm_sway`                | Readable conversational head-and-body sway                                     | Supplies a calm dominant drawing to the utterance-length spline                                          | Weighted toward ordinary phrases; never settles independently                                                                                             |
+| `speak_emphasis_nod`             | Clear phrase-boundary nod                                                      | Fast head drawing redirects the continuing body path                                                     | Selected near detected energy peaks without stopping the performance                                                                                      |
+| `speak_explanatory_lean`         | Clear forward explanatory emphasis                                             | Shoulder/head drawing carries momentum into the next phrase                                              | Phrase-scale staging inside the continuous performance                                                                                                    |
+| `speak_reflective_tilt`          | Reflective diagonal thought shape                                              | A mirrored variant supplies asymmetry and counter-shape                                                  | Calm timing without an isolated return or stop                                                                                                            |
+| Generated `speaking_performance` | One fluid, head-led action spanning the whole utterance                        | Every phrase stages a head lead, then a delayed body follow while the head anticipates its next arc      | Seeded scale/direction variation avoids a fixed cycle; energy-gated body beats have a three-phrase minimum interval; only the final anchor return settles |
+
+
+`attention_left` and `attention_right` use small base-led conversational arcs:
+small opposing anticipation, a committed lean, restrained authored overshoot,
+and one final settle. Shoulder compression and elbow/head overlap support the
+facing idea. Their approximately 20-degree targets preserve a forward eyeline
+without copying the full directional turns. The temporary anchor is held with
+purposeful stillness until speech or return; no decorative cue is played.
+The [behaviour brief](../explanation/voice-attention.md) records ELEGNT intent
+and required physical acceptance.
+
+
+
 
 ## Pose and scene review
 
@@ -59,16 +70,16 @@ exception: it intentionally has no motion and verifies the RGBW/audio devices.
 ## Acceptance invariants
 
 - Through keyframes preserve continuous position, velocity, and acceleration;
-  a direction reversal may cross instantaneous zero velocity but never holds a
-  zero-velocity plateau.
+a direction reversal may cross instantaneous zero velocity but never holds a
+zero-velocity plateau.
 - Authored overshoot poses are exact; the compiler clamps extra overshoot.
 - All relative idles and speech gestures use one uniform calibration-aware
-  amplitude and end at zero offset from their immutable anchor.
+amplitude and end at zero offset from their immutable anchor.
 - Speech composes its relative drawings into one utterance-length spline. It
-  has no internal `settle` keyframes and no scheduler-created motion gaps.
+has no internal `settle` keyframes and no scheduler-created motion gaps.
 - Every speech phrase contains a readable head drawing. Ordinary shoulder and
-  elbow motion remains secondary; full body beats are energy-gated, never
-  adjacent, and limited to at most roughly one in three phrase drawings.
+elbow motion remains secondary; full body beats are energy-gated, never
+adjacent, and limited to at most roughly one in three phrase drawings.
 - Routine idle has no sound, timers are randomized, and immediate repetition
-  is excluded.
+is excluded.
 - Final `settle` is intentional and reaches zero velocity and acceleration.
