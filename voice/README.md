@@ -25,6 +25,11 @@ capture. It preserves pairing, calibration, microphone geometry and unrelated
 files. A failed voice install restores the previous environment and leaves the
 listener stopped; archived models remain in the backup for manual recovery.
 
+When upgrading from a checkout with a locally generated, untracked
+`voice/uv.lock`, deployment removes that file before the fast-forward merge
+only if the incoming revision supplies its replacement. Tracked local edits,
+symlinks and unrelated files remain protected by Git's normal merge checks.
+
 The deployment command still requires an existing source-built, hardware-
 commissioned Pi, its Rust toolchain, trusted SSH and passwordless sudo. It runs
 physical motion smoke tests; it does not image a blank SD card or install Mac

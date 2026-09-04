@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep this upgrade step in the streamed script: the Pi checkout may predate it.
+merge_updated_checkout() {
+  local incoming_ref=$1
+  if git merge-base --is-ancestor HEAD "${incoming_ref}" \
+    && [[ -f voice/uv.lock && ! -L voice/uv.lock && ! -L voice ]] \
+    && ! git ls-files --error-unmatch -- voice/uv.lock >/dev/null 2>&1 \
+    && ! git cat-file -e HEAD:voice/uv.lock 2>/dev/null \
+    && git cat-file -e "${incoming_ref}:voice/uv.lock" 2>/dev/null; then
+    echo "Removing the generated, untracked voice/uv.lock before installing the committed lockfile..."
+    rm -- voice/uv.lock
+  fi
+  git merge --ff-only "${incoming_ref}"
+}
+
 project_root="${1:?Pi project root is required}"
 branch="${2:?Git branch is required}"
 runtime_socket="/tmp/oriond.sock"
@@ -155,7 +169,7 @@ daemon_available=false
 
 echo "Fetching origin/${branch}..."
 git fetch --prune origin "${branch}"
-git merge --ff-only "origin/${branch}"
+merge_updated_checkout "origin/${branch}"
 revision="$(git rev-parse --short=12 HEAD)"
 
 echo "Archiving non-v2 Pi user assets before loading the breaking catalog..."
