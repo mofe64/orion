@@ -43,7 +43,7 @@
 
 **Key Deliverables:** Pi token-authenticated LAN listener, complete voice deployment/legacy retirement with interactive sudo support, persistent OS pairing/reconnect, Studio home audit, processing-only Studio, character startup and authored attention previews.
 
-**Bugs Fixed:** Startup failure classification, follow-up buffering, delayed attention return, upload cancellation and stale UI readiness.
+**Bugs Fixed:** Startup failure classification, follow-up buffering, delayed attention return, upload cancellation, stale UI readiness, deployment sudo prompting and systemd template discovery.
 
 **Files Changed:** Voice packages, Studio integration, runtime, motion assets, service/deployment scripts and documentation; pre-existing user edits retained.
 

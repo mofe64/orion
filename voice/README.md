@@ -25,6 +25,12 @@ capture. It preserves pairing, calibration, microphone geometry and unrelated
 files. A failed voice install restores the previous environment and leaves the
 listener stopped; archived models remain in the backup for manual recovery.
 
+Legacy service discovery checks installed services and loaded instances in
+both system and user scopes. Bare templates such as `autovt@.service` are
+skipped; concrete instances are checked against this checkout's executable
+path and legacy worker command before being stopped. Inspection or shutdown
+failures abort retirement before the voice environment is replaced.
+
 When upgrading from a checkout with a locally generated, untracked
 `voice/uv.lock`, deployment removes that file before the fast-forward merge
 only if the incoming revision supplies its replacement. Tracked local edits,

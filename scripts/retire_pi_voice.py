@@ -7,6 +7,7 @@ from pathlib import Path
 import shlex
 import signal
 import subprocess
+import sys
 import time
 
 LEGACY_COMMANDS = {"wake-worker", "listen-worker", "tts-worker"}
@@ -55,6 +56,22 @@ def archive_models(root, backup):
     return moved
 
 
+def service_names(output):
+    """Select concrete services; bare templates have no runnable ExecStart."""
+    names = set()
+    for line in output.splitlines():
+        fields = line.split()
+        if fields and fields[0].endswith(".service") and not fields[0].endswith("@.service"):
+            names.add(fields[0])
+    return names
+
+
+def systemctl_error(action, prefix, result):
+    scope = "user" if "--user" in prefix else "system"
+    detail = result.stderr.strip() or f"systemctl exited {result.returncode}"
+    return RuntimeError(f"Could not {action} ({scope} services): {detail}")
+
+
 def retire_services(root):
     for user_scope in (False, True):
         prefix = ["systemctl", "--user"] if user_scope else ["systemctl"]
@@ -62,26 +79,36 @@ def retire_services(root):
                                 capture_output=True, text=True)
         if listed.returncode:
             if not user_scope:
-                raise RuntimeError("Could not inspect system services")
+                raise systemctl_error("list installed units", prefix, listed)
             # User units cannot be silently skipped if this checkout installed any.
             user_units = Path.home() / ".config/systemd/user"
             for unit in user_units.glob("*.service"):
                 if str(root / "voice") in unit.read_text() and any(c in unit.read_text() for c in LEGACY_COMMANDS):
                     raise RuntimeError("Start the user systemd manager to retire legacy Orion voice units")
             continue
-        for line in listed.stdout.splitlines():
-            unit = line.split()[0]
-            if not unit.endswith(".service"):
-                continue
-            command = subprocess.run(prefix + ["show", unit, "--property=ExecStart", "--value"],
-                                     capture_output=True, text=True, check=True).stdout
+        # Installed files include templates; loaded units include concrete instances
+        # and transient workers which may have no separately installed unit file.
+        loaded = subprocess.run(prefix + ["list-units", "--all", "--type=service",
+                                          "--no-legend", "--no-pager", "--plain", "--full"],
+                                capture_output=True, text=True)
+        if loaded.returncode:
+            raise systemctl_error("list loaded units", prefix, loaded)
+        for unit in sorted(service_names(listed.stdout) | service_names(loaded.stdout)):
+            inspected = subprocess.run(prefix + ["show", unit, "--property=ExecStart", "--value"],
+                                       capture_output=True, text=True)
+            if inspected.returncode:
+                raise systemctl_error(f"inspect {unit}", prefix, inspected)
+            command = inspected.stdout
             # systemd renders ExecStart with metadata; ownership and command both required.
             if str(root / "voice/.venv/bin/") not in command:
                 continue
             words = shlex.split(command.replace(";", " ").replace("}", " "))
             if not is_legacy_command(words, root):
                 continue
-            subprocess.run((prefix if user_scope else ["sudo", *prefix]) + ["disable", "--now", unit], check=True)
+            stopped = subprocess.run((prefix if user_scope else ["sudo", *prefix]) + ["disable", "--now", unit])
+            if stopped.returncode:
+                raise RuntimeError(f"Could not disable and stop legacy unit {unit}; "
+                                   "refusing to replace its voice environment")
             print(f"Retired legacy unit: {unit}")
 
 
@@ -149,4 +176,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as error:
+        sys.exit(f"Legacy voice retirement failed: {error}")

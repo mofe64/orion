@@ -50,6 +50,83 @@ class RetirementTests(unittest.TestCase):
         self.assertTrue(all(args[-1] == 'orion-voice.service' for args in disabled))
         self.assertTrue(any('--user' in args for args in disabled))
 
+    def test_templates_are_skipped_but_installed_and_loaded_instances_are_retired(self):
+        root = Path('/home/pi/orion')
+        calls = []
+        def run(arguments, **kwargs):
+            calls.append(arguments)
+            if 'list-unit-files' in arguments:
+                output = ('autovt@.service alias -\nlegacy@.service disabled enabled\n'
+                          'legacy@boot.service enabled enabled\n'
+                          'old-voice.service disabled enabled\n\n')
+            elif 'list-units' in arguments:
+                self.assertIn('--all', arguments)
+                self.assertIn('--plain', arguments)
+                self.assertIn('--full', arguments)
+                output = ('legacy@live.service loaded active running Voice\n'
+                          'legacy@boot.service loaded active running Voice\n'
+                          'getty@tty1.service loaded active running Login\n')
+            elif 'show' in arguments:
+                unit = arguments[arguments.index('show') + 1]
+                # Reproduce the Pi failure if the implementation queries a template.
+                if unit.endswith('@.service'):
+                    if kwargs.get('check'):
+                        raise subprocess.CalledProcessError(1, arguments, stderr='Invalid argument')
+                    return subprocess.CompletedProcess(arguments, 1, '', 'Invalid argument')
+                if unit == 'getty@tty1.service':
+                    output = '{ path=/sbin/agetty ; argv[]=/sbin/agetty tty1 ; }'
+                else:
+                    output = '{ path=/home/pi/orion/voice/.venv/bin/orion-voice ; argv[]=/home/pi/orion/voice/.venv/bin/orion-voice wake-worker ; }'
+            else:
+                output = ''
+            return subprocess.CompletedProcess(arguments, 0, output, '')
+        with patch.object(retire.subprocess, 'run', run):
+            retire.retire_services(root)
+        disabled = [args for args in calls if 'disable' in args]
+        for user_scope in (False, True):
+            units = [args[-1] for args in disabled if ('--user' in args) == user_scope]
+            self.assertCountEqual(units, ['legacy@boot.service', 'legacy@live.service', 'old-voice.service'])
+        self.assertFalse(any(args[args.index('show') + 1].endswith('@.service')
+                             for args in calls if 'show' in args))
+
+    def test_inspection_errors_are_actionable_and_do_not_allow_retirement(self):
+        for failed_command in ('list-unit-files', 'list-units', 'show'):
+            with self.subTest(failed_command=failed_command):
+                calls = []
+                def run(arguments, **kwargs):
+                    calls.append(arguments)
+                    if failed_command in arguments:
+                        return subprocess.CompletedProcess(arguments, 1, '', 'Access denied')
+                    return subprocess.CompletedProcess(arguments, 0, 'old-voice.service enabled\n', '')
+                with patch.object(retire.subprocess, 'run', run):
+                    with self.assertRaisesRegex(RuntimeError, r'system services.*Access denied'):
+                        retire.retire_services(Path('/home/pi/orion'))
+                self.assertFalse(any('disable' in args for args in calls))
+
+    def test_failure_to_stop_a_legacy_service_is_fatal(self):
+        def run(arguments, **kwargs):
+            if 'disable' in arguments:
+                return subprocess.CompletedProcess(arguments, 1)
+            output = ('/home/pi/orion/voice/.venv/bin/orion-voice listen-worker'
+                      if 'show' in arguments else 'old-voice.service enabled\n')
+            return subprocess.CompletedProcess(arguments, 0, output, '')
+        with patch.object(retire.subprocess, 'run', run):
+            with self.assertRaisesRegex(RuntimeError, 'old-voice.service.*refusing to replace'):
+                retire.retire_services(Path('/home/pi/orion'))
+
+    def test_unavailable_user_manager_is_only_skipped_without_local_legacy_units(self):
+        def run(arguments, **kwargs):
+            return subprocess.CompletedProcess(arguments, int('--user' in arguments), '', 'No bus')
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            units = home / '.config/systemd/user'
+            units.mkdir(parents=True)
+            with patch.object(retire.Path, 'home', return_value=home), patch.object(retire.subprocess, 'run', run):
+                retire.retire_services(Path('/home/pi/orion'))
+                (units / 'legacy@.service').write_text('ExecStart=/home/pi/orion/voice/.venv/bin/orion-voice wake-worker')
+                with self.assertRaisesRegex(RuntimeError, 'Start the user systemd manager'):
+                    retire.retire_services(Path('/home/pi/orion'))
+
     def test_known_models_archived_and_rustpotter_custom_files_preserved(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
