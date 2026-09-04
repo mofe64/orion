@@ -293,6 +293,12 @@ fails, the speech run becomes `failed`, the coordinator removes its temporary
 file, and character motion returns to the anchor. Idle resumes only after the
 scheduler chooses another randomized delay.
 
+Studio's playback-complete acknowledgement may arrive while the physical
+settle is still running. Listening, thinking, and neutral reactions preserve
+the speaking or settling state until that movement is cleaned up. The next
+speech waits only for a matching active movement; a run that has left the
+runtime's bounded movement history cannot block a later performance.
+
 ## Designing animation
 
 Before adding an asset, answer these questions:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tempfile
 from typing import Callable, Protocol
@@ -40,9 +41,10 @@ class CodexAgentProvider:
             self._thread = thread_factory(model)
             return
 
-        from openai_codex import ApprovalMode, Codex, Sandbox
+        from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox
 
-        runtime = Codex()
+        # The SDK ships its own runtime; updating a PATH CLI does not update it.
+        runtime = Codex(CodexConfig(codex_bin=os.environ.get("ORION_STUDIO_CODEX_BIN") or None))
         account = runtime.account()
         if account.account is None:
             runtime.close()

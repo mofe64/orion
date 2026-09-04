@@ -1,5 +1,7 @@
 from types import SimpleNamespace
+import os
 import unittest
+from unittest.mock import Mock, patch
 
 from orion_voice_worker.agent import CodexAgentProvider, MAX_RESPONSE_CHARACTERS
 
@@ -15,6 +17,33 @@ class FakeThread:
 
 
 class CodexAgentProviderTests(unittest.TestCase):
+    def test_runtime_override_preserves_model_and_thread_constraints(self) -> None:
+        for executable in (None, '', '/Applications/ChatGPT.app/Contents/Resources/codex'):
+            with self.subTest(executable=executable):
+                runtime = Mock()
+                runtime.account.return_value = SimpleNamespace(account=object())
+                runtime.thread_start.return_value = FakeThread('Hello from Orion.')
+                sdk = SimpleNamespace(
+                    Codex=Mock(return_value=runtime), CodexConfig=SimpleNamespace,
+                    ApprovalMode=SimpleNamespace(deny_all='deny_all'),
+                    Sandbox=SimpleNamespace(read_only='read_only'),
+                )
+                environment = {} if executable is None else {'ORION_STUDIO_CODEX_BIN': executable}
+                with patch.dict(os.environ, environment, clear=True), patch.dict('sys.modules', {'openai_codex': sdk}):
+                    provider = CodexAgentProvider('gpt-6-astra')
+                    try:
+                        config = sdk.Codex.call_args.args[0]
+                        self.assertEqual(config.codex_bin, executable or None)
+                        options = runtime.thread_start.call_args.kwargs
+                        self.assertEqual(options['model'], 'gpt-6-astra')
+                        self.assertEqual(options['sandbox'], 'read_only')
+                        self.assertEqual(options['approval_mode'], 'deny_all')
+                        self.assertTrue(options['ephemeral'])
+                        self.assertEqual(provider.respond('Say hello.'), 'Hello from Orion.')
+                    finally:
+                        provider.close()
+                    runtime.close.assert_called_once()
+
     def test_returns_normalized_spoken_response(self) -> None:
         thread = FakeThread("  Hello,\n  I am Orion.  ")
         provider = CodexAgentProvider("test-model", thread_factory=lambda _model: thread)

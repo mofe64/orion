@@ -313,6 +313,16 @@ impl CharacterCoordinator {
         if let Some(attention) = self.attention.as_mut() {
             attention.expires_at = now + if reaction == "neutral" { 15.0 } else { 120.0 };
         }
+        // Playback acknowledgement can arrive before the physical settle ends.
+        // Keep speech ownership until tick has retired its movement; otherwise
+        // a later idle can overwrite the only terminal record of that run.
+        if matches!(
+            self.status.state,
+            CharacterState::Speaking | CharacterState::Settling
+        ) && matches!(reaction, "neutral" | "listening" | "thinking")
+        {
+            return Ok(self.status.clone());
+        }
         match reaction {
             "neutral" => self.status.state = self.idle_state(),
             "listening" => self.status.state = CharacterState::Listening,
@@ -631,12 +641,18 @@ impl CharacterCoordinator {
         _frame: Option<usize>,
     ) {
         if let Some(run_id) = self.speech_motion_run_id {
-            if terminal_phase(core, run_id).is_some() {
-                self.speech_motion_run_id = None;
-                self.status.active_clip = None;
-            } else {
+            if core
+                .snapshot()
+                .motion
+                .as_ref()
+                .is_some_and(|motion| motion.run_id == run_id && !motion.state.is_terminal())
+            {
                 return;
             }
+            // A run absent from the active slot cannot still own movement.
+            // The bounded terminal history may already contain a newer run.
+            self.speech_motion_run_id = None;
+            self.status.active_clip = None;
         }
         if self.speech_motion_started {
             return;
@@ -1682,6 +1698,117 @@ mod tests {
         assert_eq!(character.status.state, CharacterState::HomeIdle);
         assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
         assert!(character.speech_motion_run_id.is_none());
+    }
+
+    #[test]
+    fn neutral_playback_acknowledgement_preserves_settle_and_next_speech() {
+        let mut core = following_core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 500],
+            quiet_regions: vec![],
+            phrase_peaks: vec![80, 240, 400],
+            duration_seconds: 10.0,
+        };
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.state = CharacterState::HomeIdle;
+        character.status.active_anchor = Some(anchor.clone());
+        character.note_speech_started(0.0);
+        character
+            .tick(0.1, &mut core, false, None, true, Some(&analysis), Some(0))
+            .unwrap();
+        for reaction in ["neutral", "listening", "thinking"] {
+            character.set_reaction(reaction, 0.15, &mut core).unwrap();
+            assert_eq!(character.status.state, CharacterState::Speaking);
+        }
+        core.tick(0.2).unwrap();
+        character
+            .tick(0.2, &mut core, false, None, false, None, None)
+            .unwrap();
+        let settle_run = character.speech_motion_run_id.unwrap();
+
+        // Studio sees audio completion before physical settling has completed.
+        character.set_reaction("neutral", 0.21, &mut core).unwrap();
+        assert_eq!(character.status.state, CharacterState::Settling);
+        advance(&mut character, &mut core, 0.21, 4.21);
+        assert!(character.speech_motion_run_id.is_none());
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+
+        // A later idle replaces the runtime's most recent terminal movement.
+        character.next_micro_at = 4.21;
+        advance(&mut character, &mut core, 4.21, 12.21);
+        assert_ne!(
+            core.snapshot().last_motion.as_ref().unwrap().run_id,
+            settle_run
+        );
+        character.preempt_idle(12.22, &mut core).unwrap();
+        character.note_speech_started(12.22);
+        character
+            .tick(
+                12.24,
+                &mut core,
+                false,
+                None,
+                true,
+                Some(&analysis),
+                Some(0),
+            )
+            .unwrap();
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("speaking_performance")
+        );
+        assert_eq!(core.mode(), RuntimeMode::Moving);
+    }
+
+    #[test]
+    fn speech_recovers_when_prior_movement_left_terminal_history() {
+        let mut core = following_core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let prior = core
+            .play_anchored_relative("idle_breathe", anchor.clone(), 0.0)
+            .unwrap();
+        for step in 1..=500 {
+            core.tick(step as f64 * 0.02).unwrap();
+        }
+        core.play_anchored_relative("idle_breathe", anchor.clone(), 10.0)
+            .unwrap();
+        for step in 501..=1000 {
+            core.tick(step as f64 * 0.02).unwrap();
+        }
+        assert!(terminal_phase(&core, prior).is_none());
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.active_anchor = Some(anchor);
+        character.speech_motion_run_id = Some(prior);
+        character.note_speech_started(20.0);
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 500],
+            quiet_regions: vec![],
+            phrase_peaks: vec![80, 240, 400],
+            duration_seconds: 10.0,
+        };
+        character
+            .tick(
+                20.02,
+                &mut core,
+                false,
+                None,
+                true,
+                Some(&analysis),
+                Some(0),
+            )
+            .unwrap();
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("speaking_performance")
+        );
+        assert_eq!(core.mode(), RuntimeMode::Moving);
     }
 
     #[test]

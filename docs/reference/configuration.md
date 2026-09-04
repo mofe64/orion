@@ -16,6 +16,7 @@ environment variables.
 | `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
 | `ORION_STUDIO_AGENT_PROVIDER` | `codex` | Agent adapter name; only `codex` is implemented |
 | `ORION_STUDIO_AGENT_MODEL` | Codex configured default | Optional Codex model override |
+| `ORION_STUDIO_CODEX_BIN` | Python SDK's bundled Codex runtime | Explicit Codex executable path, for example an updated app runtime when a model requires a newer version |
 | `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |
 
 Set Studio variables on the same command that starts the Tauri process:
