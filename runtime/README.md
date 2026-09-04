@@ -49,15 +49,20 @@ workstation:
 scripts/deploy_pi.sh
 ```
 
-The command connects to `mofe@orion.local` over SSH and streams the remote
-deployment logic. Override the target when needed with `--host`, `--root`, or
+The command connects to `mofe@orion.local` over SSH, uploads the deployment
+bootstrap to a temporary file and runs it in an SSH terminal. This leaves
+terminal input available for sudo authentication; the temporary file is
+removed when the remote command exits. Override the target when needed with `--host`, `--root`, or
 `--branch`. SSH host identity and key access must already be trusted normally;
-the script never disables host-key checking. The Pi user needs passwordless
-`sudo` for unattended installation and control of the two system services.
+the script never disables host-key checking. Enter the Pi user's sudo password
+in the terminal when prompted. The account must be permitted to install
+packages and manage services; passwordless sudo is needed only for unattended
+runs. Deployment does not change sudoers or request the password through chat.
 
 On the Pi, deployment requires the selected branch to already be checked out,
 then fetches and fast-forwards it. It never switches branches, stashes, resets,
-or cleans the Pi checkout. Deployment stops the gateway, returns the running
+or runs a broad cleanup of the Pi checkout. The specific generated lockfile
+migration is described in [Pi voice setup](../voice/README.md). Deployment stops the gateway, returns the running
 Orion to `rest`, disables torque, runs gateway tests and the
 Pi-compatible Rust suite, and release-builds `oriond` while the old daemon
 remains safely torque-off. The simulator-only MuJoCo integration test remains a

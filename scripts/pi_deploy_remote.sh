@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Keep this upgrade step in the streamed script: the Pi checkout may predate it.
+# Keep this upgrade step in the uploaded bootstrap: the Pi checkout may predate it.
 merge_updated_checkout() {
   local incoming_ref=$1
   if git merge-base --is-ancestor HEAD "${incoming_ref}" \
@@ -48,8 +48,8 @@ if [[ ! -f "${calibration_file}" ]]; then
   echo "Missing Orion calibration: ${calibration_file}" >&2
   exit 1
 fi
-if ! sudo -n true; then
-  echo "Pi deployment requires passwordless sudo for systemd installation and control." >&2
+if ! sudo -v; then
+  echo "Pi sudo authentication failed. Run deployment from a terminal and enter the Pi user password when prompted." >&2
   exit 1
 fi
 
@@ -122,11 +122,11 @@ if [[ ! -x "${old_binary}" ]]; then
 fi
 
 if unit_exists orion-listener.service; then
-  sudo -n systemctl stop orion-listener.service
+  sudo systemctl stop orion-listener.service
 fi
 
 if unit_exists orion-studio-gateway.service; then
-  sudo -n systemctl stop orion-studio-gateway.service
+  sudo systemctl stop orion-studio-gateway.service
 fi
 pkill -TERM -f 'orion_studio/gateway.py serve' 2>/dev/null || true
 
@@ -154,7 +154,7 @@ fi
 
 echo "Stopping the previous runtime before replacing the legacy catalog..."
 if unit_exists oriond.service; then
-  sudo -n systemctl stop oriond.service
+  sudo systemctl stop oriond.service
 fi
 pkill -TERM -x oriond 2>/dev/null || true
 for _ in {1..50}; do
@@ -200,7 +200,7 @@ scripts/install_pi_voice.sh "${project_root}" "${user_home}"
 
 echo "Installing and enabling Orion's boot services..."
 scripts/install_pi_services.sh "${project_root}" "${orion_user}" "${user_home}"
-sudo -n systemctl restart oriond.service
+sudo systemctl restart oriond.service
 scripts/wait_for_oriond.sh "${active_binary}" "${runtime_socket}" 20
 daemon_available=true
 
@@ -237,16 +237,16 @@ echo "Returning Orion to rest, fading lights off, and disabling torque..."
 final_status="$("${active_binary}" --status --socket "${runtime_socket}")"
 python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value.get("torque_enabled") is False, value; assert value.get("mode") == "configured", value' "${final_status}"
 
-sudo -n systemctl restart orion-studio-gateway.service
-sudo -n systemctl restart orion-listener.service
-sudo -n systemctl is-active --quiet orion-listener.service
-sudo -n systemctl is-enabled --quiet orion-listener.service
+sudo systemctl restart orion-studio-gateway.service
+sudo systemctl restart orion-listener.service
+sudo systemctl is-active --quiet orion-listener.service
+sudo systemctl is-enabled --quiet orion-listener.service
 # Verify the authenticated protocol with no real capture: a wrong token must be rejected.
 "${project_root}/voice/.venv/bin/python" "${project_root}/scripts/check_pi_listener.py"
-sudo -n systemctl is-active --quiet oriond.service
-sudo -n systemctl is-active --quiet orion-studio-gateway.service
-sudo -n systemctl is-enabled --quiet oriond.service
-sudo -n systemctl is-enabled --quiet orion-studio-gateway.service
+sudo systemctl is-active --quiet oriond.service
+sudo systemctl is-active --quiet orion-studio-gateway.service
+sudo systemctl is-enabled --quiet oriond.service
+sudo systemctl is-enabled --quiet orion-studio-gateway.service
 
 gateway_ready=false
 for _ in {1..50}; do

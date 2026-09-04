@@ -77,7 +77,7 @@ class RetirementTests(unittest.TestCase):
 
 
 class InstallerTests(unittest.TestCase):
-    def exercise(self, fail_sync=False):
+    def exercise(self, fail_sync=False, packages_installed=False):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary); root = base / 'checkout'; home = base / 'user'; binaries = base / 'bin'
             binaries.mkdir(); (root / 'scripts').mkdir(parents=True); (root / 'voice/.venv').mkdir(parents=True)
@@ -91,18 +91,22 @@ import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
 with open(os.environ['ORION_TEST_LOG'], 'a') as log: log.write(json.dumps([name, *sys.argv[1:]])+'\\n')
 if name == 'uname': print('Linux' if sys.argv[1] == '-s' else 'aarch64')
+if name == 'sudo' and '-n' in sys.argv: sys.exit('non-interactive sudo refuses the password prompt')
+if name == 'dpkg-query':
+ print('install ok installed' if os.environ['ORION_TEST_PACKAGES'] == '1' else 'unknown ok not-installed')
 if name == 'uv':
  root = pathlib.Path(sys.argv[sys.argv.index('--project') + 1])
  (root / '.venv/bin').mkdir(parents=True)
  (root / '.venv/bin/python').symlink_to(os.environ['ORION_TEST_PYTHON'])
  sys.exit(int(os.environ['ORION_TEST_FAIL']))
 '''
-            for name in ['sudo', 'systemctl', 'uname', 'cargo']:
+            for name in ['sudo', 'systemctl', 'uname', 'cargo', 'dpkg-query']:
                 file = binaries / name; file.write_text(fake); file.chmod(0o755)
             for name in ['python', 'uv']:
                 file = bootstrap / name; file.write_text(fake); file.chmod(0o755)
             env = {**os.environ, 'PATH': str(binaries) + ':' + os.environ['PATH'],
                    'ORION_TEST_LOG': str(log), 'ORION_TEST_FAIL': str(int(fail_sync)),
+                   'ORION_TEST_PACKAGES': str(int(packages_installed)),
                    'ORION_TEST_PYTHON': str(bootstrap / 'python')}
             result = subprocess.run(['bash', str(SCRIPTS / 'install_pi_voice.sh'), str(root), str(home)],
                                     env=env, text=True, capture_output=True)
@@ -110,7 +114,13 @@ if name == 'uv':
             self.assertEqual(result.returncode, int(fail_sync), result.stderr)
             sync = next(call for call in calls if call[0] == 'uv')
             self.assertIn('--locked', sync); self.assertNotIn('--extra', sync)
-            self.assertTrue(any('alsa-utils' in call for call in calls))
+            apt = [call for call in calls if call[0] == 'sudo' and 'apt-get' in call]
+            if packages_installed:
+                self.assertEqual(apt, [])
+            else:
+                self.assertTrue(any('alsa-utils' in call for call in apt))
+            self.assertIn(['sudo', '-v'], calls)
+            self.assertTrue(all('-n' not in call for call in calls if call[0] == 'sudo'))
             if fail_sync:
                 self.assertEqual((root / 'voice/.venv/old-stack').read_text(), 'legacy environment')
                 self.assertTrue(list(home.glob('.local/share/orion/backups/voice-*/failed-venv')))
@@ -121,6 +131,7 @@ if name == 'uv':
                 self.assertTrue(any('--no-default-groups' in call for call in calls))
 
     def test_success_replaces_old_environment_and_validates_new_stack(self): self.exercise()
+    def test_installed_packages_skip_privileged_package_manager(self): self.exercise(packages_installed=True)
     def test_failure_restores_old_environment_without_restarting_workers(self): self.exercise(True)
 
 

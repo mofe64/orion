@@ -41,7 +41,7 @@
 
 **Tags:** `voice`, `rustpotter`, `raspberry-pi`, `attention`, `animation`, `elegnt`, `testing`
 
-**Key Deliverables:** Pi token-authenticated LAN listener, complete voice deployment/legacy retirement, persistent OS pairing/reconnect, Studio home audit, processing-only Studio, character startup and authored attention previews.
+**Key Deliverables:** Pi token-authenticated LAN listener, complete voice deployment/legacy retirement with interactive sudo support, persistent OS pairing/reconnect, Studio home audit, processing-only Studio, character startup and authored attention previews.
 
 **Bugs Fixed:** Startup failure classification, follow-up buffering, delayed attention return, upload cancellation and stale UI readiness.
 

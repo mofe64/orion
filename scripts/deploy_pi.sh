@@ -11,10 +11,11 @@ Deploy and physically smoke-test Orion through SSH. Defaults:
   branch: main
 
 The Pi must already trust the workstation's SSH key, and the workstation must
-trust the Pi's SSH host key. The remote script installs and enables the oriond
-Orion Studio gateway and Rustpotter listener systemd services as part of the supervised physical
-smoke test. The Pi user must have passwordless sudo for service installation
-and control. It installs Pi voice dependencies, builds Rustpotter and retires
+trust the Pi's SSH host key. The remote script installs and enables oriond,
+the Studio gateway and the Rustpotter listener during the supervised physical
+smoke test. Deployment opens an SSH terminal so sudo can request the Pi user's
+password. The account must be permitted to install packages and manage services.
+It installs Pi voice dependencies, builds Rustpotter and retires
 the checkout's legacy voice workers/models. Qwen and Chatterbox stay on Studio.
 
 The matching Studio v2 frontend is tested and production-built locally before
@@ -64,5 +65,22 @@ if [[ "${studio_check}" == true ]]; then
   pnpm --dir "${project_checkout}/orion_studio" build
 fi
 echo "Connecting to ${pi_host} to deploy Orion branch ${branch}..."
-ssh -o ConnectTimeout=10 "${pi_host}" bash -s -- "${project_root}" "${branch}" \
-  < "${script_directory}/pi_deploy_remote.sh"
+# Keep stdin available for sudo. Feeding the script to bash -s prevents a
+# normal interactive SSH terminal, so copy it to a temporary file first.
+remote_script="$(ssh -o ConnectTimeout=10 "${pi_host}" mktemp /tmp/orion-deploy.XXXXXXXXXX)"
+if [[ ! "${remote_script}" =~ ^/tmp/orion-deploy\.[A-Za-z0-9]+$ ]]; then
+  echo "The Pi did not return a valid temporary deployment path." >&2
+  exit 1
+fi
+cleanup_remote_script() {
+  if [[ -n "${remote_script}" ]]; then
+    # No password prompt during cleanup if transfer/connection failed.
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "${pi_host}" \
+      rm -f -- "${remote_script}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_remote_script EXIT
+scp -o ConnectTimeout=10 "${script_directory}/pi_deploy_remote.sh" "${pi_host}:${remote_script}"
+ssh -t -o ConnectTimeout=10 "${pi_host}" "trap 'rm -f -- ${remote_script}' EXIT
+bash '${remote_script}' '${project_root}' '${branch}'"
+remote_script=""

@@ -57,7 +57,7 @@ def archive_models(root, backup):
 
 def retire_services(root):
     for user_scope in (False, True):
-        prefix = ["systemctl", "--user"] if user_scope else ["sudo", "-n", "systemctl"]
+        prefix = ["systemctl", "--user"] if user_scope else ["systemctl"]
         listed = subprocess.run(prefix + ["list-unit-files", "--type=service", "--no-legend", "--no-pager"],
                                 capture_output=True, text=True)
         if listed.returncode:
@@ -81,7 +81,7 @@ def retire_services(root):
             words = shlex.split(command.replace(";", " ").replace("}", " "))
             if not is_legacy_command(words, root):
                 continue
-            subprocess.run(prefix + ["disable", "--now", unit], check=True)
+            subprocess.run((prefix if user_scope else ["sudo", *prefix]) + ["disable", "--now", unit], check=True)
             print(f"Retired legacy unit: {unit}")
 
 

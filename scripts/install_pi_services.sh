@@ -24,7 +24,7 @@ for command in sed install systemctl sudo mktemp; do
     exit 1
   fi
 done
-sudo -n true
+sudo -v
 
 template_directory="${project_root}/scripts/systemd"
 temporary_directory="$(mktemp -d)"
@@ -45,11 +45,11 @@ for service in oriond orion-studio-gateway orion-listener; do
     -e "s|@ORION_USER@|${orion_user}|g" \
     -e "s|@USER_HOME@|${user_home}|g" \
     "${template}" > "${output}"
-  sudo -n install -o root -g root -m 0644 "${output}" "/etc/systemd/system/${service}.service"
+  sudo install -o root -g root -m 0644 "${output}" "/etc/systemd/system/${service}.service"
 done
 
-sudo -n systemctl daemon-reload
-sudo -n systemctl enable oriond.service orion-studio-gateway.service
+sudo systemctl daemon-reload
+sudo systemctl enable oriond.service orion-studio-gateway.service
 if [[ -x "${project_root}/voice/.venv/bin/orion-listener" && -f "${user_home}/.config/orion/studio-token" ]]; then
-  sudo -n systemctl enable orion-listener.service
+  sudo systemctl enable orion-listener.service
 fi

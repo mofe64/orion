@@ -15,7 +15,7 @@ repository root, use the existing source deployment command:
 scripts/deploy_pi.sh
 ```
 
-On the commissioned Pi this installs ALSA/build dependencies and a pinned `uv`
+On the commissioned Pi this installs missing ALSA/build dependencies and a pinned `uv`
 bootstrap, retires this checkout's legacy voice services/processes, archives
 known Sherpa/Moonshine/Silero/Piper downloads and the old voice environment,
 then installs the locked Rustpotter stack with Python 3.11. It runs the Pi voice
@@ -31,7 +31,11 @@ only if the incoming revision supplies its replacement. Tracked local edits,
 symlinks and unrelated files remain protected by Git's normal merge checks.
 
 The deployment command still requires an existing source-built, hardware-
-commissioned Pi, its Rust toolchain, trusted SSH and passwordless sudo. It runs
+commissioned Pi, its Rust toolchain, trusted SSH and permission to use sudo for
+package installation and service management. Deployment opens an SSH terminal;
+enter the Pi user's sudo password there when prompted. Passwordless sudo is
+needed only for unattended runs. Credentials are never passed in script
+arguments or captured by the installer. It runs
 physical motion smoke tests; it does not image a blank SD card or install Mac
 inference models on the Pi. For voice-only repair on the Pi checkout:
 
