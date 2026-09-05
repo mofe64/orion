@@ -368,41 +368,36 @@ For manual development, build and run `oriond` directly from this source tree
 only after stopping the installed service. Normal Pi operation uses the
 source-backed `oriond.service`.
 
-## Generated speech
+## Speech playback
 
-The optional persistent Piper worker under `voice/` generates speech with
-Orion's selected Ryan Medium voice without loading its ONNX model in Orion's
-50 Hz Rust control loop. Follow `voice/README.md` to create its Python 3.11
-environment, install the selected local models, and start
-`/tmp/orion-tts.sock`.
+Studio generates expressive speech with Chatterbox and uploads mono PCM16
+24 kHz WAV through the authenticated gateway. The Pi does not synthesize
+speech. `oriond` accepts a validated spool identifier through its private
+`speech file` operation and owns ReSpeaker playback. Streaming uses `speech stream`,
+ordered `speech append` commands and an explicit `speech end`, all under one run
+ID and one player process. See [streaming replies](../docs/explanation/voice-architecture.md#streaming-replies-and-timing)
+for buffering, limits and timing semantics.
 
-With the worker and hardware daemon running, submit dynamic speech through the
-daemon-owned ReSpeaker playback backend:
+Inspect or cancel playback with:
 
 ```bash
-runtime/target/release/oriond --speak "Hello. I am Orion." --wait
 runtime/target/release/oriond --speech-status
 runtime/target/release/oriond --stop-speech
 ```
 
-Speech states are `synthesizing`, `playing`, `completed`, `failed`, and
-`cancelled`. Only the active run and most recent terminal result are retained.
-The generated WAV is temporary and removed after playback. A failed `--wait`
-returns exit code `7`; cancellation returns `5`.
+Speech states are `queued`, `playing`, `completed`, `failed`, and `cancelled`.
+Only the active run and most recent terminal result are retained. The spool
+WAV is removed after completion, cancellation, or playback failure.
 
-Authenticated Studio Voice WAV uploads enter the same `SpeechCoordinator`.
-The coordinator validates and analyzes the waveform, while
+`SpeechCoordinator` validates and analyzes the waveform, while
 `CharacterCoordinator` composes one anchor-relative utterance performance and
-the daemon drives the `speaking_energy` light. Both Studio Chatterbox and local
-Piper therefore share movement, lighting, cancellation, anchor restoration,
-run status, and temporary-file cleanup. See
+the daemon drives the `speaking_energy` light. See
 [Character animation design](../docs/explanation/character-animation.md#speech-driven-animation)
-for the exact animation policy.
+for the animation policy.
 
-The primary Pi listener captures stereo ReSpeaker audio and runs Rustpotter,
-then forwards endpointed mono utterances to Studio for Qwen confirmation and
-processing. The optional legacy offline tools remain separate. See
-[Pi voice setup](../voice/README.md).
+The Pi listener captures stereo ReSpeaker audio and runs Rustpotter, then
+forwards endpointed mono utterances to Studio for Qwen confirmation and
+processing. See [Pi voice setup](../voice/README.md).
 
 ## Character startup and voice attention
 

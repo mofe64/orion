@@ -11,7 +11,8 @@ class FakeThread:
         self.response = response
         self.prompts: list[str] = []
 
-    def run(self, text: str) -> object:
+    def run(self, text: str, **options) -> object:
+        self.options = options
         self.prompts.append(text)
         return SimpleNamespace(final_response=self.response)
 
@@ -22,6 +23,7 @@ class CodexAgentProviderTests(unittest.TestCase):
             with self.subTest(executable=executable):
                 runtime = Mock()
                 runtime.account.return_value = SimpleNamespace(account=object())
+                runtime.models.return_value = SimpleNamespace(data=[SimpleNamespace(model='gpt-5.6-sol', display_name='Sol', hidden=False, supported_reasoning_efforts=[SimpleNamespace(reasoning_effort='medium')])])
                 runtime.thread_start.return_value = FakeThread('Hello from Orion.')
                 sdk = SimpleNamespace(
                     Codex=Mock(return_value=runtime), CodexConfig=SimpleNamespace,
@@ -29,20 +31,38 @@ class CodexAgentProviderTests(unittest.TestCase):
                     Sandbox=SimpleNamespace(read_only='read_only'),
                 )
                 environment = {} if executable is None else {'ORION_STUDIO_CODEX_BIN': executable}
-                with patch.dict(os.environ, environment, clear=True), patch.dict('sys.modules', {'openai_codex': sdk}):
-                    provider = CodexAgentProvider('gpt-6-astra')
+                with patch.dict(os.environ, environment, clear=True), patch.dict('sys.modules', {'openai_codex': sdk}), patch('orion_voice_worker.agent.runtime_candidates', return_value=[executable or None]):
+                    provider = CodexAgentProvider('gpt-5.6-sol')
                     try:
                         config = sdk.Codex.call_args.args[0]
                         self.assertEqual(config.codex_bin, executable or None)
                         options = runtime.thread_start.call_args.kwargs
-                        self.assertEqual(options['model'], 'gpt-6-astra')
+                        self.assertEqual(options['model'], 'gpt-5.6-sol')
                         self.assertEqual(options['sandbox'], 'read_only')
                         self.assertEqual(options['approval_mode'], 'deny_all')
                         self.assertTrue(options['ephemeral'])
                         self.assertEqual(provider.respond('Say hello.'), 'Hello from Orion.')
+                        self.assertEqual(runtime.thread_start.return_value.options, {'model': 'gpt-5.6-sol', 'effort': 'medium'})
                     finally:
                         provider.close()
                     runtime.close.assert_called_once()
+
+    def test_runtime_selection_skips_an_incompatible_catalog_without_changing_model(self):
+        old, current = Mock(), Mock()
+        for runtime in (old, current):
+            runtime.account.return_value = SimpleNamespace(account=object())
+        old.models.return_value = SimpleNamespace(data=[])
+        current.models.return_value = SimpleNamespace(data=[SimpleNamespace(model='gpt-5.6-sol', display_name='Sol', hidden=False, supported_reasoning_efforts=[SimpleNamespace(reasoning_effort='medium')])])
+        current.thread_start.return_value = FakeThread('Hello')
+        sdk = SimpleNamespace(Codex=Mock(side_effect=[old, current]), CodexConfig=SimpleNamespace,
+            ApprovalMode=SimpleNamespace(deny_all='deny_all'), Sandbox=SimpleNamespace(read_only='read_only'))
+        with patch.dict('sys.modules', {'openai_codex': sdk}), patch('orion_voice_worker.agent.runtime_candidates', return_value=['old', 'current']):
+            provider = CodexAgentProvider()
+            self.assertEqual(provider.runtime_path, 'current')
+            self.assertEqual(provider.model_name, 'gpt-5.6-sol')
+            old.close.assert_called_once()
+            provider.close()
+            current.close.assert_called_once()
 
     def test_returns_normalized_spoken_response(self) -> None:
         thread = FakeThread("  Hello,\n  I am Orion.  ")

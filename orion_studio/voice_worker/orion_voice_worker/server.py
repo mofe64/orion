@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 
 from . import PROTOCOL_VERSION
-from .agent import AgentProvider, CodexAgentProvider
+from .agent import AgentProvider, CodexAgentProvider, DEFAULT_AGENT_MODEL, DEFAULT_AGENT_EFFORT
 from .models import DEFAULT_ASR_MODEL, DEFAULT_TTS_MODEL
 from .protocol import ProtocolError, event, parse_hello, parse_json_message
 from .providers import Qwen3AsrTranscriber
@@ -44,6 +44,7 @@ async def transcribe_utterance(
     try:
         result = await asyncio.to_thread(session.asr.transcribe, pending.pcm)
         duration_ms = round((time.monotonic() - started) * 1_000)
+        await websocket.send(event("stage.timing", stage="transcription_" + pending.purpose.value, durationMs=duration_ms))
         command: str | None = None
         for message in session.complete_transcription(pending.purpose, result):
             extra = {
@@ -103,22 +104,36 @@ async def generate_response(
         ))
         return
 
+    chunks = None
     try:
         await websocket.send(event("synthesis.started", requestId=request_id))
         started = time.monotonic()
-        audio = await asyncio.to_thread(models.tts.synthesize, response)
-        session.begin_playback(request_id)
-        if pi is not None:
-            await pi.send(event("session.playing", sessionId=session_id))
-        await websocket.send(event(
-            "speech.audio",
-            requestId=request_id,
-            sampleRate=audio.sample_rate,
-            samples=audio.samples,
-            durationMs=audio.duration_ms,
-            synthesisMs=round((time.monotonic() - started) * 1_000),
-        ))
-        await websocket.send(audio.pcm)
+        chunks = iter(models.tts.stream(response))
+        sequence = 0
+        total_samples = 0
+        while True:
+            audio = await asyncio.to_thread(next, chunks, None)
+            if audio is None:
+                break
+            if audio.sample_rate != 24000:
+                raise RuntimeError("Streaming playback requires Chatterbox PCM16 at 24 kHz")
+            total_samples += audio.samples
+            if total_samples > 120 * 24000:
+                raise RuntimeError("Synthesized reply exceeds the 120-second playback limit")
+            if sequence == 0:
+                session.begin_playback(request_id)
+                if pi is not None:
+                    await pi.send(event("session.playing", sessionId=session_id))
+            await websocket.send(event("speech.chunk", requestId=request_id, sequence=sequence,
+                sampleRate=audio.sample_rate, samples=audio.samples, durationMs=audio.duration_ms,
+                synthesisMs=round((time.monotonic() - started) * 1000)))
+            await websocket.send(audio.pcm)
+            sequence += 1
+        if sequence == 0:
+            raise RuntimeError("Speech synthesis returned no chunks")
+        session.synthesis_finished = True
+        await websocket.send(event("speech.end", requestId=request_id, sequence=sequence,
+            synthesisMs=round((time.monotonic() - started) * 1000)))
     except Exception as error:
         session.fail_response()
         if pi is not None:
@@ -129,6 +144,10 @@ async def generate_response(
             message=str(error),
             recoverable=True,
         ))
+
+    finally:
+        if chunks is not None and hasattr(chunks, "close"):
+            await asyncio.to_thread(chunks.close)
 
 
 def validate_pi_url(url: str) -> None:
@@ -158,7 +177,10 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
         await websocket.send(event("ready", protocol=PROTOCOL_VERSION,
             asr={"provider": models.asr.provider, "model": models.asr.model_name},
             wake=ready["wake"],
-            agent={"provider": models.agent.provider, "model": models.agent.model_name},
+            agent={"provider": models.agent.provider, "model": models.agent.model_name,
+                   "effort": getattr(models.agent, "effort", "medium"),
+                   "runtime": getattr(models.agent, "runtime_path", "unknown"),
+                   "models": getattr(models.agent, "available_models", [])},
             tts={"provider": models.tts.provider, "model": models.tts.model_name}))
         transcription = None
         next_request_id = 1
@@ -182,7 +204,7 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                     if not isinstance(pcm, bytes) or len(pcm) != size:
                         raise ProtocolError("Pi utterance does not match its metadata")
                     pending = session.accept_utterance(session_id, message.get("purpose"), pcm)
-                    await websocket.send(event("transcription.started", purpose=pending.purpose.value))
+                    await websocket.send(event("transcription.started", purpose=pending.purpose.value, captureMs=message.get("captureMs")))
                     transcription = asyncio.create_task(transcribe_utterance(
                         websocket, session, pending, models, next_request_id, pi))
                     next_request_id += 1
@@ -209,6 +231,11 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                 if message["type"] not in {"playback.finished", "playback.failed"} or type(message.get("requestId")) is not int:
                     raise ProtocolError("Invalid playback acknowledgement")
                 session_id = session.session_id
+                if message["type"] == "playback.finished" and not session.synthesis_finished:
+                    raise ProtocolError("Playback cannot finish before synthesis ends")
+                if message["type"] == "playback.failed" and transcription and not transcription.done():
+                    transcription.cancel()
+                    await asyncio.gather(transcription, return_exceptions=True)
                 session.finish_playback(message["requestId"])
                 await pi.send(event("session.finish", sessionId=session_id))
                 await websocket.send(event("speech.completed", requestId=message["requestId"]))
@@ -233,7 +260,7 @@ def load_models(args: argparse.Namespace) -> VoiceModels:
         raise RuntimeError(f"Unsupported agent provider: {args.agent_provider}")
     return VoiceModels(
         asr=Qwen3AsrTranscriber(args.asr_model),
-        agent=CodexAgentProvider(args.agent_model),
+        agent=CodexAgentProvider(args.agent_model, effort=args.agent_effort),
         tts=ChatterboxSynthesizer(args.tts_model),
     )
 
@@ -306,7 +333,8 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asr-model", default=DEFAULT_ASR_MODEL)
     parser.add_argument("--pi-url", required=True)
     parser.add_argument("--agent-provider", default="codex")
-    parser.add_argument("--agent-model")
+    parser.add_argument("--agent-model", default=DEFAULT_AGENT_MODEL)
+    parser.add_argument("--agent-effort", default=DEFAULT_AGENT_EFFORT, choices=["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
     parser.add_argument("--tts-model", default=DEFAULT_TTS_MODEL)
     return parser
 

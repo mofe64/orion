@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::thread;
+use std::time::Duration;
 
 use crate::{Error, Result};
 
@@ -14,6 +17,17 @@ pub const ORION_APLAY_PATH: &str = "/usr/bin/aplay";
 pub trait AudioDevice {
     fn play(&mut self, cue: &str) -> Result<()>;
     fn play_file(&mut self, label: &str, path: &Path) -> Result<()>;
+    fn start_pcm(&mut self, _label: &str) -> Result<()> {
+        Err(Error::InvalidState(
+            "Streaming audio is unavailable.".into(),
+        ))
+    }
+    fn queue_pcm(&mut self, _pcm: &[u8]) -> Result<bool> {
+        Err(Error::InvalidState(
+            "Streaming audio is unavailable.".into(),
+        ))
+    }
+    fn finish_pcm(&mut self) {}
     fn update(&mut self) -> Result<()> {
         Ok(())
     }
@@ -176,6 +190,8 @@ pub struct AlsaAudioDevice {
     player_path: PathBuf,
     child: Option<Child>,
     active_label: Option<String>,
+    pcm_sender: Option<SyncSender<Vec<u8>>>,
+    pcm_writer: Option<thread::JoinHandle<std::io::Result<()>>>,
 }
 
 impl AlsaAudioDevice {
@@ -203,6 +219,8 @@ impl AlsaAudioDevice {
             player_path,
             child: None,
             active_label: None,
+            pcm_sender: None,
+            pcm_writer: None,
         })
     }
 
@@ -252,6 +270,70 @@ impl AudioDevice for AlsaAudioDevice {
         self.start_playback(label, path)
     }
 
+    fn start_pcm(&mut self, label: &str) -> Result<()> {
+        self.update()?;
+        if self.child.is_some() {
+            return Err(Error::InvalidState("Audio already playing.".into()));
+        }
+        let mut child = Command::new(&self.player_path)
+            .args([
+                "-q",
+                "-D",
+                &self.pcm_device,
+                "-t",
+                "raw",
+                "-f",
+                "S16_LE",
+                "-r",
+                "24000",
+                "-c",
+                "1",
+                "--buffer-time=100000",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let mut stdin = child.stdin.take().expect("piped audio input");
+        let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(4);
+        self.pcm_writer = Some(thread::spawn(move || {
+            loop {
+                match receiver.recv_timeout(Duration::from_secs(3)) {
+                    Ok(pcm) => stdin.write_all(&pcm)?,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Speech stream stalled",
+                        ));
+                    }
+                }
+            }
+        }));
+        self.pcm_sender = Some(sender);
+        self.child = Some(child);
+        self.active_label = Some(label.into());
+        Ok(())
+    }
+
+    fn queue_pcm(&mut self, pcm: &[u8]) -> Result<bool> {
+        let sender = self
+            .pcm_sender
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("No open audio stream.".into()))?;
+        match sender.try_send(pcm.to_vec()) {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Disconnected(_)) => {
+                Err(Error::Runtime("Audio stream writer stopped.".into()))
+            }
+        }
+    }
+
+    fn finish_pcm(&mut self) {
+        self.pcm_sender = None;
+    }
+
     fn update(&mut self) -> Result<()> {
         let Some(child) = self.child.as_mut() else {
             return Ok(());
@@ -259,8 +341,14 @@ impl AudioDevice for AlsaAudioDevice {
         let Some(status) = child.try_wait()? else {
             return Ok(());
         };
-        let label = self.active_label.take().unwrap_or_else(|| "unknown".into());
+        self.pcm_sender = None;
         self.child = None;
+        let label = self.active_label.take().unwrap_or_else(|| "unknown".into());
+        if let Some(writer) = self.pcm_writer.take() {
+            writer
+                .join()
+                .map_err(|_| Error::Runtime("Audio writer panicked.".into()))??;
+        }
         if !status.success() {
             return Err(Error::Runtime(format!(
                 "Audio source '{label}' failed with {status}."
@@ -274,6 +362,7 @@ impl AudioDevice for AlsaAudioDevice {
     }
 
     fn stop(&mut self) -> Result<()> {
+        self.pcm_sender = None;
         let Some(mut child) = self.child.take() else {
             self.active_label = None;
             return Ok(());
@@ -282,6 +371,9 @@ impl AudioDevice for AlsaAudioDevice {
             child.kill()?;
         }
         child.wait()?;
+        if let Some(writer) = self.pcm_writer.take() {
+            let _ = writer.join();
+        }
         self.active_label = None;
         Ok(())
     }
@@ -289,10 +381,7 @@ impl AudioDevice for AlsaAudioDevice {
 
 impl Drop for AlsaAudioDevice {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        let _ = self.stop();
     }
 }
 
@@ -391,6 +480,20 @@ impl AudioDevice for RecordingAudioDevice {
         Ok(())
     }
 
+    fn start_pcm(&mut self, label: &str) -> Result<()> {
+        self.playing = true;
+        self.commands.push(AudioCommand::Play(label.into()));
+        Ok(())
+    }
+    fn queue_pcm(&mut self, _pcm: &[u8]) -> Result<bool> {
+        Ok(true)
+    }
+    fn finish_pcm(&mut self) {
+        if self.auto_complete {
+            self.playing = false;
+        }
+    }
+
     fn is_playing(&self) -> bool {
         self.playing
     }
@@ -409,6 +512,34 @@ mod tests {
 
     fn write_minimal_wav(path: &Path) {
         fs::write(path, b"RIFF\x04\x00\x00\x00WAVE").unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streamed_pcm_reaches_one_process_in_order_and_eof_completes() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempdir().unwrap();
+        write_minimal_wav(&directory.path().join("cue.wav"));
+        let player = directory.path().join("player");
+        fs::write(&player, "#!/bin/sh\ncat > \"$0.pcm\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut device =
+            AlsaAudioDevice::new(CueLibrary::load(directory.path()).unwrap(), "test", &player)
+                .unwrap();
+        device.start_pcm("speech").unwrap();
+        assert!(device.queue_pcm(&[1, 0, 2, 0]).unwrap());
+        assert!(device.queue_pcm(&[3, 0]).unwrap());
+        device.finish_pcm();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while device.is_playing() {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+            device.update().unwrap();
+        }
+        assert_eq!(
+            fs::read(directory.path().join("player.pcm")).unwrap(),
+            vec![1, 0, 2, 0, 3, 0]
+        );
     }
 
     #[test]

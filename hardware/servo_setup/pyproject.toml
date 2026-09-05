@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "orion-servo-setup"
 version = "0.1.0"
-description = "STS3215 provisioning, verification, motion testing, and calibration for Orion."
+description = "STS3215 provisioning, verification, and calibration for Orion."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "GPL-3.0-only"

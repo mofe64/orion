@@ -38,6 +38,28 @@ Say “Hey Orion” followed by a request, or pause after the wake phrase and th
 speak. Qwen rejects unconfirmed wake candidates before they reach the agent.
 Listening resumes after reply playback completes.
 
+Endpoint decisions use background-relative, DC-corrected energy without
+altering captured audio. See the [endpoint rules](../docs/explanation/voice-architecture.md#capture-ownership-and-session-lifecycle).
+Allow a short quiet interval after enabling capture before the first wake.
+The listener logs `voice.endpoint` with the frozen threshold, capture time,
+and `silence` or `max_duration` reason; it does not log audio or transcripts.
+
+## Upgrade from legacy Pi voice
+
+If this checkout previously ran the Sherpa, Moonshine, or Piper workers, stop
+and retire those workers before updating their environment. On the Pi, from
+the repository root:
+
+```bash
+python3 scripts/retire_pi_voice.py "$PWD" \
+  --backup "$HOME/.local/share/orion/backups/legacy-voice-$(date +%Y%m%d-%H%M%S)"
+```
+
+The migration stops legacy workers belonging to this checkout and archives
+recognized legacy models. It preserves the Rustpotter reference. Then use the
+normal deployment or repair procedure. The listener installer does not run
+this one-time migration automatically.
+
 ## Troubleshooting
 
 On the Pi:

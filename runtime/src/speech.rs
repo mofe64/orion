@@ -1,17 +1,13 @@
+use std::collections::VecDeque;
 use std::fs;
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::thread;
+use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::{AudioDevice, Error, Result};
 
-pub const DEFAULT_TTS_SOCKET_PATH: &str = "/tmp/orion-tts.sock";
 pub const DEFAULT_SPEECH_SPOOL_PATH: &str = "/tmp/orion-speech-spool";
-pub const MAX_SPEECH_TEXT_BYTES: usize = 2_000;
 pub const MAX_SPEECH_WAV_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_SPEECH_SECONDS: f64 = 120.0;
 
@@ -19,7 +15,6 @@ pub const MAX_SPEECH_SECONDS: f64 = 120.0;
 #[serde(rename_all = "snake_case")]
 pub enum SpeechPhase {
     Queued,
-    Synthesizing,
     Playing,
     Completed,
     Failed,
@@ -39,6 +34,8 @@ pub struct SpeechStatus {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    pub first_playback_ms: Option<u64>,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,23 +44,28 @@ pub struct SpeechAnalysis {
     pub quiet_regions: Vec<(usize, usize)>,
     pub phrase_peaks: Vec<usize>,
     pub duration_seconds: f64,
-}
-
-enum SynthesisOutcome {
-    Ready(PathBuf),
-    Failed(String),
+    pub streaming: bool,
 }
 
 struct ActiveSpeech {
     status: SpeechStatus,
-    result: Option<Receiver<SynthesisOutcome>>,
-    wav_path: Option<PathBuf>,
-    analysis: Option<SpeechAnalysis>,
+    wav_path: PathBuf,
+    analysis: SpeechAnalysis,
     energy_frame: usize,
+    stream: Option<StreamSpeech>,
+    created: Instant,
+    playing_at: Option<Instant>,
+}
+
+struct StreamSpeech {
+    pcm: Vec<u8>,
+    pending: VecDeque<Vec<u8>>,
+    next_sequence: usize,
+    finished: bool,
+    updated: Instant,
 }
 
 pub struct SpeechCoordinator {
-    socket_path: PathBuf,
     spool_path: PathBuf,
     next_run_id: u64,
     active: Option<ActiveSpeech>,
@@ -71,73 +73,13 @@ pub struct SpeechCoordinator {
 }
 
 impl SpeechCoordinator {
-    pub fn new(socket_path: impl Into<PathBuf>) -> Result<Self> {
-        Self::with_spool(socket_path, DEFAULT_SPEECH_SPOOL_PATH)
-    }
-
-    pub fn with_spool(
-        socket_path: impl Into<PathBuf>,
-        spool_path: impl Into<PathBuf>,
-    ) -> Result<Self> {
-        let socket_path = socket_path.into();
-        let spool_path = spool_path.into();
-        if socket_path.as_os_str().is_empty() {
-            return Err(Error::InvalidArgument(
-                "TTS worker socket path cannot be empty.".into(),
-            ));
-        }
-        Ok(Self {
-            socket_path,
-            spool_path,
+    pub fn new(spool_path: impl Into<PathBuf>) -> Self {
+        Self {
+            spool_path: spool_path.into(),
             next_run_id: 1,
             active: None,
             last: None,
-        })
-    }
-
-    pub fn start(&mut self, text: &str) -> Result<SpeechStatus> {
-        if let Some(active) = &self.active {
-            return Err(Error::InvalidState(format!(
-                "Speech run {} is already active.",
-                active.status.run_id
-            )));
         }
-        let text = validate_speech_text(text)?;
-        let run_id = self.next_run_id;
-        self.next_run_id = self
-            .next_run_id
-            .checked_add(1)
-            .ok_or_else(|| Error::Runtime("Speech run ID overflowed.".into()))?;
-
-        let socket_path = self.socket_path.clone();
-        let worker_text = text.clone();
-        let (sender, receiver) = mpsc::channel();
-        thread::spawn(move || {
-            let outcome = match request_synthesis(&socket_path, run_id, &worker_text) {
-                Ok(path) => SynthesisOutcome::Ready(path),
-                Err(error) => SynthesisOutcome::Failed(error.to_string()),
-            };
-            if let Err(error) = sender.send(outcome) {
-                if let SynthesisOutcome::Ready(path) = error.0 {
-                    let _ = fs::remove_file(path);
-                }
-            }
-        });
-
-        let status = SpeechStatus {
-            run_id,
-            state: SpeechPhase::Synthesizing,
-            text,
-            error: None,
-        };
-        self.active = Some(ActiveSpeech {
-            status: status.clone(),
-            result: Some(receiver),
-            wav_path: None,
-            analysis: None,
-            energy_frame: 0,
-        });
-        Ok(status)
     }
 
     pub fn start_spooled(&mut self, identifier: &str) -> Result<SpeechStatus> {
@@ -168,7 +110,7 @@ impl SpeechCoordinator {
                 "Speech spool item must be a regular WAV no larger than 8 MiB.".into(),
             ));
         }
-        let analysis = analyze_pcm16_mono_wav(&path, Some(24_000))?;
+        let analysis = analyze_pcm16_mono_wav(&path)?;
         let run_id = self.next_run_id;
         self.next_run_id = self
             .next_run_id
@@ -179,15 +121,104 @@ impl SpeechCoordinator {
             state: SpeechPhase::Queued,
             text: identifier.to_owned(),
             error: None,
+            first_playback_ms: None,
+            elapsed_ms: 0,
         };
         self.active = Some(ActiveSpeech {
             status: status.clone(),
-            result: None,
-            wav_path: Some(path),
-            analysis: Some(analysis),
+            wav_path: path,
+            analysis,
             energy_frame: 0,
+            stream: None,
+            created: Instant::now(),
+            playing_at: None,
         });
         Ok(status)
+    }
+
+    pub fn start_stream(&mut self, identifier: &str) -> Result<SpeechStatus> {
+        let status = self.start_spooled(identifier)?;
+        let active = self.active.as_mut().unwrap();
+        let pcm = decode_pcm16_mono_wav(&active.wav_path)?;
+        if pcm.len() > 96_000 {
+            self.finish_active();
+            return Err(Error::InvalidArgument(
+                "Stream chunks must be at most two seconds.".into(),
+            ));
+        }
+        active.analysis.streaming = true;
+        active.stream = Some(StreamSpeech {
+            pending: pcm.chunks(24_000).map(Vec::from).collect(),
+            pcm,
+            next_sequence: 1,
+            finished: false,
+            updated: Instant::now(),
+        });
+        let _ = fs::remove_file(&active.wav_path);
+        Ok(status)
+    }
+
+    pub fn append_stream(&mut self, run_id: u64, sequence: usize, identifier: &str) -> Result<()> {
+        if identifier.is_empty()
+            || identifier.len() > 80
+            || !identifier
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(Error::InvalidArgument(
+                "Invalid speech chunk identifier.".into(),
+            ));
+        }
+        let path = self.spool_path.join(format!("{identifier}.wav"));
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() || metadata.len() > 100_000 {
+            return Err(Error::InvalidArgument("Invalid speech chunk file.".into()));
+        }
+        let pcm = decode_pcm16_mono_wav(&path)?;
+        let active = self
+            .active
+            .as_mut()
+            .filter(|a| a.status.run_id == run_id)
+            .ok_or_else(|| Error::InvalidState("Stale speech run.".into()))?;
+        let stream = active
+            .stream
+            .as_mut()
+            .ok_or_else(|| Error::InvalidState("Not a speech stream.".into()))?;
+        if stream.finished
+            || sequence != stream.next_sequence
+            || pcm.len() > 96_000
+            || stream.pcm.len() + pcm.len() > 120 * 48_000
+        {
+            return Err(Error::InvalidArgument(
+                "Invalid, out-of-order or oversized speech stream.".into(),
+            ));
+        }
+        stream.pcm.extend_from_slice(&pcm);
+        stream.pending.extend(pcm.chunks(24_000).map(Vec::from));
+        stream.next_sequence += 1;
+        stream.updated = Instant::now();
+        active.analysis = analyze_pcm(&stream.pcm)?;
+        active.analysis.streaming = true;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    pub fn end_stream(&mut self, run_id: u64, sequence: usize) -> Result<()> {
+        let active = self
+            .active
+            .as_mut()
+            .filter(|a| a.status.run_id == run_id)
+            .ok_or_else(|| Error::InvalidState("Stale speech run.".into()))?;
+        let stream = active
+            .stream
+            .as_mut()
+            .ok_or_else(|| Error::InvalidState("Not a speech stream.".into()))?;
+        if stream.finished || sequence != stream.next_sequence {
+            return Err(Error::InvalidArgument("Invalid speech stream end.".into()));
+        }
+        stream.finished = true;
+        active.analysis.streaming = false;
+        Ok(())
     }
 
     pub fn tick<A: AudioDevice + ?Sized>(&mut self, audio: &mut A) {
@@ -195,59 +226,87 @@ impl SpeechCoordinator {
             return;
         };
 
+        active.status.elapsed_ms = active.created.elapsed().as_millis() as u64;
+        if let Some(stream) = active.stream.as_ref() {
+            let underrun = active.playing_at.is_some_and(|at| {
+                !stream.finished
+                    && at.elapsed().as_secs_f64() > active.analysis.duration_seconds + 0.12
+            });
+            if underrun || (!stream.finished && stream.updated.elapsed().as_secs_f64() > 10.0) {
+                let _ = audio.stop();
+                active.status.state = SpeechPhase::Failed;
+                active.status.error =
+                    Some("Speech stream stalled or playback exhausted its buffer.".into());
+            }
+        }
         if active.status.state == SpeechPhase::Queued {
-            let path = active
-                .wav_path
+            if active
+                .stream
                 .as_ref()
-                .expect("queued speech has a spool path");
+                .is_some_and(|s| !s.finished && s.pcm.len() < 96_000)
+            {
+                return;
+            }
+            let path = &active.wav_path;
             let label = format!("speech-{}", active.status.run_id);
-            match audio.play_file(&label, path) {
-                Ok(()) => active.status.state = SpeechPhase::Playing,
+            let start = if active.stream.is_some() {
+                audio.start_pcm(&label)
+            } else {
+                audio.play_file(&label, path)
+            };
+            match start {
+                Ok(()) => {
+                    active.status.state = SpeechPhase::Playing;
+                    active.playing_at = Some(Instant::now());
+                    active.status.first_playback_ms = Some(active.status.elapsed_ms);
+                }
                 Err(error) => {
                     active.status.state = SpeechPhase::Failed;
                     active.status.error = Some(error.to_string());
                 }
             }
-        } else if active.status.state == SpeechPhase::Synthesizing {
-            match active
-                .result
-                .as_ref()
-                .expect("synthesizing speech has a worker receiver")
-                .try_recv()
-            {
-                Ok(SynthesisOutcome::Ready(path)) => {
-                    let label = format!("speech-{}", active.status.run_id);
-                    match analyze_pcm16_mono_wav(&path, None)
-                        .and_then(|analysis| audio.play_file(&label, &path).map(|()| analysis))
-                    {
-                        Ok(analysis) => {
-                            active.analysis = Some(analysis);
-                            active.wav_path = Some(path);
-                            active.status.state = SpeechPhase::Playing;
+        }
+        if active.status.state == SpeechPhase::Playing {
+            if let Some(stream) = active.stream.as_mut() {
+                while let Some(pcm) = stream.pending.front() {
+                    match audio.queue_pcm(pcm) {
+                        Ok(true) => {
+                            stream.pending.pop_front();
                         }
+                        Ok(false) => break,
                         Err(error) => {
-                            let _ = fs::remove_file(path);
                             active.status.state = SpeechPhase::Failed;
                             active.status.error = Some(error.to_string());
+                            let _ = audio.stop();
+                            break;
                         }
                     }
                 }
-                Ok(SynthesisOutcome::Failed(error)) => {
-                    active.status.state = SpeechPhase::Failed;
-                    active.status.error = Some(error);
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {
-                    active.status.state = SpeechPhase::Failed;
-                    active.status.error = Some("TTS worker request ended without a result.".into());
+                if stream.finished && stream.pending.is_empty() {
+                    audio.finish_pcm();
                 }
             }
-        } else if active.status.state == SpeechPhase::Playing {
             match audio.update() {
-                Ok(()) if !audio.is_playing() => {
-                    active.status.state = SpeechPhase::Completed;
+                Ok(()) if !audio.is_playing() && active.status.state == SpeechPhase::Playing => {
+                    if active
+                        .stream
+                        .as_ref()
+                        .is_some_and(|s| !s.finished || !s.pending.is_empty())
+                    {
+                        active.status.state = SpeechPhase::Failed;
+                        active.status.error =
+                            Some("Speech stream ended before all audio arrived.".into());
+                    } else {
+                        active.status.state = SpeechPhase::Completed;
+                    }
                 }
-                Ok(()) => active.energy_frame = active.energy_frame.saturating_add(1),
+                Ok(()) => {
+                    active.energy_frame = (active
+                        .playing_at
+                        .map(|at| at.elapsed().as_secs_f64())
+                        .unwrap_or(0.0)
+                        / 0.020) as usize
+                }
                 Err(error) => {
                     active.status.state = SpeechPhase::Failed;
                     active.status.error = Some(error.to_string());
@@ -292,9 +351,7 @@ impl SpeechCoordinator {
     }
 
     pub fn active_analysis(&self) -> Option<&SpeechAnalysis> {
-        self.active
-            .as_ref()
-            .and_then(|speech| speech.analysis.as_ref())
+        self.active.as_ref().map(|speech| &speech.analysis)
     }
 
     pub fn active_energy_frame(&self) -> Option<usize> {
@@ -305,8 +362,11 @@ impl SpeechCoordinator {
     }
 
     pub fn active_energy(&self) -> Option<f64> {
-        let speech = self.active.as_ref()?;
-        let analysis = speech.analysis.as_ref()?;
+        let speech = self
+            .active
+            .as_ref()
+            .filter(|speech| speech.status.state == SpeechPhase::Playing)?;
+        let analysis = &speech.analysis;
         analysis
             .rms_20ms
             .get(speech.energy_frame)
@@ -318,91 +378,12 @@ impl SpeechCoordinator {
         let Some(active) = self.active.take() else {
             return;
         };
-        if let Some(path) = active.wav_path {
-            let _ = fs::remove_file(path);
-        }
+        let _ = fs::remove_file(active.wav_path);
         self.last = Some(active.status);
     }
 }
 
-#[derive(Serialize)]
-struct WorkerRequest<'a> {
-    request_id: u64,
-    text: &'a str,
-}
-
-#[derive(Deserialize)]
-struct WorkerResponse {
-    request_id: u64,
-    state: String,
-    wav_path: Option<PathBuf>,
-    error: Option<String>,
-}
-
-fn request_synthesis(socket_path: &Path, request_id: u64, text: &str) -> Result<PathBuf> {
-    let mut stream = UnixStream::connect(socket_path).map_err(|error| {
-        Error::Runtime(format!(
-            "Could not connect to TTS worker '{}': {error}",
-            socket_path.display()
-        ))
-    })?;
-    serde_json::to_writer(&mut stream, &WorkerRequest { request_id, text })?;
-    stream.write_all(b"\n")?;
-
-    let mut response = String::new();
-    stream.read_to_string(&mut response)?;
-    let response: WorkerResponse = serde_json::from_str(response.trim())?;
-    if response.request_id != request_id {
-        return Err(Error::Runtime(format!(
-            "TTS worker returned request {}, expected {request_id}.",
-            response.request_id
-        )));
-    }
-    match response.state.as_str() {
-        "ready" => {
-            let path = response.wav_path.ok_or_else(|| {
-                Error::Runtime("TTS worker returned ready without a WAV path.".into())
-            })?;
-            if !path.is_absolute() {
-                return Err(Error::Runtime(
-                    "TTS worker returned a non-absolute WAV path.".into(),
-                ));
-            }
-            Ok(path)
-        }
-        "failed" => Err(Error::Runtime(response.error.unwrap_or_else(|| {
-            "TTS worker failed without an error message.".into()
-        }))),
-        state => Err(Error::Runtime(format!(
-            "TTS worker returned unknown state '{state}'."
-        ))),
-    }
-}
-
-fn validate_speech_text(text: &str) -> Result<String> {
-    let text = text.trim();
-    if text.is_empty() {
-        return Err(Error::InvalidArgument(
-            "Speech text cannot be empty.".into(),
-        ));
-    }
-    if text.contains('\n') || text.contains('\r') {
-        return Err(Error::InvalidArgument(
-            "Speech text cannot contain line breaks.".into(),
-        ));
-    }
-    if text.len() > MAX_SPEECH_TEXT_BYTES {
-        return Err(Error::InvalidArgument(format!(
-            "Speech text cannot exceed {MAX_SPEECH_TEXT_BYTES} UTF-8 bytes."
-        )));
-    }
-    Ok(text.to_owned())
-}
-
-fn analyze_pcm16_mono_wav(
-    path: &Path,
-    required_sample_rate: Option<u32>,
-) -> Result<SpeechAnalysis> {
+fn decode_pcm16_mono_wav(path: &Path) -> Result<Vec<u8>> {
     let bytes = fs::read(path)?;
     if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err(Error::InvalidArgument(
@@ -443,19 +424,9 @@ fn analyze_pcm16_mono_wav(
             "Speech WAV must contain a PCM format chunk.".into(),
         ));
     };
-    if encoding != 1
-        || channels != 1
-        || bits_per_sample != 16
-        || sample_rate == 0
-        || required_sample_rate.is_some_and(|required| sample_rate != required)
-    {
+    if encoding != 1 || channels != 1 || bits_per_sample != 16 || sample_rate != 24_000 {
         return Err(Error::InvalidArgument(
-            if required_sample_rate.is_some() {
-                "Speech WAV must be PCM16, mono, 24 kHz."
-            } else {
-                "Local speech WAV must be mono PCM16 with a valid sample rate."
-            }
-            .into(),
+            "Speech WAV must be PCM16, mono, 24 kHz.".into(),
         ));
     }
     let pcm =
@@ -471,6 +442,16 @@ fn analyze_pcm16_mono_wav(
             "Speech WAV cannot exceed 120 seconds.".into(),
         ));
     }
+    Ok(pcm.to_vec())
+}
+
+fn analyze_pcm16_mono_wav(path: &Path) -> Result<SpeechAnalysis> {
+    analyze_pcm(&decode_pcm16_mono_wav(path)?)
+}
+
+fn analyze_pcm(pcm: &[u8]) -> Result<SpeechAnalysis> {
+    let sample_rate = 24_000;
+    let duration_seconds = pcm.len() as f64 / 48_000.0;
     let samples: Vec<f64> = pcm
         .chunks_exact(2)
         .map(|sample| i16::from_le_bytes([sample[0], sample[1]]) as f64 / 32768.0)
@@ -518,19 +499,70 @@ fn analyze_pcm16_mono_wav(
         quiet_regions,
         phrase_peaks,
         duration_seconds,
+        streaming: false,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::{BufRead, BufReader};
-    use std::os::unix::net::UnixListener;
-    use std::time::Duration;
 
-    use crate::{AudioCommand, RecordingAudioDevice, UnavailableAudioDevice};
+    use crate::{RecordingAudioDevice, UnavailableAudioDevice};
 
     use super::*;
+
+    #[test]
+    fn streaming_uses_one_player_and_requires_ordered_end() {
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        write_energy_test_wav(&directory.path().join("second.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let mut audio = RecordingAudioDevice::blocking();
+        let run = speech.start_stream("first").unwrap().run_id;
+        speech.tick(&mut audio);
+        assert!(
+            audio.commands().is_empty(),
+            "must prebuffer before starting"
+        );
+        assert!(
+            speech.active_energy().is_none(),
+            "buffering must not drive speaking light"
+        );
+        assert!(speech.append_stream(run, 2, "second").is_err());
+        speech.append_stream(run, 1, "second").unwrap();
+        speech.tick(&mut audio);
+        assert_eq!(speech.active_status().unwrap().state, SpeechPhase::Playing);
+        assert_eq!(audio.commands().len(), 1);
+        assert!(speech.end_stream(run, 1).is_err());
+        speech.end_stream(run, 2).unwrap();
+        assert!(speech.end_stream(run, 2).is_err());
+        speech.tick(&mut audio);
+        assert!(speech.is_active(), "end of upload is not end of playback");
+        audio.finish();
+        speech.tick(&mut audio);
+        assert_eq!(speech.last_status().unwrap().state, SpeechPhase::Completed);
+        assert_eq!(speech.last_status().unwrap().run_id, run);
+        assert!(speech.last_status().unwrap().first_playback_ms.is_some());
+        assert!(directory.path().read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn stream_cancel_rejects_late_chunks_and_short_end_can_play() {
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        write_energy_test_wav(&directory.path().join("late.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let mut audio = RecordingAudioDevice::blocking();
+        let run = speech.start_stream("first").unwrap().run_id;
+        speech.cancel(&mut audio).unwrap();
+        assert!(speech.append_stream(run, 1, "late").is_err());
+        let next = speech.start_stream("late").unwrap().run_id;
+        speech.end_stream(next, 1).unwrap();
+        speech.tick(&mut audio);
+        assert_eq!(speech.active_status().unwrap().state, SpeechPhase::Playing);
+        speech.cancel(&mut audio).unwrap();
+        assert!(!audio.is_playing());
+    }
 
     fn write_pcm16_mono_24khz(path: &Path) {
         let mut bytes = Vec::from(&b"RIFF"[..]);
@@ -589,84 +621,13 @@ mod tests {
     }
 
     #[test]
-    fn synthesizes_plays_completes_and_removes_ephemeral_wav() {
-        let directory = tempfile::tempdir().unwrap();
-        let socket_path = directory.path().join("tts.sock");
-        let wav_path = directory.path().join("generated.wav");
-        write_pcm16_mono_24khz(&wav_path);
-        let listener = UnixListener::bind(&socket_path).unwrap();
-        let server_wav_path = wav_path.clone();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = String::new();
-            BufReader::new(stream.try_clone().unwrap())
-                .read_line(&mut request)
-                .unwrap();
-            let request: serde_json::Value = serde_json::from_str(request.trim()).unwrap();
-            serde_json::to_writer(
-                &mut stream,
-                &serde_json::json!({
-                    "request_id": request["request_id"],
-                    "state": "ready",
-                    "wav_path": server_wav_path,
-                    "error": null,
-                }),
-            )
-            .unwrap();
-        });
-
-        let mut speech = SpeechCoordinator::new(&socket_path).unwrap();
-        let accepted = speech.start("Hello from Orion.").unwrap();
-        assert_eq!(accepted.run_id, 1);
-        assert_eq!(accepted.state, SpeechPhase::Synthesizing);
-
-        let mut audio = RecordingAudioDevice::blocking();
-        for _ in 0..100 {
-            speech.tick(&mut audio);
-            if speech
-                .active_status()
-                .is_some_and(|status| status.state == SpeechPhase::Playing)
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
-        assert_eq!(speech.active_status().unwrap().state, SpeechPhase::Playing);
-        assert!(speech.active_analysis().is_some());
-        assert!(matches!(
-            audio.commands().last(),
-            Some(AudioCommand::PlayFile { label, path })
-                if label == "speech-1" && path == &wav_path
-        ));
-
-        audio.finish();
-        speech.tick(&mut audio);
-        assert!(!speech.is_active());
-        assert_eq!(speech.last_status().unwrap().state, SpeechPhase::Completed);
-        assert!(!wav_path.exists());
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn rejects_empty_multiline_and_oversized_text() {
-        let mut speech = SpeechCoordinator::new("/tmp/not-used.sock").unwrap();
-        assert!(speech.start("  ").is_err());
-        assert!(speech.start("hello\nthere").is_err());
-        assert!(
-            speech
-                .start(&"x".repeat(MAX_SPEECH_TEXT_BYTES + 1))
-                .is_err()
-        );
-    }
-
-    #[test]
     fn waveform_analysis_is_deterministic_and_finds_quiet_regions_and_peaks() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("energy.wav");
         write_energy_test_wav(&path);
 
-        let first = analyze_pcm16_mono_wav(&path, Some(24_000)).unwrap();
-        let second = analyze_pcm16_mono_wav(&path, Some(24_000)).unwrap();
+        let first = analyze_pcm16_mono_wav(&path).unwrap();
+        let second = analyze_pcm16_mono_wav(&path).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.rms_20ms.len(), 50);
         assert!((first.duration_seconds - 1.0).abs() < 1e-9);
@@ -681,7 +642,7 @@ mod tests {
 
         let completed_path = spool.join("completed.wav");
         write_pcm16_mono_24khz(&completed_path);
-        let mut speech = SpeechCoordinator::with_spool("/tmp/not-used.sock", spool).unwrap();
+        let mut speech = SpeechCoordinator::new(spool);
         speech.start_spooled("completed").unwrap();
         let mut automatic_audio = RecordingAudioDevice::default();
         speech.tick(&mut automatic_audio);

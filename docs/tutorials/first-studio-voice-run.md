@@ -99,17 +99,11 @@ invoke other physical capabilities.
   `.venv/bin/orion-voice-models`, and retry after all three paths print.
 - **Codex authentication fails:** run `codex login` in a terminal and restart
   the voice session.
-- **Model requires a newer Codex version:** the Python SDK uses its own pinned
-  runtime, so upgrading a terminal CLI alone does not change the worker.
-  Quit Studio and select a compatible installed runtime explicitly. For a
-  ChatGPT app installed at the following path, run from `orion_studio`:
-
-  ```bash
-  ORION_STUDIO_CODEX_BIN=/Applications/ChatGPT.app/Contents/Resources/codex pnpm tauri dev
-  ```
-
-  This selects the executable without changing the configured agent model or
-  pairing. The SDK uses its bundled runtime when the variable is unset.
+- **Model or effort is unavailable:** update an installed Codex/ChatGPT app or
+  CLI and re-enable Voice. Studio checks each discovered runtime’s model catalog;
+  it does not silently substitute another model. Voice → Debug shows the selected
+  runtime. An explicit `ORION_STUDIO_CODEX_BIN` override restricts discovery to that
+  executable; remove the override to restore automatic discovery.
 - **Voice works in neither browser nor Studio:** use `pnpm tauri dev`; the
   UI-only `pnpm dev` server cannot launch the worker.
 - **Old TLS configuration:** remove `ORION_PI_VOICE_CA` from the launch

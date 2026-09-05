@@ -48,6 +48,7 @@ class VoiceSession:
         self.phase = SessionPhase.LISTENING
         self.session_id = None
         self._playback_request_id = None
+        self.synthesis_finished = False
 
     def begin(self, session_id):
         if self.session_id is not None or not isinstance(session_id, str) or not re.fullmatch(r"[a-f0-9]{32}", session_id):

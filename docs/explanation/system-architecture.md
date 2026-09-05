@@ -58,11 +58,12 @@ orion studio, exposes versioned semantic operations, and keeps
 ### Orion Studio
 
 Studio owns desktop interaction: asset browsing, editing, local preview,
-connection state, and the optional workstation voice experience.
-Note - the voice experience is going to be revamped to do user voice capture from the robots
-embedded mics
-Orion studo also allows for physical execution of system and user generated motion, but
-requires an explicit connected run request through the gateway.
+connection state, and voice processing. The Pi listener captures the robot's
+microphones and detects the wake phrase; Studio performs transcription, agent
+processing, and speech synthesis, then sends audio to the Pi for playback.
+See the [voice architecture](voice-architecture.md) for the transport and turn lifecycle.
+Studio also requests physical execution of built-in and user-authored motion
+through the gateway.
 
 
 

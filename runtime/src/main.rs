@@ -7,13 +7,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use orion_runtime::{
-    AlsaAudioDevice, AudioDevice, CharacterCoordinator, CueLibrary, DEFAULT_TTS_SOCKET_PATH,
-    LightingDevice, MAX_SPEECH_TEXT_BYTES, MotionLibrary, MujocoDriver, ORION_APLAY_PATH,
-    ORION_AUDIO_CARD, ORION_AUDIO_PCM_DEVICE, ORION_JOINT_NAMES, PI5_NEOPIXEL_DEVICE_PATH,
-    Pi5NeoPixelDevice, PoseLibrary, RecordingAudioDevice, RecordingLightingDevice, Rgbw8,
-    RuntimeCore, RuntimeDriver, RustypotTransport, SceneCoordinator, SceneLibrary, ScenePhase,
-    SpeechCoordinator, Sts3215Driver, UnixCommandServer, configure_respeaker_v2_mixer,
-    load_calibration_file, parse_scene_document, render_effect, request_daemon,
+    AlsaAudioDevice, AudioDevice, CharacterCoordinator, CueLibrary, DEFAULT_SPEECH_SPOOL_PATH,
+    LightingDevice, MotionLibrary, MujocoDriver, ORION_APLAY_PATH, ORION_AUDIO_CARD,
+    ORION_AUDIO_PCM_DEVICE, ORION_JOINT_NAMES, PI5_NEOPIXEL_DEVICE_PATH, Pi5NeoPixelDevice,
+    PoseLibrary, RecordingAudioDevice, RecordingLightingDevice, Rgbw8, RuntimeCore, RuntimeDriver,
+    RustypotTransport, SceneCoordinator, SceneLibrary, ScenePhase, SpeechCoordinator,
+    Sts3215Driver, UnixCommandServer, configure_respeaker_v2_mixer, load_calibration_file,
+    parse_scene_document, render_effect, request_daemon,
 };
 
 const DEFAULT_BAUD_RATE: i32 = 1_000_000;
@@ -23,7 +23,6 @@ const EXIT_DAEMON_REJECTED: i32 = 3;
 const EXIT_MOVEMENT_TIMED_OUT: i32 = 4;
 const EXIT_MOVEMENT_CANCELLED: i32 = 5;
 const EXIT_SCENE_FAILED: i32 = 6;
-const EXIT_SPEECH_FAILED: i32 = 7;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Operation {
@@ -44,7 +43,6 @@ enum Operation {
     RunScene,
     SceneStatus,
     StopScene,
-    Speak,
     SpeechStatus,
     StopSpeech,
 }
@@ -83,8 +81,6 @@ struct Options {
     light_pixel: usize,
     scenes_directory: PathBuf,
     scene_name: String,
-    speech_text: String,
-    tts_socket_path: PathBuf,
 }
 
 #[derive(Clone)]
@@ -157,8 +153,6 @@ impl Default for Options {
             light_pixel: 0,
             scenes_directory: "scenes".into(),
             scene_name: String::new(),
-            speech_text: String::new(),
-            tts_socket_path: DEFAULT_TTS_SOCKET_PATH.into(),
         }
     }
 }
@@ -181,7 +175,6 @@ fn usage() -> &'static str {
   oriond --run-scene SCENE [--wait] [--socket PATH]\n\
   oriond --scene-status [--socket PATH]\n\
   oriond --stop-scene [--socket PATH]\n\n\
-  oriond --speak TEXT [--wait] [--socket PATH]\n\
   oriond --speech-status [--socket PATH]\n\
   oriond --stop-speech [--socket PATH]\n\n\
   --check             Print one direct hardware state snapshot and exit.\n\
@@ -202,10 +195,8 @@ fn usage() -> &'static str {
   --run-scene SCENE  Submit a named lighting/motion scene to the daemon.\n\
   --scene-status     Show the active and most recent terminal scene.\n\
   --stop-scene       Cancel the active scene and its movement.\n\
-  --speak TEXT       Synthesize and play text through the persistent TTS worker.\n\
   --speech-status    Show the active and most recent terminal speech run.\n\
   --stop-speech      Cancel the active speech run or playback.\n\
-  --tts-socket PATH  TTS worker socket used by --serve (default: /tmp/orion-tts.sock).\n\
   --scenes DIR       Scene library used by --serve (default: scenes).\n\
   --cues DIR         WAV cue library used by --serve and --play-cue (default: audio/cues).\n\
   --audio-card CARD  ALSA mixer card (default: seeed2micvoicec).\n\
@@ -270,7 +261,6 @@ fn run() -> orion_runtime::Result<i32> {
             print_response(request_daemon(&options.socket_path, "scene status")?)
         }
         Operation::StopScene => print_response(request_daemon(&options.socket_path, "scene stop")?),
-        Operation::Speak => request_speech(&options),
         Operation::SpeechStatus => {
             print_response(request_daemon(&options.socket_path, "speech status")?)
         }
@@ -281,79 +271,6 @@ fn run() -> orion_runtime::Result<i32> {
             eprint!("{}", usage());
             Ok(2)
         }
-    }
-}
-
-fn request_speech(options: &Options) -> orion_runtime::Result<i32> {
-    let response = request_daemon(
-        &options.socket_path,
-        &format!("speech start {}", options.speech_text),
-    )?;
-    let value: serde_json::Value = serde_json::from_str(response.trim())?;
-    let exit_code = daemon_value_exit_code(&value);
-    print!("{response}");
-    io::stdout().flush()?;
-    if exit_code != 0 || !options.wait {
-        return Ok(exit_code);
-    }
-    let run_id = value
-        .get("run_id")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| {
-            orion_runtime::Error::Runtime(
-                "Accepted Orion speech response did not include a run_id.".into(),
-            )
-        })?;
-    wait_for_speech(&options.socket_path, run_id)
-}
-
-fn wait_for_speech(socket_path: &std::path::Path, run_id: u64) -> orion_runtime::Result<i32> {
-    loop {
-        thread::sleep(OBSERVE_PERIOD);
-        let response = request_daemon(socket_path, "speech status")?;
-        let status: serde_json::Value = serde_json::from_str(response.trim())?;
-        let mut found = false;
-        for field in ["speech", "last_speech"] {
-            let Some(speech) = status.get(field).filter(|value| !value.is_null()) else {
-                continue;
-            };
-            if speech.get("run_id").and_then(serde_json::Value::as_u64) != Some(run_id) {
-                continue;
-            }
-            found = true;
-            let state = speech
-                .get("state")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    orion_runtime::Error::Runtime(
-                        "Orion speech status did not include a state.".into(),
-                    )
-                })?;
-            match speech_state_exit_code(state)? {
-                None => break,
-                Some(exit_code) => {
-                    println!("{}", serde_json::to_string(speech)?);
-                    return Ok(exit_code);
-                }
-            }
-        }
-        if !found {
-            return Err(orion_runtime::Error::Runtime(format!(
-                "Orion speech run {run_id} is no longer the active or most recent result."
-            )));
-        }
-    }
-}
-
-fn speech_state_exit_code(state: &str) -> orion_runtime::Result<Option<i32>> {
-    match state {
-        "queued" | "synthesizing" | "playing" => Ok(None),
-        "completed" => Ok(Some(0)),
-        "cancelled" => Ok(Some(EXIT_MOVEMENT_CANCELLED)),
-        "failed" => Ok(Some(EXIT_SPEECH_FAILED)),
-        value => Err(orion_runtime::Error::Runtime(format!(
-            "Unknown Orion speech state: {value}"
-        ))),
     }
 }
 
@@ -549,10 +466,6 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             }
             "--scene-status" => select_operation(&mut options, Operation::SceneStatus, &argument)?,
             "--stop-scene" => select_operation(&mut options, Operation::StopScene, &argument)?,
-            "--speak" => {
-                select_operation(&mut options, Operation::Speak, &argument)?;
-                options.speech_text = require_value(&mut arguments, &argument)?;
-            }
             "--speech-status" => {
                 select_operation(&mut options, Operation::SpeechStatus, &argument)?
             }
@@ -617,9 +530,6 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
                 options.calibration_file = require_value(&mut arguments, &argument)?.into()
             }
             "--socket" => options.socket_path = require_value(&mut arguments, &argument)?.into(),
-            "--tts-socket" => {
-                options.tts_socket_path = require_value(&mut arguments, &argument)?.into()
-            }
             "--poses" => options.poses_file = require_value(&mut arguments, &argument)?.into(),
             "--user-poses" => {
                 options.user_poses_directory = require_value(&mut arguments, &argument)?.into()
@@ -679,11 +589,11 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
     if options.wait
         && !matches!(
             options.operation,
-            Operation::Goto | Operation::Play | Operation::RunScene | Operation::Speak
+            Operation::Goto | Operation::Play | Operation::RunScene
         )
     {
         return Err(orion_runtime::Error::InvalidArgument(
-            "--wait is only valid with --goto, --play, --run-scene, or --speak.".into(),
+            "--wait is only valid with --goto, --play, or --run-scene.".into(),
         ));
     }
     if options.operation == Operation::LightPixel
@@ -693,20 +603,6 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> orion_runtime::Resu
             "--light-pixel index must be between 0 and {}.",
             orion_runtime::ORION_LIGHT_PIXEL_COUNT - 1
         )));
-    }
-    if options.operation == Operation::Speak {
-        let text = options.speech_text.trim();
-        if text.is_empty() || text.contains('\n') || text.contains('\r') {
-            return Err(orion_runtime::Error::InvalidArgument(
-                "--speak requires non-empty text without line breaks.".into(),
-            ));
-        }
-        if text.len() > MAX_SPEECH_TEXT_BYTES {
-            return Err(orion_runtime::Error::InvalidArgument(format!(
-                "--speak text cannot exceed {MAX_SPEECH_TEXT_BYTES} UTF-8 bytes."
-            )));
-        }
-        options.speech_text = text.to_owned();
     }
     if options.backend == Backend::Hardware
         && matches!(options.operation, Operation::Check | Operation::Serve)
@@ -899,7 +795,7 @@ fn serve_driver<D: RuntimeDriver>(
     let mut core = RuntimeCore::new(driver, poses, motions)?;
     lighting.clear()?;
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
-    let mut speech = SpeechCoordinator::new(&options.tts_socket_path)?;
+    let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
     let server = UnixCommandServer::bind(&options.socket_path)?;
     let stopping = Arc::new(AtomicBool::new(false));
@@ -1170,43 +1066,57 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         })
         .to_string());
     }
-    if let Some(identifier) = command.strip_prefix("speech file ") {
+    if let Some(arguments) = command.strip_prefix("speech append ") {
+        let fields: Vec<_> = arguments.split_whitespace().collect();
+        if fields.len() != 3 {
+            return Err(orion_runtime::Error::InvalidArgument(
+                "Expected run, sequence and chunk identifier.".into(),
+            ));
+        }
+        let run = fields[0]
+            .parse::<u64>()
+            .map_err(|_| orion_runtime::Error::InvalidArgument("Invalid speech run.".into()))?;
+        let sequence = fields[1].parse::<usize>().map_err(|_| {
+            orion_runtime::Error::InvalidArgument("Invalid speech sequence.".into())
+        })?;
+        speech.append_stream(run, sequence, fields[2])?;
+        return Ok(serde_json::json!({"ok":true,"run_id":run}).to_string());
+    }
+    if let Some(arguments) = command.strip_prefix("speech end ") {
+        let fields: Vec<_> = arguments.split_whitespace().collect();
+        if fields.len() != 2 {
+            return Err(orion_runtime::Error::InvalidArgument(
+                "Expected run and final sequence.".into(),
+            ));
+        }
+        let run = fields[0]
+            .parse::<u64>()
+            .map_err(|_| orion_runtime::Error::InvalidArgument("Invalid speech run.".into()))?;
+        let sequence = fields[1].parse::<usize>().map_err(|_| {
+            orion_runtime::Error::InvalidArgument("Invalid speech sequence.".into())
+        })?;
+        speech.end_stream(run, sequence)?;
+        return Ok(serde_json::json!({"ok":true,"run_id":run}).to_string());
+    }
+    if let Some(identifier) = command
+        .strip_prefix("speech file ")
+        .or_else(|| command.strip_prefix("speech stream "))
+    {
         if scenes.is_active() {
             return Ok(serde_json::json!({"ok": false, "command": "speech_file", "error": "scene already active"}).to_string());
         }
         if let Some(coordinator) = character.as_deref_mut() {
             coordinator.preempt_idle(now_seconds, core)?;
         }
-        let status = speech.start_spooled(identifier.trim())?;
+        let status = if command.starts_with("speech stream ") {
+            speech.start_stream(identifier.trim())?
+        } else {
+            speech.start_spooled(identifier.trim())?
+        };
         if let Some(coordinator) = character.as_deref_mut() {
             coordinator.note_speech_started(now_seconds);
         }
         return Ok(serde_json::json!({"ok": true, "command": "speech_file", "run_id": status.run_id, "state": status.state}).to_string());
-    }
-    if let Some(text) = command.strip_prefix("speech start ") {
-        if scenes.is_active() {
-            return Ok(serde_json::json!({
-                "ok": false,
-                "command": "speech_start",
-                "error": "scene already active",
-                "active_scene_run_id": scenes.active_status().map(|status| status.run_id),
-            })
-            .to_string());
-        }
-        if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.preempt_idle(now_seconds, core)?;
-        }
-        let status = speech.start(text)?;
-        if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.note_speech_started(now_seconds);
-        }
-        return Ok(serde_json::json!({
-            "ok": true,
-            "command": "speech_start",
-            "run_id": status.run_id,
-            "state": status.state,
-        })
-        .to_string());
     }
     if command == "speech stop" {
         let status = speech.cancel(audio)?;
@@ -1616,19 +1526,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_speech_clients_and_wait() {
-        let options = parse(&[
-            "--speak",
-            "Hello from Orion.",
-            "--wait",
-            "--tts-socket",
-            "/tmp/test-tts.sock",
-        ])
-        .unwrap();
-        assert_eq!(options.operation, Operation::Speak);
-        assert_eq!(options.speech_text, "Hello from Orion.");
-        assert_eq!(options.tts_socket_path, PathBuf::from("/tmp/test-tts.sock"));
-        assert!(options.wait);
+    fn accepts_playback_controls_and_rejects_pi_synthesis() {
+        assert!(parse(&["--speak", "Hello from Orion."]).is_err());
+        assert!(parse(&["--tts-socket", "/tmp/tts.sock"]).is_err());
         assert_eq!(
             parse(&["--speech-status"]).unwrap().operation,
             Operation::SpeechStatus
@@ -1657,22 +1557,6 @@ mod tests {
             Some(EXIT_SCENE_FAILED)
         );
         assert!(scene_state_exit_code("mystery").is_err());
-    }
-
-    #[test]
-    fn maps_speech_terminal_states_to_exit_codes() {
-        assert_eq!(speech_state_exit_code("synthesizing").unwrap(), None);
-        assert_eq!(speech_state_exit_code("playing").unwrap(), None);
-        assert_eq!(speech_state_exit_code("completed").unwrap(), Some(0));
-        assert_eq!(
-            speech_state_exit_code("cancelled").unwrap(),
-            Some(EXIT_MOVEMENT_CANCELLED)
-        );
-        assert_eq!(
-            speech_state_exit_code("failed").unwrap(),
-            Some(EXIT_SPEECH_FAILED)
-        );
-        assert!(speech_state_exit_code("mystery").is_err());
     }
 
     #[test]
@@ -1713,8 +1597,20 @@ mod tests {
         };
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
         let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
-        let mut speech = SpeechCoordinator::new("/tmp/orion-test-tts.sock").unwrap();
+        let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
         let mut audio = UnavailableAudioDevice;
+
+        let rejected: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+            "speech start Hello from Orion.",
+            0.0,
+            &mut core,
+            &mut scenes,
+            &mut speech,
+            &mut audio,
+        ))
+        .unwrap();
+        assert_eq!(rejected["ok"], false);
+        assert!(!speech.is_active());
 
         let accepted: serde_json::Value = serde_json::from_str(&handle_daemon_command(
             "scene start acknowledge_left",
@@ -1857,7 +1753,7 @@ mod tests {
         let spool = tempfile::tempdir().unwrap();
         let speech_path = spool.path().join("foreground.wav");
         write_test_wav(&speech_path);
-        let mut speech = SpeechCoordinator::with_spool("/tmp/not-used.sock", spool.path()).unwrap();
+        let mut speech = SpeechCoordinator::new(spool.path());
         speech.start_spooled("foreground").unwrap();
         let mut audio = RecordingAudioDevice::blocking();
         speech.tick(&mut audio);
@@ -1892,7 +1788,7 @@ mod tests {
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
         let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
         let spool = tempfile::tempdir().unwrap();
-        let mut speech = SpeechCoordinator::with_spool("/tmp/not-used.sock", spool.path()).unwrap();
+        let mut speech = SpeechCoordinator::new(spool.path());
         let mut character = CharacterCoordinator::new(42);
         let mut audio = RecordingAudioDevice::blocking();
         character.start(0.0, &mut core).unwrap();
@@ -1935,7 +1831,7 @@ mod tests {
         let spool = tempfile::tempdir().unwrap();
         let speech_path = spool.path().join("shutdown.wav");
         write_test_wav(&speech_path);
-        let mut speech = SpeechCoordinator::with_spool("/tmp/not-used.sock", spool.path()).unwrap();
+        let mut speech = SpeechCoordinator::new(spool.path());
         let mut character = CharacterCoordinator::new(42);
         let mut audio = RecordingAudioDevice::blocking();
 
@@ -1977,7 +1873,7 @@ mod tests {
 
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
         let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
-        let mut speech = SpeechCoordinator::new("/tmp/not-used.sock").unwrap();
+        let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
         let mut character = CharacterCoordinator::new(43);
         let mut audio = RecordingAudioDevice::blocking();
         handle_daemon_command_with_character(

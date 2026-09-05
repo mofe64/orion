@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
-from . import FRAME_SAMPLES, PROTOCOL_VERSION, SAMPLE_RATE
+from . import PROTOCOL_VERSION
 
 
 class ProtocolError(ValueError):
@@ -31,10 +31,6 @@ def parse_hello(raw: str) -> ClientHello:
     expected = {
         "type": "hello",
         "protocol": PROTOCOL_VERSION,
-        "sampleRate": SAMPLE_RATE,
-        "channels": 1,
-        "encoding": "pcm_s16le",
-        "frameSamples": FRAME_SAMPLES,
     }
     for key, value in expected.items():
         if message.get(key) != value:

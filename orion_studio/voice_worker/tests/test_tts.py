@@ -15,6 +15,20 @@ class FakeModel:
 
 
 class ChatterboxSynthesizerTests(unittest.TestCase):
+    def test_stream_requests_native_chunks_and_keeps_gain_constant(self):
+        options = {}
+        class Model:
+            def generate(self, **kwargs):
+                options.update(kwargs)
+                yield SimpleNamespace(audio=np.array([.2]), sample_rate=24000)
+                yield SimpleNamespace(audio=np.array([.1]), sample_rate=24000)
+        stream = ChatterboxSynthesizer('test', model_loader=lambda _: Model()).stream('hello')
+        first, second = list(stream)
+        self.assertTrue(options['stream'])
+        self.assertEqual(options['streaming_interval'], .8)
+        self.assertEqual(np.frombuffer(first.pcm, dtype='<i2')[0], 26213)
+        self.assertEqual(np.frombuffer(second.pcm, dtype='<i2')[0], 13106)
+
     def test_converts_generated_float_audio_to_pcm16(self) -> None:
         model = FakeModel([
             SimpleNamespace(audio=np.array([-1.0, 0.0, 1.0]), sample_rate=24_000),

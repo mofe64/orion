@@ -161,17 +161,18 @@ are sufficient to communicate life.
 
 ## Speech-driven animation
 
-Speech is an utterance-length performance generated before its movement
-begins. Orion does not play a short gesture, stop, choose another, and restart.
-The trajectory compiler combines the complete sequence of phrase drawings into
-one motion spline with one final settle.
+Speech uses one continuous performance lifecycle. Complete files can be planned
+up front; streaming replies extend the spline from its current commanded position
+and velocity as more waveform becomes available. The motion run and immutable
+anchor persist across extensions. Network chunks do not trigger separate gestures
+or intermediate returns to rest. Playback completion triggers the final settle.
 
 ### Audio ownership and analysis
 
-Studio synthesizes a whole response and uploads a validated RIFF/WAV file to
-the Pi. The gateway requires mono, 24 kHz, signed 16-bit pulse-code modulation
+Studio streams synthesized audio as ordered RIFF/WAV chunks to the Pi;
+the complete-file endpoint also remains available. The gateway requires mono, 24 kHz, signed 16-bit pulse-code modulation
 (PCM16). It applies size and duration limits, writes an atomic random spool
-item, and asks the speech coordinator to play that identifier. The coordinator
+item, and asks the speech coordinator to start or append that identifier. The coordinator
 never accepts an arbitrary path.
 
 The runtime divides PCM into 20 ms frames, matching its 50 Hz loop. For each
@@ -233,7 +234,7 @@ subordinate to the head. It allows a larger explanatory body beat only when all
 of these conditions hold:
 
 - the drawing is associated with a detected phrase peak;
-- its peak energy is at least 72% of the utterance maximum;
+- its peak energy is at least 72% of the available waveform maximum;
 - its drawing index is at least three greater than the preceding body beat
 (at least two drawings intervene); and
 - it would not immediately repeat an explanatory lean.
@@ -273,7 +274,7 @@ These values are character policy, not hardware limits:
 | Full body-beat multiplier on source drawing | `0.78–0.96`                                           |
 | Head-lead share of each phrase              | `0.64–0.74`                                           |
 | Next-head look-ahead during body follow     | `0.18`                                                |
-| Full body-beat energy gate                  | At least `0.72` of utterance maximum                  |
+| Full body-beat energy gate                  | At least `0.72` of available waveform maximum                  |
 | Full body-beat spacing                      | Drawing-index difference of at least `3`              |
 
 

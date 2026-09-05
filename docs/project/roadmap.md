@@ -4,7 +4,7 @@
 
 Orion has a neutral robot description, shared motion assets, a Rust runtime,
 MuJoCo parity, commissioned Pi hardware, multimodal scenes, a desktop authoring
-tool, and primary and fallback voice paths.
+tool, and Studio-processed voice with Pi capture and playback.
 
 
 

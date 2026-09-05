@@ -176,7 +176,7 @@ class OrionGateway:
                 "pose_library": {"read": True, "create": True, "update": False},
                 "motion_library": {"read": True, "create": True, "update": False},
                 "movement_lifecycle": ["prepare", "release"],
-                "speech": {"format": "pcm16_mono_24000_hz", "max_bytes": MAX_SPEECH_BYTES, "max_seconds": 120},
+                "speech": {"format": "pcm16_mono_24000_hz", "max_bytes": MAX_SPEECH_BYTES, "max_seconds": 120, "streaming": "ordered_wav_chunks_v1", "max_chunk_seconds": 2},
                 "character_states": ["neutral", "listening", "thinking"],
                 "hardware_profile": {
                     "variant": "7.4 V STS3215",
@@ -295,10 +295,14 @@ class OrionGateway:
             "result": response,
         }
 
-    def upload_speech(self, body: bytes, studio_request_id: str) -> tuple[HTTPStatus, dict[str, Any]]:
+    def upload_speech(self, body: bytes, studio_request_id: str, *, streaming=False, run_id=None, sequence=None) -> tuple[HTTPStatus, dict[str, Any]]:
         if not studio_request_id or len(studio_request_id) > 128 or any(char in studio_request_id for char in "\r\n\0"):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_request_id", "Studio voice request ID is required.")
+        if run_id is not None and (type(run_id) is not int or run_id < 1 or type(sequence) is not int or sequence < 1 or not streaming):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_sequence", "A stream run and positive sequence are required.")
         self._validate_speech_wav(body)
+        if streaming and len(body) > 100_000:
+            raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Speech chunks may contain at most two seconds of audio.")
         identifier = secrets.token_urlsafe(24)
         try:
             self.speech_spool.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -316,7 +320,10 @@ class OrionGateway:
         except OSError as error:
             raise GatewayError(HTTPStatus.INTERNAL_SERVER_ERROR, "speech_spool_failed", f"Could not spool speech: {error}") from error
         try:
-            runtime = self._checked(f"speech file {identifier}")
+            if run_id is not None:
+                runtime = self._checked(f"speech append {run_id} {sequence} {identifier}")
+            else:
+                runtime = self._checked(f"speech {'stream' if streaming else 'file'} {identifier}")
         except GatewayError:
             path.unlink(missing_ok=True)
             raise
@@ -336,8 +343,7 @@ class OrionGateway:
             speech = status.get(key)
             if isinstance(speech, dict) and speech.get("run_id") == run_id:
                 state = speech.get("state")
-                if state == "synthesizing": state = "queued"
-                return {"api_version": API_VERSION, "run_id": run_id, "state": state, "error": speech.get("error")}
+                return {"api_version": API_VERSION, "run_id": run_id, "state": state, "error": speech.get("error"), "first_playback_ms": speech.get("first_playback_ms"), "elapsed_ms": speech.get("elapsed_ms")}
         raise GatewayError(HTTPStatus.NOT_FOUND, "speech_run_not_found", f"Speech run {run_id} is not active or the most recent result.")
 
     def compile_trajectory_preview(self, payload: Any) -> dict[str, Any]:
@@ -1215,6 +1221,17 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == "/api/v2/speech/stream":
+                return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True)
+            match = re.fullmatch(r"/api/v2/speech/([1-9][0-9]*)/chunks/([1-9][0-9]*)", path)
+            if match:
+                return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True, run_id=int(match[1]), sequence=int(match[2]))
+            match = re.fullmatch(r"/api/v2/speech/([1-9][0-9]*)/end", path)
+            if match:
+                sequence = self._read_json().get("sequence")
+                if type(sequence) is not int or sequence < 1:
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_sequence", "A positive sequence is required.")
+                return HTTPStatus.OK, gateway._checked(f"speech end {match[1]} {sequence}")
             if path == "/api/v2/speech":
                 request_id = self.headers.get("X-Orion-Voice-Request-ID", "")
                 return gateway.upload_speech(self._read_speech_wav(), request_id)

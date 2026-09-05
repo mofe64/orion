@@ -8,7 +8,7 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
-from .archived.motion_test import motion_test_plan, read_motion_preflight
+from .preflight import commissioning_plan, read_preflight
 from .bus import create_lerobot_bus
 from .calibration import (
     ENCODER_RESOLUTION,
@@ -75,10 +75,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     bus = None
     try:
         document = _load_document(calibration_path)
-        assignments = motion_test_plan()
+        assignments = commissioning_plan()
         bus = create_lerobot_bus(args.port, assignments)
         bus.connect(handshake=True)
-        read_motion_preflight(bus, assignments)
+        read_preflight(bus, assignments)
         positions = {
             name: int(value)
             for name, value in bus.sync_read(
@@ -122,7 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Cancelled.")
             return 2
 
-        read_motion_preflight(bus, assignments)
+        read_preflight(bus, assignments)
         backup = write_calibration_file(updated, calibration_path)
     except (
         CalibrationError,

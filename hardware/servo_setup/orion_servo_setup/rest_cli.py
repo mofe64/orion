@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .bus import create_lerobot_bus
-from .archived.motion_test import motion_test_plan, read_motion_preflight
+from .preflight import commissioning_plan, read_preflight
 from .calibration import load_hardware_calibration
 from .rest_capture import (
     STABILITY_DURATION_SECONDS,
@@ -69,10 +69,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     bus = None
     try:
-        assignments = motion_test_plan()
+        assignments = commissioning_plan()
         bus = create_lerobot_bus(args.port, assignments)
         bus.connect(handshake=True)
-        read_motion_preflight(bus, assignments)
+        read_preflight(bus, assignments)
         print("Preflight: 5 servos healthy, torque off.")
         input(
             "Set stable unsupported rest, clear hands and blocks, then press ENTER: "
@@ -100,7 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         final_positions = _positions(bus)
         validate_rest_stability(reference, [final_positions])
-        read_motion_preflight(bus, assignments)
+        read_preflight(bus, assignments)
         write_rest_pose(args.poses, angles, replace=True)
     except KeyboardInterrupt:
         print("\nCancelled; torque off.")

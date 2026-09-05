@@ -21,7 +21,7 @@ from .calibration import (
     validate_captures,
     write_calibration_file,
 )
-from .archived.motion_test import motion_test_plan, read_motion_preflight
+from .preflight import commissioning_plan, read_preflight
 
 
 DEFAULT_OUTPUT_PATH = Path("~/.config/orion/servo_calibration.json")
@@ -83,7 +83,7 @@ def _record_until_enter(bus, neutral_positions: Mapping[str, int]) -> dict[str, 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    plan = motion_test_plan()
+    plan = commissioning_plan()
 
     if args.dry_run:
         ids = ",".join(str(item.servo_id) for item in plan)
@@ -98,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         bus = create_lerobot_bus(args.port, plan)
         bus.connect(handshake=True)
-        read_motion_preflight(bus, plan)
+        read_preflight(bus, plan)
         print("Preflight: 5 servos healthy, torque off.")
 
         input("Set the zero pose, then press ENTER: ")
@@ -133,7 +133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # Repeat the same safety checks after handling the mechanism and before
         # accepting its measurements.
-        read_motion_preflight(bus, plan)
+        read_preflight(bus, plan)
         document = build_calibration_document(captures, port=args.port)
         backup = write_calibration_file(document, args.output)
     except KeyboardInterrupt:

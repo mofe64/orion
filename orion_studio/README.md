@@ -24,15 +24,22 @@ routine controls:
 - **Go to rest** cancels active speech or scenes, turns character mode off, and
   follows the runtime's calibrated three-second movement to the rest pose.
   Motors continue holding the pose; this is not a torque-release command.
-- **Enter character mode** starts autonomous character behaviour and restores
+- **Character mode** starts autonomous character behaviour and restores
   expressive lighting.
-- **Turn on light**, **Apply light**, and **Turn off light** set the lamp through
-  `oriond`. Choose color and brightness before applying. Speech and scenes can
-  temporarily take priority over the manual light.
+- The **Lamp power** switch turns manual light on or off through `oriond`.
+  Choose **Warm white** or **Custom color**, set brightness, then select
+  **Apply**. Custom color reveals one spectrum slider without numeric color
+  fields. Speech and scenes can temporarily take priority over the manual light.
 
 These controls require the updated gateway and runtime on the Pi. Editing a
-color or brightness alone does not send a command. The Home model is an
-illustration, not live robot telemetry.
+color or brightness alone does not send a command. The switch shows the last
+accepted lamp command in this Home session; the gateway does not report live
+lamp state. Failed requests do not change the switch.
+
+Home includes a rotatable 3D model with fixed zoom and no camera panning. The
+model shows the attentive pose and the last accepted lamp setting as a preview,
+not live robot telemetry. Rotating it never sends a robot command. Home starts
+in dark mode; its **Light mode** toggle does not change Create’s appearance.
 
 Create contains three levels of an expression:
 
@@ -60,8 +67,9 @@ has a separate selectable row; zoom expands the time scale.
 
 Robot activity shows accepted run IDs, progress, terminal results, and a
 run-specific cancel action. Diagnostics contains runtime and calibration details;
-seeds and simulated reactions belong to developer tools. Home does not load the
-3D renderer. Create renders on changes and releases its GPU resources on exit.
+seeds and simulated reactions belong to developer tools. Both screens load the
+3D renderer on demand, render on changes, and release GPU resources on exit.
+Create retains its orbit, zoom, and pan controls independently of Home.
 
 ## Development
 

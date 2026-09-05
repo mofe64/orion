@@ -15,15 +15,23 @@ environment variables.
 | `ORION_STUDIO_TTS_MODEL` | `mlx-community/chatterbox-turbo-8bit` | Chatterbox repository ID or compatible local model path |
 | `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
 | `ORION_STUDIO_AGENT_PROVIDER` | `codex` | Agent adapter name; only `codex` is implemented |
-| `ORION_STUDIO_AGENT_MODEL` | Codex configured default | Optional Codex model override |
-| `ORION_STUDIO_CODEX_BIN` | Python SDK's bundled Codex runtime | Explicit Codex executable path, for example an updated app runtime when a model requires a newer version |
+| `ORION_STUDIO_CODEX_BIN` | First installed runtime advertising the selected model and effort | Explicit executable override; when set, automatic fallback is disabled |
 | `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |
+
+Choose the reply model and reasoning effort in Studio’s Voice → Reply model section.
+The defaults are `gpt-5.6-sol` and `medium`; preferences are saved locally and
+applied when Voice starts. Runtime discovery tries installed Codex/ChatGPT app
+executables, then the PATH CLI, then the SDK runtime. Each candidate must report
+the selected model and effort in its catalog. Debug shows the selected executable.
+
+From the repository root, `./scripts/studio-dev.sh` starts Studio without a
+working-directory change or Codex environment override.
 
 Set Studio variables on the same command that starts the Tauri process:
 
 ```bash
 cd orion_studio
-ORION_STUDIO_AGENT_MODEL=MODEL_NAME \
+ORION_STUDIO_VOICE_PYTHON=/absolute/path/to/python \
 pnpm tauri dev
 ```
 

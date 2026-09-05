@@ -89,7 +89,7 @@ class RestCliTests(unittest.TestCase):
             with (
                 patch("builtins.input", side_effect=lambda _: next(prompts)),
                 patch("orion_servo_setup.rest_cli.create_lerobot_bus", return_value=bus),
-                patch("orion_servo_setup.rest_cli.read_motion_preflight"),
+                patch("orion_servo_setup.rest_cli.read_preflight"),
                 patch("orion_servo_setup.rest_cli.time.sleep"),
                 patch(
                     "orion_servo_setup.rest_cli.time.monotonic",

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "orion-voice"
 version = "0.1.0"
-description = "Local speech workers for the Orion robot"
+description = "Pi capture, wake detection, and Studio voice transport"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "numpy>=1.26,<3",
@@ -13,21 +13,7 @@ dependencies = [
   "orion-rustpotter",
 ]
 
-[project.optional-dependencies]
-fallback = [
-  # sherpa-onnx exposes sherpa-onnx-cli through Click but does not declare it.
-  "click>=8.1,<9",
-  "numpy>=1.26,<3",
-  "piper-tts==1.7.0",
-  # Sherpa imports both helpers unconditionally in its text2token utility.
-  "pypinyin>=0.55,<1",
-  "sentencepiece>=0.2,<0.3",
-  "sherpa-onnx==1.13.6",
-  "sherpa-onnx-bin==1.13.6",
-]
-
 [project.scripts]
-orion-voice = "orion_voice.__main__:main"
 orion-listener = "orion_voice.satellite:main"
 
 [tool.setuptools.packages.find]

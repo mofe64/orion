@@ -14,7 +14,7 @@ Pi ReSpeaker stereo capture (16 kHz signed PCM16)
   -> Pi speech endpoint -> bounded complete utterance upload
   -> Studio Qwen ASR confirms "Hey Orion" and extracts command
   -> configured AgentProvider -> Chatterbox Turbo
-  -> existing validated WAV upload -> oriond-owned playback
+  -> ordered WAV chunk uploads -> one oriond-owned streaming player
   -> speech animation -> terminal playback acknowledgement -> rearm Pi
 ```
 
@@ -35,9 +35,21 @@ Every interaction has a random session ID. The Pi captures continuously while
 enabled, keeps three seconds of pre-roll in memory and sends a candidate event
 immediately. Audio is uploaded as a complete endpointed utterance, not a
 continuous room-audio stream. An utterance is at most 18 seconds including
-pre-roll. Endpointing uses the existing deterministic energy detector: at least
-1.2 seconds of capture, 800 ms of trailing silence and a 15-second maximum.
-These workstation-origin thresholds require evaluation on the ReSpeaker.
+pre-roll. Endpointing uses DC-corrected energy for its decisions; the audio
+sent to Rustpotter and Studio remains unchanged. While listening, it retains
+six seconds of frame energies. At wake detection it excludes the latest second,
+takes the lower quartile of the remaining window, and freezes a threshold of
+three times that energy, with a floor of 500 PCM units. With less than half a
+second of eligible history it uses the floor. Allow at least 1.5 seconds of
+quiet listening after enabling capture to establish a background estimate.
+
+The same frozen threshold applies to wake capture and a buffered follow-up.
+A sustained 60 ms above threshold resets the silence timer; isolated shorter
+spikes do not. Capture ends after one second of non-speech, subject to a
+1.2-second minimum and a 15-second maximum. Noise estimation resumes only
+when listening for a new wake, so response playback cannot raise the threshold.
+These energy rules are a prototype based on Pi measurements; clipping,
+continuous background speech, and quiet commands still require physical evaluation.
 
 If the first transcript is only the wake phrase, Studio requests a follow-up
 command. The Pi buffers up to one endpointed follow-up while Qwen is working,
@@ -68,7 +80,7 @@ interception.
 
 Studio's native launcher passes connection configuration to its Python worker.
 The worker connects directly to the Pi listener and exposes processing events
-to the UI through its existing authenticated loopback socket. Version 5 of that
+to the UI through its existing authenticated loopback socket. Version 7 of that
 local protocol rejects workstation microphone frames. Pi protocol version 1
 uses JSON session messages and length-checked PCM16 utterances.
 
@@ -92,9 +104,63 @@ semantic attention operation. Character Off prevents those movements while
 voice can remain enabled. See [Voice attention](voice-attention.md) for the
 animation brief, priority, commissioning and acceptance requirements.
 
-## Legacy offline diagnostics
+## Processing station and latency
 
-Sherpa, Moonshine and Piper remain available only through the optional
-`fallback` dependency set and explicit legacy diagnostic commands. They are
-not started by `orion-listener` or Studio. Never run a legacy microphone worker
-concurrently with the primary listener. Piper remains usable for Pi-local TTS.
+Studio is the voice processing station. Its compute supports Qwen speech
+recognition, the configured agent, and expressive Chatterbox synthesis. The Pi
+owns capture, Rustpotter, endpointing, playback, and character animation; it
+runs no speech-recognition or speech-synthesis model. Conversational voice
+requires Studio to be connected and enabled.
+
+The pipeline waits for an endpointed utterance before transcription and a
+complete synthesized reply before uploading the WAV for playback. Response
+latency therefore includes endpointing, transport, ASR, agent response, TTS,
+WAV upload, and playback startup. The worker reports ASR, agent, and synthesis
+durations; these do not constitute a complete end-to-end latency measurement.
+Measure the stages on the deployed setup before changing model quality or
+introducing streaming.
+
+## Direction evidence
+
+Direction uses at most 30 accepted stereo frames from the last three seconds.
+Silence and rejected frames add no votes; old votes expire even when no further
+frames arrive. The `confidence` field measures vote agreement, not a calibrated
+probability of identifying the speaker. At least five votes and 75% agreement
+are required for a known side.
+
+At wake confirmation, the listener checks the age of the oldest vote supporting
+the selected side, rather than timestamping utterance completion as new evidence.
+Evidence aged three seconds or more cannot trigger attention. Microphone spacing
+and channel orientation must still be explicitly commissioned; their default
+values disable direction-based attention.
+
+## Streaming replies and timing
+
+Chatterbox generates native audio chunks on Studio. The worker sends each chunk
+on its existing local WebSocket; Studio uploads ordered PCM16 mono 24 kHz WAV
+chunks to the authenticated gateway. `POST /api/v2/speech/stream` creates one
+runtime speech run, `/api/v2/speech/{run}/chunks/{sequence}` appends audio, and
+`/api/v2/speech/{run}/end` declares the final sequence. The existing complete-WAV
+endpoint remains available for other callers.
+
+The Pi prebuffers two seconds (or a shorter complete reply), then feeds one
+`aplay` process continuously. Upload end does not mean playback completion.
+Chunks are bounded to two seconds and the whole reply to 120 seconds. Out-of-order
+chunks are rejected; cancellation, upload stalls and buffer exhaustion terminate
+the run. Generation slower than real-time can exhaust the prebuffer; its physical
+behavior still needs commissioning.
+
+The runtime analyzes accumulated audio and extends the character spline under
+its existing motion run ID. Extension starts from the commanded position and
+velocity, keeps the immutable anchor and calibration checks, and retains head-led
+staging, secondary body beats and clip variation. Network chunks do not become
+separate gestures. Open-stream plans carry a short continuation horizon; terminal
+playback triggers the existing final settle. Software player elapsed time drives
+the audio frame estimate; ALSA buffering and physical motion require live review.
+
+Voice → Debug reports capture after wake detection, transcription, agent time,
+first synthesized chunk, total synthesis, summed upload round trips, and Pi
+queue-to-player-start/elapsed durations. These are monotonic durations measured
+within each process; overlapping stages cannot be added as total latency.
+Player start is software timing, not an acoustic measurement at the speaker.
+Capture duration requires the updated Pi listener; older listeners omit it.

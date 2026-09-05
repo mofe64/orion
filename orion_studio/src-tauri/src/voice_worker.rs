@@ -70,6 +70,8 @@ pub fn start_voice_worker(
     manager: State<'_, VoiceWorkerManager>,
     pi_url: String,
     pi_token: String,
+    agent_model: Option<String>,
+    agent_effort: Option<String>,
 ) -> Result<VoiceWorkerConnection, String> {
     let mut slot = manager
         .worker
@@ -94,7 +96,8 @@ pub fn start_voice_worker(
         .unwrap_or_else(|_| "Qwen/Qwen3-ASR-0.6B".to_owned());
     let agent_provider =
         std::env::var("ORION_STUDIO_AGENT_PROVIDER").unwrap_or_else(|_| "codex".to_owned());
-    let agent_model = std::env::var("ORION_STUDIO_AGENT_MODEL").ok();
+    let agent_model = agent_model.unwrap_or_else(|| "gpt-5.6-sol".to_owned());
+    let agent_effort = agent_effort.unwrap_or_else(|| "medium".to_owned());
     let tts_model = std::env::var("ORION_STUDIO_TTS_MODEL")
         .unwrap_or_else(|_| "mlx-community/chatterbox-turbo-8bit".to_owned());
     let pi_url = std::env::var("ORION_PI_VOICE_URL").unwrap_or(pi_url);
@@ -128,9 +131,12 @@ pub fn start_voice_worker(
         "--tts-model".to_owned(),
         tts_model,
     ];
-    if let Some(agent_model) = agent_model {
-        arguments.extend(["--agent-model".to_owned(), agent_model]);
-    }
+    arguments.extend([
+        "--agent-model".to_owned(),
+        agent_model,
+        "--agent-effort".to_owned(),
+        agent_effort,
+    ]);
     let child = Command::new(&python)
         .args(arguments)
         .current_dir(&root)

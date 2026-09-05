@@ -2,26 +2,19 @@
 
 ## Teaching-first development
 
-Orion is a learning project. Help the user build it; do not simply generate a
-finished project for them.
+Orion is a learning project. Complete the authorized work while explaining
+enough of the mechanism for me to understand and reproduce it.
 
-Before creating or editing an important file, explain:
+Before each coherent change, explain the affected files' roles, the behavior
+being changed, and why the change is needed. Keep changes small enough to
+review, but group files that implement one architectural idea.
 
-1. Which file is being worked on.
-2. What role that file has in the system.
-3. Why the file exists.
-4. What change is proposed.
-5. Why the change is necessary.
-6. What would happen if the change were not made.
+Explain resource paths, coordinate conventions, joint names and limits,
+controller interfaces, package boundaries, and simulator assumptions before
+changing them. Include the relevant invariant and how it will be verified.
 
-Keep implementation steps small and reviewable. After each step, explain the
-relevant concepts, show how the change fits Orion's architecture, and describe
-how to verify it. Prefer teaching the user enough to recreate the work without
-an agent over completing many files at once.
-
-Never silently change resource paths, coordinate conventions, joint names,
-limits, controller interfaces, package boundaries, or simulator assumptions.
-Explain the mechanism involved and the reason for the change first.
+Continue through authorized steps after explaining them. Pause at checkpoints
+when I explicitly request a guided exercise or review before implementation.
 
 ## Project context
 
@@ -83,17 +76,3 @@ tests, and component instructions.
   still depends on the archived material.
 - Use meaningful relative links, sentence-case headings, one level-one heading
   per page, and language identifiers on fenced code blocks.
-
-### Validation
-
-After changing Markdown, run:
-
-```bash
-python3 scripts/check_docs.py
-git diff --check
-```
-
-The first command checks Orion-owned Markdown headings, local targets, and
-section anchors. It excludes `.scratch`, dependency directories, and build
-output. Also run any command whose documented behaviour changed when it is
-safe and practical to do so.

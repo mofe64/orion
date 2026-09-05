@@ -13,9 +13,9 @@ import uuid
 import numpy as np
 
 from .direction import DirectionEstimator
-from .endpoint import EnergyEndpointDetector
+from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise
 from .rustpotter import RustpotterWakeDetector
-from .wake import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
+from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
 
 PROTOCOL = 1
 FRAME_BYTES = 640  # 20 ms of mono signed little-endian PCM16 at 16 kHz
@@ -26,7 +26,7 @@ class SatelliteSession:
     """One capture owner, one active turn. Audio is never retained on disk."""
     def __init__(self, wake, direction=None, clock=time.monotonic):
         self.wake = wake
-        self.direction = direction or DirectionEstimator()
+        self.direction = direction or DirectionEstimator(clock=clock)
         self.clock = clock
         self.reset()
 
@@ -37,6 +37,7 @@ class SatelliteSession:
         self.utterance = bytearray()
         self.followup = bytearray()
         self.followup_done = False
+        self.noise = ListeningNoise()
         self.endpoint = EnergyEndpointDetector()
         self.followup_endpoint = EnergyEndpointDetector()
         self.expires_at = float("inf")
@@ -59,6 +60,7 @@ class SatelliteSession:
             self.reset()
             return [event]
         if self.phase == "listening":
+            self.noise.accept(audio)
             self.direction.accept(stereo)
             self.pre_roll.extend(audio)
             del self.pre_roll[:-3 * 32000]
@@ -67,8 +69,11 @@ class SatelliteSession:
                 return []
             self.session_id = uuid.uuid4().hex
             self.phase = "wake"
+            config = EndpointConfig(speech_rms=self.noise.threshold())
+            self.endpoint = EnergyEndpointDetector(config)
+            self.followup_endpoint = EnergyEndpointDetector(config)
             self.expires_at = self.clock() + 120
-            self.observation = self.direction.observation()
+            self.update_direction()
             self.utterance = bytearray(self.pre_roll)
             self.pre_roll.clear()
             self.endpoint.prime_detected_speech()
@@ -86,15 +91,27 @@ class SatelliteSession:
             self.followup_done = self.followup_endpoint.accept(audio)
         return []
 
+    def update_direction(self):
+        observation = self.direction.observation()
+        observed_at = observation.pop("observed_at")
+        self.observed_at = observed_at if observed_at is not None else float("-inf")
+        self.observation = observation
+
+    def direction_is_fresh(self):
+        return 0 <= self.clock() - self.observed_at < 3.0
+
     def finish_utterance(self):
         if self.phase == "wake":
-            self.observation = self.direction.observation()
-            self.observed_at = self.clock()
+            self.update_direction()
         purpose = "wake_and_command" if self.phase == "wake" else "command"
+        print(json.dumps({"event": "voice.endpoint", "session_id": self.session_id,
+                          "purpose": purpose, "reason": self.endpoint.end_reason,
+                          "threshold_rms": round(self.endpoint.config.speech_rms, 1),
+                          "capture_ms": self.endpoint.capture_ms}), flush=True)
         audio = bytes(self.utterance)
         self.utterance.clear()
         self.phase = "confirming" if purpose == "wake_and_command" else "processing"
-        return [self.message("utterance", purpose=purpose, bytes=len(audio)), audio]
+        return [self.message("utterance", purpose=purpose, bytes=len(audio), captureMs=self.endpoint.capture_ms), audio]
 
     def control(self, message):
         if not self.session_id or message.get("sessionId") != self.session_id:
@@ -210,7 +227,7 @@ async def serve(args):
                     if not isinstance(message, dict):
                         raise ValueError("Invalid listener control")
                     observation = session.observation.copy()
-                    fresh_direction = session.clock() - session.observed_at <= 3.0
+                    fresh_direction = session.direction_is_fresh()
                     result = session.control(message)
                     if message["type"] == "wake.confirmed":
                         side, confidence = observation["side"], observation["confidence"]

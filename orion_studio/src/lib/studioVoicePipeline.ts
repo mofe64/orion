@@ -57,9 +57,17 @@ export interface StudioVoiceSnapshot {
   ttsModel: string | null;
   transcript: string | null;
   response: string | null;
+  agentEffort?: string;
+  runtime?: string;
+  models?: { model: string; name: string; efforts: string[] }[];
+  latency?: Record<string, number>;
 }
 
+export interface VoiceSettings { model: string; effort: string; }
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { model: "gpt-5.6-sol", effort: "medium" };
+
 export interface StudioVoicePipelineOptions {
+  settings?: VoiceSettings;
   connection?: GatewayConnection;
   launcher?: VoiceWorkerLauncher;
   createTransport?: (connection: VoiceWorkerConnection) => VoiceWorkerTransport;
@@ -80,11 +88,11 @@ export function piVoiceUrl(gatewayUrl: string): string {
 }
 
 class TauriVoiceWorkerLauncher implements VoiceWorkerLauncher {
-  constructor(private readonly connection?: GatewayConnection) {}
+  constructor(private readonly connection?: GatewayConnection, private readonly settings = DEFAULT_VOICE_SETTINGS) {}
   start(): Promise<VoiceWorkerConnection> {
     if (!this.connection) throw new Error("Connect Orion before starting Voice.");
     return invoke<VoiceWorkerConnection>("start_voice_worker", {
-      piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token,
+      piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token, agentModel: this.settings.model, agentEffort: this.settings.effort,
     });
   }
 
@@ -122,9 +130,13 @@ export class StudioVoicePipeline {
   private transport: VoiceWorkerTransport | null = null;
   private unsubscribeTransport: (() => void) | null = null;
   private operation = 0;
+  private streamQueue = Promise.resolve();
+  private streamFailed = false;
+  private speechEpoch = 0;
+  private streamBytes = 0;
 
   constructor(options: StudioVoicePipelineOptions = {}) {
-    this.launcher = options.launcher ?? new TauriVoiceWorkerLauncher(options.connection);
+    this.launcher = options.launcher ?? new TauriVoiceWorkerLauncher(options.connection, options.settings);
     this.createTransport = options.createTransport ?? ((connection) => new VoiceWorkerClient({
       url: connection.url,
       token: connection.token,
@@ -165,6 +177,9 @@ export class StudioVoicePipeline {
         wakeThreshold: ready.wake.threshold,
         agentProvider: ready.agent.provider,
         agentModel: ready.agent.model,
+        agentEffort: ready.agent.effort,
+        runtime: ready.agent.runtime,
+        models: ready.agent.models,
         ttsProvider: ready.tts.provider,
         ttsModel: ready.tts.model,
       });
@@ -223,9 +238,18 @@ export class StudioVoicePipeline {
   private acceptWorkerEvent(event: VoiceWorkerEvent): void {
     switch (event.type) {
       case "wake.candidate":
+        ++this.speechEpoch;
+        this.snapshot.latency = {};
+        this.streamFailed = false;
+        this.streamBytes = 0;
+        this.streamQueue = Promise.resolve();
         this.publish({ ...this.snapshot, phase: "wake_candidate", error: null });
         break;
+      case "stage.timing":
+        this.publish({ ...this.snapshot, latency: { ...this.snapshot.latency, [event.stage]: event.durationMs } });
+        break;
       case "transcription.started":
+        if (typeof event.captureMs === "number") this.snapshot.latency = { ...this.snapshot.latency, ["capture_" + event.purpose]: event.captureMs };
         this.publish({
           ...this.snapshot,
           phase: event.purpose === "wake_and_command" ? "confirming_wake" : "transcribing",
@@ -243,6 +267,7 @@ export class StudioVoicePipeline {
         this.publish({ ...this.snapshot, phase: "command_listening", error: null });
         break;
       case "transcript.final":
+        this.snapshot.latency = { ...this.snapshot.latency, transcriptionMs: event.durationMs };
         this.publish({
           ...this.snapshot,
           phase: "thinking",
@@ -254,11 +279,38 @@ export class StudioVoicePipeline {
         this.publish({ ...this.snapshot, phase: "thinking", response: null, error: null });
         break;
       case "agent.response":
+        this.snapshot.latency = { ...this.snapshot.latency, agentMs: event.durationMs };
         this.publish({ ...this.snapshot, phase: "thinking", response: event.text, error: null });
         break;
       case "synthesis.started":
         this.publish({ ...this.snapshot, phase: "synthesizing", error: null });
         break;
+      case "speech.chunk": {
+        if (event.sequence === 0) this.snapshot.latency = { ...this.snapshot.latency, synthesisFirstChunkMs: event.synthesisMs };
+        this.streamBytes += event.pcm.byteLength;
+        const operation = this.operation;
+        const epoch = this.speechEpoch;
+        this.streamQueue = this.streamQueue.then(async () => {
+          if (operation !== this.operation || epoch !== this.speechEpoch || this.streamFailed) return;
+          if (!this.speaker.append || this.streamBytes > 120 * 48_000) throw new Error("Streaming playback is unavailable or oversized.");
+          await this.speaker.append(event.pcm, event.sampleRate, event.sequence!);
+          if (operation !== this.operation || epoch !== this.speechEpoch || this.streamFailed) return;
+          this.publish({ ...this.snapshot, phase: "speaking" });
+        }).catch(error => { if (epoch === this.speechEpoch) return this.failStream(event.requestId, operation, error); });
+        break;
+      }
+      case "speech.end": {
+        this.publish({ ...this.snapshot, latency: { ...this.snapshot.latency, synthesisTotalMs: event.synthesisMs } });
+        const operation = this.operation;
+        const epoch = this.speechEpoch;
+        this.streamQueue = this.streamQueue.then(async () => {
+          if (operation !== this.operation || epoch !== this.speechEpoch || this.streamFailed) return;
+          if (!this.speaker.finish) throw new Error("Streaming playback is unavailable.");
+          await this.speaker.finish(event.sequence);
+          if (operation === this.operation && epoch === this.speechEpoch && !this.streamFailed) this.transport?.finishPlayback(event.requestId);
+        }).catch(error => { if (epoch === this.speechEpoch) return this.failStream(event.requestId, operation, error); });
+        break;
+      }
       case "speech.audio":
         void this.playSpeech(event.requestId, event.pcm, event.sampleRate);
         break;
@@ -266,6 +318,8 @@ export class StudioVoicePipeline {
         this.publish({ ...this.snapshot, phase: "ready", error: null });
         break;
       case "worker.error":
+        this.streamFailed = true;
+        void this.speaker.stop();
         if (event.recoverable) {
           this.publish({ ...this.snapshot, phase: "ready", error: event.message });
         } else {
@@ -273,6 +327,17 @@ export class StudioVoicePipeline {
         }
         break;
     }
+  }
+
+  private async failStream(requestId: number, operation: number, error: unknown): Promise<void> {
+    if (operation !== this.operation || this.streamFailed) return;
+    this.streamFailed = true;
+    const epoch = this.speechEpoch;
+    await this.speaker.stop().catch(() => undefined);
+    if (operation !== this.operation || epoch !== this.speechEpoch) return;
+    const message = error instanceof Error ? error.message : String(error);
+    try { this.transport?.finishPlayback(requestId, message); }
+    catch { await this.failPipeline(message); }
   }
 
   private async playSpeech(requestId: number, pcm: Int16Array, sampleRate: number): Promise<void> {

@@ -494,7 +494,38 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         anchor: JointPositions,
         now_seconds: f64,
     ) -> Result<u64> {
-        if self.mode != RuntimeMode::Holding || self.active_movement.is_some() {
+        self.install_character_performance(definition, anchor, now_seconds, None)
+    }
+
+    pub fn extend_character_performance(
+        &mut self,
+        run_id: u64,
+        definition: MotionDefinition,
+        anchor: JointPositions,
+        now_seconds: f64,
+    ) -> Result<u64> {
+        self.install_character_performance(definition, anchor, now_seconds, Some(run_id))
+    }
+
+    fn install_character_performance(
+        &mut self,
+        definition: MotionDefinition,
+        anchor: JointPositions,
+        now_seconds: f64,
+        replacing: Option<u64>,
+    ) -> Result<u64> {
+        if replacing.is_some()
+            && !self.active_movement.as_ref().is_some_and(|m| {
+                Some(m.status.run_id) == replacing && m.status.state == MovementPhase::Executing
+            })
+        {
+            return Err(Error::InvalidState(
+                "Character performance no longer owns movement.".into(),
+            ));
+        }
+        if replacing.is_none()
+            && (self.mode != RuntimeMode::Holding || self.active_movement.is_some())
+        {
             return Err(Error::InvalidState(
                 "Anchored character motion requires idle holding torque.".into(),
             ));
@@ -524,9 +555,26 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 definition.name
             )));
         }
-        let start = self
-            .driver
-            .clamp_positions_to_safe_range(&self.measured_positions())?;
+        let state = if replacing.is_some() {
+            Some(
+                self.motion_sequence
+                    .as_ref()
+                    .ok_or_else(|| Error::InvalidState("No character spline to extend.".into()))?
+                    .sample_state((now_seconds - self.movement_started_at).max(0.0))?,
+            )
+        } else {
+            None
+        };
+        let start = match &state {
+            Some(state) => state.positions.clone(),
+            None => self
+                .driver
+                .clamp_positions_to_safe_range(&self.measured_positions())?,
+        };
+        let velocity = match state {
+            Some(state) => state.velocities,
+            None => self.measured_velocities(),
+        };
         let limits = self.driver.joint_limits()?;
         let amplitude_scale = definition.uniform_amplitude_scale(&anchor, &limits)?;
         let targets = definition.resolved_targets_with_scale(&anchor, amplitude_scale)?;
@@ -536,7 +584,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let sequence = MotionSequence::compile_scaled_calibrated(
             &definition,
             start,
-            self.measured_velocities(),
+            velocity,
             anchor,
             amplitude_scale,
             &limits,
@@ -549,7 +597,14 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         self.trajectory = None;
         self.movement_started_at = now_seconds;
         self.mode = RuntimeMode::Moving;
-        self.begin_movement(&definition.name, target)
+        if let Some(run_id) = replacing {
+            let movement = self.active_movement.as_mut().unwrap();
+            movement.target = target;
+            movement.status.progress = 0.0;
+            Ok(run_id)
+        } else {
+            self.begin_movement(&definition.name, target)
+        }
     }
 
     pub fn replace_motion_assets(
@@ -766,6 +821,46 @@ mod tests {
     fn activate(core: &mut RuntimeCore<FakeDriver>) {
         core.handle_command("configure", 0.0);
         core.handle_command("enable", 0.0);
+    }
+
+    #[test]
+    fn extending_character_spline_preserves_run_position_and_velocity() {
+        let mut core = core();
+        activate(&mut core);
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let definition = core
+            .motions()
+            .motion("speak_reflective_tilt")
+            .unwrap()
+            .clone();
+        let run = core
+            .play_generated_anchored_relative(definition.clone(), anchor.clone(), 0.0)
+            .unwrap();
+        let before = core
+            .motion_sequence
+            .as_ref()
+            .unwrap()
+            .sample_state(0.3)
+            .unwrap();
+        core.tick(0.3).unwrap();
+        let same = core
+            .extend_character_performance(run, definition.clone(), anchor.clone(), 0.3)
+            .unwrap();
+        let after = core
+            .motion_sequence
+            .as_ref()
+            .unwrap()
+            .sample_state(0.0)
+            .unwrap();
+        assert_eq!(run, same);
+        for name in ORION_JOINT_NAMES {
+            assert!((before.positions[name] - after.positions[name]).abs() < 1e-9);
+            assert!((before.velocities[name] - after.velocities[name]).abs() < 1e-9);
+        }
+        assert!(
+            core.extend_character_performance(run + 1, definition, anchor, 0.3)
+                .is_err()
+        );
     }
 
     #[test]

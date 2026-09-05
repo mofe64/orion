@@ -8,8 +8,7 @@ from orion_voice_worker.providers import Transcript
 from orion_voice_worker.tts import SpeechAudio
 
 SID = 'a' * 32
-HELLO = dict(type='hello', protocol=5, token='local', sampleRate=16000,
-             channels=1, encoding='pcm_s16le', frameSamples=1280)
+HELLO = dict(type='hello', protocol=7, token='local')
 
 class Asr:
     provider='qwen3-asr'; model_name='fake'
@@ -21,7 +20,7 @@ class Agent:
     def respond(self, text): self.commands.append(text); return 'Hello.'
 class Tts:
     provider='chatterbox-turbo'; model_name='fake'
-    def synthesize(self, text): return SpeechAudio(b'\x00\x00'*240,24000)
+    def stream(self, text): yield SpeechAudio(b'\x00\x00'*240,24000)
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
     async def exercise(self, texts, rejected=False):
@@ -56,10 +55,10 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                             raw=await client.recv()
                             if isinstance(raw,bytes):
                                 self.assertEqual(len(raw),480)
-                                await client.send(json.dumps(dict(type='playback.finished',requestId=request_id)))
                                 continue
                             message=json.loads(raw); events.append(message['type'])
-                            if message['type']=='speech.audio': request_id=message['requestId']
+                            if message['type']=='speech.chunk': request_id=message['requestId']
+                            if message['type']=='speech.end': await client.send(json.dumps(dict(type='playback.finished',requestId=request_id)))
                             if message['type'] in {'speech.completed','wake.rejected'}: break
                         await client.send(json.dumps(dict(type='stop')))
         return commands,agent.commands,events

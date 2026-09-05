@@ -45,8 +45,8 @@ pub use scene::{
 };
 pub use socket::{UnixCommandServer, request_daemon};
 pub use speech::{
-    DEFAULT_SPEECH_SPOOL_PATH, DEFAULT_TTS_SOCKET_PATH, MAX_SPEECH_TEXT_BYTES,
-    MAX_SPEECH_WAV_BYTES, SpeechAnalysis, SpeechCoordinator, SpeechPhase, SpeechStatus,
+    DEFAULT_SPEECH_SPOOL_PATH, MAX_SPEECH_WAV_BYTES, SpeechAnalysis, SpeechCoordinator,
+    SpeechPhase, SpeechStatus,
 };
 pub use state::{JointState, MotionState, MovementPhase, RuntimeMode, StateSnapshot};
 pub use style::{MotionStyle, motion_styles};

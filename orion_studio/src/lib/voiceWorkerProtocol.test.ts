@@ -22,7 +22,7 @@ class FakeSocket {
 
 const ready = JSON.stringify({
   type: "ready",
-  protocol: 5,
+  protocol: 7,
   asr: { provider: "qwen3-asr", model: "Qwen/Qwen3-ASR-0.6B" },
   wake: { provider: "rustpotter", model: "hey_orion_reference.rpw", threshold: 0.4 },
   agent: { provider: "codex", model: "configured-default" },
@@ -39,8 +39,8 @@ describe("VoiceWorkerClient", () => {
     });
     const connected = client.connect();
     socket.open();
-    expect(JSON.parse(socket.sent[0] as string)).toMatchObject({
-      type: "hello", protocol: 5, token: "secret", sampleRate: 16_000, frameSamples: 1_280,
+    expect(JSON.parse(socket.sent[0] as string)).toEqual({
+      type: "hello", protocol: 7, token: "secret",
     });
     socket.message(ready);
     await expect(connected).resolves.toMatchObject({ type: "ready" });

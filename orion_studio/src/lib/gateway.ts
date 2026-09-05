@@ -236,6 +236,8 @@ export interface SpeechUploadResult {
 }
 
 export interface SpeechRunStatus {
+  first_playback_ms?: number | null;
+  elapsed_ms?: number;
   api_version: 2;
   run_id: number;
   state: "queued" | "playing" | "completed" | "cancelled" | "failed";
@@ -283,4 +285,14 @@ export function restOrion(connection: GatewayConnection): Promise<unknown> {
 }
 export function setLamp(connection: GatewayConnection, rgbw: number[]): Promise<unknown> {
   return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "lamp", rgbw }) });
+}
+
+export function uploadSpeechChunk(connection: GatewayConnection, wav: Uint8Array, requestId: string, runId?: number, sequence = 0): Promise<SpeechUploadResult> {
+  return request(connection, runId === undefined ? "/api/v2/speech/stream" : `/api/v2/speech/${runId}/chunks/${sequence}`, {
+    method: "POST", headers: { "Content-Type": "audio/wav", "X-Orion-Voice-Request-ID": requestId },
+    body: wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) as ArrayBuffer,
+  });
+}
+export function endSpeechStream(connection: GatewayConnection, runId: number, sequence: number): Promise<unknown> {
+  return request(connection, `/api/v2/speech/${runId}/end`, { method: "POST", body: JSON.stringify({ sequence }) });
 }

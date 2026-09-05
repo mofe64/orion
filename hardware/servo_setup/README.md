@@ -143,14 +143,12 @@ To list the selected bus IDs without opening hardware:
 uv run orion-verify-servos --port /dev/not-opened --dry-run
 ```
 
-## Archived one-off physical motion tools
-
-The first-motion nudge and direct named-pose commands were commissioning tools,
-not runtime control. Their installed entry points have been removed and their
-source lives in `orion_servo_setup/archived/`. Supervised physical movement runs
-through the Rust `oriond` runtime.
-
 ## Calibrate all five joints in one session
+
+Calibration, rest capture, and supported-rest acceptance share the read-only
+checks in `orion_servo_setup/preflight.py`. They verify the servo model,
+position mode, torque-off state, encoder range, supply voltage, temperature,
+and fault status before commissioning proceeds.
 
 The torque-off calibration command remains available as a setup utility:
 
@@ -259,8 +257,7 @@ uv run orion-accept-supported-rest --port /dev/ttyACM0 \
 This test demonstrates short-term stability in the captured environment; it
 cannot certify stability after moving the base, changing payload or cable
 routing, or changing the lamp's surface or orientation. Recapture or retest
-after any such change. The former direct named-pose executor is archived and
-must not be used in place of `oriond`.
+after any such change. Supervised physical movement runs through `oriond`.
 
 ## How the write works
 

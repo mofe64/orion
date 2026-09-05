@@ -55,12 +55,28 @@ class FakeTts:
     provider = "test-tts"
     model_name = "test-voice"
 
-    def synthesize(self, text: str) -> SpeechAudio:
+    def stream(self, text: str):
         self.text = text
-        return SpeechAudio(b"\x01\x00\x02\x00", 24_000)
+        yield SpeechAudio(b"\x01\x00\x02\x00", 24_000)
 
 
 class ServerPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_audio_is_sent_before_generator_finishes(self):
+        websocket = FakeWebSocket()
+        class StreamingTts:
+            def stream(self, _text):
+                yield SpeechAudio(b"\x01\x00", 24000)
+                assert any(isinstance(item, bytes) for item in websocket.messages)
+                yield SpeechAudio(b"\x02\x00", 24000)
+        asr = FakeAsr()
+        session = VoiceSession(asr)
+        session.phase = SessionPhase.TRANSCRIBING_COMMAND
+        await transcribe_utterance(websocket, session, PendingTranscription(b"\0\0", TranscriptionPurpose.COMMAND), VoiceModels(asr, FakeAgent(), StreamingTts()), 1)
+        controls = [json.loads(item) for item in websocket.messages if isinstance(item, str)]
+        self.assertEqual([item['sequence'] for item in controls if item['type'] == 'speech.chunk'], [0, 1])
+        self.assertEqual(controls[-1]['type'], 'speech.end')
+        self.assertTrue(session.synthesis_finished)
+
     async def test_transcript_flows_through_agent_and_tts_to_binary_audio(self) -> None:
         asr = FakeAsr()
         session = VoiceSession(asr)
@@ -79,10 +95,10 @@ class ServerPipelineTests(unittest.IsolatedAsyncioTestCase):
         controls = [json.loads(message) for message in websocket.messages if isinstance(message, str)]
         self.assertEqual(
             [message["type"] for message in controls],
-            ["transcript.final", "agent.started", "agent.response", "synthesis.started", "speech.audio"],
+            ["stage.timing", "transcript.final", "agent.started", "agent.response", "synthesis.started", "speech.chunk", "speech.end"],
         )
-        self.assertEqual(controls[2]["text"], "I heard: What time is it?")
-        self.assertEqual(websocket.messages[-1], b"\x01\x00\x02\x00")
+        self.assertEqual(controls[3]["text"], "I heard: What time is it?")
+        self.assertEqual(websocket.messages[-2], b"\x01\x00\x02\x00")
         self.assertEqual(session.phase, SessionPhase.PLAYING_RESPONSE)
 
 

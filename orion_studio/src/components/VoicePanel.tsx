@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   StudioVoicePipeline,
+  DEFAULT_VOICE_SETTINGS,
+  type VoiceSettings,
   type StudioVoicePhase,
   type StudioVoiceSnapshot,
 } from "../lib/studioVoicePipeline";
@@ -44,14 +46,26 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("keydown", escape); previous?.focus(); };
   }, [open]);
+  const [settings, setSettings] = useState<VoiceSettings>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("orion.voice.settings") ?? "null");
+      if (saved && typeof saved.model === "string" && saved.model.trim() && typeof saved.effort === "string") return saved;
+    } catch { /* Use explicit defaults if browser storage is unavailable. */ }
+    return DEFAULT_VOICE_SETTINGS;
+  });
+  useEffect(() => { try { localStorage.setItem("orion.voice.settings", JSON.stringify(settings)); } catch { /* Session settings remain usable. */ } }, [settings]);
   const [playback, setPlayback] = useState<OrionPlaybackSnapshot>({ runId: null, state: "idle" });
   const pipeline = useMemo(() => new StudioVoicePipeline({
     connection: connection ?? undefined,
+    settings,
     speaker: new OrionSpeechPlayer(() => connection, setPlayback),
-  }), [connection]);
+  }), [connection, settings]);
   const [snapshot, setSnapshot] = useState<StudioVoiceSnapshot>(() => pipeline.current());
+  const [catalog, setCatalog] = useState<NonNullable<StudioVoiceSnapshot["models"]>>([]);
+  useEffect(() => { if (snapshot.models?.length) setCatalog(snapshot.models); }, [snapshot.models]);
 
   useEffect(() => pipeline.subscribe(setSnapshot), [pipeline]);
+  useEffect(() => { if (snapshot.phase === "wake_candidate" || snapshot.phase === "starting") setPlayback({ runId: null, state: "idle" }); }, [snapshot.phase]);
   useEffect(() => { onPhaseChange?.(PHASE_LABELS[snapshot.phase]); }, [snapshot.phase, onPhaseChange]);
   useEffect(() => () => { void pipeline.stop(); }, [pipeline]);
 
@@ -99,6 +113,23 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
         {active ? "Stop Orion microphone" : !connection ? "Connect Orion first" : snapshot.phase === "error" ? "Try again" : "Enable Orion microphone"}
       </button>
 
+      <fieldset disabled={active} className="voice-settings">
+        <legend>Reply model</legend>
+        <label>Model<input list="orion-agent-models" value={settings.model} onChange={event => setSettings({ ...settings, model: event.target.value })} /></label>
+        <datalist id="orion-agent-models"><option value="gpt-5.6-sol">GPT-5.6 Sol</option>{catalog.filter(model => model.model !== "gpt-5.6-sol").map(model => <option key={model.model} value={model.model}>{model.name}</option>)}</datalist>
+        <label>Reasoning effort<select value={settings.effort} onChange={event => setSettings({ ...settings, effort: event.target.value })}>{(catalog.find(model => model.model === settings.model)?.efforts ?? ["low", "medium", "high", "xhigh", "max", "ultra"]).map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></label>
+        <small>Applies when you enable the microphone. Startup verifies support; Orion never silently switches models.</small>
+      </fieldset>
+      <details className="voice-debug"><summary>Debug</summary>
+        <p>Runtime: {snapshot.runtime ?? "Resolved when Voice starts"}</p>
+        <p>Active reply model: {snapshot.agentModel ?? "Not loaded"} · {snapshot.agentEffort ?? settings.effort}</p>
+        <dl>{Object.entries(snapshot.latency ?? {}).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{Math.round(value)} ms</dd></div>)}
+          {playback.uploadMs !== undefined && <div><dt>Chunk upload round trips (sum)</dt><dd>{playback.uploadMs} ms</dd></div>}
+          {playback.firstPlaybackMs != null && <div><dt>Pi accepted first chunk → player start</dt><dd>{playback.firstPlaybackMs} ms</dd></div>}
+          {playback.elapsedMs !== undefined && <div><dt>Pi run elapsed</dt><dd>{playback.elapsedMs} ms</dd></div>}
+        </dl>
+        <small>Durations use each process’s monotonic clock. Player start is software timing, not measured speaker output. Stages overlap; do not add these values as end-to-end latency.</small>
+      </details>
       <div className="voice-provider-list">
         <div><span>Activation</span><strong>{snapshot.wakeModel ?? "Not loaded"}{snapshot.wakeThreshold === null ? "" : ` · ${snapshot.wakeThreshold.toFixed(3)}`}</strong></div>
         <div><span>Speech to text</span><strong>{snapshot.asrModel ?? "Not loaded"}</strong></div>

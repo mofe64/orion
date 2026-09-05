@@ -53,8 +53,8 @@ hardware directly. AI agent integrations use the same semantic boundary.
 Studio Voice processes audio captured exclusively by the onboard Pi. The Pi
 runs Rustpotter and forwards bounded utterances over the local network; Studio confirms the
 wake with Qwen3-ASR, invokes the configured agent, and synthesizes replies with
-Chatterbox. The Pi plays replies and owns character animation. Legacy offline
-voice tools remain optional diagnostics. See the
+Chatterbox. Studio provides the compute for speech recognition, the agent, and
+expressive synthesis; the Pi plays replies and owns character animation. See the
 [voice architecture](docs/explanation/voice-architecture.md) and
 [Pi setup](voice/README.md).
 
@@ -69,7 +69,7 @@ voice tools remain optional diagnostics. See the
 | `description/` | Neutral Unified Robot Description Format (URDF) model and shared mesh assets |
 | `simulation/mujoco/` | MuJoCo model, playback tools, and simulator checks |
 | `hardware/` | Commissioning and operating instructions for servos, audio, and lighting |
-| `voice/` | Raspberry Pi-local fallback wake, ASR, and Piper TTS processes |
+| `voice/` | Pi microphone capture, Rustpotter wake detection, and Studio transport |
 | `audio/` | Named local audio cues |
 | `docs/` | Cross-system documentation, project status, decisions, and learning material |
 

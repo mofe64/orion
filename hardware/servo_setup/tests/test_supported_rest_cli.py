@@ -80,7 +80,7 @@ class SupportedRestCliTests(unittest.TestCase):
                     "orion_servo_setup.supported_rest_cli.create_lerobot_bus",
                     return_value=bus,
                 ),
-                patch("orion_servo_setup.supported_rest_cli.read_motion_preflight"),
+                patch("orion_servo_setup.supported_rest_cli.read_preflight"),
                 patch("builtins.input", return_value="y"),
                 redirect_stdout(io.StringIO()),
             ):
@@ -126,7 +126,7 @@ class SupportedRestCliTests(unittest.TestCase):
                     "orion_servo_setup.supported_rest_cli.create_lerobot_bus",
                     return_value=bus,
                 ),
-                patch("orion_servo_setup.supported_rest_cli.read_motion_preflight"),
+                patch("orion_servo_setup.supported_rest_cli.read_preflight"),
                 patch("builtins.input", return_value="y"),
                 redirect_stdout(stream),
             ):
@@ -180,7 +180,7 @@ class SupportedRestCliTests(unittest.TestCase):
                     "orion_servo_setup.supported_rest_cli.create_lerobot_bus",
                     return_value=bus,
                 ),
-                patch("orion_servo_setup.supported_rest_cli.read_motion_preflight"),
+                patch("orion_servo_setup.supported_rest_cli.read_preflight"),
                 patch(
                     "builtins.input",
                     side_effect=AssertionError("no confirmation should be requested"),

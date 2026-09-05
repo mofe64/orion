@@ -6,7 +6,8 @@ from orion_voice.direction import DirectionEstimator
 
 
 def frame(value=2000):
-    return np.full((320,2), value, dtype='<i2').tobytes()
+    # Alternating samples represent AC energy; constant values are only DC offset.
+    return np.tile([[value, value], [-value, -value]], (160, 1)).astype('<i2').tobytes()
 
 class Wake:
     next = False
@@ -88,6 +89,22 @@ class SatelliteTests(unittest.TestCase):
         self.session.control({'type':'session.reject','sessionId':sid})
         self.assertEqual(self.session.followup,b'')
 
+    def test_threshold_is_frozen_and_audio_is_unchanged(self):
+        for _ in range(250): self.session.accept_stereo(frame(1000))
+        self.wake.next = True
+        self.session.accept_stereo(frame(6000))
+        threshold = self.session.endpoint.config.speech_rms
+        self.assertEqual(threshold, 3000)
+        self.assertEqual(self.session.followup_endpoint.config.speech_rms, threshold)
+        for _ in range(50): self.session.accept_stereo(frame(6000))
+        self.assertEqual(self.session.endpoint.config.speech_rms, threshold)
+        expected_tail = np.frombuffer(frame(6000), dtype='<i2').reshape(-1, 2)[:, 0].tobytes()
+        self.assertTrue(self.session.utterance.endswith(expected_tail))
+        events = []
+        for _ in range(50): events = self.session.accept_stereo(frame(1000))
+        self.assertEqual(events[0]['purpose'], 'wake_and_command')
+        self.assertEqual(self.session.endpoint.end_reason, 'silence')
+
 class DirectionTests(unittest.TestCase):
     def test_no_direction_without_commissioned_orientation(self):
         estimator=DirectionEstimator()
@@ -103,6 +120,51 @@ class DirectionTests(unittest.TestCase):
                 estimator.accept(np.stack([x,np.roll(x,2)],axis=1))
             self.assertEqual(estimator.observation()['side'],expected)
             self.assertGreaterEqual(estimator.observation()['confidence'],.75)
+
+    def test_evidence_expires_during_silence_rejection_and_no_input(self):
+        for rejected in (np.zeros((320, 2), dtype=np.int16),
+                         np.full((320, 2), 32767, dtype=np.int16), None):
+            with self.subTest(rejected=rejected is None):
+                now = 0.0
+                estimator = DirectionEstimator(.06, 1, clock=lambda: now)
+                rng = np.random.default_rng(71)
+                for _ in range(10):
+                    x = rng.normal(0, 3000, 320).astype(np.int16)
+                    estimator.accept(np.stack([x, np.roll(x, 2)], axis=1))
+                self.assertEqual(estimator.observation()['side'], 'left')
+                now = 2.99
+                self.assertEqual(estimator.observation()['side'], 'left')
+                now = 3.0
+                if rejected is not None:
+                    estimator.accept(rejected)
+                self.assertEqual(estimator.observation()['side'], 'unknown')
+                self.assertIsNone(estimator.observation()['observed_at'])
+                now = 60
+                self.assertEqual(estimator.observation()['confidence'], 0.0)
+
+    def test_completion_does_not_refresh_supporting_sound(self):
+        now = 0.0
+        wake = Wake()
+        estimator = DirectionEstimator(.06, 1, clock=lambda: now)
+        session = SatelliteSession(wake, estimator, clock=lambda: now)
+        rng = np.random.default_rng(71)
+        for i in range(10):
+            now = i * .02
+            x = rng.normal(0, 3000, 320).astype(np.int16)
+            wake.next = i == 9
+            session.accept_stereo(np.stack([x, np.roll(x, 2)], axis=1).astype('<i2').tobytes())
+        events = []
+        for _ in range(65):
+            now += .02
+            events = session.accept_stereo(frame(0))
+            if events:
+                break
+        self.assertEqual(events[0]["purpose"], "wake_and_command")
+        self.assertEqual(session.observation['side'], 'left')
+        self.assertEqual(session.observed_at, 0.0)
+        self.assertTrue(session.direction_is_fresh())
+        now = 3.0
+        self.assertFalse(session.direction_is_fresh())
 
     def test_silence_and_clipping_do_not_produce_direction(self):
         estimator=DirectionEstimator(.06,1)

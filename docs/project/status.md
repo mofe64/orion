@@ -26,10 +26,9 @@ machine-learning framework.
 | Character coordinator | Explicit disabled/idle/listening/thinking/speaking states, priority, anchor-relative idles, head-led utterance-length speech performance, and background lighting |
 | Multimodal scenes | V2 parallel motion, RGBW effect, marker, audio, and exact finish-policy coordination under one clock |
 | Pi services and deployment | Source-backed runtime/gateway/listener services, incremental locked Rustpotter installation, plus bounded deployment smoke test |
-| Orion Studio home and authoring | Home/Create navigation; character, rest, lamp and voice controls; per-asset drafts; v2 pose/motion/scene editors; Rust-compiled preview; run-specific cancellation; revisioned publishing |
+| Orion Studio home and authoring | Home/Create navigation; character, rest, lamp power, warm-white/custom-color brightness, a rotatable home model, and voice controls; per-asset drafts; v2 pose/motion/scene editors; Rust-compiled preview; run-specific cancellation; revisioned publishing |
 | Studio-to-Pi control | Authenticated semantic HTTP gateway over the private `oriond` Unix socket; OS-stored desktop pairing and automatic reconnect |
 | Studio Voice response | Pi Rustpotter capture transport, Studio Qwen confirmation/agent/Chatterbox, authenticated Pi playback, and completion reporting |
-| Pi-local fallback voice | Sherpa wake detection, Silero endpointing, Moonshine transcription, Piper speech generation, and `oriond` playback integration |
 
 ## Partial
 
@@ -39,6 +38,7 @@ machine-learning framework.
 | Agent abstraction | A small `AgentProvider` boundary and Codex provider exist | OpenAI Platform and local-LLM providers are not implemented |
 | Conversational privacy | Raw audio, ASR, and TTS stay local | Codex receives confirmed text; provider disclosure must remain explicit |
 | Voice packaging | Source development starts a persistent local worker | Signed installers do not package Python, the native extension, or model weights |
+| Streaming speech | Ordered gateway chunk uploads, one Pi player, incremental character spline and per-stage diagnostics | Physical buffer, playback alignment and animation acceptance |
 | Pi audio front end | Stereo capture and coarse direction software; earlier mono hardware commissioning | Stereo orientation, Pi Rustpotter performance and physical attention acceptance; echo cancellation and noise suppression remain |
 | Studio network security | Bearer tokens and development origins; plain LAN WebSocket microphone transport | Device-approved initial pairing, encrypted voice/gateway transport and token lifecycle hardening remain |
 

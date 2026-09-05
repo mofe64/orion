@@ -20,7 +20,7 @@ class FakeLauncher implements VoiceWorkerLauncher {
 
 const READY: VoiceWorkerReadyEvent = {
   type: "ready",
-  protocol: 5,
+  protocol: 7,
   asr: { provider: "qwen3-asr", model: "Qwen/Qwen3-ASR-0.6B" },
   wake: { provider: "rustpotter", model: "hey_orion_reference.rpw", threshold: 0.4 },
   agent: { provider: "codex", model: "configured-default" },
@@ -47,6 +47,42 @@ class FakeSpeaker implements SpeechPlayer {
 }
 
 describe("StudioVoicePipeline", () => {
+  it("streams chunks before synthesis ends and acknowledges only terminal playback", async () => {
+    const transport = new FakeTransport();
+    let complete: () => void = () => undefined;
+    const speaker = { play: vi.fn(), stop: vi.fn(), append: vi.fn().mockResolvedValue(undefined), finish: vi.fn(() => new Promise<void>(resolve => { complete = resolve; })) };
+    const pipeline = new StudioVoicePipeline({ launcher: new FakeLauncher(), createTransport: () => transport, speaker });
+    await pipeline.start();
+    transport.emit({ type: "wake.candidate", name: "hey_orion", score: .8 });
+    transport.emit({ type: "speech.chunk", requestId: 1, sequence: 0, sampleRate: 24000, samples: 2, durationMs: 1, synthesisMs: 900, pcm: Int16Array.of(1, 2) });
+    await vi.waitFor(() => expect(speaker.append).toHaveBeenCalledOnce());
+    expect(transport.playback).toEqual([]);
+    transport.emit({ type: "speech.chunk", requestId: 1, sequence: 1, sampleRate: 24000, samples: 2, durationMs: 1, synthesisMs: 1200, pcm: Int16Array.of(3, 4) });
+    transport.emit({ type: "speech.end", requestId: 1, sequence: 2, synthesisMs: 1400 });
+    await vi.waitFor(() => expect(speaker.finish).toHaveBeenCalledWith(2));
+    expect(speaker.append.mock.calls.map(call => call[2])).toEqual([0, 1]);
+    expect(transport.playback).toEqual([]);
+    expect(pipeline.current().latency).toMatchObject({ synthesisFirstChunkMs: 900, synthesisTotalMs: 1400 });
+    complete();
+    await vi.waitFor(() => expect(transport.playback).toEqual([{ requestId: 1, error: undefined }]));
+  });
+
+  it("does not return to speaking when an in-flight chunk resolves after stop", async () => {
+    const transport = new FakeTransport();
+    let accepted: () => void = () => undefined;
+    const speaker = { play: vi.fn(), stop: vi.fn().mockResolvedValue(undefined), append: vi.fn(() => new Promise<void>(resolve => { accepted = resolve; })) };
+    const pipeline = new StudioVoicePipeline({ launcher: new FakeLauncher(), createTransport: () => transport, speaker });
+    await pipeline.start();
+    transport.emit({ type: "speech.chunk", requestId: 1, sequence: 0, sampleRate: 24000, samples: 2, durationMs: 1, synthesisMs: 900, pcm: Int16Array.of(1, 2) });
+    await vi.waitFor(() => expect(speaker.append).toHaveBeenCalledOnce());
+    await pipeline.stop();
+    accepted();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pipeline.current().phase).toBe("off");
+    expect(transport.playback).toEqual([]);
+  });
+
   it.each([
     ["http://orion.local:7447", "ws://orion.local:7448/"],
     ["https://192.168.1.50:7447", "ws://192.168.1.50:7448/"],

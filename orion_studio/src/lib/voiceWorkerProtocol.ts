@@ -1,13 +1,11 @@
-import { VOICE_SAMPLE_RATE, WORKER_FRAME_SAMPLES } from "./voiceAudio";
-
-export const VOICE_WORKER_PROTOCOL_VERSION = 5;
+export const VOICE_WORKER_PROTOCOL_VERSION = 7;
 
 export interface VoiceWorkerReadyEvent {
   type: "ready";
-  protocol: 5;
+  protocol: 7;
   asr: { provider: "qwen3-asr"; model: string };
   wake: { provider: "rustpotter"; model: string; threshold: number };
-  agent: { provider: string; model: string };
+  agent: { provider: string; model: string; effort?: string; runtime?: string; models?: { model: string; name: string; efforts: string[] }[] };
   tts: { provider: "chatterbox-turbo"; model: string };
 }
 
@@ -34,6 +32,7 @@ export interface CommandStartedEvent {
 
 export interface TranscriptionStartedEvent {
   type: "transcription.started";
+  captureMs?: number;
   purpose: "wake_and_command" | "command";
 }
 
@@ -63,7 +62,8 @@ export interface SynthesisStartedEvent {
 }
 
 interface SpeechAudioMetadataEvent {
-  type: "speech.audio";
+  type: "speech.audio" | "speech.chunk";
+  sequence?: number;
   requestId: number;
   sampleRate: number;
   samples: number;
@@ -73,6 +73,13 @@ interface SpeechAudioMetadataEvent {
 
 export interface SpeechAudioEvent extends SpeechAudioMetadataEvent {
   pcm: Int16Array;
+}
+
+export interface SpeechEndEvent {
+  type: "speech.end";
+  requestId: number;
+  sequence: number;
+  synthesisMs: number;
 }
 
 export interface SpeechCompletedEvent {
@@ -88,6 +95,7 @@ export interface VoiceWorkerErrorEvent {
 }
 
 export type VoiceWorkerEvent =
+  | { type: "stage.timing"; stage: string; durationMs: number }
   | VoiceWorkerReadyEvent
   | WakeCandidateEvent
   | WakeConfirmedEvent
@@ -99,6 +107,7 @@ export type VoiceWorkerEvent =
   | AgentResponseEvent
   | SynthesisStartedEvent
   | SpeechAudioEvent
+  | SpeechEndEvent
   | SpeechCompletedEvent
   | VoiceWorkerErrorEvent;
 
@@ -142,6 +151,9 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
   }
 
   switch (message.type) {
+    case "stage.timing":
+      if (typeof message.stage !== "string" || typeof message.durationMs !== "number" || !Number.isFinite(message.durationMs) || message.durationMs < 0) break;
+      return message as unknown as { type: "stage.timing"; stage: string; durationMs: number };
     case "ready":
       if (
         message.protocol !== VOICE_WORKER_PROTOCOL_VERSION
@@ -192,15 +204,20 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
     case "synthesis.started":
       if (!isRequestId(message.requestId)) break;
       return message as unknown as SynthesisStartedEvent;
+    case "speech.chunk":
     case "speech.audio":
       if (
         !isRequestId(message.requestId)
+        || (message.type === "speech.chunk" && (!Number.isInteger(message.sequence) || Number(message.sequence) < 0))
         || !isPositiveInteger(message.sampleRate)
         || !isPositiveInteger(message.samples)
         || typeof message.durationMs !== "number"
         || typeof message.synthesisMs !== "number"
       ) break;
       return message as unknown as SpeechAudioMetadataEvent;
+    case "speech.end":
+      if (!isRequestId(message.requestId) || !isPositiveInteger(message.sequence) || typeof message.synthesisMs !== "number") break;
+      return message as unknown as SpeechEndEvent;
     case "speech.completed":
       if (!isRequestId(message.requestId)) break;
       return message as unknown as SpeechCompletedEvent;
@@ -281,10 +298,6 @@ export class VoiceWorkerClient {
           type: "hello",
           protocol: VOICE_WORKER_PROTOCOL_VERSION,
           token: this.options.token,
-          sampleRate: VOICE_SAMPLE_RATE,
-          channels: 1,
-          encoding: "pcm_s16le",
-          frameSamples: WORKER_FRAME_SAMPLES,
         }));
       };
       socket.onmessage = (event) => {
@@ -297,7 +310,7 @@ export class VoiceWorkerClient {
             throw new Error("Voice worker did not send binary audio after speech metadata.");
           }
           const message = parseVoiceWorkerEvent(event.data);
-          if (message.type === "speech.audio") {
+          if ((message.type === "speech.audio" || message.type === "speech.chunk")) {
             if (this.pendingSpeech) throw new Error("Voice worker sent overlapping speech audio.");
             this.pendingSpeech = message;
             return;
@@ -311,7 +324,7 @@ export class VoiceWorkerClient {
             fail(new Error(message.message));
             return;
           }
-          this.emit(message);
+          this.emit(message as VoiceWorkerEvent);
         } catch (error) {
           fail(error instanceof Error ? error : new Error(String(error)));
         }

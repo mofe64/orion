@@ -115,7 +115,6 @@ class FakeOrionClient:
         if command.startswith("play "): return {"ok": True, "run_id": 5, "state": "executing"}
         if command.startswith("scene start "): return {"ok": True, "run_id": 6, "state": "executing"}
         if command.startswith("scene preview "): return {"ok": True, "run_id": 8, "state": "executing", "persisted": False}
-        if command.startswith("speech start "): return {"ok": True, "run_id": 7, "state": "synthesizing"}
         if command.startswith("speech file "):
             self.speech = {"run_id": 9, "state": "playing"}; return {"ok": True, "run_id": 9, "state": "queued"}
         if command == "character start":
@@ -294,3 +293,23 @@ class HomeOperationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreamingSpeechGatewayTests(unittest.TestCase):
+    def test_stream_chunks_use_one_runtime_run_and_cleanup_rejected_files(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            client = Mock()
+            client.request.return_value = {"ok": True, "run_id": 12, "state": "queued"}
+            gateway = OrionGateway(client, speech_spool=Path(directory))
+            gateway.upload_speech(pcm_wav(), "reply", streaming=True)
+            self.assertTrue(client.request.call_args.args[0].startswith("speech stream "))
+            gateway.upload_speech(pcm_wav(), "reply", streaming=True, run_id=12, sequence=1)
+            self.assertTrue(client.request.call_args.args[0].startswith("speech append 12 1 "))
+            before = set(Path(directory).iterdir())
+            client.request.return_value = {"ok": False, "error": "stale stream"}
+            with self.assertRaises(GatewayError):
+                gateway.upload_speech(pcm_wav(), "reply", streaming=True, run_id=12, sequence=2)
+            self.assertEqual(set(Path(directory).iterdir()), before)
+            with self.assertRaises(GatewayError):
+                gateway.upload_speech(pcm_wav(frames=24000*3), "reply", streaming=True)
