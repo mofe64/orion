@@ -8,7 +8,7 @@ without accessing physical hardware.
 Install:
 
 - A stable Rust toolchain with Rust 2024 edition support (Rust 1.85 or newer).
-- Python 3.11 or newer.
+- Python 3.12.
 - `uv`, or another way to create a Python virtual environment.
 
 Run every command below from the Orion repository root.

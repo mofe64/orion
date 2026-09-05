@@ -1,5 +1,5 @@
 import { Mic, MicOff, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   StudioVoicePipeline,
@@ -14,6 +14,7 @@ interface VoicePanelProps {
   connection: GatewayConnection | null;
   onClose: () => void;
   onNotice: (notice: string) => void;
+  onPhaseChange?: (label: string) => void;
 }
 
 const PHASE_LABELS: Record<StudioVoicePhase, string> = {
@@ -31,7 +32,18 @@ const PHASE_LABELS: Record<StudioVoicePhase, string> = {
   error: "Needs attention",
 };
 
-export function VoicePanel({ open, connection, onClose, onNotice }: VoicePanelProps) {
+export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange }: VoicePanelProps) {
+  const panel = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    panel.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") closeRef.current(); };
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("keydown", escape); previous?.focus(); };
+  }, [open]);
   const [playback, setPlayback] = useState<OrionPlaybackSnapshot>({ runId: null, state: "idle" });
   const pipeline = useMemo(() => new StudioVoicePipeline({
     connection: connection ?? undefined,
@@ -40,6 +52,7 @@ export function VoicePanel({ open, connection, onClose, onNotice }: VoicePanelPr
   const [snapshot, setSnapshot] = useState<StudioVoiceSnapshot>(() => pipeline.current());
 
   useEffect(() => pipeline.subscribe(setSnapshot), [pipeline]);
+  useEffect(() => { onPhaseChange?.(PHASE_LABELS[snapshot.phase]); }, [snapshot.phase, onPhaseChange]);
   useEffect(() => () => { void pipeline.stop(); }, [pipeline]);
 
   const toggleCapture = async () => {
@@ -59,7 +72,7 @@ export function VoicePanel({ open, connection, onClose, onNotice }: VoicePanelPr
   const active = !["off", "error"].includes(snapshot.phase);
 
   return (
-    <section className="voice-popover" role="dialog" aria-label="Studio voice setup">
+    <section ref={panel} className="voice-popover" role="dialog" aria-label="Studio voice setup">
       <header>
         <div><p className="panel-kicker">ORION VOICE</p><h2>Speak through Orion</h2></div>
         <button className="icon-button" onClick={onClose} aria-label="Close voice setup"><X size={15} /></button>

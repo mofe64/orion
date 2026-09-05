@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "orion-voice"
 version = "0.1.0"
 description = "Local speech workers for the Orion robot"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "numpy>=1.26,<3",
   "websockets>=14.2,<16",

@@ -38,34 +38,23 @@ uv_bootstrap="${voice_home}/.local/share/orion/uv-bootstrap"
 if [[ ! -x "${uv_bootstrap}/bin/uv" ]]; then
   python3 -m venv "${uv_bootstrap}"
 fi
-"${uv_bootstrap}/bin/python" -m pip install --disable-pip-version-check 'uv==0.11.13'
+if [[ "$("${uv_bootstrap}/bin/uv" --version 2>/dev/null || true)" != "uv 0.11.13" ]]; then
+  "${uv_bootstrap}/bin/python" -m pip install --disable-pip-version-check 'uv==0.11.13'
+fi
 uv_command="${uv_bootstrap}/bin/uv"
 
 if systemctl cat orion-listener.service >/dev/null 2>&1; then
   sudo systemctl stop orion-listener.service
 fi
-backup="${voice_home}/.local/share/orion/backups/voice-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-mkdir -p "${backup}"
-python3 "${project_root}/scripts/retire_pi_voice.py" "${project_root}" --backup "${backup}"
 voice_environment="${project_root}/voice/.venv"
 if [[ -L "${voice_environment}" ]]; then
-  echo "Refusing to replace a symlinked voice environment." >&2
+  echo "Refusing to update a symlinked voice environment." >&2
   exit 1
 fi
-if [[ -e "${voice_environment}" ]]; then
-  mv -- "${voice_environment}" "${backup}/venv"
-fi
-restore_environment() {
-  local result=$?
-  trap - ERR
-  # Keep the failed environment for diagnosis, restore the old environment in place.
-  if [[ -e "${voice_environment}" ]]; then mv -- "${voice_environment}" "${backup}/failed-venv"; fi
-  if [[ -e "${backup}/venv" ]]; then mv -- "${backup}/venv" "${voice_environment}"; fi
-  echo "Voice installation failed. Listener remains stopped. Inspect ${backup}." >&2
-  exit "${result}"
-}
-trap restore_environment ERR
-"${uv_command}" sync --project "${project_root}/voice" --locked --python 3.11 --no-default-groups
+# Sync in place: uv reuses matching packages and removes dependencies absent
+# from the lockfile. A failed update leaves the listener stopped for repair.
+trap 'echo "Voice installation failed. Listener remains stopped; rerun install_pi_voice.sh after resolving the error." >&2' ERR
+UV_PROJECT_ENVIRONMENT="${voice_environment}" "${uv_command}" sync --project "${project_root}/voice" --locked --python 3.12 --no-default-groups
 "${voice_environment}/bin/python" -m unittest discover -s "${project_root}/voice/tests" -q
 "${voice_environment}/bin/python" - "${project_root}" <<'PY'
 from pathlib import Path
@@ -77,4 +66,4 @@ wake.process(bytes(640))
 print('Pi Rustpotter reference loaded and accepted a 20 ms silence frame.')
 PY
 trap - ERR
-printf 'Rustpotter voice installed. Retired files are archived at %s\n' "${backup}"
+echo 'Rustpotter voice installed and verified.'

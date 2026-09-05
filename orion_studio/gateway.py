@@ -262,6 +262,14 @@ class OrionGateway:
                     "Speech must be one line and no more than 2000 UTF-8 bytes.",
                 )
             response = self._checked(f"speech start {text}")
+        elif operation == "rest":
+            response = self._checked("character rest")
+        elif operation == "lamp":
+            channels = payload.get("rgbw")
+            if (not isinstance(channels, list) or len(channels) != 4
+                    or any(type(value) is not int or not 0 <= value <= 255 for value in channels)):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "rgbw must contain four integers from 0 to 255.")
+            response = self._checked("lamp " + " ".join(map(str, channels)))
         elif operation == "character_start":
             response = self._checked("character start")
         elif operation == "character_stop":
@@ -277,7 +285,7 @@ class OrionGateway:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, preview_scene, speech, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
+                "Supported operations are goto, motion, scene, preview_scene, speech, rest, lamp, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {

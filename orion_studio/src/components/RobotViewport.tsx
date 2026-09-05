@@ -21,16 +21,20 @@ function previewColor(light: LightPreview): THREE.Color {
   );
 }
 
+let savedCamera: { position: THREE.Vector3; target: THREE.Vector3 } | null = null;
+
 export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const robotRef = useRef<URDFRobot | null>(null);
   const lampLightRef = useRef<THREE.PointLight | null>(null);
+  const invalidateRef = useRef<() => void>(() => {});
   const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
+    let disposed = false;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0f17);
     scene.fog = new THREE.FogExp2(0x0a0f17, 0.55);
@@ -54,7 +58,8 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0.24, 0);
-    controls.enableDamping = true;
+    if (savedCamera) { camera.position.copy(savedCamera.position); controls.target.copy(savedCamera.target); }
+    controls.enableDamping = false;
     controls.minDistance = 0.35;
     controls.maxDistance = 2.5;
     controls.update();
@@ -95,6 +100,7 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
       new STLLoader(loadingManager).load(
         url,
         (geometry) => {
+          if (disposed) { geometry.dispose(); return; }
           geometry.computeVertexNormals();
           const mesh = new THREE.Mesh(
             geometry,
@@ -107,6 +113,7 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           done(mesh);
+          invalidateRef.current();
         },
         undefined,
         (error) => done(null, error instanceof Error ? error : new Error(String(error))),
@@ -124,24 +131,43 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
+      invalidateRef.current();
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     resize();
 
     let frame = 0;
-    const render = () => {
-      controls.update();
-      renderer.render(scene, camera);
-      frame = requestAnimationFrame(render);
+    const invalidate = () => {
+      if (disposed || frame || document.hidden) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!disposed && !document.hidden) renderer.render(scene, camera);
+      });
     };
-    render();
+    invalidateRef.current = invalidate;
+    controls.addEventListener("change", invalidate);
+    document.addEventListener("visibilitychange", invalidate);
+    invalidate();
 
     return () => {
+      savedCamera = { position: camera.position.clone(), target: controls.target.clone() };
+      disposed = true;
+      invalidateRef.current = () => {};
       cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", invalidate);
+      controls.removeEventListener("change", invalidate);
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const materials = mesh.material ? (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) : [];
+        materials.forEach((material) => material.dispose());
+      });
       observer.disconnect();
       controls.dispose();
+      key.shadow.dispose();
       renderer.dispose();
+      renderer.forceContextLoss();
       renderer.domElement.remove();
       robotRef.current = null;
       lampLightRef.current = null;
@@ -154,6 +180,7 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
     for (const [name, value] of Object.entries(joints)) {
       robot.joints[name]?.setJointValue(value + catalog.urdfJointOffsets[name as keyof JointPositions]);
     }
+    invalidateRef.current();
   }, [catalog.urdfJointOffsets, joints]);
 
   useEffect(() => {
@@ -161,11 +188,12 @@ export function RobotViewport({ catalog, joints, light }: RobotViewportProps) {
     if (!lamp) return;
     lamp.color.copy(previewColor(light));
     lamp.intensity = Math.max(light.red, light.green, light.blue, light.white) / 22;
+    invalidateRef.current();
   }, [light]);
 
   return (
     <div className="robot-viewport" ref={hostRef} aria-label="Interactive 3D preview of Orion">
-      <div className="viewport-badge">URDF / LIVE PREVIEW</div>
+      <div className="viewport-badge">3D model</div>
       {renderError ? (
         <div className="viewport-fallback" role="status">
           <span>Preview unavailable</span>

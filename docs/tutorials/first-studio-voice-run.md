@@ -11,7 +11,7 @@ of the required first-time setup.
 ## Prerequisites
 
 - An Apple Silicon Mac.
-- Python 3.10–3.13; Python 3.12 is the commissioned choice.
+- Python 3.12.
 - `uv`.
 - The configured [Pi listener](../../voice/README.md), its token and a trusted
   local network. Voice audio and the token travel unencrypted.

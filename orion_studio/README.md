@@ -13,27 +13,55 @@ Studio / Chatterbox ── authenticated HTTP v2 ──> Pi gateway
 ```
 
 Editing is inert. A slider, keyframe, or timeline drag never moves Orion.
-Explicit **Run on Orion** and **Publish v2 asset** actions cross the gateway.
+Explicit Home controls, **Run on Orion**, and **Publish asset** actions cross
+the gateway.
 
-## Editor model
+## Home and Create
 
-- **Pose** — all five joints, semantic tags, idle profile, default lighting,
-  and live calibrated ranges while connected.
-- **Motion** — absolute or anchor-relative space, named character style,
-  through/settle arrivals, legal holds, partial offsets, and named markers.
-- **Scene** — parallel motion, lighting, and audio tracks with seconds or
-  marker triggers and an explicit finish policy.
-- **Preview** — samples the Rust compiler's exact calibrated 50 Hz spline,
-  displays retimed markers and peak speed, and can evaluate relative clips
-  around any powered anchor.
-- **Character** — explicit start/stop plus listening and thinking reactions;
-  status exposes state, immutable anchor, active clip, and next idle category.
-- **Diagnostics** — live calibration, 7.4 V STS3215 profile, runtime mode,
-  torque state, active character state, and deterministic preview seed.
+Home provides voice access, character status, curated expressions, and three
+routine controls:
 
-The interface targets WCAG AA: visible keyboard focus, semantic controls,
-44 px primary targets, reduced-motion support, responsive editing layouts, and
-navy surfaces with restrained blue, cyan, and violet status/accent color.
+- **Go to rest** cancels active speech or scenes, turns character mode off, and
+  follows the runtime's calibrated three-second movement to the rest pose.
+  Motors continue holding the pose; this is not a torque-release command.
+- **Enter character mode** starts autonomous character behaviour and restores
+  expressive lighting.
+- **Turn on light**, **Apply light**, and **Turn off light** set the lamp through
+  `oriond`. Choose color and brightness before applying. Speech and scenes can
+  temporarily take priority over the manual light.
+
+These controls require the updated gateway and runtime on the Pi. Editing a
+color or brightness alone does not send a command. The Home model is an
+illustration, not live robot telemetry.
+
+Create contains three levels of an expression:
+
+- **Pose:** one body position, defined by the five joint angles.
+- **Motion:** how Orion travels between positions, including timing, holds,
+  anticipation, and settling.
+- **Scene:** movement coordinated with lighting and sound. Events can use
+  elapsed time or a named motion marker.
+
+For example, a left-facing pose defines the destination; a left-looking motion
+adds the expressive journey; a scene adds a light response or sound. Keeping
+these separate lets expressions reuse the same poses and motions.
+
+Drafts save on this device per asset and restore when selected again, including
+following a restart. **Discard changes** restores the catalog version.
+**Publish asset** sends an asset to Orion; edited poses and motions must be
+published before running. Browser-storage errors remain visible and prevent
+switching away from an unsaved asset.
+
+The preview distinguishes a static pose, compilation in progress, a failed
+compile, and a compiled preview. Compiled movement uses the Rust trajectory
+compiler and connected calibration; it does not establish physical clearance.
+Unresolved timeline events stay in **Awaiting compilation**. Each resolved event
+has a separate selectable row; zoom expands the time scale.
+
+Robot activity shows accepted run IDs, progress, terminal results, and a
+run-specific cancel action. Diagnostics contains runtime and calibration details;
+seeds and simulated reactions belong to developer tools. Home does not load the
+3D renderer. Create renders on changes and releases its GPU resources on exit.
 
 ## Development
 
@@ -127,7 +155,7 @@ character reactions and optional commissioned attention. Follow
 remote phase returns the running robot to mechanical rest, releases torque,
 fast-forwards the selected branch, validates the user asset catalog, builds
 runtime and trajectory binaries, installs the Pi Rustpotter environment,
-archives the old voice stack, installs all three services, and runs light/audio
+installs all three services, and runs light/audio
 plus left/right expressive physical smoke tests. It verifies native wake-model
 loading and listener authentication as part of the same command. All components therefore come
 from one Git revision.
@@ -137,4 +165,4 @@ See the [system architecture](../docs/explanation/system-architecture.md),
 and [scene reference](../scenes/README.md).
 
 See the [Studio home audit](../docs/project/studio-home-audit-2026-09-04.md) for
-prioritised interface findings and proposed Home/Create separation.
+the original findings and validation of their fixes.

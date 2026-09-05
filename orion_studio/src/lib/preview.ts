@@ -71,8 +71,8 @@ export function sceneDuration(
     return Math.max(end, event.at + duration);
   }, 0);
   const lightEnd = scene.lighting.reduce((end, event) => {
-    const start = triggerTime(event, scene, trajectories) ?? 0;
-    return Math.max(end, start + (event.duration ?? 0.8));
+    const start = triggerTime(event, scene, trajectories);
+    return start === null ? end : Math.max(end, start + (event.duration ?? 0.8));
   }, 0);
   const audioEnd = scene.audio.reduce(
     (end, event) => Math.max(end, triggerTime(event, scene, trajectories) ?? 0),

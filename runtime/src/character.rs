@@ -289,6 +289,27 @@ impl CharacterCoordinator {
         Ok(self.status.clone())
     }
 
+    /// Leave autonomous character behavior and use the existing rest trajectory.
+    pub fn rest<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<serde_json::Value> {
+        self.clear_attention();
+        self.preempt_idle(now, core)?;
+        if core.mode() == RuntimeMode::Moving {
+            checked(core.handle_command("stop", now))?;
+        }
+        self.finish_stop();
+        if core.mode() == RuntimeMode::Observe {
+            checked(core.handle_command("configure", now))?;
+        }
+        if core.mode() == RuntimeMode::Configured {
+            checked(core.handle_command("enable", now))?;
+        }
+        checked(core.handle_command("goto rest 3.0", now))
+    }
+
     pub fn set_reaction<D: RuntimeDriver>(
         &mut self,
         reaction: &str,

@@ -14,3 +14,5 @@ orion_studio/voice_worker/models/*
 !orion_studio/voice_worker/models/README.md
 !orion_studio/voice_worker/models/*.rpw
 orion_studio/voice_worker/rustpotter_native/target/
+
+.playwright-cli/

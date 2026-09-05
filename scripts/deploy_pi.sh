@@ -10,13 +10,12 @@ Deploy and physically smoke-test Orion through SSH. Defaults:
   root:   /home/mofe/dev/orion
   branch: main
 
-The Pi must already trust the workstation's SSH key, and the workstation must
-trust the Pi's SSH host key. The remote script installs and enables oriond,
+The workstation must trust the Pi's SSH host key. SSH keys are recommended;
+password login is also supported through one shared SSH connection. The remote script installs and enables oriond,
 the Studio gateway and the Rustpotter listener during the supervised physical
 smoke test. Deployment opens an SSH terminal so sudo can request the Pi user's
 password. The account must be permitted to install packages and manage services.
-It installs Pi voice dependencies, builds Rustpotter and retires
-the checkout's legacy voice workers/models. Qwen and Chatterbox stay on Studio.
+It installs Pi voice dependencies and builds Rustpotter. Qwen and Chatterbox stay on Studio.
 
 The matching Studio v2 frontend is tested and production-built locally before
 SSH deployment. Use --skip-studio-check only if the exact revision was already
@@ -67,20 +66,31 @@ fi
 echo "Connecting to ${pi_host} to deploy Orion branch ${branch}..."
 # Keep stdin available for sudo. Feeding the script to bash -s prevents a
 # normal interactive SSH terminal, so copy it to a temporary file first.
-remote_script="$(ssh -o ConnectTimeout=10 "${pi_host}" mktemp /tmp/orion-deploy.XXXXXXXXXX)"
+# A private control socket lets setup, transfer and the interactive command reuse
+# one login. Close it when deployment ends, including failed transfers.
+control_directory="$(mktemp -d /tmp/orion-ssh.XXXXXXXXXX)"
+ssh_options=(-o ConnectTimeout=10 -o ControlMaster=auto -o ControlPersist=60
+  -o "ControlPath=${control_directory}/connection")
+remote_script=""
+cleanup_connection() {
+  local result=$?
+  trap - EXIT
+  if [[ -n "${remote_script}" ]]; then
+    ssh "${ssh_options[@]}" -o BatchMode=yes "${pi_host}" \
+      rm -f -- "${remote_script}" >/dev/null 2>&1 || true
+  fi
+  ssh "${ssh_options[@]}" -o BatchMode=yes -O exit "${pi_host}" >/dev/null 2>&1 || true
+  rm -rf -- "${control_directory}"
+  exit "${result}"
+}
+trap cleanup_connection EXIT
+remote_script="$(ssh "${ssh_options[@]}" "${pi_host}" mktemp /tmp/orion-deploy.XXXXXXXXXX)"
 if [[ ! "${remote_script}" =~ ^/tmp/orion-deploy\.[A-Za-z0-9]+$ ]]; then
+  remote_script=""
   echo "The Pi did not return a valid temporary deployment path." >&2
   exit 1
 fi
-cleanup_remote_script() {
-  if [[ -n "${remote_script}" ]]; then
-    # No password prompt during cleanup if transfer/connection failed.
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "${pi_host}" \
-      rm -f -- "${remote_script}" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup_remote_script EXIT
-scp -o ConnectTimeout=10 "${script_directory}/pi_deploy_remote.sh" "${pi_host}:${remote_script}"
-ssh -t -o ConnectTimeout=10 "${pi_host}" "trap 'rm -f -- ${remote_script}' EXIT
+scp "${ssh_options[@]}" "${script_directory}/pi_deploy_remote.sh" "${pi_host}:${remote_script}"
+ssh "${ssh_options[@]}" -t "${pi_host}" "trap 'rm -f -- ${remote_script}' EXIT
 bash '${remote_script}' '${project_root}' '${branch}'"
 remote_script=""

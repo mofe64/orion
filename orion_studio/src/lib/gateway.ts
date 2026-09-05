@@ -277,3 +277,10 @@ export function setCharacterState(
     body: JSON.stringify({ operation: "character_state", state }),
   });
 }
+
+export function restOrion(connection: GatewayConnection): Promise<unknown> {
+  return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "rest" }) });
+}
+export function setLamp(connection: GatewayConnection, rgbw: number[]): Promise<unknown> {
+  return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "lamp", rgbw }) });
+}

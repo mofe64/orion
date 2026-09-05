@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "orion-studio-voice-worker"
 version = "0.1.0"
 description = "Persistent local voice inference worker for Orion Studio"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "huggingface-hub>=0.36,<2",
   "numpy>=1.26,<3",

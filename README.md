@@ -91,7 +91,13 @@ pnpm build
 Some runtime integration tests expect the repository Python environment at
 `.venv/bin/python`. Model-independent voice-worker tests use the worker's own
 environment; see its [validation instructions](orion_studio/voice_worker/README.md#validation).
-- Will probably look into unifying various python environemnts later
+Orion-managed environments use Python 3.12, selected by `.python-version` and
+package metadata. The simulator environment (`.venv`) is for workstation development and is not
+installed or required on the Pi. Keep separate environments for Pi
+capture (`voice/.venv`), Studio inference (`orion_studio/voice_worker/.venv`), and
+servo commissioning (`hardware/servo_setup/.venv`). Use `uv sync --locked` for
+packages with a lockfile. The Pi gateway and the `uv` bootstrap use system Python;
+they do not require changing the operating system interpreter.
 
 ## Implementation status
 

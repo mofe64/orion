@@ -38,6 +38,11 @@ if name == 'ssh' and '-t' in sys.argv:
                                     env=env, input='', text=True, capture_output=True)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             self.assertEqual(result.returncode, 17 if fail_scp else 23 if fail_remote else 0, result.stderr)
+            sockets = [next(arg for arg in call if arg.startswith('ControlPath=')) for call in calls]
+            self.assertEqual(len(set(sockets)), 1)
+            socket_directory = Path(sockets[0].split('=', 1)[1]).parent
+            self.assertFalse(socket_directory.exists())
+            self.assertTrue(any('-O' in call and 'exit' in call for call in calls))
             launch = [call for call in calls if call[0] == 'ssh' and '-t' in call]
             if fail_scp:
                 self.assertEqual(launch, [])
@@ -47,7 +52,7 @@ if name == 'ssh' and '-t' in sys.argv:
                 self.assertIn("bash '/tmp/orion-deploy.fixture' '/home/pi/orion' 'main'", launch[0][-1])
                 self.assertIn("trap 'rm -f -- /tmp/orion-deploy.fixture' EXIT", launch[0][-1])
             if fail_scp or fail_remote:
-                cleanup = calls[-1]
+                cleanup = next(call for call in calls if call[-4:] == ['rm', '-f', '--', '/tmp/orion-deploy.fixture'])
                 self.assertIn('BatchMode=yes', cleanup)
                 self.assertEqual(cleanup[-4:], ['rm', '-f', '--', '/tmp/orion-deploy.fixture'])
 

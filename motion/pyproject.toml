@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "orion-motion"
 version = "0.1.0"
 description = "Backend-independent Orion motion definitions and validation"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 dependencies = ["PyYAML>=6"]
 
 [tool.pytest.ini_options]

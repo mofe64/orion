@@ -53,6 +53,18 @@ if ! sudo -v; then
   exit 1
 fi
 
+# Keep the authenticated sudo timestamp valid during long Rust builds. The
+# refresh never prompts and ends with this deployment process.
+deploy_pid=$$
+(
+  while kill -0 "${deploy_pid}" 2>/dev/null; do
+    sleep 50
+    sudo -n -v || exit
+  done
+) &
+sudo_refresh_pid=$!
+trap 'kill "${sudo_refresh_pid}" 2>/dev/null || true' EXIT
+
 old_binary="${project_root}/runtime/target/release/oriond"
 active_binary="${old_binary}"
 daemon_available=false
@@ -195,7 +207,7 @@ if [[ ! -f "${token_file}" ]]; then
   python3 orion_studio/gateway.py create-token --token-file "${token_file}"
 fi
 
-echo "Installing Rustpotter voice and retiring the legacy voice stack..."
+echo "Updating Rustpotter voice dependencies..."
 scripts/install_pi_voice.sh "${project_root}" "${user_home}"
 
 echo "Installing and enabling Orion's boot services..."

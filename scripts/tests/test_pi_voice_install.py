@@ -171,9 +171,11 @@ if name == 'uname': print('Linux' if sys.argv[1] == '-s' else 'aarch64')
 if name == 'sudo' and '-n' in sys.argv: sys.exit('non-interactive sudo refuses the password prompt')
 if name == 'dpkg-query':
  print('install ok installed' if os.environ['ORION_TEST_PACKAGES'] == '1' else 'unknown ok not-installed')
+if name == 'uv' and '--version' in sys.argv:
+ print('uv 0.11.13'); sys.exit(0)
 if name == 'uv':
  root = pathlib.Path(sys.argv[sys.argv.index('--project') + 1])
- (root / '.venv/bin').mkdir(parents=True)
+ (root / '.venv/bin').mkdir(parents=True, exist_ok=True)
  (root / '.venv/bin/python').symlink_to(os.environ['ORION_TEST_PYTHON'])
  sys.exit(int(os.environ['ORION_TEST_FAIL']))
 '''
@@ -189,8 +191,9 @@ if name == 'uv':
                                     env=env, text=True, capture_output=True)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             self.assertEqual(result.returncode, int(fail_sync), result.stderr)
-            sync = next(call for call in calls if call[0] == 'uv')
+            sync = next(call for call in calls if call[0] == 'uv' and 'sync' in call)
             self.assertIn('--locked', sync); self.assertNotIn('--extra', sync)
+            self.assertEqual(sync[sync.index('--python') + 1], '3.12')
             apt = [call for call in calls if call[0] == 'sudo' and 'apt-get' in call]
             if packages_installed:
                 self.assertEqual(apt, [])
@@ -198,18 +201,21 @@ if name == 'uv':
                 self.assertTrue(any('alsa-utils' in call for call in apt))
             self.assertIn(['sudo', '-v'], calls)
             self.assertTrue(all('-n' not in call for call in calls if call[0] == 'sudo'))
+            self.assertEqual((root / 'voice/.venv/old-stack').read_text(), 'legacy environment')
+            self.assertFalse(list(home.glob('.local/share/orion/backups/voice-*')))
+            self.assertFalse(any('pip' in call for call in calls))
+            self.assertNotIn('retired fixture stack', result.stdout)
+            self.assertFalse(any('restart' in call for call in calls))
             if fail_sync:
-                self.assertEqual((root / 'voice/.venv/old-stack').read_text(), 'legacy environment')
-                self.assertTrue(list(home.glob('.local/share/orion/backups/voice-*/failed-venv')))
+                self.assertIn('Listener remains stopped', result.stderr)
+                self.assertFalse(any('unittest' in call for call in calls))
             else:
-                self.assertFalse((root / 'voice/.venv/old-stack').exists())
-                self.assertTrue(list(home.glob('.local/share/orion/backups/voice-*/venv/old-stack')))
                 self.assertTrue(any('unittest' in call for call in calls))
-                self.assertTrue(any('--no-default-groups' in call for call in calls))
+                self.assertIn('--no-default-groups', sync)
 
-    def test_success_replaces_old_environment_and_validates_new_stack(self): self.exercise()
+    def test_success_updates_existing_environment_and_validates_stack(self): self.exercise()
     def test_installed_packages_skip_privileged_package_manager(self): self.exercise(packages_installed=True)
-    def test_failure_restores_old_environment_without_restarting_workers(self): self.exercise(True)
+    def test_failure_leaves_listener_stopped_without_archiving_environment(self): self.exercise(True)
 
 
 if __name__ == '__main__':

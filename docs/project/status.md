@@ -25,8 +25,8 @@ machine-learning framework.
 | Local audio | Named WAV cues and `oriond`-owned ReSpeaker playback |
 | Character coordinator | Explicit disabled/idle/listening/thinking/speaking states, priority, anchor-relative idles, head-led utterance-length speech performance, and background lighting |
 | Multimodal scenes | V2 parallel motion, RGBW effect, marker, audio, and exact finish-policy coordination under one clock |
-| Pi services and deployment | Source-backed runtime/gateway/listener services, automatic Rustpotter installation and legacy voice retirement, plus bounded deployment smoke test |
-| Orion Studio authoring | Responsive dark creative workspace, URDF preview, v2 pose/motion/scene editors, Rust-compiled preview, calibrated controls, and revisioned publishing |
+| Pi services and deployment | Source-backed runtime/gateway/listener services, incremental locked Rustpotter installation, plus bounded deployment smoke test |
+| Orion Studio home and authoring | Home/Create navigation; character, rest, lamp and voice controls; per-asset drafts; v2 pose/motion/scene editors; Rust-compiled preview; run-specific cancellation; revisioned publishing |
 | Studio-to-Pi control | Authenticated semantic HTTP gateway over the private `oriond` Unix socket; OS-stored desktop pairing and automatic reconnect |
 | Studio Voice response | Pi Rustpotter capture transport, Studio Qwen confirmation/agent/Chatterbox, authenticated Pi playback, and completion reporting |
 | Pi-local fallback voice | Sherpa wake detection, Silero endpointing, Moonshine transcription, Piper speech generation, and `oriond` playback integration |

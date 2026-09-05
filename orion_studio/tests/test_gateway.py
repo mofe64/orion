@@ -85,6 +85,8 @@ class FakeOrionClient:
 
     def request(self, command: str) -> dict[str, object]:
         self.commands.append(command)
+        if command == "character rest" or command.startswith("lamp "):
+            return {"ok": True, "run_id": 99}
         if command == "status":
             return {"schema_version": 3, "robot": "orion", "build_revision": "test-revision",
                     "mode": self.mode, "torque_enabled": self.torque_enabled,
@@ -271,6 +273,23 @@ class HttpAuthenticationTests(unittest.TestCase):
         with urllib.request.urlopen(self.request("/api/v2/scenes", document=scene_document("http_scene"))) as response:
             published = json.load(response); self.assertEqual(response.status, HTTPStatus.CREATED)
         self.assertEqual(published["name"], "http_scene")
+
+
+class HomeOperationTests(unittest.TestCase):
+    def test_rest_uses_character_owned_shutdown(self):
+        client = FakeOrionClient()
+        gateway = OrionGateway(client)
+        gateway.submit({"operation": "rest"})
+        self.assertEqual(client.commands[-1], "character rest")
+
+    def test_lamp_validates_channels_before_command(self):
+        client = FakeOrionClient()
+        gateway = OrionGateway(client)
+        for value in [[True, 0, 0, 0], [256, 0, 0, 0], [-1, 0, 0, 0], [0, 0, 0], "0 0 0 0"]:
+            with self.assertRaises(GatewayError): gateway.submit({"operation": "lamp", "rgbw": value})
+        self.assertEqual(client.commands, [])
+        gateway.submit({"operation": "lamp", "rgbw": [32, 64, 128, 0]})
+        self.assertEqual(client.commands, ["lamp 32 64 128 0"])
 
 
 if __name__ == "__main__":

@@ -920,6 +920,7 @@ fn serve_driver<D: RuntimeDriver>(
     }
     let mut next_sample = started_at;
     let mut speaking_light_intensity = 0.0;
+    let mut manual_light: Option<Rgbw8> = None;
     while !stopping.load(Ordering::Relaxed) {
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
@@ -954,12 +955,31 @@ fn serve_driver<D: RuntimeDriver>(
         }
         if !scenes.is_active()
             && !speech.is_active()
+            && manual_light.is_none()
             && let Some(effect) = character.background_lighting_effect(&core)
         {
             lighting.render(&render_effect(&effect, now_seconds, 0.55)?)?;
         }
+        if !scenes.is_active() && !speech.is_active() {
+            if let Some(color) = manual_light {
+                lighting.render_uniform(color)?;
+            }
+        }
         server.serve_pending(|command| {
-            handle_daemon_command_with_character(
+            if let Some(values) = command.strip_prefix("lamp ") {
+                if scenes.is_active() || speech.is_active() {
+                    return serde_json::json!({"ok": false, "error": "Wait for the current scene or speech to finish before changing the lamp."}).to_string();
+                }
+                let channels: Vec<_> = values.split_whitespace().collect();
+                let result = if channels.len() == 4 { parse_rgbw(&mut channels.iter().map(|value| value.to_string()), "lamp") } else {
+                    Err(orion_runtime::Error::InvalidArgument("Expected lamp R G B W".into()))
+                };
+                return match result {
+                    Ok(color) => { manual_light = Some(color); serde_json::json!({"ok": true, "command": "lamp"}).to_string() },
+                    Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
+                };
+            }
+            let response = handle_daemon_command_with_character(
                 command,
                 started_at.elapsed().as_secs_f64(),
                 &mut core,
@@ -968,7 +988,14 @@ fn serve_driver<D: RuntimeDriver>(
                 &mut character,
                 audio.as_mut(),
                 Some(&asset_reload),
-            )
+            );
+            if command == "character start"
+                && serde_json::from_str::<serde_json::Value>(&response)
+                    .is_ok_and(|value| value["ok"] == true)
+            {
+                manual_light = None;
+            }
+            response
         })?;
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }
@@ -1096,6 +1123,18 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
             serde_json::json!({"ok": true, "command": "character_start", "character": status})
                 .to_string(),
         );
+    }
+    if command == "character rest" {
+        if scenes.is_active() {
+            scenes.cancel(now_seconds, core, audio)?;
+        }
+        if speech.is_active() {
+            speech.cancel(audio)?;
+        }
+        let coordinator = character.as_deref_mut().ok_or_else(|| {
+            orion_runtime::Error::InvalidState("Character coordinator is not configured.".into())
+        })?;
+        return Ok(coordinator.rest(now_seconds, core)?.to_string());
     }
     if command == "character stop" {
         if scenes.is_active() {
@@ -1839,6 +1878,46 @@ mod tests {
         assert_eq!(speech.last_status().unwrap().state, SpeechPhase::Cancelled);
         assert!(!speech_path.exists());
         assert_eq!(audio.commands().last(), Some(&AudioCommand::Stop));
+    }
+
+    #[test]
+    fn character_rest_disables_character_and_starts_calibrated_rest() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let poses =
+            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
+        let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
+        let spool = tempfile::tempdir().unwrap();
+        let mut speech = SpeechCoordinator::with_spool("/tmp/not-used.sock", spool.path()).unwrap();
+        let mut character = CharacterCoordinator::new(42);
+        let mut audio = RecordingAudioDevice::blocking();
+        character.start(0.0, &mut core).unwrap();
+        assert!(character.status().enabled);
+        write_test_wav(&spool.path().join("rest-test.wav"));
+        speech.start_spooled("rest-test").unwrap();
+        speech.tick(&mut audio);
+        assert!(speech.is_active());
+        let response: serde_json::Value =
+            serde_json::from_str(&handle_daemon_command_with_character(
+                "character rest",
+                0.0,
+                &mut core,
+                &mut scenes,
+                &mut speech,
+                &mut character,
+                &mut audio,
+                None,
+            ))
+            .unwrap();
+        assert_eq!(response["ok"], true, "{response}");
+        assert!(!speech.is_active());
+        assert_eq!(speech.last_status().unwrap().state, SpeechPhase::Cancelled);
+        assert!(!character.status().enabled);
+        assert_eq!(core.snapshot().motion.as_ref().unwrap().name, "rest");
     }
 
     #[test]
