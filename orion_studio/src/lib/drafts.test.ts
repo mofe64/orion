@@ -1,12 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { projectCatalog } from "./catalog";
-import { readDraft, saveDraft, discardDraft } from "./drafts";
+import { readDraft, saveDraft, discardDraft, resetAcknowledgementDrafts } from "./drafts";
 
 beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) });
 });
 describe("workspace drafts", () => {
+  it("clears only the two requested system-scene drafts once, preserving later edits", () => {
+    for (const name of ["acknowledge_left", "agreement", "acknowledge_right"]) {
+      saveDraft("scene", { ...projectCatalog.scenes[name], description: "Edited" });
+    }
+    resetAcknowledgementDrafts();
+    for (const name of ["acknowledge_left", "agreement"]) {
+      expect(localStorage.getItem(`orion-studio:draft:v1:scene:${name}`)).toBeNull();
+      expect(readDraft("scene", projectCatalog.scenes[name])).toEqual(projectCatalog.scenes[name]);
+    }
+    expect(readDraft("scene", projectCatalog.scenes.acknowledge_right).description).toBe("Edited");
+    saveDraft("scene", { ...projectCatalog.scenes.agreement, description: "Later edit" });
+    resetAcknowledgementDrafts();
+    expect(readDraft("scene", projectCatalog.scenes.agreement).description).toBe("Later edit");
+  });
   it("preserves independent edits for all asset types across selection and reload", () => {
     const scene = Object.values(projectCatalog.scenes)[0];
     const motion = Object.values(projectCatalog.motions)[0];

@@ -69,7 +69,9 @@ Robot activity shows accepted run IDs, progress, terminal results, and a
 run-specific cancel action. Diagnostics contains runtime and calibration details;
 seeds and simulated reactions belong to developer tools. Both screens load the
 3D renderer on demand, render on changes, and release GPU resources on exit.
-Create retains its orbit, zoom, and pan controls independently of Home.
+Create retains its orbit, zoom, and pan controls independently of Home. Its
+floor grid is centered on the stationary base and aligned with the base’s
+edges; it is a visual reference, not a change to robot coordinates or calibration.
 
 ## Development
 

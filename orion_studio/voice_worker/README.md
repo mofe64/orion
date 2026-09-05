@@ -7,7 +7,7 @@ Rustpotter. The Pi owns the sole wake detector.
 
 ## Setup on Apple Silicon
 
-The Qwen and Chatterbox adapters require Apple Silicon and Python 3.10–3.13.
+The deployed environment requires Apple Silicon and Python 3.12.
 From this directory:
 
 ```bash
@@ -20,37 +20,37 @@ The model downloader prepares the Hugging Face cache. Studio startup does not
 proactively download weights. See [model management](../../docs/how-to/manage-studio-voice-models.md).
 
 Prepare the [Pi listener](../../voice/README.md), then launch Studio. No
-certificate setup is required. The native launcher passes the listener URL
-and authentication token to the worker. The token is
-passed in the child environment, not in the URL or logged command arguments.
-`ORION_PI_VOICE_URL` overrides the default `ws://GATEWAY_HOST:7448/`.
+certificate setup is required. Studio starts one worker child while the app is
+open. Closing the Voice panel detaches its observer; quitting Studio stops the
+worker. Connection credentials travel through the parent pipe and are not saved
+in a service configuration. Reply model settings are saved separately.
 The token and audio travel unencrypted on the local network.
 
 ## Processing contract
 
-Local protocol version 7 accepts UI control and playback acknowledgements only.
-Its hello message contains `type`, `protocol`, and `token`; Studio and the
-worker must be updated together.
-The authenticated loopback worker connects to Pi listener protocol version 1.
-Qwen rejects transcripts that do not begin with “Hey Orion”; an empty confirmed
-wake requests a follow-up utterance buffered by the Pi. Only extracted command
-text reaches the configured agent. The Codex provider produces spoken replies
-and cannot invoke movement or raw device operations.
+The authenticated loopback observer uses protocol version 7. Its hello contains
+`type`, `protocol`, and `token`. Update Studio and the worker together.
+The worker connects to Pi listener protocol version 1, confirms “Hey Orion”,
+processes a buffered follow-up when needed and sends only extracted command text
+to the agent. It owns uploads and Pi completion acknowledgments, with automatic
+reconnect and cancellation of interrupted turns. The UI cannot claim playback
+ownership. Microphone control is an explicit authenticated Pi operation.
 
-The worker sends Chatterbox PCM16 to Studio, which uploads validated mono
-24 kHz WAV to Orion through the existing gateway. It acknowledges playback
-only after a terminal Pi speech run. Failures discard the active session;
-connection failure stops Voice and requires an explicit retry. Microphone
-frames sent by Studio are protocol errors.
+The worker loads models once and serializes inference. A separate bounded
+executor keeps HTTP uploads and playback polling from waiting behind model work.
+Studio keeps one child per app instance; the Pi rejects competing processing
+attachments. Qwen rejects unconfirmed wakes before invoking the agent. The Codex
+provider cannot invoke movement or raw device operations.
 
 Model-independent tests include real loopback WebSocket integration with fake
 models; they do not establish physical microphone quality or inference latency.
 See [voice architecture](../../docs/explanation/voice-architecture.md) for data
 flow, deadlines, privacy and the separate gateway transport boundary.
 
-Replies stream as `speech.chunk` metadata followed by binary PCM16, with ordered
-zero-based sequences and one `speech.end`. The worker accepts playback completion
-only after synthesis ends. Chatterbox gain is selected from the first audible
+Internally, replies stream as `speech.chunk` metadata followed by binary PCM16,
+with ordered zero-based sequences and one `speech.end`. The worker
+converts them to gateway WAV uploads; it reports completion only after synthesis
+ends and Pi playback reaches a terminal result. Chatterbox gain is selected from the first audible
 chunk and held for the reply to avoid volume pumping between chunks.
 
 Studio selects the reply model and effort explicitly (defaults: `gpt-5.6-sol`,

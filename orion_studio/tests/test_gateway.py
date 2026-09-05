@@ -210,6 +210,18 @@ class GatewayContractTests(unittest.TestCase):
             with self.assertRaisesRegex(GatewayError, "must stay between"): gateway.publish_pose(pose_document("unsafe_pose", 2.0))
             self.assertFalse((root / "motion/user/poses/unsafe_pose.yaml").exists())
 
+    def test_voice_session_reaches_runtime_and_invalid_ids_are_not_spooled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spool = Path(directory)
+            gateway = OrionGateway(self.client, speech_spool=spool)
+            identity = "a" * 32
+            gateway.upload_speech(pcm_wav(), f"voice:{identity}")
+            self.assertTrue(self.client.commands[-1].endswith(f" {identity}"))
+            before = list(spool.iterdir())
+            with self.assertRaises(GatewayError):
+                gateway.upload_speech(pcm_wav(), "voice:invalid session")
+            self.assertEqual(list(spool.iterdir()), before)
+
     def test_speech_spooling_validation_status_and_rejection_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             spool = Path(directory); gateway = OrionGateway(self.client, speech_spool=spool)

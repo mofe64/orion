@@ -303,6 +303,9 @@ class OrionGateway:
         self._validate_speech_wav(body)
         if streaming and len(body) > 100_000:
             raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Speech chunks may contain at most two seconds of audio.")
+        voice_session = studio_request_id.removeprefix("voice:") if studio_request_id.startswith("voice:") else None
+        if voice_session is not None and not re.fullmatch(r"[a-f0-9]{32}", voice_session):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_session", "Invalid voice session ID.")
         identifier = secrets.token_urlsafe(24)
         try:
             self.speech_spool.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -323,7 +326,8 @@ class OrionGateway:
             if run_id is not None:
                 runtime = self._checked(f"speech append {run_id} {sequence} {identifier}")
             else:
-                runtime = self._checked(f"speech {'stream' if streaming else 'file'} {identifier}")
+                suffix = f" {voice_session}" if voice_session is not None else ""
+                runtime = self._checked(f"speech {'stream' if streaming else 'file'} {identifier}{suffix}")
         except GatewayError:
             path.unlink(missing_ok=True)
             raise

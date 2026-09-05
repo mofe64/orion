@@ -10,7 +10,7 @@ environment variables.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ORION_PROJECT_ROOT` | Resolved from the Tauri crate during development | Points a packaged or relocated Studio build at an Orion checkout |
-| `ORION_STUDIO_VOICE_PYTHON` | `orion_studio/voice_worker/.venv/bin/python` on Unix; `.venv/Scripts/python.exe` on Windows | Overrides the Python executable used to start the voice worker |
+| `ORION_STUDIO_VOICE_PYTHON` | `orion_studio/voice_worker/.venv/bin/python` on macOS | Overrides the Python executable used to start the voice worker |
 | `ORION_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-0.6B` | Qwen3-ASR repository ID or compatible local model path |
 | `ORION_STUDIO_TTS_MODEL` | `mlx-community/chatterbox-turbo-8bit` | Chatterbox repository ID or compatible local model path |
 | `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
@@ -19,8 +19,8 @@ environment variables.
 | `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |
 
 Choose the reply model and reasoning effort in Studio’s Voice → Reply model section.
-The defaults are `gpt-5.6-sol` and `medium`; preferences are saved locally and
-applied when Voice starts. Runtime discovery tries installed Codex/ChatGPT app
+The defaults are `gpt-5.6-sol` and `medium`; preferences are saved in `~/.config/orion/voice-settings.json` and
+applied with **Save reply settings**, which restarts Studio’s voice worker. Runtime discovery tries installed Codex/ChatGPT app
 executables, then the PATH CLI, then the SDK runtime. Each candidate must report
 the selected model and effort in its catalog. Debug shows the selected executable.
 
@@ -52,8 +52,11 @@ from 1 to 15 seconds. Each HTTP request has a five-second timeout. Rejected
 credentials pause automatic retries and show **Pair Orion again**. **Disconnect**
 pauses connection for the current session; **Forget Orion on this computer**
 removes the saved credential. Neither action changes Pi torque or character
-mode. Losing the connection stops Studio Voice; reconnect does not reopen the
-microphone automatically.
+mode. Closing the Voice panel detaches its UI observer; quitting Studio stops its
+voice worker. Pi capture continues unless explicitly muted. If no Studio worker
+is connected when capture finishes, Orion plays an error cue and listens again.
+Only model and effort are saved in `voice-settings.json`; pairing credentials
+remain in the desktop credential store. Microphone mute is a persistent Pi setting.
 
 Linux desktop builds require the Secret Service backend and D-Bus development
 libraries (`libdbus-1-dev` on Debian/Ubuntu), plus an unlocked desktop keyring
@@ -107,3 +110,10 @@ disable direction estimation pending commissioning. See [Pi voice setup](../../v
 `oriond --serve` defaults to `--character-on-start on`. Select `off` explicitly
 for torque-off maintenance startup. Studio Stop affects the current daemon
 session, not the next restart.
+
+The listener's `--mute-file` defaults to `~/.config/orion/microphone.json`.
+Absent a saved preference, capture starts enabled. The authenticated protocol-1
+`hello` with `role: "control"` returns microphone status; `microphone.mute` with
+a boolean `muted` changes and persists it without claiming processing ownership.
+Starting `oriond.service` pulls in the listener; `PartOf=oriond.service` propagates
+runtime stop/restart to the listener.

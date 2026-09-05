@@ -80,9 +80,12 @@ pnpm tauri dev
 ```
 
 Pair Studio with the Pi gateway once using its token. The desktop app saves
-the pairing in the OS credential store and reconnects automatically. Then open **Voice** and select
-**Enable Orion microphone**. Studio loads processing models and connects to
-`ws://GATEWAY_HOST:7448/`. No workstation microphone permission is needed.
+the pairing in the OS credential store and reconnects automatically. Studio
+starts its voice worker, which loads models and connects to
+`ws://GATEWAY_HOST:7448/`. Open **Voice** to inspect status or mute the microphone.
+No workstation microphone permission is needed. Capture defaults on unless
+explicitly muted. Keep Studio open for replies. Without Studio, Orion plays an
+error cue after capture and returns to listening.
 Studio reports Pi capture readiness, wake confirmation, transcription,
 response generation and playback.
 

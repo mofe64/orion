@@ -1,7 +1,7 @@
 [Unit]
 Description=Orion hardware runtime
 Documentation=file://@PROJECT_ROOT@/runtime/README.md
-Wants=orion-neopixel-pin.service
+Wants=orion-neopixel-pin.service orion-listener.service
 After=local-fs.target sound.target orion-neopixel-pin.service
 
 [Service]

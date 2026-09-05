@@ -6,6 +6,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import URDFLoader, { type URDFRobot } from "urdf-loader";
 
 import type { JointPositions, LightPreview, ProjectCatalog } from "../types";
+import { baseGridFrame } from "../lib/viewportGrid";
 
 interface RobotViewportProps {
   catalog: ProjectCatalog;
@@ -174,6 +175,23 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
             lightUpdateRef.current();
           }
           done(mesh);
+          if (mode === "editor" && name === "lamp_base.stl") {
+            // The stationary base's CAD axes define this visual floor reference.
+            // Leave the URDF, joint offsets, and moving links untouched.
+            mesh.updateWorldMatrix(true, false);
+            geometry.computeBoundingBox();
+            const frame = baseGridFrame(geometry.boundingBox!, mesh.matrixWorld);
+            grid.position.set(frame.center.x, .001, frame.center.z);
+            grid.rotation.y = frame.yaw;
+            floor.position.copy(frame.center);
+            if (!savedCamera) {
+              camera.position.x += frame.center.x;
+              camera.position.z += frame.center.z;
+              controls.target.x = frame.center.x;
+              controls.target.z = frame.center.z;
+              controls.update();
+            }
+          }
           meshComplete();
           invalidateRef.current();
         },

@@ -19,8 +19,9 @@ existing calibrated Pi with the [ReSpeaker driver](../hardware/audio/README.md)
 and Rust toolchain. The deployment includes physical movement tests.
 
 Prepare the Mac worker using the [Studio Voice setup](../docs/tutorials/first-studio-voice-run.md).
-Pair Studio with Orion once, then enable Orion’s microphone. Pairing is saved
-in the desktop credential store; enabling capture remains a separate action.
+Open Studio manually and pair it with Orion to run voice processing.
+Pi capture defaults on unless explicitly muted. If Studio is unavailable after
+capture ends, Orion plays its error cue and returns to listening.
 
 ## Runtime
 
@@ -31,8 +32,9 @@ in the desktop credential store; enabling capture remains a separate action.
 - Studio models: Qwen3-ASR-0.6B and Chatterbox Turbo; no ASR or TTS models are needed on the Pi.
 
 Audio and authentication travel unencrypted over the LAN. Use a trusted network.
-Capture opens only while Studio is connected and authenticated. **Stop Orion
-microphone** closes capture; Character Stop controls animation separately.
+Capture opens with the listener service and survives processing disconnects.
+**Mute Orion microphone** closes capture, clears buffered audio and saves mute
+across restarts; Character Stop controls animation separately.
 
 Say “Hey Orion” followed by a request, or pause after the wake phrase and then
 speak. Qwen rejects unconfirmed wake candidates before they reach the agent.

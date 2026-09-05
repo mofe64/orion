@@ -3,6 +3,16 @@ import { JOINT_NAMES, type MotionDefinition, type PoseDefinition, type SceneDefi
 export type DraftAsset = SceneDefinition | MotionDefinition | PoseDefinition;
 export type DraftKind = "scene" | "motion" | "pose";
 const prefix = "orion-studio:draft:v1:";
+const systemSceneReset = "orion-studio:migration:2026-09-05-system-scene-reset";
+
+/** One-time, user-requested reset; other assets and future edits are preserved. */
+export function resetAcknowledgementDrafts(): void {
+  if (localStorage.getItem(systemSceneReset)) return;
+  discardDraft("scene", "acknowledge_left");
+  discardDraft("scene", "agreement");
+  localStorage.setItem(systemSceneReset, "done");
+}
+
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const number = (value: unknown) => typeof value === "number" && Number.isFinite(value);
 const timing = (value: Record<string, unknown>) => (value.at === undefined || number(value.at)) && (value.on_marker === undefined || typeof value.on_marker === "string");

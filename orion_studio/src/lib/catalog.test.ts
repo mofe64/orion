@@ -4,6 +4,18 @@ import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
 import { projectCatalog } from "./catalog";
 
 describe("v2 project catalog", () => {
+  it("keeps acknowledgement scenes and motion timing identical apart from direction", () => {
+    const mirror = (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll("left", "right"));
+    expect(mirror(projectCatalog.scenes.acknowledge_left)).toEqual(projectCatalog.scenes.acknowledge_right);
+    expect(mirror(projectCatalog.motions.look_at_left_expressive)).toEqual(projectCatalog.motions.look_at_right_expressive);
+    expect(projectCatalog.scenes.agreement.motion).toEqual([
+      { id: "agreement-motion-0", at: 0, play: "acknowledge_nod" },
+    ]);
+    const markers = projectCatalog.motions.acknowledge_nod.keyframes.map(frame => frame.marker);
+    for (const event of [...projectCatalog.scenes.agreement.lighting, ...projectCatalog.scenes.agreement.audio]) {
+      expect(markers).toContain(event.on_marker);
+    }
+  });
   it("loads the complete commissioned character vocabulary", () => {
     const names = Object.keys(projectCatalog.motions);
     expect(names.filter((name) => name.startsWith("idle_"))).toHaveLength(8);

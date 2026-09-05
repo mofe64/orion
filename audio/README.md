@@ -24,3 +24,12 @@ The v2 vocabulary is `notice_warm`, `acknowledge_warm`, `curious_rise`,
 `agree_soft`, `delight_warm`, `settle_soft`, and `error_muted`. It uses one
 coherent harmonic palette, gentle attacks, short decays, and restrained
 loudness. Routine idles never dispatch a cue.
+
+## Voice entry cues
+
+`voice_wake` is a 200 ms, 220 Hz rounded tone. `voice_processing` is a 180 ms,
+180 Hz tone. `VOICE_CUE_GAIN` in the generator sets their levels independently
+of reply speech and the global ALSA mixer. Regenerate with
+`python3 audio/generate_cues.py` from the repository root after tuning. The
+runtime plays each entry cue under the voice session guard; speech preempts it.
+Physical loudness, microphone pickup and endpoint effects require Pi validation.

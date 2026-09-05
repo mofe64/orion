@@ -249,11 +249,20 @@ impl SpeechCoordinator {
             }
             let path = &active.wav_path;
             let label = format!("speech-{}", active.status.run_id);
-            let start = if active.stream.is_some() {
-                audio.start_pcm(&label)
+            // Speech owns the speaker once prebuffering completes. Optional
+            // local cues must never turn a valid response into "audio busy".
+            let start = (if audio.is_playing() {
+                audio.stop()
             } else {
-                audio.play_file(&label, path)
-            };
+                Ok(())
+            })
+            .and_then(|_| {
+                if active.stream.is_some() {
+                    audio.start_pcm(&label)
+                } else {
+                    audio.play_file(&label, path)
+                }
+            });
             match start {
                 Ok(()) => {
                     active.status.state = SpeechPhase::Playing;
@@ -544,6 +553,30 @@ mod tests {
         assert_eq!(speech.last_status().unwrap().run_id, run);
         assert!(speech.last_status().unwrap().first_playback_ms.is_some());
         assert!(directory.path().read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn speech_preempts_a_processing_cue_only_when_ready_to_play() {
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let mut audio = RecordingAudioDevice::blocking();
+        audio.play("voice_processing").unwrap();
+        let run = speech.start_stream("first").unwrap().run_id;
+        speech.tick(&mut audio);
+        assert_eq!(
+            audio.commands().len(),
+            1,
+            "queued speech leaves the cue alone"
+        );
+        speech.end_stream(run, 1).unwrap();
+        speech.tick(&mut audio);
+        assert_eq!(speech.active_status().unwrap().state, SpeechPhase::Playing);
+        assert!(matches!(
+            audio.commands()[1],
+            crate::audio::AudioCommand::Stop
+        ));
+        assert_eq!(audio.commands().len(), 3);
     }
 
     #[test]

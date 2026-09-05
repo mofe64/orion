@@ -38,6 +38,7 @@ machine-learning framework.
 | Agent abstraction | A small `AgentProvider` boundary and Codex provider exist | OpenAI Platform and local-LLM providers are not implemented |
 | Conversational privacy | Raw audio, ASR, and TTS stay local | Codex receives confirmed text; provider disclosure must remain explicit |
 | Voice packaging | Source development starts a persistent local worker | Signed installers do not package Python, the native extension, or model weights |
+| Voice lifecycle | Local cues/thinking, independent Pi capture, saved mute, Studio-owned processing and an error cue when Studio is unavailable after capture | Hardware cue/echo/latency acceptance and deployed restart commissioning |
 | Streaming speech | Ordered gateway chunk uploads, one Pi player, incremental character spline and per-stage diagnostics | Physical buffer, playback alignment and animation acceptance |
 | Pi audio front end | Stereo capture and coarse direction software; earlier mono hardware commissioning | Stereo orientation, Pi Rustpotter performance and physical attention acceptance; echo cancellation and noise suppression remain |
 | Studio network security | Bearer tokens and development origins; plain LAN WebSocket microphone transport | Device-approved initial pairing, encrypted voice/gateway transport and token lifecycle hardening remain |

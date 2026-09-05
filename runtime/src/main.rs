@@ -797,6 +797,10 @@ fn serve_driver<D: RuntimeDriver>(
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
+    let mut feedback = orion_runtime::voice_feedback::VoiceFeedback::default();
+    let mut playing_run = None;
+    let mut voice_speech_run: Option<u64> = None;
+    let mut feedback_was_lit = false;
     let server = UnixCommandServer::bind(&options.socket_path)?;
     let stopping = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stopping))?;
@@ -822,7 +826,24 @@ fn serve_driver<D: RuntimeDriver>(
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
         scenes.tick(now_seconds, &mut core, lighting.as_mut(), audio.as_mut())?;
+        if !scenes.is_active() && !speech.is_active() {
+            let _ = audio.update();
+        }
         speech.tick(audio.as_mut());
+        let current_playing = speech
+            .active_status()
+            .filter(|status| status.state == orion_runtime::speech::SpeechPhase::Playing)
+            .map(|status| status.run_id);
+        if current_playing.is_some() && current_playing != playing_run {
+            if current_playing == voice_speech_run {
+                feedback.playback_started(now_seconds);
+            }
+            character.note_speech_started(now_seconds);
+        }
+        playing_run = current_playing;
+        if feedback.expire(now_seconds) {
+            let _ = character.set_reaction("neutral", now_seconds, &mut core);
+        }
         if let Some(energy) = speech.active_energy() {
             speaking_light_intensity = smooth_speaking_light(speaking_light_intensity, energy);
             lighting.render(&render_effect(
@@ -841,7 +862,7 @@ fn serve_driver<D: RuntimeDriver>(
             scenes
                 .last_status()
                 .map(|status| (status.run_id, status.state == ScenePhase::Completed)),
-            speech.is_active(),
+            current_playing.is_some(),
             speech.active_analysis(),
             speech.active_energy_frame(),
         )?;
@@ -850,7 +871,7 @@ fn serve_driver<D: RuntimeDriver>(
             speaking_light_intensity = 0.0;
         }
         if !scenes.is_active()
-            && !speech.is_active()
+            && current_playing.is_none()
             && manual_light.is_none()
             && let Some(effect) = character.background_lighting_effect(&core)
         {
@@ -861,7 +882,65 @@ fn serve_driver<D: RuntimeDriver>(
                 lighting.render_uniform(color)?;
             }
         }
+        if feedback_was_lit
+            && feedback.light(now_seconds).is_none()
+            && !scenes.is_active()
+            && current_playing.is_none()
+            && manual_light.is_none()
+            && !character.status().enabled
+        {
+            lighting.clear()?;
+        }
+        feedback_was_lit = feedback.light(now_seconds).is_some();
+        if !scenes.is_active() && current_playing.is_none() {
+            if let Some(color) = feedback.light(now_seconds) {
+                lighting.render_uniform(color)?;
+            }
+        }
         server.serve_pending(|command| {
+            if let Some(fields) = command.strip_prefix("voice ") {
+                if fields == "status" {
+                    return serde_json::json!({"ok": true, "voice": feedback}).to_string();
+                }
+                let parts: Vec<_> = fields.split_whitespace().collect();
+                if parts.len() != 2 {
+                    return serde_json::json!({"ok": false, "error": "Expected voice SESSION EVENT"}).to_string();
+                }
+                if matches!(parts[1], "attend_left" | "attend_right") {
+                    if feedback.owns(parts[0]) {
+                        let side = parts[1].strip_prefix("attend_").unwrap();
+                        let _ = character.attend(side, 0.75, now_seconds, &mut core);
+                        let _ = character.set_reaction("thinking", now_seconds, &mut core);
+                    }
+                    return serde_json::json!({"ok": true}).to_string();
+                }
+                let action = feedback.event(parts[0], parts[1], now_seconds);
+                match action {
+                    Ok(Some((reaction, cue))) => {
+                        if cue == Some("error_muted") && speech.active_status().is_some_and(|status| Some(status.run_id) == voice_speech_run) {
+                            let _ = speech.cancel(audio.as_mut());
+                        }
+                        let _ = character.set_reaction(reaction, now_seconds, &mut core);
+                        if !speech.is_active() && !scenes.is_active() {
+                            if let Some(cue) = cue {
+                                if cue == "error_muted" { let _ = audio.stop(); }
+                                if audio.play(cue).is_ok() { feedback.cue_started(cue, now_seconds); }
+                            }
+                            else { let _ = audio.stop(); }
+                        }
+                        return serde_json::json!({"ok": true}).to_string();
+                    }
+                    Ok(None) => return serde_json::json!({"ok": true}).to_string(),
+                    Err(error) => return serde_json::json!({"ok": false, "error": error}).to_string(),
+                }
+            }
+            if matches!(command, "stop" | "disable" | "character stop" | "character rest") {
+                feedback.clear();
+                if matches!(command, "stop" | "disable") {
+                    let _ = character.set_reaction("neutral", now_seconds, &mut core);
+                }
+                if !speech.is_active() && !scenes.is_active() { let _ = audio.stop(); }
+            }
             if let Some(values) = command.strip_prefix("lamp ") {
                 if scenes.is_active() || speech.is_active() {
                     return serde_json::json!({"ok": false, "error": "Wait for the current scene or speech to finish before changing the lamp."}).to_string();
@@ -875,8 +954,14 @@ fn serve_driver<D: RuntimeDriver>(
                     Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
                 };
             }
+            let fields: Vec<_> = command.split_whitespace().collect();
+            let scoped_speech = fields.len() == 4 && fields[0] == "speech" && matches!(fields[1], "stream" | "file");
+            if scoped_speech && !feedback.owns(fields[3]) {
+                return serde_json::json!({"ok": false, "error": "Stale voice session"}).to_string();
+            }
+            let normalized = if scoped_speech { fields[..3].join(" ") } else { command.to_owned() };
             let response = handle_daemon_command_with_character(
-                command,
+                &normalized,
                 started_at.elapsed().as_secs_f64(),
                 &mut core,
                 &mut scenes,
@@ -885,6 +970,14 @@ fn serve_driver<D: RuntimeDriver>(
                 audio.as_mut(),
                 Some(&asset_reload),
             );
+            if scoped_speech {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) {
+                    if value["ok"] == true {
+                        voice_speech_run = value["run_id"].as_u64();
+                        let _ = feedback.event(fields[3], "first_chunk", now_seconds);
+                    }
+                }
+            }
             if command == "character start"
                 && serde_json::from_str::<serde_json::Value>(&response)
                     .is_ok_and(|value| value["ok"] == true)
@@ -1105,17 +1198,11 @@ fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Sized>(
         if scenes.is_active() {
             return Ok(serde_json::json!({"ok": false, "command": "speech_file", "error": "scene already active"}).to_string());
         }
-        if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.preempt_idle(now_seconds, core)?;
-        }
         let status = if command.starts_with("speech stream ") {
             speech.start_stream(identifier.trim())?
         } else {
             speech.start_spooled(identifier.trim())?
         };
-        if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.note_speech_started(now_seconds);
-        }
         return Ok(serde_json::json!({"ok": true, "command": "speech_file", "run_id": status.run_id, "state": status.state}).to_string());
     }
     if command == "speech stop" {

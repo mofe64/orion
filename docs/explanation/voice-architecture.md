@@ -27,9 +27,11 @@ that every false positive is eliminated.
 ## Capture ownership and session lifecycle
 
 The Pi listener is an independent process, outside the 50 Hz motor loop. The
-service may run at boot, but opens capture only while an authenticated Studio
-owner has enabled the Orion microphone. Closing Voice or disconnecting ends
-capture. A single connection owns capture; additional connections are refused.
+service opens capture when it starts unless a saved mute preference disables it.
+Closing Studio or disconnecting its processing station leaves capture running.
+One authenticated connection owns processing; additional processing connections
+are refused. Separate authenticated control connections can inspect or change
+mute. Muting closes capture, clears buffered audio and persists across restarts.
 
 Every interaction has a random session ID. The Pi captures continuously while
 enabled, keeps three seconds of pre-roll in memory and sends a candidate event
@@ -60,14 +62,14 @@ Processing suppresses further wake triggers. Playback acknowledgement is sent
 only after the Pi reports terminal playback. This is turn-taking, not acoustic
 echo cancellation or barge-in. Session deadlines, bounded socket queues and
 strict state transitions prevent indefinite buffering and stale command replay.
-A disconnected session is discarded; the operator re-enables Voice to reconnect.
+A disconnected session is discarded; the Studio worker reconnects automatically.
 Processing has a 120-second session lease; entering playback grants 180 seconds.
 
 ## Transport and deployment
 
 Studio saves the paired gateway address and token in the OS credential store.
-Gateway reconnect restores read-only status/authoring connectivity without
-replaying robot operations or enabling Voice. The listener token is reused from
+Gateway reconnect restores status/authoring connectivity without replaying robot
+operations. Paired Studio starts its own voice worker while the app is open. The listener token is reused from
 that saved connection. See [pairing configuration](../reference/configuration.md#saved-pairing).
 
 The Pi listener uses plain WebSockets on port 7448 and the Pi's existing
@@ -78,9 +80,11 @@ unencrypted, so this development connection is intended for a trusted LAN.
 Token authentication controls access but does not protect against network
 interception.
 
-Studio's native launcher passes connection configuration to its Python worker.
-The worker connects directly to the Pi listener and exposes processing events
-to the UI through its existing authenticated loopback socket. Version 7 of that
+Studio's native launcher owns one voice-worker child and stops it when the app
+exits. Closing the Voice panel only detaches its status connection. Credentials
+reach the worker through its parent pipe and are not saved in a service file.
+The worker connects directly to the Pi and exposes status through an authenticated
+loopback socket; the Pi permits only one processing owner. Version 7 of that
 local protocol rejects workstation microphone frames. Pi protocol version 1
 uses JSON session messages and length-checked PCM16 utterances.
 
@@ -110,10 +114,10 @@ Studio is the voice processing station. Its compute supports Qwen speech
 recognition, the configured agent, and expressive Chatterbox synthesis. The Pi
 owns capture, Rustpotter, endpointing, playback, and character animation; it
 runs no speech-recognition or speech-synthesis model. Conversational voice
-requires Studio to be connected and enabled.
+requires the paired Studio app open on an awake Mac.
 
-The pipeline waits for an endpointed utterance before transcription and a
-complete synthesized reply before uploading the WAV for playback. Response
+The pipeline waits for an endpointed utterance before transcription, then uploads
+Chatterbox chunks as they arrive while the Pi prebuffers for playback. Response
 latency therefore includes endpointing, transport, ASR, agent response, TTS,
 WAV upload, and playback startup. The worker reports ASR, agent, and synthesis
 durations; these do not constitute a complete end-to-end latency measurement.
@@ -136,9 +140,9 @@ values disable direction-based attention.
 
 ## Streaming replies and timing
 
-Chatterbox generates native audio chunks on Studio. The worker sends each chunk
-on its existing local WebSocket; Studio uploads ordered PCM16 mono 24 kHz WAV
-chunks to the authenticated gateway. `POST /api/v2/speech/stream` creates one
+Chatterbox generates native audio chunks on Studio. The Studio worker uploads ordered PCM16 mono 24 kHz WAV chunks directly to
+the authenticated gateway. UI observers receive status and timing events; they
+have no upload or completion responsibility. `POST /api/v2/speech/stream` creates one
 runtime speech run, `/api/v2/speech/{run}/chunks/{sequence}` appends audio, and
 `/api/v2/speech/{run}/end` declares the final sequence. The existing complete-WAV
 endpoint remains available for other callers.
@@ -164,3 +168,24 @@ queue-to-player-start/elapsed durations. These are monotonic durations measured
 within each process; overlapping stages cannot be added as total latency.
 Player start is software timing, not an acoustic measurement at the speaker.
 Capture duration requires the updated Pi listener; older listeners omit it.
+
+## Local interaction feedback
+
+The listener queues a semantic wake event to `oriond` before it sends anything
+to the processing station. Endpoint completion queues thinking before utterance
+upload. Feedback events carry the Pi voice session ID. Runtime guards suppress
+duplicates and stale transitions, and enforce a bounded feedback lease.
+
+Wake feedback uses one quiet tone and a brief three-colour pulse, followed by
+steady listening light. Thinking uses one quiet entry cue, warm-white breathing
+and small head motion through the existing calibrated compiler. Buffered
+follow-up audio survives a bare-wake transition back to listening. Local
+capture continues throughout cues; acoustic echo cancellation is not implemented.
+
+Session-scoped speech uploads bind the Pi speech run to the active voice turn.
+Thinking yields when the runtime starts its player, preserving commanded spline
+position and velocity, the conversational anchor and speech variation. Cues
+cannot displace speech. Stop/rest and foreground work retain their priority.
+When Studio is unavailable after capture, the runtime plays `error_muted` once
+and returns to listening. Physical cue loudness and microphone pickup remain
+unverified.

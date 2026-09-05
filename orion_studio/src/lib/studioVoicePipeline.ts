@@ -42,6 +42,7 @@ export interface VoiceWorkerTransport {
 }
 
 export interface StudioVoiceSnapshot {
+  muted?: boolean;
   deviceLabel: string | null;
   sampleRate: number | null;
   error: string | null;
@@ -92,12 +93,13 @@ class TauriVoiceWorkerLauncher implements VoiceWorkerLauncher {
   start(): Promise<VoiceWorkerConnection> {
     if (!this.connection) throw new Error("Connect Orion before starting Voice.");
     return invoke<VoiceWorkerConnection>("start_voice_worker", {
-      piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token, agentModel: this.settings.model, agentEffort: this.settings.effort,
+      gatewayUrl: this.connection.url, piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token, agentModel: this.settings.model, agentEffort: this.settings.effort,
     });
   }
 
   stop(): Promise<void> {
-    return invoke("stop_voice_worker");
+    // The native application owns the child; detaching a panel does not stop it.
+    return Promise.resolve();
   }
 }
 
@@ -170,6 +172,7 @@ export class StudioVoicePipeline {
       this.unsubscribeTransport = unsubscribe;
       this.publish({
         ...this.snapshot,
+        muted: ready.muted ?? false,
         asrProvider: ready.asr.provider,
         asrModel: ready.asr.model,
         wakeProvider: ready.wake.provider,
@@ -194,6 +197,11 @@ export class StudioVoicePipeline {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  async setMuted(muted: boolean): Promise<void> {
+    const status = await invoke<{ muted: boolean }>("set_voice_microphone", { muted });
+    this.publish({ ...this.snapshot, muted: status.muted });
   }
 
   async stop(): Promise<void> {
@@ -237,6 +245,20 @@ export class StudioVoicePipeline {
 
   private acceptWorkerEvent(event: VoiceWorkerEvent): void {
     switch (event.type) {
+      case "ready":
+        this.publish({ ...this.snapshot, phase: "ready", error: null, muted: event.muted ?? false,
+          asrProvider: event.asr.provider, asrModel: event.asr.model,
+          wakeProvider: event.wake.provider, wakeModel: event.wake.model, wakeThreshold: event.wake.threshold,
+          agentProvider: event.agent.provider, agentModel: event.agent.model, agentEffort: event.agent.effort,
+          runtime: event.agent.runtime, models: event.agent.models,
+          ttsProvider: event.tts.provider, ttsModel: event.tts.model });
+        break;
+      case "microphone.status":
+        this.publish({ ...this.snapshot, muted: event.muted });
+        break;
+      case "speech.started":
+        this.publish({ ...this.snapshot, phase: "speaking" });
+        break;
       case "wake.candidate":
         ++this.speechEpoch;
         this.snapshot.latency = {};

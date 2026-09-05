@@ -14,6 +14,7 @@ SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH_BYTES = 2
 PEAK = 0.32
+VOICE_CUE_GAIN = {"voice_wake": 0.12, "voice_processing": 0.08}
 
 
 def envelope(position: float, duration: float) -> float:
@@ -70,10 +71,11 @@ def main() -> None:
         "settle_soft": [(659.255, 0.15), (523.251, 0.27)],
         "error_muted": [(392.000, 0.17), (349.228, 0.25)],
     }
+    cues.update({"voice_wake": [(220.0, 0.20)], "voice_processing": [(180.0, 0.18)]})
     directory = Path(__file__).resolve().parent / "cues"
     for name, notes in cues.items():
         output = directory / f"{name}.wav"
-        write_stereo_wav(output, phrase(notes))
+        write_stereo_wav(output, [round(sample * VOICE_CUE_GAIN.get(name, 1.0)) for sample in phrase(notes)])
         print(f"Generated {output}")
 
 

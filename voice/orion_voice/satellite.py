@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import suppress
+from collections import deque
 import hmac
 import json
 from pathlib import Path
@@ -179,13 +180,123 @@ async def serve(args):
     capture = StereoCapture(args.device)
     session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing, args.channel_sign))
     lock = asyncio.Lock()
+    capture_gate = asyncio.Lock()
+    mute_file = getattr(args, "mute_file", args.token_file.with_name("microphone.json"))
+    muted = json.loads(mute_file.read_text())["muted"] if mute_file.exists() else False
+    if type(muted) is not bool:
+        raise ValueError("Invalid saved microphone preference")
+    owner = None
+    outgoing = None
+    generation = 0
+    timing_history = deque(maxlen=128)
+    changed = asyncio.Event()
+    feedback = asyncio.Queue(maxsize=64)
 
-    async def character(command):
-        # Optional expression must never break a valid speech session.
-        with suppress(OSError, ValueError, asyncio.TimeoutError):
-            await daemon_command(command, args.daemon_socket)
+    def expression(kind, session_id=None):
+        identity = session_id or session.session_id
+        if identity:
+            try:
+                feedback.put_nowait(f"voice {identity} {kind}")
+            except asyncio.QueueFull:
+                # The runtime's own lease bounds feedback if its socket is unavailable.
+                pass
+
+    def cancel_turn():
+        nonlocal generation
+        expression("cancel")
+        generation += 1
+        session.reset()
+        if outgoing is not None:
+            while not outgoing.empty(): outgoing.get_nowait()
+
+    async def character():
+        while True:
+            command = await feedback.get()
+            with suppress(OSError, ValueError, asyncio.TimeoutError):
+                await daemon_command(command, args.daemon_socket)
+
+    async def deliver(messages):
+        nonlocal outgoing
+        for message in messages:
+            if isinstance(message, dict):
+                kind = message["type"]
+                if kind in {"wake.candidate", "utterance"}:
+                    timing_history.append({"sessionId": message["sessionId"], "event": kind, "at": time.monotonic()})
+                if kind == "wake.candidate": expression("wake")
+                elif kind == "utterance": expression("endpoint" if owner is not None else "unavailable")
+                elif kind == "session.expired": expression("cancel", message["sessionId"])
+            if outgoing is not None:
+                try:
+                    outgoing.put_nowait(message)
+                except asyncio.QueueFull:
+                    await owner.close(4012, "Processing connection stalled")
+                    cancel_turn()
+                    return
+        if owner is None and any(isinstance(m, dict) and m["type"] == "utterance" for m in messages):
+            session.reset()
+
+    async def listen():
+        nonlocal generation
+        opened = False
+        try:
+            while True:
+                if muted:
+                    if opened:
+                        capture.close()
+                        opened = False
+                    changed.clear()
+                    await changed.wait()
+                    continue
+                if not opened:
+                    async with capture_gate:
+                        if muted: continue
+                        opening = asyncio.create_task(asyncio.to_thread(capture.open))
+                        try:
+                            await asyncio.shield(opening)
+                        except asyncio.CancelledError:
+                            # Cancelling to_thread cannot cancel resource creation.
+                            # Retire the opener before allowing service shutdown.
+                            await opening
+                            capture.close()
+                            raise
+                        opened = True
+                    if muted: continue
+                epoch = generation
+                try:
+                    audio = await asyncio.to_thread(capture.read)
+                except Exception:
+                    capture.close()
+                    opened = False
+                    cancel_turn()
+                    await asyncio.sleep(0.25)
+                    continue
+                if epoch == generation and not muted:
+                    await deliver(session.accept_stereo(audio))
+        finally:
+            capture.close()
+
+    async def set_muted(value):
+        nonlocal muted
+        if type(value) is not bool: raise ValueError("Mute requires a boolean")
+        # Write before acknowledging, so success means the preference is durable.
+        mute_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = mute_file.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"muted": value}))
+        temporary.chmod(0o600)
+        temporary.replace(mute_file)
+        if muted == value: return
+        interrupted = session.session_id
+        muted = value
+        cancel_turn()
+        if muted:
+            async with capture_gate:
+                capture.close()
+        changed.set()
+        if interrupted and outgoing is not None:
+            outgoing.put_nowait({"type": "session.expired", "sessionId": interrupted})
 
     async def connection(ws):
+        nonlocal owner, outgoing
         hello = json.loads(await asyncio.wait_for(ws.recv(), 10))
         if (not isinstance(hello, dict) or hello.get("type") != "hello"
                 or type(hello.get("protocol")) is not int or hello.get("protocol") != PROTOCOL
@@ -193,75 +304,84 @@ async def serve(args):
                 or not hmac.compare_digest(hello["token"], token)):
             await ws.close(4003, "Invalid listener handshake")
             return
+        if hello.get("role") == "control":
+            await ws.send(json.dumps({"type": "microphone.status", "muted": muted, "timingHistory": list(timing_history)}))
+            async for raw in ws:
+                message = json.loads(raw)
+                if message.get("type") != "microphone.mute": raise ValueError("Invalid microphone control")
+                await set_muted(message.get("muted"))
+                await ws.send(json.dumps({"type": "microphone.status", "muted": muted, "timingHistory": list(timing_history)}))
+            return
         if lock.locked():
             await ws.close(4009, "Listener already owned")
             return
         async with lock:
-            session.reset()
-            # Capture is enabled only for the connected, authenticated Studio owner.
-            await asyncio.to_thread(capture.open)
+            cancel_turn()
+            owner = ws
             outgoing = asyncio.Queue(maxsize=32)
-
-            async def enqueue(messages):
-                for message in messages:
-                    outgoing.put_nowait(message)  # Backpressure aborts; never queues stale audio.
+            queue = outgoing
 
             async def send():
                 while True:
-                    message = await outgoing.get()
+                    message = await queue.get()
                     await asyncio.wait_for(ws.send(message if isinstance(message, bytes) else json.dumps(message)), 5)
-
-            async def listen():
-                while True:
-                    audio = await asyncio.to_thread(capture.read)
-                    events = session.accept_stereo(audio)
-                    if any(isinstance(e, dict) and e["type"] == "session.expired" for e in events):
-                        await character("character state neutral")
-                    await enqueue(events)
 
             async def controls():
                 async for raw in ws:
-                    if not isinstance(raw, str):
-                        raise ValueError("Listener accepts control messages only")
+                    if not isinstance(raw, str): raise ValueError("Listener accepts control messages only")
                     message = json.loads(raw)
-                    if not isinstance(message, dict):
-                        raise ValueError("Invalid listener control")
+                    if not isinstance(message, dict): raise ValueError("Invalid listener control")
+                    if message.get("type") == "microphone.mute":
+                        await set_muted(message.get("muted"))
+                        continue
+                    # Late completion from a cancelled turn has no authority.
+                    if message.get("sessionId") != session.session_id: continue
+                    identity = session.session_id
                     observation = session.observation.copy()
                     fresh_direction = session.direction_is_fresh()
                     result = session.control(message)
                     if message["type"] == "wake.confirmed":
                         side, confidence = observation["side"], observation["confidence"]
                         if fresh_direction and side in {"left", "right"} and confidence >= 0.75:
-                            await character(f"character attend {side} {confidence:.4f}")
-                        await character("character state " + ("listening" if message["followup"] else "thinking"))
-                    elif message["type"] == "session.processing":
-                        await character("character state thinking")
+                            expression(f"attend_{side}", identity)
+                        if message["followup"]: expression("followup", identity)
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
-                        await character("character state neutral")
-                    await enqueue(result)
+                        expression(message["type"].split(".")[1], identity)
+                    await deliver(result)
 
             tasks = []
             try:
                 await ws.send(json.dumps({"type": "ready", "protocol": PROTOCOL,
-                    "sampleRate": 16000, "channels": 1, "encoding": "pcm_s16le",
+                    "sampleRate": 16000, "channels": 1, "encoding": "pcm_s16le", "muted": muted,
                     "wake": {"provider": wake.provider, "model": wake.model_name, "threshold": wake.threshold}}))
-                tasks = [asyncio.create_task(job()) for job in (send, listen, controls)]
+                tasks = [asyncio.create_task(job()) for job in (send, controls)]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    task.result()
+                for task in done: task.result()
             finally:
-                # Terminate arecord before waiting for a thread blocked in read().
-                capture.close()
-                for task in tasks:
-                    task.cancel()
+                owner = None
+                outgoing = None
+                if session.phase not in {"wake", "command"}:
+                    if session.session_id:
+                        expression("unavailable")
+                        session.reset()
+                    else:
+                        cancel_turn()
+                for task in tasks: task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-                session.reset()
-                await character("character state neutral")
                 await ws.close()
 
-    async with websocket_serve(connection, args.host, args.port,
-                              max_size=4096, max_queue=16, compression=None):
-        await asyncio.Future()
+    tasks = [asyncio.create_task(listen()), asyncio.create_task(character())]
+    try:
+        async with websocket_serve(connection, args.host, args.port,
+                                  max_size=4096, max_queue=16, compression=None, ping_interval=5, ping_timeout=5):
+            await asyncio.gather(*tasks)
+    finally:
+        capture.close()
+        for task in tasks: task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if session.session_id:
+            with suppress(OSError, ValueError, asyncio.TimeoutError):
+                await daemon_command(f"voice {session.session_id} cancel", args.daemon_socket)
 
 
 def main():
@@ -269,6 +389,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7448)
     parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--mute-file", type=Path, default=Path.home() / ".config/orion/microphone.json")
     parser.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
     parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_reference.rpw")
     parser.add_argument("--threshold", type=float, default=0.4)

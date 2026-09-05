@@ -65,3 +65,5 @@ pub const ORION_JOINT_NAMES: [&str; 5] = [
     "head_roll_joint",
     "head_pitch_joint",
 ];
+
+pub mod voice_feedback;

@@ -122,7 +122,7 @@ async def generate_response(
                 raise RuntimeError("Synthesized reply exceeds the 120-second playback limit")
             if sequence == 0:
                 session.begin_playback(request_id)
-                if pi is not None:
+                if pi is not None and not hasattr(websocket, "gateway"):
                     await pi.send(event("session.playing", sessionId=session_id))
             await websocket.send(event("speech.chunk", requestId=request_id, sequence=sequence,
                 sampleRate=audio.sample_rate, samples=audio.samples, durationMs=audio.duration_ms,
@@ -174,7 +174,7 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                 or ready.get("encoding") != "pcm_s16le" or not isinstance(ready.get("wake"), dict)):
             raise ProtocolError("Unsupported Pi listener contract")
         session = VoiceSession(models.asr)
-        await websocket.send(event("ready", protocol=PROTOCOL_VERSION,
+        await websocket.send(event("ready", protocol=PROTOCOL_VERSION, muted=ready.get("muted", False),
             asr={"provider": models.asr.provider, "model": models.asr.model_name},
             wake=ready["wake"],
             agent={"provider": models.agent.provider, "model": models.agent.model_name,
@@ -228,6 +228,9 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                 message = parse_json_message(raw)
                 if message["type"] == "stop":
                     return
+                if message["type"] == "playback.started" and message.get("requestId") == session._playback_request_id:
+                    await pi.send(event("session.playing", sessionId=session.session_id))
+                    continue
                 if message["type"] not in {"playback.finished", "playback.failed"} or type(message.get("requestId")) is not int:
                     raise ProtocolError("Invalid playback acknowledgement")
                 session_id = session.session_id
@@ -237,7 +240,7 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                     transcription.cancel()
                     await asyncio.gather(transcription, return_exceptions=True)
                 session.finish_playback(message["requestId"])
-                await pi.send(event("session.finish", sessionId=session_id))
+                await pi.send(event("session.cancel" if message["type"] == "playback.failed" else "session.finish", sessionId=session_id))
                 await websocket.send(event("speech.completed", requestId=message["requestId"]))
                 if message["type"] == "playback.failed":
                     await websocket.send(event("worker.error", code="playback_failed",

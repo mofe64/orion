@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { Mic, MicOff, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -46,44 +47,38 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("keydown", escape); previous?.focus(); };
   }, [open]);
-  const [settings, setSettings] = useState<VoiceSettings>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("orion.voice.settings") ?? "null");
-      if (saved && typeof saved.model === "string" && saved.model.trim() && typeof saved.effort === "string") return saved;
-    } catch { /* Use explicit defaults if browser storage is unavailable. */ }
-    return DEFAULT_VOICE_SETTINGS;
-  });
-  useEffect(() => { try { localStorage.setItem("orion.voice.settings", JSON.stringify(settings)); } catch { /* Session settings remain usable. */ } }, [settings]);
+  const [settings, setSettings] = useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
+  const [appliedSettings, setAppliedSettings] = useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  useEffect(() => { void invoke<VoiceSettings>("load_voice_settings")
+    .then(value => { setSettings(value); setAppliedSettings(value); setSettingsLoaded(true); }).catch(error => onNotice(String(error))); }, []);
   const [playback, setPlayback] = useState<OrionPlaybackSnapshot>({ runId: null, state: "idle" });
   const pipeline = useMemo(() => new StudioVoicePipeline({
     connection: connection ?? undefined,
-    settings,
+    settings: appliedSettings,
     speaker: new OrionSpeechPlayer(() => connection, setPlayback),
-  }), [connection, settings]);
+  }), [connection, appliedSettings]);
   const [snapshot, setSnapshot] = useState<StudioVoiceSnapshot>(() => pipeline.current());
   const [catalog, setCatalog] = useState<NonNullable<StudioVoiceSnapshot["models"]>>([]);
   useEffect(() => { if (snapshot.models?.length) setCatalog(snapshot.models); }, [snapshot.models]);
 
   useEffect(() => pipeline.subscribe(setSnapshot), [pipeline]);
   useEffect(() => { if (snapshot.phase === "wake_candidate" || snapshot.phase === "starting") setPlayback({ runId: null, state: "idle" }); }, [snapshot.phase]);
-  useEffect(() => { onPhaseChange?.(PHASE_LABELS[snapshot.phase]); }, [snapshot.phase, onPhaseChange]);
-  useEffect(() => () => { void pipeline.stop(); }, [pipeline]);
+  useEffect(() => { onPhaseChange?.(snapshot.muted ? "Muted" : PHASE_LABELS[snapshot.phase]); }, [snapshot.phase, snapshot.muted, onPhaseChange]);
+  useEffect(() => {
+    if (connection && settingsLoaded) void pipeline.start();
+    return () => { void pipeline.stop(); };
+  }, [pipeline, connection, settingsLoaded]);
 
   const toggleCapture = async () => {
-    if (!["off", "error"].includes(snapshot.phase)) {
-      await pipeline.stop();
-      onNotice("Orion microphone and Studio processing stopped.");
-      return;
-    }
-    await pipeline.start();
-    const result = pipeline.current();
-    onNotice(result.phase === "ready"
-      ? `Speech recognition is ready for ${result.deviceLabel}.`
-      : result.error ?? "Orion voice could not start.");
+    try {
+      await pipeline.setMuted(!snapshot.muted);
+      onNotice(pipeline.current().muted ? "Orion microphone muted. Audio buffers cleared." : "Orion microphone is listening.");
+    } catch (error) { onNotice(String(error)); }
   };
 
   if (!open) return null;
-  const active = !["off", "error"].includes(snapshot.phase);
+  const active = snapshot.muted === false;
 
   return (
     <section ref={panel} className="voice-popover" role="dialog" aria-label="Studio voice setup">
@@ -94,7 +89,7 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
 
       <div className={`voice-state ${snapshot.phase}`}>
         {active ? <Mic size={17} /> : <MicOff size={17} />}
-        <div><strong>{PHASE_LABELS[snapshot.phase]}</strong><span>{snapshot.deviceLabel ?? (snapshot.phase === "starting" ? "Starting persistent worker…" : "No microphone open")}</span></div>
+        <div><strong>{snapshot.muted ? "Microphone muted" : PHASE_LABELS[snapshot.phase]}</strong><span>{snapshot.deviceLabel ?? (snapshot.phase === "starting" ? "Starting persistent worker…" : "No microphone open")}</span></div>
       </div>
 
       <p className="voice-metadata">16 kHz audio from Orion · local wake detection on the Pi</p>
@@ -106,11 +101,11 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
 
       <button
         className={active ? "stop-button" : "primary-button"}
-        disabled={snapshot.phase === "stopping" || !connection}
+        disabled={snapshot.muted === undefined || !connection}
         onClick={() => { void toggleCapture(); }}
       >
         {active ? <MicOff size={15} /> : <Mic size={15} />}
-        {active ? "Stop Orion microphone" : !connection ? "Connect Orion first" : snapshot.phase === "error" ? "Try again" : "Enable Orion microphone"}
+        {active ? "Mute Orion microphone" : !connection ? "Connect Orion first" : snapshot.phase === "error" ? "Try again" : "Enable Orion microphone"}
       </button>
 
       <fieldset disabled={active} className="voice-settings">
@@ -119,6 +114,7 @@ export function VoicePanel({ open, connection, onClose, onNotice, onPhaseChange 
         <datalist id="orion-agent-models"><option value="gpt-5.6-sol">GPT-5.6 Sol</option>{catalog.filter(model => model.model !== "gpt-5.6-sol").map(model => <option key={model.model} value={model.model}>{model.name}</option>)}</datalist>
         <label>Reasoning effort<select value={settings.effort} onChange={event => setSettings({ ...settings, effort: event.target.value })}>{(catalog.find(model => model.model === settings.model)?.efforts ?? ["low", "medium", "high", "xhigh", "max", "ultra"]).map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></label>
         <small>Applies when you enable the microphone. Startup verifies support; Orion never silently switches models.</small>
+        <button type="button" onClick={() => setAppliedSettings({ ...settings })}>Save reply settings</button>
       </fieldset>
       <details className="voice-debug"><summary>Debug</summary>
         <p>Runtime: {snapshot.runtime ?? "Resolved when Voice starts"}</p>

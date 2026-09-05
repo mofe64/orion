@@ -3,6 +3,7 @@ export const VOICE_WORKER_PROTOCOL_VERSION = 7;
 export interface VoiceWorkerReadyEvent {
   type: "ready";
   protocol: 7;
+  muted?: boolean;
   asr: { provider: "qwen3-asr"; model: string };
   wake: { provider: "rustpotter"; model: string; threshold: number };
   agent: { provider: string; model: string; effort?: string; runtime?: string; models?: { model: string; name: string; efforts: string[] }[] };
@@ -95,6 +96,8 @@ export interface VoiceWorkerErrorEvent {
 }
 
 export type VoiceWorkerEvent =
+  | { type: "speech.started"; requestId: number }
+  | { type: "microphone.status"; muted: boolean }
   | { type: "stage.timing"; stage: string; durationMs: number }
   | VoiceWorkerReadyEvent
   | WakeCandidateEvent
@@ -151,6 +154,12 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
   }
 
   switch (message.type) {
+    case "microphone.status":
+      if (typeof message.muted !== "boolean") break;
+      return message as { type: "microphone.status"; muted: boolean };
+    case "speech.started":
+      if (typeof message.requestId !== "number") break;
+      return message as { type: "speech.started"; requestId: number };
     case "stage.timing":
       if (typeof message.stage !== "string" || typeof message.durationMs !== "number" || !Number.isFinite(message.durationMs) || message.durationMs < 0) break;
       return message as unknown as { type: "stage.timing"; stage: string; durationMs: number };

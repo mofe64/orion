@@ -2,6 +2,7 @@
 Description=Orion Pi microphone and Rustpotter listener
 After=network-online.target sound.target oriond.service
 Wants=network-online.target oriond.service
+PartOf=oriond.service
 ConditionPathExists=@USER_HOME@/.config/orion/studio-token
 
 [Service]

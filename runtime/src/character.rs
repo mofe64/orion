@@ -92,6 +92,7 @@ pub struct CharacterCoordinator {
     starting_run_id: Option<u64>,
     foreground_pending: bool,
     foreground_scene_run_id: Option<u64>,
+    thinking_run: Option<u64>,
     speech_motion_run_id: Option<u64>,
     speech_motion_started: bool,
     last_speech_clip: Option<String>,
@@ -123,6 +124,7 @@ impl CharacterCoordinator {
             starting_run_id: None,
             foreground_pending: false,
             foreground_scene_run_id: None,
+            thinking_run: None,
             speech_motion_run_id: None,
             speech_motion_started: false,
             last_speech_clip: None,
@@ -168,7 +170,9 @@ impl CharacterCoordinator {
                     | CharacterState::Listening
                     | CharacterState::Thinking
             )
-            || (core.mode() == RuntimeMode::Moving && self.active_idle_run_id.is_none())
+            || (core.mode() == RuntimeMode::Moving
+                && self.active_idle_run_id.is_none()
+                && self.thinking_run.is_none())
         {
             return Err(Error::InvalidState(
                 "Attention requires an available powered character.".into(),
@@ -374,9 +378,12 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
-        if self.active_idle_run_id.is_some() && core.mode() == RuntimeMode::Moving {
+        if (self.active_idle_run_id.is_some() || self.thinking_run.is_some())
+            && core.mode() == RuntimeMode::Moving
+        {
             checked(core.handle_command("stop", now))?;
         }
+        self.thinking_run = None;
         if self.active_idle_run_id.take().is_some() {
             self.status.active_clip = None;
         }
@@ -575,6 +582,23 @@ impl CharacterCoordinator {
             self.reset_timers(now);
         }
 
+        if self.status.state == CharacterState::Thinking {
+            if self
+                .thinking_run
+                .is_some_and(|run| terminal_phase(core, run).is_none())
+            {
+                return Ok(());
+            }
+            self.thinking_run = None;
+            if core.mode() == RuntimeMode::Holding {
+                if let Some(anchor) = self.status.active_anchor.clone() {
+                    self.thinking_run = core
+                        .play_generated_anchored_relative(thinking_motion(), anchor, now)
+                        .ok();
+                }
+            }
+            return Ok(());
+        }
         if let Some(run_id) = self.active_idle_run_id {
             if let Some(phase) = terminal_phase(core, run_id) {
                 self.active_idle_run_id = None;
@@ -732,7 +756,12 @@ impl CharacterCoordinator {
         let Some(anchor) = self.status.active_anchor.clone() else {
             return;
         };
-        if core.mode() != RuntimeMode::Holding {
+        let prior = self
+            .thinking_run
+            .take()
+            .or_else(|| self.active_idle_run_id.take());
+        self.active_idle_category = None;
+        if core.mode() != RuntimeMode::Holding && prior.is_none() {
             return;
         }
         self.speech_motion_started = true;
@@ -743,7 +772,17 @@ impl CharacterCoordinator {
         };
         // Speech motion remains best-effort: playback is never failed because
         // a generated performance could not be compiled or started.
-        if let Ok(run_id) = core.play_generated_anchored_relative(performance, anchor, now) {
+        let result = if let Some(run) = prior.filter(|run| {
+            core.snapshot()
+                .motion
+                .as_ref()
+                .is_some_and(|m| m.run_id == *run && m.state == MovementPhase::Executing)
+        }) {
+            core.extend_character_performance(run, performance, anchor, now)
+        } else {
+            core.play_generated_anchored_relative(performance, anchor, now)
+        };
+        if let Ok(run_id) = result {
             self.speech_motion_run_id = Some(run_id);
             self.status.active_clip = Some("speaking_performance".into());
         }
@@ -1080,6 +1119,7 @@ impl CharacterCoordinator {
     }
 
     fn finish_stop(&mut self) {
+        self.thinking_run = None;
         self.clear_attention();
         self.status = CharacterStatus {
             enabled: false,
@@ -1131,6 +1171,35 @@ fn blend_speech_head(
             (blended.abs() > f64::EPSILON).then(|| (joint.to_owned(), blended))
         })
         .collect()
+}
+
+fn thinking_motion() -> MotionDefinition {
+    let mut motion = speech_settle_motion();
+    motion.name = "thinking_head".into();
+    motion.description = "Small head-led thought around the conversational anchor.".into();
+    for (yaw, tilt) in [(0.05, 0.035), (-0.04, -0.025), (0.025, 0.02)]
+        .into_iter()
+        .rev()
+    {
+        motion.keyframes.insert(
+            0,
+            MotionKeyframe {
+                pose_name: None,
+                target: [
+                    ("head_roll_joint".into(), yaw),
+                    ("head_pitch_joint".into(), tilt),
+                    ("base_yaw_joint".into(), yaw * 0.25),
+                ]
+                .into(),
+                duration_seconds: 1.6,
+                arrival: KeyframeArrival::Through,
+                hold_seconds: 0.0,
+                marker: None,
+            },
+        );
+    }
+    motion.keyframes.last_mut().unwrap().duration_seconds = 1.6;
+    motion
 }
 
 fn speech_settle_motion() -> MotionDefinition {
@@ -1736,6 +1805,84 @@ mod tests {
                 .all(|pair| pair[1] - pair[0] >= 3)
         );
         assert!(ordinary_body_shapes.len() >= 4);
+    }
+
+    #[test]
+    fn thinking_compiles_with_calibrated_limits_at_every_powered_anchor() {
+        let mut core = core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        for name in core.poses().names() {
+            let definition = core.poses().definition(&name).unwrap();
+            if !definition.tags.iter().any(|tag| tag == "idle_anchor") {
+                continue;
+            }
+            let anchor = definition.positions.clone();
+            let mut character = CharacterCoordinator::new(42);
+            character.status.enabled = true;
+            character.status.active_anchor = Some(anchor);
+            character.set_reaction("thinking", 0.0, &mut core).unwrap();
+            character
+                .tick(0.0, &mut core, false, None, false, None, None)
+                .unwrap();
+            assert!(
+                character.thinking_run.is_some(),
+                "thinking failed at {name}"
+            );
+            character.set_reaction("neutral", 0.1, &mut core).unwrap();
+            assert!(character.thinking_run.is_none());
+            assert_ne!(character.status.state, CharacterState::Thinking);
+        }
+    }
+
+    #[test]
+    fn thinking_is_head_led_and_speech_replaces_its_commanded_spline() {
+        let mut core = core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.active_anchor = Some(anchor.clone());
+        character.set_reaction("thinking", 0.0, &mut core).unwrap();
+        character
+            .tick(0.0, &mut core, false, None, false, None, None)
+            .unwrap();
+        let run = character
+            .thinking_run
+            .expect("thinking must compile and start");
+        for frame in 1..50 {
+            let now = frame as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            assert_eq!(character.status.state, CharacterState::Thinking);
+        }
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 200],
+            quiet_regions: vec![],
+            phrase_peaks: vec![40],
+            duration_seconds: 4.0,
+            streaming: true,
+        };
+        character.note_speech_started(1.0);
+        character
+            .tick(1.0, &mut core, false, None, true, Some(&analysis), Some(0))
+            .unwrap();
+        assert_eq!(character.speech_motion_run_id, Some(run));
+        assert!(character.thinking_run.is_none());
+        assert_eq!(character.status.active_anchor, Some(anchor));
+        assert_eq!(character.status.state, CharacterState::Speaking);
+        for frame in &thinking_motion().keyframes {
+            assert!(
+                frame
+                    .target
+                    .iter()
+                    .all(|(name, offset)| name.starts_with("head_")
+                        || (name == "base_yaw_joint" && offset.abs() <= 0.015))
+            );
+        }
     }
 
     #[test]
