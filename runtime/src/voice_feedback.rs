@@ -95,6 +95,13 @@ impl VoiceFeedback {
             return Ok(None);
         }
         match event {
+            "processing" if matches!(self.phase.as_str(), "speaking" | "thinking") => {
+                self.phase = "thinking".into();
+                self.since = now;
+                self.deadline = now + 180.0;
+                self.record("tool_processing", now);
+                Ok(Some(("thinking", None)))
+            }
             "guard" if self.phase == "speaking" => {
                 self.phase = "guard".into();
                 self.deadline = now + 3.0;
@@ -218,6 +225,21 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn intermediate_speech_returns_to_silent_processing_animation() {
+        let mut f = VoiceFeedback::default();
+        f.event(ID, "wake", 0.0).unwrap();
+        f.event(ID, "endpoint", 1.0).unwrap();
+        f.playback_started(2.0);
+        assert_eq!(
+            f.event(ID, "processing", 3.0).unwrap(),
+            Some(("thinking", None))
+        );
+        assert!(f.light(3.0).is_some());
+        assert_ne!(f.light(3.0), f.light(4.0));
+        f.playback_started(5.0);
+        assert_eq!(f.event(ID, "guard", 6.0).unwrap(), Some(("neutral", None)));
+    }
     #[test]
     fn conversation_invitation_is_silent_teal_bounded_and_session_scoped() {
         let mut f = VoiceFeedback::default();

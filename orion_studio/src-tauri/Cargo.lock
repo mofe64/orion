@@ -2667,10 +2667,12 @@ dependencies = [
 name = "orion-agent"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

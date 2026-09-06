@@ -52,6 +52,18 @@ impl Gateway {
             .await
             .map_err(|e| e.to_string())
     }
+    pub async fn set_lighting(&self, parameters: Value) -> Result<Value, String> {
+        let result = self
+            .request(
+                "/api/v2/operations",
+                Some(json!({"operation":"lamp_effect","settings":parameters})),
+            )
+            .await?;
+        if result["accepted"] != true || result["result"]["ok"] != true {
+            return Err("Pi did not confirm the lighting change".into());
+        }
+        Ok(json!({"applied":true,"settings":parameters}))
+    }
     pub async fn cancel(&self, active: &ActiveRun) {
         if let Some(run) = active.lock().await.take() {
             let _ = self

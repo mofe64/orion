@@ -208,6 +208,7 @@ async fn connected(
         return Err("Unsupported Pi listener contract".into());
     }
     let window = ready["conversationWindow"] == true;
+    let tool_feedback = ready["toolFeedback"] == true;
     hub.publish(
         json!({"type":"ready", "protocol":7, "muted":ready["muted"], "asr":models["asr"],
         "tts":models["tts"], "wake":ready["wake"], "agent":agent_info}),
@@ -265,7 +266,7 @@ async fn connected(
                             pi.send(json!({"type":"session.processing", "sessionId":sid})).await?;
                             let agent = agent.clone(); let speech = speech.clone(); let gateway = gateway.clone();
                             let hub = hub.clone(); let pi = pi.clone(); let active = active.clone(); let request = *next_request;
-                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active).await.map(|_| Completed::Response) });
+                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback).await.map(|_| Completed::Response) });
                         },
                         Ok(Completed::Response) => {
                             let request = *next_request;
@@ -352,6 +353,7 @@ async fn response(
     request: u64,
     command: &str,
     active: ActiveRun,
+    tool_feedback: bool,
 ) -> Result<(), String> {
     event(
         hub,
@@ -359,17 +361,72 @@ async fn response(
         json!({"type":"agent.started", "requestId":request}),
     );
     let started = Instant::now();
-    let text = agent.respond(command).await?;
+    let (send, mut receive) = mpsc::channel(8);
+    let activity = async {
+        while let Some(activity) = receive.recv().await {
+            match activity {
+                orion_agent::AgentEvent::SearchStarted => {
+                    event(
+                        hub,
+                        sid,
+                        json!({"type":"agent.progress","requestId":request,"message":"Searching the web"}),
+                    );
+                    if tool_feedback {
+                        speak(
+                            speech,
+                            gateway,
+                            pi,
+                            hub,
+                            sid,
+                            request,
+                            "I’ll search for that now.".into(),
+                            active.clone(),
+                            true,
+                        )
+                        .await?;
+                        pi.send(json!({"type":"session.processing","sessionId":sid}))
+                            .await?;
+                    }
+                }
+                orion_agent::AgentEvent::SetLighting { parameters, reply } => {
+                    if reply.is_closed() {
+                        continue;
+                    }
+                    let result = gateway.set_lighting(parameters).await;
+                    let _ = reply.send(result);
+                }
+            }
+        }
+        Ok::<(), String>(())
+    };
+    let (text, ()) = tokio::try_join!(agent.respond_with_events(command, Some(send)), activity)?;
     event(
         hub,
         sid,
         json!({"type":"agent.response", "requestId":request, "text":text, "durationMs":started.elapsed().as_secs_f64()*1000.}),
     );
-    event(
-        hub,
-        sid,
-        json!({"type":"synthesis.started", "requestId":request}),
-    );
+    speak(speech, gateway, pi, hub, sid, request, text, active, false).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn speak(
+    speech: &SpeechRuntime,
+    gateway: &Gateway,
+    pi: &Pi,
+    hub: &Hub,
+    sid: &str,
+    request: u64,
+    text: String,
+    active: ActiveRun,
+    intermediate: bool,
+) -> Result<(), String> {
+    if !intermediate {
+        event(
+            hub,
+            sid,
+            json!({"type":"synthesis.started", "requestId":request}),
+        );
+    }
     let (run_send, mut run_receive) = watch::channel(None::<u64>);
     let (end_send, mut end_receive) = watch::channel(false);
     let synthesize = async {
@@ -412,11 +469,13 @@ async fn response(
                     playing = true;
                     pi.send(json!({"type":"session.playing", "sessionId":sid}))
                         .await?;
-                    event(
-                        hub,
-                        sid,
-                        json!({"type":"speech.started", "requestId":request}),
-                    );
+                    if !intermediate {
+                        event(
+                            hub,
+                            sid,
+                            json!({"type":"speech.started", "requestId":request}),
+                        );
+                    }
                     timing(hub, sid, "firstPlaybackMs", ms);
                 }
                 match status["state"].as_str() {

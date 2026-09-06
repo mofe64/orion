@@ -85,7 +85,7 @@ class FakeOrionClient:
 
     def request(self, command: str) -> dict[str, object]:
         self.commands.append(command)
-        if command == "character rest" or command.startswith("lamp "):
+        if command == "character rest" or command.startswith(("lamp ", "lamp-effect ")):
             return {"ok": True, "run_id": 99}
         if command == "status":
             return {"schema_version": 3, "robot": "orion", "build_revision": "test-revision",
@@ -298,6 +298,15 @@ class HomeOperationTests(unittest.TestCase):
         gateway = OrionGateway(client)
         gateway.submit({"operation": "rest"})
         self.assertEqual(client.commands[-1], "character rest")
+
+    def test_lamp_effect_validates_before_execution(self):
+        client = FakeOrionClient()
+        gateway = OrionGateway(client)
+        for settings in [{"brightness":True}, {"effect":"unknown"}, {"colors":[[256,0,0,0]]}, {"brightness":float("nan")}]:
+            with self.assertRaises(GatewayError): gateway.submit({"operation":"lamp_effect","settings":settings})
+        self.assertEqual(client.commands, [])
+        gateway.submit({"operation":"lamp_effect","settings":{"effect":"thinking_drift","colors":[[40,20,4,210],[255,0,0,0]],"brightness":0.5}})
+        self.assertTrue(client.commands[0].startswith('lamp-effect '))
 
     def test_lamp_validates_channels_before_command(self):
         client = FakeOrionClient()

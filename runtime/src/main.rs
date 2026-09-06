@@ -820,7 +820,7 @@ fn serve_driver<D: RuntimeDriver>(
     }
     let mut next_sample = started_at;
     let mut speaking_light_intensity = 0.0;
-    let mut manual_light: Option<Rgbw8> = None;
+    let mut manual_light: Option<orion_runtime::lamp::LampProgram> = None;
     while !stopping.load(Ordering::Relaxed) {
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
@@ -878,8 +878,8 @@ fn serve_driver<D: RuntimeDriver>(
             lighting.render(&render_effect(&effect, now_seconds, 0.55)?)?;
         }
         if !scenes.is_active() && !speech.is_active() {
-            if let Some(color) = manual_light {
-                lighting.render_uniform(color)?;
+            if let Some(program) = &manual_light {
+                lighting.render(&program.render(now_seconds)?)?;
             }
         }
         if feedback_was_lit
@@ -941,6 +941,17 @@ fn serve_driver<D: RuntimeDriver>(
                 }
                 if !speech.is_active() && !scenes.is_active() { let _ = audio.stop(); }
             }
+            if let Some(value) = command.strip_prefix("lamp-effect ") {
+                if scenes.is_active() || speech.is_active() {
+                    return serde_json::json!({"ok":false,"error":"Wait for the current scene or speech to finish."}).to_string();
+                }
+                let result = serde_json::from_str::<orion_runtime::lamp::LampPatch>(value)
+                    .map_err(|e| e.to_string()).and_then(|patch| manual_light.clone().unwrap_or_default().updated(patch).map_err(|e| e.to_string()));
+                return match result {
+                    Ok(program) => { manual_light = Some(program); serde_json::json!({"ok":true,"command":"lamp_effect"}).to_string() },
+                    Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+                };
+            }
             if let Some(values) = command.strip_prefix("lamp ") {
                 if scenes.is_active() || speech.is_active() {
                     return serde_json::json!({"ok": false, "error": "Wait for the current scene or speech to finish before changing the lamp."}).to_string();
@@ -950,7 +961,7 @@ fn serve_driver<D: RuntimeDriver>(
                     Err(orion_runtime::Error::InvalidArgument("Expected lamp R G B W".into()))
                 };
                 return match result {
-                    Ok(color) => { manual_light = Some(color); serde_json::json!({"ok": true, "command": "lamp"}).to_string() },
+                    Ok(color) => { manual_light = Some(orion_runtime::lamp::LampProgram::from_color(color)); serde_json::json!({"ok": true, "command": "lamp"}).to_string() },
                     Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
                 };
             }

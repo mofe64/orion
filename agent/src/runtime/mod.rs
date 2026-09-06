@@ -1,4 +1,4 @@
-use crate::{AgentConfig, AgentInfo, codex::Codex};
+use crate::{AgentConfig, AgentInfo, providers::codex::Codex};
 use std::{thread::JoinHandle, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
@@ -12,27 +12,43 @@ impl AgentHandle {
         self.0.same_channel(&other.0)
     }
 
-    async fn request(&self, text: Option<String>) -> Result<Reply, String> {
+    async fn request(
+        &self,
+        text: Option<String>,
+        events: Option<mpsc::Sender<crate::AgentEvent>>,
+    ) -> Result<Reply, String> {
         let (reply, receive) = oneshot::channel();
         self.0
-            .send(Request { text, reply })
+            .send(Request {
+                text,
+                events,
+                reply,
+            })
             .await
             .map_err(|_| "Agent runtime stopped")?;
         receive.await.map_err(|_| "Agent request cancelled")?
     }
 
     pub async fn info(&self) -> Result<AgentInfo, String> {
-        match self.request(None).await? {
+        match self.request(None, None).await? {
             Reply::Info(info) => Ok(info),
             _ => Err("Invalid agent status response".into()),
         }
     }
 
     pub async fn respond(&self, text: &str) -> Result<String, String> {
+        self.respond_with_events(text, None).await
+    }
+
+    pub async fn respond_with_events(
+        &self,
+        text: &str,
+        events: Option<mpsc::Sender<crate::AgentEvent>>,
+    ) -> Result<String, String> {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
             return Err("Agent input is empty or too large".into());
         }
-        match self.request(Some(text.trim().into())).await? {
+        match self.request(Some(text.trim().into()), events).await? {
             Reply::Text(text) => Ok(text),
             _ => Err("Invalid agent text response".into()),
         }
@@ -41,6 +57,7 @@ impl AgentHandle {
 
 struct Request {
     text: Option<String>,
+    events: Option<mpsc::Sender<crate::AgentEvent>>,
     reply: oneshot::Sender<Result<Reply, String>>,
 }
 enum Reply {
@@ -74,13 +91,13 @@ impl AgentService {
                     _ = &mut stopped => break,
                     request = receive.recv() => match request { Some(request) => request, None => break },
                 };
-                let Request { text, mut reply } = request;
+                let Request { text, events, mut reply } = request;
                 if reply.is_closed() { continue; }
                 let result = tokio::select! {
                     biased;
                     _ = &mut stopped => break,
                     _ = reply.closed() => continue,
-                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text)) =>
+                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text, events)) =>
                         result.unwrap_or_else(|_| Err("Agent request timed out; conversation reset".into())),
                 };
                 let _ = reply.send(result);
@@ -102,6 +119,7 @@ async fn dispatch(
     config: &AgentConfig,
     slot: &mut Option<Codex>,
     text: Option<String>,
+    events: Option<mpsc::Sender<crate::AgentEvent>>,
 ) -> Result<Reply, String> {
     // Cancellation owns and drops an uncertain child before another turn starts.
     let mut client = match slot.take() {
@@ -109,7 +127,10 @@ async fn dispatch(
         None => Codex::connect(config).await?,
     };
     let result = match text {
-        Some(text) => client.respond(&text).await.map(Reply::Text),
+        Some(text) => client
+            .respond(&text, events.as_ref())
+            .await
+            .map(Reply::Text),
         None => Ok(Reply::Info(client.info.clone())),
     };
     if result.is_ok() {

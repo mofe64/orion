@@ -33,6 +33,6 @@ export function useStudioVoice(connection: GatewayConnection | null, onNotice: (
     finally { setToggling(false); }
   };
   return { settings, loaded, saving, save, snapshot, playback, models, toggle, toggling,
-    listening: snapshot.muted === false, label: !connection ? "Connect Orion to enable listening" : snapshot.muted ? "Listening is off" : VOICE_PHASE_LABELS[snapshot.phase] };
+    listening: snapshot.muted === false, label: !connection ? "Connect Orion to enable listening" : snapshot.muted ? "Listening is off" : snapshot.phase === "thinking" && snapshot.activity ? snapshot.activity : VOICE_PHASE_LABELS[snapshot.phase] };
 }
 export type StudioVoice = ReturnType<typeof useStudioVoice>;

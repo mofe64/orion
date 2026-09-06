@@ -25,7 +25,9 @@ for line in sys.stdin:
         assert params['approvalPolicy'] == 'never'
         assert params['sandbox'] == 'read-only'
         assert params['ephemeral'] is True
-        assert 'Do not use tools' in params['baseInstructions']
+        assert 'set_lighting' in params['baseInstructions']
+        assert len(params['dynamicTools']) == 3
+        assert params['config']['web_search'] == 'live'
         result = {'thread': {'id': thread_id}}
     elif method == 'turn/start':
         assert params['threadId'] == thread_id
@@ -42,6 +44,15 @@ for line in sys.stdin:
         if text == 'approval':
             emit({'id': 'permission', 'method': 'item/commandExecution/requestApproval', 'params': {}})
             continue
+        if text.startswith('tool:'):
+            call = json.loads(text[5:])
+            emit({'id':'tool-request','method':'item/tool/call','params':{'threadId':thread_id,'turnId':turn_id,'callId':'call-'+turn_id, 'tool':call['name'],'arguments':call['arguments']}})
+            tool_result = json.loads(sys.stdin.readline())
+            assert tool_result['id'] == 'tool-request'
+            text = json.dumps(tool_result['result'])
+        if text == 'search-fixture':
+            for _ in range(2):
+                emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,'item':{'type':'webSearch','id':'search','query':'restaurants in Woking'}}})
         # Ignore commentary and events from unrelated conversations or turns.
         for tid, uid, phase, value in [(thread_id, turn_id, 'commentary', 'Do not speak this'),
                                       ('other', turn_id, 'final_answer', 'Wrong thread'),

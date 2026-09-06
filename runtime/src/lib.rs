@@ -67,3 +67,5 @@ pub const ORION_JOINT_NAMES: [&str; 5] = [
 ];
 
 pub mod voice_feedback;
+
+pub mod lamp;

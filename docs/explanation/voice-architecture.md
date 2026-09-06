@@ -167,31 +167,46 @@ only ASR and TTS model execution. A speech job has an ID; synthesis responses
 have ordered chunk sequence numbers and an explicit end marker. Channel closure
 without that marker is failure, never permission to upload held startup audio.
 
-The configured base instructions are `ORION_INSTRUCTIONS` in
-[`agent/src/lib.rs`](../../agent/src/lib.rs). They request a conversational
-desk-lamp reply of at most two concise spoken sentences, prohibit tools/file
-operations, and prohibit claims of physical actions. The Rust wrapper normalizes
-whitespace and truncates long output at 800 Unicode characters before adding an
-ellipsis. Only final assistant messages from the matching thread and turn become
-speech; intermediate commentary is excluded.
+The base instructions live in
+[`agent/src/prompt/mod.rs`](../../agent/src/prompt/mod.rs). Orion uses Codex's
+built-in live web search and three client-executed tools: `append_memory`,
+`search_memories`, and `set_lighting`. Dynamic tool calls are bound to the active
+thread and turn, limited to 16 per turn, and validated before execution.
+Unexpected interactive requests are rejected. Desktop shell, browser, app,
+plugin, and multi-agent features are explicitly disabled for Orion's thread.
+The installed App Server dynamic-tool API is experimental.
 
-Orion does not load a `soul.md`, user profile, durable memory store, or memory
-retrieval/write pipeline. Conversation context lasts with the agent service;
-it is not durable personal memory. A future memory design should distinguish
-character instructions from user facts and retain explicit provenance for saved
-facts.
+Memory entries are stored in a local `MEMORY.md` with IDs, UTC creation dates,
+and reserved delimiters. Writes use a file lock and atomic replacement; repeated
+identical entries reuse the existing entry. Retrieval uses bounded keyword
+matching, returning at most eight entries. The agent saves only explicitly
+requested memories and treats retrieved text as data. Current UTC time is
+supplied on each turn. See [agent storage and tools](../../agent/README.md).
+Personality selection, memory editing/deletion UI, and automatic memory
+collection are not implemented.
 
-The Rust agent handle supports status and text-response requests. It controls an
-installed `codex app-server` process through its JSON protocol over stdin/stdout;
-it does not embed Codex's internal Rust implementation or require the Python
-Codex SDK. See [runtime discovery](../reference/configuration.md#orion-studio).
+`AgentHandle::respond_with_events` emits request-scoped activity while awaiting
+a final answer. Search emits one acknowledgement per agent turn. The coordinator
+synthesizes and plays it while Codex continues; after playback, `session.processing`
+restores the Pi's thinking reaction and breathing light. Capture remains
+suppressed. Final speech waits for intermediate playback to finish, and only
+final playback completion opens the follow-up window. Memory tools are silent.
+Older listeners without `toolFeedback` continue processing without spoken
+search acknowledgements.
 
-Orion registers no robot tools or structured tool-result dispatcher. The Codex
-runtime is launched with read-only sandboxing and denied approvals. Unexpected
-interactive server requests are rejected, but the prompt's no-tools instruction
-is not itself an enforced tool allowlist. Adding robot tools requires explicit
-schemas, authorization, validated gateway calls, timeouts/cancellation, and
-results fed back to the agent. Physical operations remain owned by `oriond`.
+Lighting tool choices resolve into validated brightness, effect, and RGBW
+palette parameters. The coordinator sends them through the authenticated
+`lamp_effect` gateway operation. `oriond` stores the lamp program beneath speech,
+scene, and voice-feedback lighting; it reappears after those finish. Animated
+effects without a palette use warm white plus one randomly selected accent.
+Brightness-only changes preserve the current effect and palette. A paired Pi
+with the updated gateway and runtime is required; errors are returned to the
+agent rather than reported as successful actions.
+
+Final spoken output is bounded to 800 Unicode characters plus an ellipsis;
+Codex citation markers are removed from speech. Only matching final assistant
+messages become the answer. The deterministic search acknowledgement is separate
+from model commentary. Physical operations remain owned by `oriond`.
 
 ## Processing station and latency
 

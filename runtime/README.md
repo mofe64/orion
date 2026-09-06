@@ -249,6 +249,7 @@ trials.
 ## Port structure
 
 - `src/lighting.rs` — RGBW frames and the lighting-device boundary.
+- `src/lamp.rs` — persistent brightness, effect, and palette settings beneath voice/scene feedback.
 - `src/audio.rs` — named local cues and the audio-device boundary.
 - `src/scene.rs` — versioned scene loading, validation, and monotonic playback.
 - `src/transport.rs` — raw `rustypot` STS3215 serial and packet boundary.
@@ -414,3 +415,16 @@ and a bounded yaw transition. It holds the completed attention anchor, then
 returns to the prior anchor 15 seconds after neutral inactivity. Explicit
 foreground work discards that pending return. See the
 [attention brief](../docs/explanation/voice-attention.md).
+
+## Agent lighting commands
+
+The authenticated gateway translates `lamp_effect` operations into the private
+`lamp-effect JSON` daemon command. JSON fields are optional `brightness` (0–1),
+`effect` (`solid` or a supported lighting effect), and `colors` (one or two
+arrays of four integer RGBW channels, 0–255). An update must supply at least one
+non-null field. Invalid patches leave the existing program unchanged.
+
+Brightness-only updates preserve the palette and effect; zero brightness is
+fully off. Lamp programs resume after higher-priority voice feedback or speech.
+Scene or speech playback rejects changes until it finishes. The existing
+`lamp R G B W` command still sets a steady color.

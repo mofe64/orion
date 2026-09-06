@@ -62,7 +62,7 @@ expressive synthesis; the Pi plays replies and owns character animation. See the
 
 | Path | Responsibility |
 | --- | --- |
-| `agent/` | Rust conversation runtime and Codex integration, compiled into Studio |
+| `agent/` | Rust conversation runtime, memory/tools, and Codex integration, compiled into Studio |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
 | `speech/` | Python Qwen ASR and Chatterbox inference worker |

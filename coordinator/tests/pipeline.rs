@@ -26,6 +26,8 @@ struct GatewayState {
     allow_complete: bool,
     runs: u64,
     fail_playback: bool,
+    lighting: Vec<Value>,
+    reject_lighting: bool,
 }
 struct Harness {
     coordinator: Option<Coordinator>,
@@ -119,6 +121,7 @@ impl Harness {
         });
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let agent = AgentService::start(AgentConfig {
+            memory_path: None,
             model: "test-model".into(),
             effort: "high".into(),
             codex_bin: Some(root.join("../agent/tests/fixtures/codex.py")),
@@ -146,7 +149,7 @@ impl Harness {
             .unwrap()
             .unwrap();
         send(&mut pi, json!({"type":"ready", "protocol":1, "sampleRate":16000, "channels":1, "encoding":"pcm_s16le", "muted":false,
-            "conversationWindow":true, "wake":{"provider":"rustpotter","model":"pi.rpw","threshold":0.4}})).await;
+            "conversationWindow":true,"toolFeedback":true, "wake":{"provider":"rustpotter","model":"pi.rpw","threshold":0.4}})).await;
         let (mut observer, _) = connect_async(&connection.url).await.unwrap();
         send(
             &mut observer,
@@ -231,8 +234,13 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
     let mut state = state.lock().await;
     let value = if path == "/api/v2/operations" {
         let value: Value = serde_json::from_slice(&body).unwrap();
-        state.cancellations.push(value["run_id"].as_u64().unwrap());
-        json!({"ok":true})
+        if value["operation"] == "lamp_effect" {
+            state.lighting.push(value["settings"].clone());
+            json!({"accepted":!state.reject_lighting,"result":{"ok":!state.reject_lighting}})
+        } else {
+            state.cancellations.push(value["run_id"].as_u64().unwrap());
+            json!({"ok":true})
+        }
     } else if path == "/api/v2/speech/stream" || path.contains("/chunks/") {
         let request_id = headers
             .iter()
@@ -394,7 +402,7 @@ async fn pi_disconnect_cancels_playback_and_reconnect_preserves_agent_conversati
         .unwrap();
     assert_eq!(h.gateway.lock().await.cancellations, vec![1]);
     send(&mut pi, json!({"type":"ready", "protocol":1, "sampleRate":16000, "channels":1, "encoding":"pcm_s16le", "muted":false,
-        "conversationWindow":true, "wake":{"provider":"rustpotter","model":"pi.rpw","threshold":0.4}})).await;
+        "conversationWindow":true,"toolFeedback":true, "wake":{"provider":"rustpotter","model":"pi.rpw","threshold":0.4}})).await;
     h.pi = pi;
     h.gateway.lock().await.allow_complete = true;
     h.wake("Hey Orion, second").await;
@@ -443,4 +451,49 @@ async fn observer_cannot_fabricate_playback_completion() {
     h.gateway.lock().await.allow_complete = true;
     until(&mut h.pi, "session.finish").await;
     h.stop().await;
+}
+
+#[tokio::test]
+async fn search_acknowledgement_does_not_finish_session_or_open_followup() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, search-fixture").await;
+    until(&mut h.pi, "session.playing").await;
+    // The next processing transition must follow acknowledgement playback,
+    // before the final response starts, with no session.finish in between.
+    let next_message = next(&mut h.pi).await;
+    assert_eq!(next_message["type"], "session.processing");
+    assert_eq!(next_message["sessionId"], SID);
+    until(&mut h.pi, "session.playing").await;
+    let finish = next(&mut h.pi).await;
+    assert_eq!(finish["type"], "session.finish");
+    assert_eq!(finish["conversationWindow"], true);
+    assert_eq!(h.gateway.lock().await.runs, 2);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn lighting_translates_parameters_and_only_confirms_gateway_success() {
+    for reject in [false, true] {
+        let mut h = Harness::new().await;
+        h.gateway.lock().await.reject_lighting = reject;
+        h.wake(r#"Hey Orion, tool:{"name":"set_lighting","arguments":{"mood":"warm_red","brightness":30}}"#).await;
+        until(&mut h.pi, "session.finish").await;
+        let response = until(&mut h.observer, "agent.response").await;
+        if reject {
+            assert!(
+                response["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("did not confirm")
+            );
+        } else {
+            assert!(response["text"].as_str().unwrap().contains("applied"));
+        }
+        let state = h.gateway.lock().await;
+        assert_eq!(state.lighting.len(), 1);
+        assert_eq!(state.lighting[0]["brightness"], 0.3);
+        assert_eq!(state.lighting[0]["colors"][1], json!([255, 0, 0, 0]));
+        drop(state);
+        h.stop().await;
+    }
 }

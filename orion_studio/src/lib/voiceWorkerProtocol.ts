@@ -107,6 +107,7 @@ export type VoiceWorkerEvent =
   | CommandStartedEvent
   | TranscriptionStartedEvent
   | TranscriptFinalEvent
+  | { type: "agent.progress"; requestId: number; message: string }
   | AgentStartedEvent
   | AgentResponseEvent
   | SynthesisStartedEvent
@@ -207,6 +208,9 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
     case "agent.started":
       if (!isRequestId(message.requestId)) break;
       return message as unknown as AgentStartedEvent;
+    case "agent.progress":
+      if (!isRequestId(message.requestId) || typeof message.message !== "string") break;
+      return { type: "agent.progress", requestId: message.requestId, message: message.message };
     case "agent.response":
       if (
         !isRequestId(message.requestId)

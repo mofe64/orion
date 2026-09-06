@@ -117,3 +117,8 @@ describe("parseVoiceWorkerEvent", () => {
     expect(() => parseVoiceWorkerEvent('{"type":"surprise"}')).toThrow("unsupported");
   });
 });
+
+it("validates search progress independently from final speech", () => {
+  expect(parseVoiceWorkerEvent(JSON.stringify({type:"agent.progress",requestId:1,message:"Searching the web"}))).toEqual({type:"agent.progress",requestId:1,message:"Searching the web"});
+  expect(() => parseVoiceWorkerEvent(JSON.stringify({type:"agent.progress",requestId:1,message:42}))).toThrow();
+});

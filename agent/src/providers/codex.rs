@@ -1,4 +1,4 @@
-use crate::{AgentConfig, AgentInfo, ModelInfo, ORION_INSTRUCTIONS, spoken_response};
+use crate::{AgentConfig, AgentInfo, ModelInfo, ORION_INSTRUCTIONS, prompt::spoken_response};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -23,6 +23,7 @@ pub(crate) struct Codex {
     next_id: u64,
     pending: VecDeque<Value>,
     pub info: AgentInfo,
+    config: AgentConfig,
 }
 
 fn candidates(config: &AgentConfig) -> Vec<PathBuf> {
@@ -79,6 +80,7 @@ impl Codex {
         let input = child.stdin.take().ok_or("Codex stdin unavailable")?;
         let output = BufReader::new(child.stdout.take().ok_or("Codex stdout unavailable")?);
         let mut client = Self {
+            config: config.clone(),
             _child: child,
             input,
             output,
@@ -97,7 +99,7 @@ impl Codex {
         client
             .rpc(
                 "initialize",
-                json!({"clientInfo": {"name":"orion-agent", "version": env!("CARGO_PKG_VERSION")}}),
+                json!({"capabilities":{"experimentalApi":true},"clientInfo": {"name":"orion-agent", "version": env!("CARGO_PKG_VERSION")}}),
             )
             .await?;
         client.send(json!({"method":"initialized"})).await?;
@@ -154,13 +156,44 @@ impl Codex {
                     .collect(),
             })
             .collect();
+        // Explicitly disable inherited desktop capabilities for this companion.
+        let inherited = client
+            .rpc("config/read", json!({"includeLayers":false}))
+            .await?;
+        let mut tool_config = json!({"web_search":"live"});
+        for feature in [
+            "shell_tool",
+            "unified_exec",
+            "multi_agent",
+            "multi_agent_v2",
+            "apps",
+            "plugins",
+            "hooks",
+            "browser_use",
+            "browser_use_external",
+            "computer_use",
+            "image_generation",
+            "in_app_browser",
+            "code_mode_host",
+            "workspace_dependencies",
+            "memories",
+        ] {
+            tool_config[format!("features.{feature}")] = false.into();
+        }
+        if let Some(servers) = inherited["config"]["mcp_servers"].as_object() {
+            for name in servers.keys() {
+                tool_config[format!("mcp_servers.{name}.enabled")] = false.into();
+            }
+        }
         let thread = client
             .rpc(
                 "thread/start",
                 json!({
                     "model":config.model, "baseInstructions":ORION_INSTRUCTIONS,
                     "approvalPolicy":"never", "sandbox":"read-only", "ephemeral":true,
-                    "cwd":client._workspace.path(),
+                    "cwd":client._workspace.path(), "environments":[],
+                    "dynamicTools":crate::tools::schemas(),
+                    "config":tool_config, "selectedCapabilityRoots":[],
                 }),
             )
             .await?;
@@ -198,7 +231,10 @@ impl Codex {
         let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         // This first extraction has no tool dispatcher or interactive approvals.
         // Never leave an unexpected server request waiting indefinitely.
-        if value.get("id").is_some() && value.get("method").is_some() {
+        if value.get("id").is_some()
+            && value.get("method").is_some()
+            && value["method"] != "item/tool/call"
+        {
             self.send(json!({"id":value["id"], "error":{"code":-32601,
                 "message":"Orion does not support interactive server requests"}}))
                 .await?;
@@ -232,14 +268,18 @@ impl Codex {
         }
     }
 
-    pub async fn respond(&mut self, text: &str) -> Result<String, String> {
+    pub async fn respond(
+        &mut self,
+        text: &str,
+        events: Option<&tokio::sync::mpsc::Sender<crate::AgentEvent>>,
+    ) -> Result<String, String> {
         self.pending.clear();
         let start = self
             .rpc(
                 "turn/start",
                 json!({"threadId":self.info.conversation_id,
             "model":self.info.model, "effort":self.info.effort,
-            "input":[{"type":"text", "text":text}]}),
+            "input":[{"type":"text", "text":text}, {"type":"text", "text":format!("Current UTC date/time: {}", chrono::Utc::now().to_rfc3339())}]}),
             )
             .await?;
         let turn_id = start["turn"]["id"]
@@ -247,14 +287,53 @@ impl Codex {
             .ok_or("Codex returned no turn ID")?
             .to_owned();
         let mut final_text = String::new();
+        let mut searched = false;
+        let mut calls = std::collections::HashSet::new();
         loop {
             let message = match self.pending.pop_front() {
                 Some(message) => message,
                 None => self.read().await?,
             };
             let params = &message["params"];
+            if message["method"] == "item/tool/call" {
+                if params["threadId"] != self.info.conversation_id
+                    || params["turnId"] != turn_id
+                    || !params["namespace"].is_null()
+                {
+                    self.send(json!({"id":message["id"],"error":{"code":-32602,"message":"Stale or invalid tool call"}})).await?;
+                    return Err("Stale or invalid tool call".into());
+                }
+                let call = params["callId"].as_str().ok_or("Missing tool call ID")?;
+                if calls.len() >= 16 || !calls.insert(call.to_owned()) {
+                    return Err("Duplicate or excessive tool calls".into());
+                }
+                let result = crate::tools::execute(
+                    &self.config,
+                    params["tool"].as_str().unwrap_or_default(),
+                    params["arguments"].clone(),
+                    events,
+                )
+                .await;
+                let success = result.is_ok();
+                let value = result.unwrap_or_else(|error| json!({"error":error}));
+                self.send(json!({"id":message["id"],"result":{"success":success,"contentItems":[{"type":"inputText","text":value.to_string()}]}})).await?;
+                continue;
+            }
             if params["threadId"] != self.info.conversation_id {
                 continue;
+            }
+            if message["method"] == "item/started"
+                && params["turnId"] == turn_id
+                && params["item"]["type"] == "webSearch"
+                && !searched
+            {
+                searched = true;
+                if let Some(events) = events {
+                    events
+                        .send(crate::AgentEvent::SearchStarted)
+                        .await
+                        .map_err(|_| "Coordinator stopped")?;
+                }
             }
             if message["method"] == "item/completed"
                 && params["turnId"] == turn_id

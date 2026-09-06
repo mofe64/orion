@@ -43,6 +43,7 @@ export interface VoiceWorkerTransport {
 }
 
 export interface StudioVoiceSnapshot {
+  activity?: string | null;
   muted?: boolean;
   deviceLabel: string | null;
   sampleRate: number | null;
@@ -301,12 +302,15 @@ export class StudioVoicePipeline {
           error: null,
         });
         break;
+      case "agent.progress":
+        this.publish({ ...this.snapshot, phase: "thinking", activity: event.message });
+        break;
       case "agent.started":
-        this.publish({ ...this.snapshot, phase: "thinking", response: null, error: null });
+        this.publish({ ...this.snapshot, phase: "thinking", activity: null, response: null, error: null });
         break;
       case "agent.response":
         this.snapshot.latency = { ...this.snapshot.latency, agentMs: event.durationMs };
-        this.publish({ ...this.snapshot, phase: "thinking", response: event.text, error: null });
+        this.publish({ ...this.snapshot, phase: "thinking", activity: null, response: event.text, error: null });
         break;
       case "synthesis.started":
         this.publish({ ...this.snapshot, phase: "synthesizing", error: null });

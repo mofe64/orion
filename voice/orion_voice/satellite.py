@@ -193,7 +193,9 @@ class SatelliteSession:
                 self.phase = "processing"
                 self.followup.clear()
             return []
-        if kind == "session.processing" and self.phase == "processing":
+        if kind == "session.processing" and self.phase in {"processing", "playing"}:
+            self.phase = "processing"
+            self.expires_at = self.clock() + 180
             return []
         if kind == "session.playing" and self.phase == "processing":
             self.phase = "playing"
@@ -398,7 +400,9 @@ async def serve(args):
                     observation = session.observation.copy()
                     fresh_direction = session.direction_is_fresh()
                     result = session.control(message)
-                    if message["type"] == "wake.confirmed":
+                    if message["type"] == "session.processing":
+                        expression("processing", identity)
+                    elif message["type"] == "wake.confirmed":
                         side, confidence = observation["side"], observation["confidence"]
                         if fresh_direction and side in {"left", "right"} and confidence >= 0.75:
                             expression(f"attend_{side}", identity)
@@ -412,7 +416,7 @@ async def serve(args):
             try:
                 await ws.send(json.dumps({"type": "ready", "protocol": PROTOCOL,
                     "sampleRate": 16000, "channels": 1, "encoding": "pcm_s16le", "muted": muted,
-                    "conversationWindow": True,
+                    "conversationWindow": True, "toolFeedback": True,
                     "wake": {"provider": wake.provider, "model": wake.model_name, "threshold": wake.threshold}}))
                 tasks = [asyncio.create_task(job()) for job in (send, controls)]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

@@ -38,6 +38,17 @@ class SatelliteTests(unittest.TestCase):
             if result: return result
         self.fail('No endpoint')
 
+    def test_intermediate_playback_returns_to_processing_without_capture(self):
+        sid = self.trigger(); self.endpoint()
+        self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})
+        self.session.control({'type':'session.playing','sessionId':sid})
+        self.session.control({'type':'session.processing','sessionId':sid})
+        self.assertEqual(self.session.phase, 'processing')
+        for _ in range(40): self.assertEqual(self.session.accept_stereo(frame(9000)), [])
+        self.session.control({'type':'session.playing','sessionId':sid})
+        self.session.control({'type':'session.finish','sessionId':sid,'conversationWindow':True})
+        self.assertEqual(self.session.phase, 'echo_guard')
+
     def test_pre_roll_preserves_wake_audio(self):
         self.trigger()
         result = self.endpoint()

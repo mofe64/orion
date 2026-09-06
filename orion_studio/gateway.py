@@ -285,6 +285,20 @@ class OrionGateway:
             response = self._checked(f"speech start {text}")
         elif operation == "rest":
             response = self._checked("character rest")
+        elif operation == "lamp_effect":
+            settings = payload.get("settings")
+            if not isinstance(settings, dict) or not settings or set(settings) - {"brightness", "effect", "colors"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Invalid lamp settings.")
+            brightness = settings.get("brightness")
+            if brightness is not None and (type(brightness) not in {int, float} or not 0 <= brightness <= 1):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Brightness must be 0–1.")
+            effect = settings.get("effect")
+            if effect is not None and (not isinstance(effect, str) or effect not in {"solid", "warm_idle_breathe", "attentive_focus", "thinking_drift", "speaking_energy", "acknowledge_pulse", "curious_sweep", "delight_spark", "settle_glow", "off"}):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Unknown lamp effect.")
+            colors = settings.get("colors")
+            if colors is not None and (not isinstance(colors, list) or not 1 <= len(colors) <= 2 or any(not isinstance(c, list) or len(c) != 4 or any(type(v) is not int or not 0 <= v <= 255 for v in c) for c in colors)):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Expected one or two RGBW colors.")
+            response = self._checked("lamp-effect " + json.dumps(settings, allow_nan=False))
         elif operation == "lamp":
             channels = payload.get("rgbw")
             if (not isinstance(channels, list) or len(channels) != 4
@@ -306,7 +320,7 @@ class OrionGateway:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, preview_scene, speech, rest, lamp, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
+                "Supported operations are goto, motion, scene, preview_scene, speech, rest, lamp, lamp_effect, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {

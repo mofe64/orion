@@ -95,3 +95,12 @@ or `-1`. Both default to zero. Restart the listener after changing them.
 Use the [attention setup and constraints](../docs/explanation/voice-attention.md)
 and [physical validation procedure](../docs/how-to/validate-character-v2.md)
 before enabling directional motion.
+
+## Intermediate tool speech
+
+The listener advertises `toolFeedback: true`. After search acknowledgement
+playback, `session.processing` returns the same session to processing with
+capture suppressed. It asks `oriond` to restore thinking animation and breathing
+light without another cue. Only final `session.finish` starts the echo guard
+and follow-up invitation. Deploy this listener together with the matching
+runtime to support the `processing` voice-feedback event.
