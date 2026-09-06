@@ -15,6 +15,7 @@ export type StudioVoicePhase =
   | "ready"
   | "wake_candidate"
   | "confirming_wake"
+  | "conversation_listening"
   | "command_listening"
   | "transcribing"
   | "thinking"
@@ -284,6 +285,9 @@ export class StudioVoicePipeline {
         break;
       case "wake.rejected":
         this.publish({ ...this.snapshot, phase: "ready", error: null });
+        break;
+      case "conversation.window":
+        this.publish({ ...this.snapshot, phase: event.active ? "conversation_listening" : "ready", error: null });
         break;
       case "command.started":
         this.publish({ ...this.snapshot, phase: "command_listening", error: null });

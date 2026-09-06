@@ -47,6 +47,18 @@ class FakeSpeaker implements SpeechPlayer {
 }
 
 describe("StudioVoicePipeline", () => {
+  it("shows the invitation and returns to wake listening when it expires", async () => {
+    const transport = new FakeTransport();
+    const pipeline = new StudioVoicePipeline({ launcher: new FakeLauncher(), createTransport: () => transport, speaker: new FakeSpeaker() });
+    await pipeline.start();
+    transport.emit({ type: "speech.completed", requestId: 1 });
+    transport.emit({ type: "conversation.window", active: true });
+    expect(pipeline.current().phase).toBe("conversation_listening");
+    transport.emit({ type: "command.started" });
+    expect(pipeline.current().phase).toBe("command_listening");
+    transport.emit({ type: "conversation.window", active: false });
+    expect(pipeline.current().phase).toBe("ready");
+  });
   it("observes background playback without uploading or acknowledging it", async () => {
     const transport = new FakeTransport();
     const speaker = { play: vi.fn(), append: vi.fn(), finish: vi.fn(), stop: vi.fn() };

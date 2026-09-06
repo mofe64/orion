@@ -30,6 +30,10 @@ const ready = JSON.stringify({
 });
 
 describe("VoiceWorkerClient", () => {
+  it("validates conversation window events", () => {
+    expect(parseVoiceWorkerEvent(JSON.stringify({ type: "conversation.window", active: true }))).toEqual({ type: "conversation.window", active: true });
+    expect(() => parseVoiceWorkerEvent(JSON.stringify({ type: "conversation.window", active: "true" }))).toThrow();
+  });
   it("authenticates once and keeps binary audio on the same socket", async () => {
     const socket = new FakeSocket();
     const client = new VoiceWorkerClient({

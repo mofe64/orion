@@ -91,7 +91,8 @@ class ProcessingOwner:
             return
         message = json.loads(raw)
         kind = message['type']
-        if kind == 'wake.candidate': self.session_id = message['sessionId']
+        if kind in {'wake.candidate', 'command.started'} and message.get('sessionId'):
+            self.session_id = message['sessionId']
         if self.session_id:
             message.setdefault('sessionId', self.session_id)
             raw = json.dumps(message)

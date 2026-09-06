@@ -182,9 +182,11 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
             tts={"provider": models.tts.provider, "model": models.tts.model_name}))
         transcription = None
         next_request_id = 1
+        followup_parent = None
+        conversation_window = ready.get("conversationWindow") is True
 
         async def receive_pi():
-            nonlocal transcription, next_request_id
+            nonlocal transcription, next_request_id, followup_parent
             async for raw in pi:
                 if not isinstance(raw, str):
                     raise ProtocolError("Unexpected Pi audio frame")
@@ -192,8 +194,20 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                 kind = message["type"]
                 session_id = message.get("sessionId")
                 if kind == "wake.candidate":
+                    followup_parent = None
                     session.begin(session_id)
                     await websocket.send(raw)
+                elif kind == "command.candidate":
+                    if not followup_parent or message.get("previousSessionId") != followup_parent or session_id == followup_parent:
+                        raise ProtocolError("Unexpected conversation continuation")
+                    session.begin_followup(session_id)
+                    followup_parent = None
+                    await websocket.send(event("command.started", sessionId=session_id))
+                elif kind in {"conversation.ready", "conversation.closed"}:
+                    if session_id != followup_parent or followup_parent is None:
+                        raise ProtocolError("Stale conversation window event")
+                    await websocket.send(event("conversation.window", active=kind == "conversation.ready"))
+                    if kind == "conversation.closed": followup_parent = None
                 elif kind == "utterance":
                     size = message.get("bytes")
                     if type(size) is not int or not 0 < size <= 18 * 32000 or size % 2:
@@ -220,6 +234,7 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                     raise ProtocolError("Unknown Pi event")
 
         async def receive_studio():
+            nonlocal followup_parent
             async for raw in websocket:
                 if not isinstance(raw, str):
                     raise ProtocolError("Studio microphone capture is not supported; audio comes from Orion")
@@ -238,7 +253,9 @@ async def handle_connection(websocket, token, models, pi_url, pi_token):
                     transcription.cancel()
                     await asyncio.gather(transcription, return_exceptions=True)
                 session.finish_playback(message["requestId"])
-                await pi.send(event("session.cancel" if message["type"] == "playback.failed" else "session.finish", sessionId=session_id))
+                followup_parent = session_id if conversation_window and message["type"] == "playback.finished" else None
+                await pi.send(event("session.cancel" if message["type"] == "playback.failed" else "session.finish", sessionId=session_id,
+                    **({"conversationWindow": True} if followup_parent else {})))
                 await websocket.send(event("speech.completed", requestId=message["requestId"]))
                 if message["type"] == "playback.failed":
                     await websocket.send(event("worker.error", code="playback_failed",

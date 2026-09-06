@@ -61,3 +61,14 @@ chunk and held for the reply to avoid volume pumping between chunks.
 Studio selects the reply model and effort explicitly (defaults: `gpt-5.6-sol`,
 `medium`). The worker validates them against an installed Codex runtime catalog.
 See [configuration](../../docs/reference/configuration.md) for discovery and overrides.
+
+## Post-response conversation
+
+A compatible Pi advertises `conversationWindow`. After successful playback, the
+worker requests its guarded listening window and accepts a fresh linked voice
+turn without wake confirmation. The Pi controls onset, timeout, and the silent
+teal pulse. Studio displays “You can continue without Hey Orion” while the
+invitation is active. Deploy the matching listener/runtime and restart Studio.
+
+Follow-ups reuse the loaded agent's conversation. The listening timeout does not
+reset that conversation; worker restart does. See [agent context and memory](../../docs/explanation/voice-architecture.md#agent-conversation-and-memory).

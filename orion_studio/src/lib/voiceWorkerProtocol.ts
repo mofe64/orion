@@ -96,6 +96,7 @@ export interface VoiceWorkerErrorEvent {
 }
 
 export type VoiceWorkerEvent =
+  | { type: "conversation.window"; active: boolean }
   | { type: "speech.started"; requestId: number }
   | { type: "microphone.status"; muted: boolean }
   | { type: "stage.timing"; stage: string; durationMs: number }
@@ -188,6 +189,9 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
     case "wake.rejected":
       if (typeof message.text !== "string") break;
       return message as unknown as WakeRejectedEvent;
+    case "conversation.window":
+      if (typeof message.active !== "boolean") break;
+      return { type: "conversation.window", active: message.active };
     case "command.started":
       return { type: "command.started" };
     case "transcription.started":

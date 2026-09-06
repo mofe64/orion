@@ -18,6 +18,19 @@ class Gateway:
 
 
 class ProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_followup_upload_is_bound_to_the_new_voice_turn(self):
+        gateway = Gateway()
+        async def publish(raw): pass
+        owner = ProcessingOwner('a'*32, gateway, publish)
+        try:
+            await owner.send(event('wake.candidate', sessionId='a'*32))
+            await owner.send(event('command.started', sessionId='b'*32))
+            await owner.send(event('speech.chunk', requestId=2, sequence=0, samples=100))
+            await owner.send(bytes(200))
+            self.assertEqual(owner.upload_id, 'voice:' + 'b'*32)
+        finally:
+            await owner.close()
+
     async def test_headless_owner_uploads_buffers_and_acknowledges_actual_playback(self):
         gateway=Gateway(); events=[]
         async def publish(raw): events.append(json.loads(raw))
@@ -98,4 +111,3 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-

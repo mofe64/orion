@@ -14,13 +14,18 @@ import uuid
 import numpy as np
 
 from .direction import DirectionEstimator
-from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise
+from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise, pcm16_rms
 from .rustpotter import RustpotterWakeDetector
 from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
 
 PROTOCOL = 1
 FRAME_BYTES = 640  # 20 ms of mono signed little-endian PCM16 at 16 kHz
 MAX_UTTERANCE_BYTES = 18 * 32000
+CONVERSATION_WINDOW_SECONDS = 5.0
+ECHO_GUARD_SECONDS = 0.5
+ECHO_QUIET_MS = 300
+ECHO_GUARD_LIMIT_SECONDS = 2.0
+FOLLOWUP_ONSET_MS = 180
 
 
 class SatelliteSession:
@@ -44,6 +49,9 @@ class SatelliteSession:
         self.expires_at = float("inf")
         self.observation = {"side": "unknown", "confidence": 0.0}
         self.observed_at = float("-inf")
+        self.quiet_ms = 0
+        self.onset_ms = 0
+        self.guard_started = 0.0
         self.wake.reset()
         self.direction.reset()
 
@@ -56,6 +64,8 @@ class SatelliteSession:
         stereo = np.frombuffer(pcm, dtype="<i2").reshape(-1, 2)
         mono = stereo.astype(np.int32).sum(axis=1) // 2
         audio = mono.astype("<i2").tobytes()
+        if self.phase in {"echo_guard", "conversation"}:
+            return self.accept_conversation(audio)
         if self.session_id and self.clock() >= self.expires_at:
             event = self.message("session.expired")
             self.reset()
@@ -92,6 +102,41 @@ class SatelliteSession:
             self.followup_done = self.followup_endpoint.accept(audio)
         return []
 
+    def accept_conversation(self, audio):
+        now = self.clock()
+        if self.phase == "echo_guard":
+            # Discard playback tail and require a quiet baseline before accepting onset.
+            if now - self.guard_started >= ECHO_GUARD_SECONDS:
+                self.quiet_ms = self.quiet_ms + 20 if pcm16_rms(audio) < self.endpoint.config.speech_rms else 0
+                if self.quiet_ms >= ECHO_QUIET_MS:
+                    self.phase = "conversation"
+                    self.expires_at = now + CONVERSATION_WINDOW_SECONDS
+                    return [self.message("conversation.ready", durationMs=round(CONVERSATION_WINDOW_SECONDS * 1000))]
+            if now - self.guard_started >= ECHO_GUARD_LIMIT_SECONDS:
+                return self.close_conversation("echo_guard_timeout")
+            return []
+        if now >= self.expires_at and self.onset_ms == 0:
+            return self.close_conversation("timeout")
+        self.pre_roll.extend(audio)
+        del self.pre_roll[:-int(0.3 * 32000)]
+        self.onset_ms = self.onset_ms + 20 if pcm16_rms(audio) >= self.endpoint.config.speech_rms else 0
+        if self.onset_ms < FOLLOWUP_ONSET_MS:
+            return []
+        previous = self.session_id
+        self.session_id = uuid.uuid4().hex
+        self.phase = "command"
+        self.expires_at = now + 120
+        self.utterance = bytearray(self.pre_roll)
+        self.pre_roll.clear()
+        self.endpoint = EnergyEndpointDetector(self.endpoint.config)
+        self.endpoint.prime_detected_speech()
+        return [self.message("command.candidate", previousSessionId=previous)]
+
+    def close_conversation(self, reason):
+        message = self.message("conversation.closed", reason=reason)
+        self.reset()
+        return [message]
+
     def update_direction(self):
         observation = self.direction.observation()
         observed_at = observation.pop("observed_at")
@@ -122,6 +167,14 @@ class SatelliteSession:
             raise ValueError("Playback has not started")
         if kind == "session.reject" and self.phase != "confirming":
             raise ValueError("No wake confirmation is pending")
+        if kind == "session.finish" and message.get("conversationWindow") is True:
+            self.phase = "echo_guard"
+            self.guard_started = self.clock()
+            self.quiet_ms = self.onset_ms = 0
+            self.pre_roll.clear()
+            self.followup.clear()
+            self.utterance.clear()
+            return []
         if kind in {"session.finish", "session.reject", "session.cancel"}:
             self.reset()
             return []
@@ -223,6 +276,11 @@ async def serve(args):
                 if kind in {"wake.candidate", "utterance"}:
                     timing_history.append({"sessionId": message["sessionId"], "event": kind, "at": time.monotonic()})
                 if kind == "wake.candidate": expression("wake")
+                elif kind == "command.candidate":
+                    expression("finish", message["previousSessionId"])
+                    expression("continue", message["sessionId"])
+                elif kind == "conversation.ready": expression("window", message["sessionId"])
+                elif kind == "conversation.closed": expression("finish", message["sessionId"])
                 elif kind == "utterance": expression("endpoint" if owner is not None else "unavailable")
                 elif kind == "session.expired": expression("cancel", message["sessionId"])
             if outgoing is not None:
@@ -346,13 +404,15 @@ async def serve(args):
                             expression(f"attend_{side}", identity)
                         if message["followup"]: expression("followup", identity)
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
-                        expression(message["type"].split(".")[1], identity)
+                        expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
+                                   else message["type"].split(".")[1], identity)
                     await deliver(result)
 
             tasks = []
             try:
                 await ws.send(json.dumps({"type": "ready", "protocol": PROTOCOL,
                     "sampleRate": 16000, "channels": 1, "encoding": "pcm_s16le", "muted": muted,
+                    "conversationWindow": True,
                     "wake": {"provider": wake.provider, "model": wake.model_name, "threshold": wake.threshold}}))
                 tasks = [asyncio.create_task(job()) for job in (send, controls)]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

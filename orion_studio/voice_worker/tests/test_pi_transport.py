@@ -23,24 +23,31 @@ class Tts:
     def stream(self, text): yield SpeechAudio(b'\x00\x00'*240,24000)
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, texts, rejected=False):
+    async def exercise(self, texts, rejected=False, continuation=False):
         commands=[]
         agent=Agent()
         models=VoiceModels(Asr(texts),agent,Tts())
         async def pi(ws):
+            current_sid = SID
             hello=json.loads(await ws.recv())
             self.assertEqual(hello,dict(type='hello',protocol=1,token='remote'))
             await ws.send(json.dumps(dict(type='ready',protocol=1,sampleRate=16000,channels=1,
-                encoding='pcm_s16le',wake=dict(provider='rustpotter',model='pi.rpw',threshold=.4))))
+                encoding='pcm_s16le',conversationWindow=continuation,wake=dict(provider='rustpotter',model='pi.rpw',threshold=.4))))
             await ws.send(json.dumps(dict(type='wake.candidate',sessionId=SID,name='hey_orion',score=.8)))
             async def utterance(purpose):
-                await ws.send(json.dumps(dict(type='utterance',sessionId=SID,purpose=purpose,bytes=2)))
+                await ws.send(json.dumps(dict(type='utterance',sessionId=current_sid,purpose=purpose,bytes=2)))
                 await ws.send(b'\x00\x00')
             await utterance('wake_and_command')
             async for raw in ws:
                 message=json.loads(raw); commands.append(message)
-                self.assertEqual(message['sessionId'],SID)
+                self.assertEqual(message['sessionId'],current_sid)
                 if message['type']=='wake.confirmed' and message['followup']:
+                    await utterance('command')
+                if continuation and message['type'] == 'session.finish' and current_sid == SID:
+                    self.assertTrue(message['conversationWindow'])
+                    await ws.send(json.dumps(dict(type='conversation.ready', sessionId=SID)))
+                    current_sid = 'b' * 32
+                    await ws.send(json.dumps(dict(type='command.candidate',sessionId=current_sid,previousSessionId=SID)))
                     await utterance('command')
         async with serve(pi,'127.0.0.1',0) as remote:
             url=f'ws://127.0.0.1:{remote.sockets[0].getsockname()[1]}'
@@ -50,6 +57,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 async with connect(f'ws://127.0.0.1:{local.sockets[0].getsockname()[1]}') as client:
                     await client.send(json.dumps(HELLO))
                     events=[]
+                    completions=0
                     async with asyncio.timeout(5):
                         while True:
                             raw=await client.recv()
@@ -59,7 +67,8 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                             message=json.loads(raw); events.append(message['type'])
                             if message['type']=='speech.chunk': request_id=message['requestId']
                             if message['type']=='speech.end': await client.send(json.dumps(dict(type='playback.finished',requestId=request_id)))
-                            if message['type'] in {'speech.completed','wake.rejected'}: break
+                            if message['type'] == 'speech.completed': completions += 1
+                            if message['type'] == 'wake.rejected' or completions >= (2 if continuation else 1): break
                         await client.send(json.dumps(dict(type='stop')))
         return commands,agent.commands,events
 
@@ -68,6 +77,16 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands,['what time is it?'])
         self.assertEqual([m['type'] for m in controls],['wake.confirmed','session.processing','session.playing','session.finish'])
         self.assertIn('speech.completed',events)
+
+    async def test_post_response_followup_uses_same_agent_and_fresh_voice_turn(self):
+        controls, commands, events = await self.exercise(
+            ['Hey Orion, tell me about Mars', 'How far away is it?'], continuation=True)
+        self.assertEqual(commands, ['tell me about Mars', 'How far away is it?'])
+        self.assertEqual(events.count('speech.completed'), 2)
+        self.assertEqual(events.count('wake.candidate'), 1)
+        self.assertIn('conversation.window', events)
+        self.assertIn('command.started', events)
+        self.assertEqual([m['sessionId'] for m in controls if m['type'] == 'session.finish'], [SID, 'b' * 32])
 
     async def test_qwen_false_positive_does_not_invoke_agent(self):
         controls,commands,events=await self.exercise(['That is an onion'],True)

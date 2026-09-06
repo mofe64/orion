@@ -38,7 +38,10 @@ across restarts; Character Stop controls animation separately.
 
 Say “Hey Orion” followed by a request, or pause after the wake phrase and then
 speak. Qwen rejects unconfirmed wake candidates before they reach the agent.
-Listening resumes after reply playback completes.
+After a successful reply, wait for the soft teal pulse and continue without
+"Hey Orion". The invitation closes after five seconds without speech; the next
+request then needs the wake phrase. A silent echo guard precedes the pulse.
+See [conversation timing and limitations](../docs/explanation/voice-architecture.md#capture-ownership-and-session-lifecycle).
 
 Endpoint decisions use background-relative, DC-corrected energy without
 altering captured audio. See the [endpoint rules](../docs/explanation/voice-architecture.md#capture-ownership-and-session-lifecycle).

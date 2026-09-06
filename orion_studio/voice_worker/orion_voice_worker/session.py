@@ -56,6 +56,10 @@ class VoiceSession:
         self.session_id = session_id
         self.phase = SessionPhase.CAPTURING_WAKE
 
+    def begin_followup(self, session_id):
+        self.begin(session_id)
+        self.phase = SessionPhase.CAPTURING_COMMAND
+
     def accept_utterance(self, session_id, purpose, pcm):
         purpose = TranscriptionPurpose(purpose)
         expected = SessionPhase.CAPTURING_WAKE if purpose is TranscriptionPurpose.WAKE else SessionPhase.CAPTURING_COMMAND

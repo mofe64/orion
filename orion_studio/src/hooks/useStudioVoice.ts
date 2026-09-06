@@ -4,7 +4,7 @@ import { StudioVoicePipeline, DEFAULT_VOICE_SETTINGS, type StudioVoicePhase, typ
 import { OrionSpeechPlayer, type OrionPlaybackSnapshot } from "../lib/studioSpeaker";
 import type { GatewayConnection } from "../lib/gateway";
 export const VOICE_PHASE_LABELS: Record<StudioVoicePhase,string> = {
-  off: "Off", starting: "Loading voice models", ready: "Listening for Hey Orion", wake_candidate: "Wake phrase detected", confirming_wake: "Confirming Hey Orion", command_listening: "Listening for your command", transcribing: "Transcribing locally", thinking: "Orion is thinking", synthesizing: "Creating Orion’s voice", speaking: "Orion is speaking", stopping: "Stopping", error: "Needs attention",
+  off: "Off", starting: "Loading voice models", ready: "Listening for Hey Orion", wake_candidate: "Wake phrase detected", confirming_wake: "Confirming Hey Orion", conversation_listening: "You can continue without Hey Orion", command_listening: "Listening for your command", transcribing: "Transcribing locally", thinking: "Orion is thinking", synthesizing: "Creating Orion’s voice", speaking: "Orion is speaking", stopping: "Stopping", error: "Needs attention",
 };
 export function useStudioVoice(connection: GatewayConnection | null, onNotice: (message: string) => void) {
   const [settings,setSettings] = useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS);

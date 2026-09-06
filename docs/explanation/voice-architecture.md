@@ -15,7 +15,8 @@ Pi ReSpeaker stereo capture (16 kHz signed PCM16)
   -> Studio Qwen ASR confirms "Hey Orion" and extracts command
   -> configured AgentProvider -> Chatterbox Turbo
   -> ordered WAV chunk uploads -> one oriond-owned streaming player
-  -> speech animation -> terminal playback acknowledgement -> rearm Pi
+  -> speech animation -> terminal playback acknowledgement
+  -> echo guard -> five-second conversation invitation -> command or wake rearm
 ```
 
 Rustpotter is the only active wake detector. Its reference and native adapter
@@ -50,6 +51,7 @@ A sustained 60 ms above threshold resets the silence timer; isolated shorter
 spikes do not. Capture ends after one second of non-speech, subject to a
 1.2-second minimum and a 15-second maximum. Noise estimation resumes only
 when listening for a new wake, so response playback cannot raise the threshold.
+The post-response window also reuses this frozen threshold.
 These energy rules are a prototype based on Pi measurements; clipping,
 continuous background speech, and quiet commands still require physical evaluation.
 
@@ -58,9 +60,32 @@ command. The Pi buffers up to one endpointed follow-up while Qwen is working,
 so the transition does not discard speech spoken during confirmation. Empty
 commands fail without invoking the agent.
 
-Processing suppresses further wake triggers. Playback acknowledgement is sent
-only after the Pi reports terminal playback. This is turn-taking, not acoustic
-echo cancellation or barge-in. Session deadlines, bounded socket queues and
+Processing and playback suppress further wake triggers. Playback acknowledgement
+is sent only after the Pi reports terminal playback. After successful playback,
+a compatible worker requests a post-response window. Failed or cancelled
+playback returns directly to wake listening.
+
+The Pi discards the first 0.5 seconds after acknowledgement, then requires
+300 ms of consecutive below-threshold audio before accepting another turn.
+If no quiet baseline appears within two seconds, it abandons the window.
+Once ready, Orion shows a silent, soft teal pulse on a 1.4-second cycle and accepts a command without
+"Hey Orion" for five seconds. Speech onset requires 180 ms of sustained energy;
+a short onset that begins before the deadline may finish confirmation just
+after it. A 300 ms pre-roll preserves the beginning of the command. The guard
+audio is never included. Once onset is confirmed, the ordinary endpoint and
+120-second turn lease apply instead of the invitation deadline.
+
+Each accepted follow-up gets a fresh voice session ID linked to the preceding
+completed turn. Studio validates that link and transcribes it as a command,
+without a second wake-phrase check. Timeout, mute, disconnect, or cancellation
+clears the listening window. The listener advertises `conversationWindow` in
+its ready response; workers request it explicitly on `session.finish`, so older
+peers retain one-shot behavior. Deploy the Pi runtime/listener and restart the
+updated Studio worker together to enable the pulse and follow-up behavior.
+
+This is turn-taking, not acoustic echo cancellation or barge-in. Speak after
+the teal invitation appears. Sustained noise or delayed echo can still cause a
+false onset; threshold, guard, and pulse timing require physical acceptance. Session deadlines, bounded socket queues and
 strict state transitions prevent indefinite buffering and stale command replay.
 A disconnected session is discarded; the Studio worker reconnects automatically.
 Processing has a 120-second session lease; entering playback grants 180 seconds.
@@ -107,6 +132,35 @@ Confirmed, confident direction observations request the existing runtime's
 semantic attention operation. Character Off prevents those movements while
 voice can remain enabled. See [Voice attention](voice-attention.md) for the
 animation brief, priority, commissioning and acceptance requirements.
+
+## Agent conversation and memory
+
+Voice session IDs identify capture/playback turns, not agent conversations.
+`CodexAgentProvider` creates one ephemeral Codex thread when models load and
+reuses it for every confirmed command, including post-response follow-ups and
+later wake-word requests. Pi transport reconnects reuse the loaded models.
+Worker restart or model reload creates a new thread; there is no idle-time
+rotation, explicit new-conversation command, or persisted thread-resume policy.
+The five-second listening deadline does not erase agent context.
+
+The configured base instructions are `ORION_INSTRUCTIONS` in
+[`agent.py`](../../orion_studio/voice_worker/orion_voice_worker/agent.py). They
+request a conversational desk-lamp reply of at most two concise spoken
+sentences, prohibit tools/file operations, and prohibit claims of physical
+actions. The wrapper caps spoken output at 800 characters.
+
+Orion does not load a `soul.md`, user profile, durable memory store, or memory
+retrieval/write pipeline. Conversation context lasts with the worker; it is not
+durable personal memory. A future memory design should distinguish character
+instructions from user facts and retain explicit provenance for saved facts.
+
+The agent boundary currently exposes `respond(text) -> str` and `close()`.
+Orion registers no robot tools or structured tool-result dispatcher. The Codex
+runtime is launched with read-only sandboxing and denied approvals, but the
+prompt's no-tools instruction is not itself an enforced tool allowlist. Adding
+robot tools requires explicit schemas, authorization, validated gateway calls,
+timeouts/cancellation, and results fed back to the agent. Physical operations
+must remain owned by `oriond`.
 
 ## Processing station and latency
 

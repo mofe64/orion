@@ -83,6 +83,76 @@ class SatelliteTests(unittest.TestCase):
     def test_capture_is_stereo(self):
         self.assertEqual(StereoCapture().command()[-2:],['-c','2'])
 
+    def open_window(self):
+        sid = self.trigger(); self.endpoint()
+        self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})
+        self.session.control({'type':'session.playing','sessionId':sid})
+        self.session.control({'type':'session.finish','sessionId':sid,'conversationWindow':True})
+        return sid
+
+    def ready_window(self):
+        for _ in range(50):
+            self.now += .02
+            events = self.session.accept_stereo(frame(0))
+            if events: return events
+        self.fail('No conversation invitation')
+
+    def test_echo_is_discarded_and_followup_has_fresh_id_and_preserved_onset(self):
+        previous = self.open_window()
+        for _ in range(35):
+            self.now += .02
+            self.assertEqual(self.session.accept_stereo(frame(9000)), [])
+        self.assertEqual(self.ready_window()[0]['type'], 'conversation.ready')
+        for _ in range(9):
+            self.now += .02
+            events = self.session.accept_stereo(frame(2345))
+        self.assertEqual(events[0]['type'], 'command.candidate')
+        self.assertEqual(events[0]['previousSessionId'], previous)
+        self.assertNotEqual(self.session.session_id, previous)
+        with self.assertRaises(ValueError):
+            self.session.control({'type':'session.finish','sessionId':previous})
+        result = self.endpoint()
+        self.assertEqual(result[0]['purpose'], 'command')
+        samples = np.frombuffer(result[1], dtype='<i2')
+        self.assertIn(2345, samples)
+        self.assertNotIn(9000, samples)
+
+    def test_window_timeout_rearms_wake_and_clears_audio(self):
+        self.open_window(); self.ready_window()
+        self.now += 5.1
+        self.assertEqual(self.session.accept_stereo(frame())[0]['type'], 'conversation.closed')
+        self.assertEqual(self.session.phase, 'listening')
+        self.assertFalse(self.session.pre_roll)
+
+    def test_continuous_echo_never_arms_and_guard_is_bounded(self):
+        self.open_window()
+        events = []
+        for _ in range(101):
+            self.now += .02
+            events += self.session.accept_stereo(frame(9000))
+        self.assertEqual([e['type'] for e in events], ['conversation.closed'])
+        self.assertEqual(events[0]['reason'], 'echo_guard_timeout')
+
+    def test_cancellation_clears_guard_and_open_window(self):
+        for ready in [False, True]:
+            sid = self.open_window()
+            if ready: self.ready_window()
+            self.session.control({'type':'session.cancel','sessionId':sid})
+            self.assertEqual(self.session.phase, 'listening')
+            self.assertIsNone(self.session.session_id)
+            self.assertFalse(self.session.pre_roll)
+
+    def test_onset_before_window_deadline_reserves_the_whole_utterance(self):
+        self.open_window(); self.ready_window()
+        self.now = self.session.expires_at - .08
+        for _ in range(9):
+            self.now += .02
+            events = self.session.accept_stereo(frame())
+        self.assertEqual(events[0]['type'], 'command.candidate')
+        self.now += 2
+        self.assertEqual(self.session.phase, 'command')
+        self.assertEqual(self.session.accept_stereo(frame()), [])
+
     def test_reject_and_reset_clear_followup(self):
         sid=self.trigger(); self.endpoint()
         self.session.accept_stereo(frame())

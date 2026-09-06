@@ -3,7 +3,7 @@ use crate::Rgbw8;
 use serde::Serialize;
 use std::collections::VecDeque;
 
-// Both voice states share one palette; wake pulses are brief, thinking breathes.
+// Voice feedback shares one palette; the conversation invitation uses its teal.
 const VOICE_PALETTE: [Rgbw8; 3] = [
     Rgbw8::new(65, 32, 6, 8),
     Rgbw8::new(8, 45, 38, 8),
@@ -72,22 +72,42 @@ impl VoiceFeedback {
         if id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
             return Err("Invalid voice session ID");
         }
-        if event == "wake" {
+        if matches!(event, "wake" | "continue") {
             if self.session.is_some() || self.retired.iter().any(|old| old == id) {
                 return Ok(None);
             }
             self.session = Some(id.into());
             self.phase = "listening".into();
-            self.since = now;
+            self.since = if event == "continue" { now - 1.0 } else { now };
             self.deadline = now + 120.0;
             self.processing_cued = false;
-            self.record("wake", now);
-            return Ok(Some(("listening", Some("voice_wake"))));
+            self.record(event, now);
+            return Ok(Some((
+                "listening",
+                if event == "wake" {
+                    Some("voice_wake")
+                } else {
+                    None
+                },
+            )));
         }
         if self.session.as_deref() != Some(id) {
             return Ok(None);
         }
         match event {
+            "guard" if self.phase == "speaking" => {
+                self.phase = "guard".into();
+                self.deadline = now + 3.0;
+                self.record("guard", now);
+                Ok(Some(("neutral", None)))
+            }
+            "window" if self.phase == "guard" => {
+                self.phase = "window".into();
+                self.since = now;
+                self.deadline = now + 5.0;
+                self.record("window", now);
+                Ok(Some(("listening", None)))
+            }
             "endpoint" if self.phase == "listening" => {
                 self.phase = "thinking".into();
                 self.since = now;
@@ -128,7 +148,7 @@ impl VoiceFeedback {
                 self.record("unavailable", now);
                 Ok(Some(("neutral", Some("error_muted"))))
             }
-            "endpoint" | "followup" | "unavailable" => Ok(None),
+            "endpoint" | "followup" | "unavailable" | "guard" | "window" => Ok(None),
             _ => Err("Unknown voice event"),
         }
     }
@@ -142,6 +162,11 @@ impl VoiceFeedback {
     pub fn light(&self, now: f64) -> Option<Rgbw8> {
         let elapsed = (now - self.since).max(0.0);
         let (color, gain) = match self.phase.as_str() {
+            // Silent invitation: a soft teal pulse, distinct from wake's three flashes.
+            "window" => (
+                VOICE_PALETTE[1],
+                0.55 - 0.30 * (elapsed * std::f64::consts::TAU / 1.4).cos(),
+            ),
             "listening" if elapsed < 0.9 => {
                 let index = (elapsed / 0.3).floor() as usize;
                 (
@@ -193,6 +218,33 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn conversation_invitation_is_silent_teal_bounded_and_session_scoped() {
+        let mut f = VoiceFeedback::default();
+        f.event(ID, "wake", 0.0).unwrap();
+        f.playback_started(1.0);
+        assert_eq!(f.event(ID, "guard", 2.0).unwrap(), Some(("neutral", None)));
+        assert!(f.light(2.2).is_none());
+        assert_eq!(
+            f.event(ID, "window", 2.8).unwrap(),
+            Some(("listening", None))
+        );
+        let low = f.light(2.8).unwrap();
+        let high = f.light(3.5).unwrap();
+        assert!(high.green > high.red && high.blue > high.red);
+        assert!(high.green > low.green);
+        assert!(f.event(ID, "window", 3.0).unwrap().is_none());
+        assert!(f.expire(7.8));
+        assert!(f.light(7.8).is_none());
+        let next = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert_eq!(
+            f.event(next, "continue", 8.0).unwrap(),
+            Some(("listening", None))
+        );
+        f.event(ID, "cancel", 8.1).unwrap();
+        assert!(f.owns(next));
+        assert!(f.event(next, "endpoint", 9.0).unwrap().is_some());
+    }
     #[test]
     fn thinking_breathes_in_all_acknowledgment_colors_without_flashes() {
         let mut feedback = VoiceFeedback::default();
