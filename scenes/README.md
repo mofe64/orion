@@ -52,3 +52,19 @@ runtime/target/release/oriond --scene-status
 deployment pass also exercises both expressive look scenes. Mechanical `rest`
 is not a scene: shutdown moves directly to the calibrated `rest` pose and only
 then releases torque.
+
+
+## Studio-authored light effects and scoped assets
+
+Lighting events also accept `constant`, `pulse`, `breathe`, and `fade`. `colors`
+contains one stage for constant or two for the other effects. Each stage is
+`warm_white` (the dedicated white channel) or a `#rrggbb` color. Optional `levels`
+sets per-stage brightness in the range 0–1; `intensity` scales the whole effect.
+`period` is the pulse/breathe cycle length in seconds, at least 0.1. Fade spans
+`duration`. Pulse and breathe default to 15% base brightness and 100% peak brightness.
+
+An optional top-level `studio` object preserves scene-owned pose and movement data.
+The Studio gateway validates ownership names, stages those dependencies, and reloads
+the asset libraries when publishing. The runtime ignores the metadata itself; moving
+a bundled scene file directly to the Pi does not install its dependencies. See the
+[Studio editor documentation](../orion_studio/README.md#animation-library-and-scene-editor).

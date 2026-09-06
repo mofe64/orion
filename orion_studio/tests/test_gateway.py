@@ -303,10 +303,6 @@ class HomeOperationTests(unittest.TestCase):
         self.assertEqual(client.commands, ["lamp 32 64 128 0"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class StreamingSpeechGatewayTests(unittest.TestCase):
     def test_stream_chunks_use_one_runtime_run_and_cleanup_rejected_files(self):
         from unittest.mock import Mock
@@ -325,3 +321,97 @@ class StreamingSpeechGatewayTests(unittest.TestCase):
             self.assertEqual(set(Path(directory).iterdir()), before)
             with self.assertRaises(GatewayError):
                 gateway.upload_speech(pcm_wav(frames=24000*3), "reply", streaming=True)
+
+class SceneDeletionTests(unittest.TestCase):
+    def test_delete_restores_file_when_reload_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            user = root / "scenes" / "user"
+            user.mkdir(parents=True)
+            path = user / "mine.yaml"
+            original = b"scene: mine\n"
+            path.write_bytes(original)
+            client = FakeOrionClient()
+            gateway = OrionGateway(client, project_root=root)
+            revision = gateway.read_user_scene("mine")["revision"]
+            client.reject_reload = True
+            with self.assertRaises(GatewayError):
+                gateway.delete_user_scene("mine", {"expected_revision": revision})
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_delete_user_scene_checks_revision_and_reloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            user = root / "scenes" / "user"
+            user.mkdir(parents=True)
+            path = user / "mine.yaml"
+            path.write_text("scene: mine\n")
+            gateway = OrionGateway(FakeOrionClient(), project_root=root)
+            revision = gateway.read_user_scene("mine")["revision"]
+            with self.assertRaises(GatewayError):
+                gateway.delete_user_scene("mine", {"expected_revision": "stale"})
+            self.assertTrue(path.exists())
+            status, result = gateway.delete_user_scene("mine", {"expected_revision": revision})
+            self.assertEqual(status, HTTPStatus.OK)
+            self.assertTrue(result["deleted"])
+            self.assertFalse(path.exists())
+
+    def test_delete_cannot_remove_system_scene(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scenes").mkdir()
+            path = root / "scenes" / "system.yaml"
+            path.write_text("system")
+            gateway = OrionGateway(FakeOrionClient(), project_root=root)
+            with self.assertRaises(GatewayError):
+                gateway.delete_user_scene("system", {"expected_revision": "anything"})
+            self.assertTrue(path.exists())
+
+class SceneOwnedAssetTests(unittest.TestCase):
+    def bundle(self):
+        document = scene_document("private_scene")
+        pose_name = "private_scene_custom_pose_1"
+        motion_name = "private_scene_custom_movement_1"
+        pose = dict(pose_document(pose_name)["poses"][pose_name], name=pose_name, owner_scene="private_scene", source="draft")
+        motion = motion_document(motion_name)["motion"]
+        motion["keyframes"][0]["pose"] = pose_name
+        motion.update(owner_scene="private_scene", source="draft")
+        document["scene"]["motion"][0]["play"] = motion_name
+        document["studio"] = {"poses": {pose_name: pose}, "motions": {motion_name: motion}}
+        return document
+
+    def test_bundle_publish_and_delete_keep_owned_assets_with_scene(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = OrionGateway(FakeOrionClient(), project_root=Path(directory))
+            document = self.bundle()
+            _, published = gateway.publish_scene(document)
+            owned = gateway._owned_scene_assets(document)
+            self.assertTrue(all(path.exists() for path in owned))
+            self.assertEqual(gateway.list_user_poses()["assets"], [])
+            self.assertIn("asset reload", gateway.client.commands)
+            gateway.delete_user_scene("private_scene", {"expected_revision": published["revision"]})
+            self.assertTrue(all(not path.exists() for path in owned))
+
+    def test_rejected_bundle_rolls_back_scene_and_dependencies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = FakeOrionClient()
+            client.reject_reload = True
+            gateway = OrionGateway(client, project_root=Path(directory))
+            document = self.bundle()
+            with self.assertRaises(GatewayError): gateway.publish_scene(document)
+            self.assertFalse((Path(directory)/"scenes/user/private_scene.yaml").exists())
+            self.assertTrue(all(not path.exists() for path in gateway._owned_scene_assets(document)))
+
+    def test_invalid_ownership_and_light_stage_count_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = OrionGateway(FakeOrionClient(), project_root=Path(directory))
+            document = self.bundle()
+            document["studio"]["poses"]["private_scene_custom_pose_1"]["owner_scene"] = "another_scene"
+            with self.assertRaises(GatewayError): gateway.publish_scene(document)
+            document = scene_document()
+            document["scene"]["lighting"] = [{"at": 0, "effect": "pulse", "colors": ["#ffffff"]}]
+            with self.assertRaises(GatewayError): gateway.publish_scene(document)
+
+
+if __name__ == "__main__":
+    unittest.main()

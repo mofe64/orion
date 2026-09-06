@@ -1,3 +1,4 @@
+import { customLight } from "./lightEffects";
 import { JOINT_NAMES } from "../types";
 import type {
   CompiledTrajectoryPreview,
@@ -11,6 +12,10 @@ import type {
 export type SceneTrajectoryPreviews = Record<string, CompiledTrajectoryPreview>;
 
 export const EFFECT_PREVIEWS: Record<LightingEffectName, LightPreview> = {
+  constant: { red: 255, green: 204, blue: 136, white: 0 },
+  pulse: { red: 255, green: 204, blue: 136, white: 0 },
+  breathe: { red: 255, green: 204, blue: 136, white: 0 },
+  fade: { red: 255, green: 204, blue: 136, white: 0 },
   warm_idle_breathe: { red: 32, green: 12, blue: 1, white: 78 },
   attentive_focus: { red: 28, green: 18, blue: 4, white: 120 },
   thinking_drift: { red: 24, green: 8, blue: 18, white: 70 },
@@ -58,6 +63,7 @@ export function triggerTime(
   scene: SceneDefinition,
   trajectories: SceneTrajectoryPreviews,
 ): number | null {
+  if (timing.resolved_at !== undefined) return timing.resolved_at;
   if (timing.at !== undefined) return timing.at;
   return timing.on_marker ? sceneMarkerTime(scene, trajectories, timing.on_marker) : null;
 }
@@ -72,10 +78,10 @@ export function sceneDuration(
   }, 0);
   const lightEnd = scene.lighting.reduce((end, event) => {
     const start = triggerTime(event, scene, trajectories);
-    return start === null ? end : Math.max(end, start + (event.duration ?? 0.8));
+    return start === null ? end : Math.max(end, start + (event.duration ?? 0.8) + (event.transition ?? 0));
   }, 0);
   const audioEnd = scene.audio.reduce(
-    (end, event) => Math.max(end, triggerTime(event, scene, trajectories) ?? 0),
+    (end, event) => Math.max(end, (triggerTime(event, scene, trajectories) ?? 0) + (event.duration ?? 0)),
     0,
   );
   return Math.max(1, motionEnd, lightEnd, audioEnd);
@@ -111,6 +117,38 @@ export function sceneMarkers(
   );
 }
 
+export function orderedSceneMotions(scene: SceneDefinition) {
+  return [...scene.motion].sort((left, right) => left.at - right.at);
+}
+
+export function sequenceSceneMotions(scene: SceneDefinition, trajectories: SceneTrajectoryPreviews): SceneDefinition {
+  let end = 0;
+  let changed = false;
+  const motion = orderedSceneMotions(scene).map(event => {
+    const trajectory = trajectories[event.id];
+    if (!trajectory) throw new Error(`No Rust preview is available for ${event.play}.`);
+    const at = event.after_previous ? end : Math.max(event.at, end);
+    end = at + trajectory.duration_seconds;
+    changed ||= at !== event.at;
+    return { ...event, at };
+  });
+  return changed ? { ...scene, motion } : scene;
+}
+
+export function appendSceneMotion(scene: SceneDefinition, id: string, play: string, trajectories: SceneTrajectoryPreviews = {}): SceneDefinition {
+  const motion = orderedSceneMotions(scene);
+  return { ...scene, motion: [...motion, { id, play, at: motion.at(-1) ? motion.at(-1)!.at + (trajectories[motion.at(-1)!.id]?.duration_seconds ?? 0) : 0, after_previous: true }] };
+}
+
+export function moveSceneMotion(scene: SceneDefinition, id: string, direction: -1 | 1): SceneDefinition {
+  const motion = orderedSceneMotions(scene);
+  const index = motion.findIndex(event => event.id === id);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= motion.length) return scene;
+  [motion[index], motion[target]] = [motion[target], motion[index]];
+  return { ...scene, motion: motion.map(event => ({ ...event, at: 0, after_previous: true })) };
+}
+
 export function validateSceneMotionSchedule(
   scene: SceneDefinition,
   trajectories: SceneTrajectoryPreviews,
@@ -131,14 +169,18 @@ export function sampleSceneLight(
   elapsed: number,
   trajectories: SceneTrajectoryPreviews,
 ): LightPreview {
-  let effect: LightingEffectName = "off";
   let latest = -1;
+  let result = EFFECT_PREVIEWS.off;
   for (const event of scene.lighting) {
     const at = triggerTime(event, scene, trajectories);
-    if (at !== null && at <= elapsed && at >= latest) {
-      latest = at;
-      effect = event.effect;
-    }
+    if (at === null || at > elapsed || at < latest || (event.duration !== undefined && elapsed >= at + event.duration + (event.transition ?? 0))) continue;
+    latest = at;
+    const custom = customLight(event, elapsed - at);
+    if (custom) { result = custom; continue; }
+    const fade = event.transition ? Math.min(1, Math.max(0, (elapsed - at) / event.transition)) : 1;
+    const intensity = Math.max(0, Math.min(1, event.intensity ?? 1)) * fade;
+    const source = EFFECT_PREVIEWS[event.effect];
+    result = { red: source.red * intensity, green: source.green * intensity, blue: source.blue * intensity, white: source.white * intensity };
   }
-  return EFFECT_PREVIEWS[effect];
+  return result;
 }

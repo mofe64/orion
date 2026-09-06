@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import argparse
 import hashlib
 import json
@@ -171,7 +173,7 @@ class OrionGateway:
                     "max_body_bytes": MAX_PREVIEW_SCENE_BYTES,
                     "persisted": False,
                 },
-                "scene_library": {"read": True, "create": True, "update": "revision"},
+                "scene_library": {"read": True, "create": True, "update": "revision", "delete": True},
                 "joint_limits": limits.get("joints", []),
                 "pose_library": {"read": True, "create": True, "update": False},
                 "motion_library": {"read": True, "create": True, "update": False},
@@ -226,6 +228,11 @@ class OrionGateway:
                 )
             document = payload.get("document")
             self._validate_scene_document(document)
+            if document.get("studio"):
+                for path, data in self._owned_scene_assets(document).items():
+                    if not path.is_file() or path.read_bytes() != data:
+                        raise GatewayError(HTTPStatus.CONFLICT, "publish_scene_first", "Publish this scene to Orion before playing its custom poses on the robot.")
+                document = {key: value for key, value in document.items() if key != "studio"}
             try:
                 encoded = json.dumps(
                     document,
@@ -355,7 +362,7 @@ class OrionGateway:
 
         if self.project_root is None:
             raise GatewayError(HTTPStatus.NOT_IMPLEMENTED, "trajectory_preview_unavailable", "The gateway has no Orion project root.")
-        if not isinstance(payload, dict) or not set(payload) <= {"motion", "document", "start_pose", "anchor_pose"}:
+        if not isinstance(payload, dict) or not set(payload) <= {"motion", "document", "start_pose", "anchor_pose", "poses"}:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_trajectory_preview", "Trajectory preview accepts one motion name or v2 document, start_pose, and optional anchor_pose.")
         if ("motion" in payload) == ("document" in payload):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_trajectory_preview", "Provide exactly one motion name or v2 motion document.")
@@ -364,21 +371,32 @@ class OrionGateway:
         start_pose = self._name(payload.get("start_pose"), "pose")
         anchor_value = payload.get("anchor_pose")
         anchor_pose = self._name(anchor_value, "pose") if anchor_value is not None else None
+        poses_document = payload.get("poses")
+        if poses_document is not None:
+            if not isinstance(poses_document, dict) or not isinstance(poses_document.get("poses"), dict) or not poses_document["poses"]:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_preview_poses", "Preview poses are invalid.")
+            for name, pose in poses_document["poses"].items():
+                self._validate_pose_document({"format_version": 2, "units": "radians", "poses": {name: pose}})
         temporary: tempfile.TemporaryDirectory[str] | None = None
         try:
             motions_directory = self.project_root / "motion/motions"
-            if document is not None:
+            if document is not None or poses_document is not None:
                 temporary = tempfile.TemporaryDirectory(prefix="orion-studio-motion-")
+            if document is not None:
                 motions_directory = Path(temporary.name)
                 (motions_directory / f"{motion}.yaml").write_text(
                     json.dumps(document, separators=(",", ":"), ensure_ascii=False, allow_nan=False),
                     encoding="utf-8",
                 )
+            pose_file = self.project_root / "motion/config/poses.yaml"
+            if poses_document is not None:
+                pose_file = Path(temporary.name) / "preview-poses.json"
+                pose_file.write_text(json.dumps(poses_document, allow_nan=False), encoding="utf-8")
             command = [
                 str(self._trajectory_compiler_path()),
                 "--motion", motion,
                 "--start-pose", start_pose,
-                "--pose-file", str(self.project_root / "motion/config/poses.yaml"),
+                "--pose-file", str(pose_file),
                 "--motions-directory", str(motions_directory),
                 "--calibration", str(self.calibration_file),
                 "--control-rate-hz", "50",
@@ -474,9 +492,57 @@ class OrionGateway:
             return self._checked("disable")
         return {"ok": True, "command": "release_movement", "mode": mode, "already_released": True}
 
+    def _owned_scene_assets(self, document: Any) -> dict[Path, bytes]:
+        self._validate_scene_document(document)
+        if self.project_root is None:
+            raise GatewayError(HTTPStatus.NOT_IMPLEMENTED, "scene_publish_unavailable", "Orion project root is unavailable.")
+        studio = document.get("studio", {})
+        if not isinstance(studio, dict) or not set(studio) <= {"poses", "motions"}:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene_assets", "Scene assets are invalid.")
+        owner = document["scene"]["name"]
+        result = {}
+        for kind, directory in (("poses", "motion/user/poses/_scene_owned"), ("motions", "motion/motions/user/_scene_owned")):
+            entries = studio.get(kind, {})
+            if not isinstance(entries, dict):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene_assets", "Scene assets must be named objects.")
+            for name, value in entries.items():
+                self._name(name, kind)
+                suffix = "pose" if kind == "poses" else "movement"
+                if not re.fullmatch(re.escape(owner) + "_custom_" + suffix + r"_[1-9][0-9]*", name) or not isinstance(value, dict) or value.get("owner_scene") != owner:
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene_owner", "Custom assets must belong to this scene.")
+                if kind == "poses":
+                    asset = {"format_version": 2, "units": "radians", "poses": {name: {key: value[key] for key in ("description", "tags", "idle_profile", "default_lighting", "positions") if key in value}}}
+                    self._validate_pose_document(asset)
+                    self._validate_pose_limits(asset, self._checked("joint limits").get("joints"))
+                else:
+                    asset = {"format_version": 2, "motion": {key: value[key] for key in ("name", "description", "space", "style", "return_to_anchor", "keyframes") if key in value}}
+                    self._validate_motion_document(asset)
+                result[self.project_root / directory / f"{name}.yaml"] = self._encode_scene_document(asset)
+        return result
+
+    @contextmanager
+    def _scene_asset_transaction(self, document: Any):
+        assets = self._owned_scene_assets(document)
+        backups = {}
+        try:
+            for path, data in assets.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.is_symlink():
+                    raise GatewayError(HTTPStatus.CONFLICT, "invalid_scene_asset", "Scene asset cannot be a symbolic link.")
+                backups[path] = path.read_bytes() if path.exists() else None
+                self._atomic_replace(path, data)
+            yield
+        except Exception:
+            for path, data in backups.items():
+                if data is None: path.unlink(missing_ok=True)
+                else: self._atomic_replace(path, data)
+            raise
+
     def publish_scene(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         with self.scene_write_lock:
-            return self._publish_scene_locked(document)
+            with self._scene_asset_transaction(document):
+                result = self._publish_scene_locked(document)
+                return result
 
     def _publish_scene_locked(self, document: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         if self.project_root is None:
@@ -522,7 +588,7 @@ class OrionGateway:
                     "user_scene_exists",
                     f"A different user scene named '{name}' already exists; choose a new name.",
                 )
-            reload_result = self._checked("scene reload")
+            reload_result = self._checked("asset reload" if document.get("studio") else "scene reload")
             return HTTPStatus.OK, {
                 "api_version": API_VERSION,
                 "published": True,
@@ -541,7 +607,7 @@ class OrionGateway:
                 output.write(encoded)
                 output.flush()
                 os.fsync(output.fileno())
-            reload_result = self._checked("scene reload")
+            reload_result = self._checked("asset reload" if document.get("studio") else "scene reload")
         except GatewayError:
             if created:
                 path.unlink(missing_ok=True)
@@ -614,9 +680,36 @@ class OrionGateway:
             "yaml": yaml,
         }
 
+    def delete_user_scene(self, name: Any, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        with self.scene_write_lock:
+            name = self._name(name, "scene")
+            if not isinstance(payload, dict) or set(payload) != {"expected_revision"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene_delete", "A scene revision is required.")
+            path = self._existing_user_scene_path(name)
+            previous = self._read_user_scene_file(path)
+            if self._revision(previous) != payload["expected_revision"]:
+                raise GatewayError(HTTPStatus.CONFLICT, "scene_revision_conflict", "Scene changed on Orion; reload it before deleting.")
+            try:
+                stored = json.loads(previous)
+            except (ValueError, UnicodeDecodeError):
+                stored = None
+            owned = self._owned_scene_assets(stored) if stored and stored.get("studio") else {}
+            backups = {asset: asset.read_bytes() for asset in owned if asset.exists() and not asset.is_symlink()}
+            try:
+                path.unlink()
+                for asset in backups: asset.unlink()
+                self._checked("asset reload" if owned else "scene reload")
+            except (GatewayError, OSError):
+                self._atomic_replace(path, previous)
+                for asset, data in backups.items(): self._atomic_replace(asset, data)
+                raise
+            return HTTPStatus.OK, {"api_version": API_VERSION, "name": name, "deleted": True}
+
     def update_user_scene(self, name: Any, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         with self.scene_write_lock:
-            return self._update_user_scene_locked(name, payload)
+            with self._scene_asset_transaction(payload.get("document") if isinstance(payload, dict) else None):
+                result = self._update_user_scene_locked(name, payload)
+                return result
 
     def _update_user_scene_locked(self, name: Any, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         name = self._name(name, "scene")
@@ -663,7 +756,7 @@ class OrionGateway:
 
         try:
             self._atomic_replace(path, encoded)
-            reload_result = self._checked("scene reload")
+            reload_result = self._checked("asset reload" if document.get("studio") else "scene reload")
         except GatewayError as publish_error:
             try:
                 self._atomic_replace(path, previous)
@@ -1069,7 +1162,7 @@ class OrionGateway:
 
     @classmethod
     def _validate_scene_document(cls, document: Any) -> str:
-        if not isinstance(document, dict) or set(document) != {"format_version", "scene"}:
+        if not isinstance(document, dict) or not {"format_version", "scene"} <= set(document) or not set(document) <= {"format_version", "scene", "studio"}:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Expected a versioned scene document.")
         if document.get("format_version") != 2 or not isinstance(document.get("scene"), dict):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Scene format_version must be 2 (v2 required).")
@@ -1092,15 +1185,24 @@ class OrionGateway:
             if at < previous_at: raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Motion track times must be ordered.")
             previous_at = at
             cls._name(event.get("play"), "motion")
-        effects = {"warm_idle_breathe", "attentive_focus", "thinking_drift", "speaking_energy", "acknowledge_pulse", "curious_sweep", "delight_spark", "settle_glow", "off"}
+        effects = {"warm_idle_breathe", "attentive_focus", "thinking_drift", "speaking_energy", "acknowledge_pulse", "curious_sweep", "delight_spark", "settle_glow", "off", "constant", "pulse", "breathe", "fade"}
         for event in lighting:
-            if not isinstance(event, dict) or not set(event) <= {"at", "on_marker", "effect", "intensity", "duration", "transition", "palette"}:
+            if not isinstance(event, dict) or not set(event) <= {"at", "on_marker", "effect", "intensity", "duration", "transition", "palette", "colors", "period", "levels"}:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Lighting track event contains invalid fields.")
             if ("at" in event) == ("on_marker" in event): raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Lighting event requires exactly one trigger.")
             if "at" in event: cls._number(event["at"], "Lighting time", minimum=0.0)
             else: cls._name(event["on_marker"], "marker")
             if event.get("effect") not in effects: raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Unknown Orion lighting effect.")
             cls._number(event.get("intensity", 1.0), "Lighting intensity", minimum=0.0)
+            if event.get("effect") in {"constant", "pulse", "breathe", "fade"}:
+                colors = event.get("colors")
+                count = 1 if event["effect"] == "constant" else 2
+                if not isinstance(colors, list) or len(colors) != count or any(not isinstance(color, str) or (color != "warm_white" and not re.fullmatch(r"#[0-9a-fA-F]{6}", color)) for color in colors):
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Choose a color for every effect stage.")
+            cls._number(event.get("period", 2.0), "Effect cycle", minimum=0.1)
+            levels = event.get("levels", [])
+            if not isinstance(levels, list) or len(levels) > 2 or any(type(level) not in (int, float) or not math.isfinite(level) or not 0 <= level <= 1 for level in levels):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene", "Stage brightness must be between zero and one.")
             cls._number(event.get("duration", 0.8), "Lighting duration", minimum=0.0)
             cls._number(event.get("transition", 0.0), "Lighting transition", minimum=0.0)
         for event in audio:
@@ -1186,7 +1288,7 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
             self.send_response(HTTPStatus.NO_CONTENT)
             self._cors_headers()
             self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Orion-Voice-Request-ID")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
             self.end_headers()
 
         def do_GET(self) -> None:
@@ -1194,6 +1296,15 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def do_POST(self) -> None:
             self._handle(self._post)
+
+        def do_DELETE(self) -> None:
+            self._handle(self._delete)
+
+        def _delete(self) -> tuple[HTTPStatus, dict[str, Any]]:
+            path = urlparse(self.path).path
+            if not path.startswith("/api/v2/scenes/"):
+                raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
+            return gateway.delete_user_scene(path.removeprefix("/api/v2/scenes/"), self._read_json())
 
         def do_PUT(self) -> None:
             self._handle(self._put)

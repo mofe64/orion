@@ -32,7 +32,7 @@ export const MOTION_STYLES = [
 export type JointName = (typeof JOINT_NAMES)[number];
 export type JointPositions = Record<JointName, number>;
 export type JointOffsets = Partial<Record<JointName, number>>;
-export type LightingEffectName = (typeof LIGHTING_EFFECTS)[number];
+export type LightingEffectName = (typeof LIGHTING_EFFECTS)[number] | "constant" | "pulse" | "breathe" | "fade";
 export type MotionStyleName = (typeof MOTION_STYLES)[number];
 export type AssetSource = "built_in" | "user" | "draft";
 
@@ -43,6 +43,7 @@ export interface JointLimit {
 }
 
 export interface PoseDefinition {
+  owner_scene?: string;
   name: string;
   description: string;
   tags: string[];
@@ -66,13 +67,14 @@ export interface MotionKeyframe {
 }
 
 export interface MotionDefinition {
+  owner_scene?: string;
   name: string;
   description: string;
   space: MotionSpace;
   style: MotionStyleName;
   return_to_anchor: boolean;
   keyframes: MotionKeyframe[];
-  source: Exclude<AssetSource, "draft">;
+  source: AssetSource;
   remote_revision?: string;
 }
 
@@ -101,17 +103,27 @@ export interface StoredMotionDocument {
 }
 
 export interface TrackTiming {
+  resolved_at?: number;
+  after_previous?: boolean;
+  delay?: number;
   at?: number;
   on_marker?: string;
 }
 
 export interface SceneMotionClip {
+  /** Studio presentation state for expanded pose/delay editing. */
+  show_parts?: boolean;
+  /** Studio-only: derive this start from the preceding compiled movement. */
+  after_previous?: boolean;
   id: string;
   at: number;
   play: string;
 }
 
 export interface SceneLightingEvent extends TrackTiming {
+  colors?: string[];
+  levels?: number[];
+  period?: number;
   id: string;
   effect: LightingEffectName;
   intensity?: number;
@@ -121,6 +133,7 @@ export interface SceneLightingEvent extends TrackTiming {
 }
 
 export interface SceneAudioEvent extends TrackTiming {
+  duration?: number;
   id: string;
   cue: string;
 }
@@ -131,6 +144,10 @@ export interface SceneFinish {
 }
 
 export interface SceneDefinition {
+  custom_poses?: Record<string, PoseDefinition>;
+  custom_motions?: Record<string, MotionDefinition>;
+  /** Studio draft starting point; not part of the runtime scene format. */
+  starting_pose?: string;
   format_version: 2;
   name: string;
   description: string;
@@ -143,11 +160,12 @@ export interface SceneDefinition {
 }
 
 export interface StoredSceneDocument {
+  studio?: { poses: Record<string, PoseDefinition>; motions: Record<string, MotionDefinition> };
   format_version: 2;
   scene: {
     name: string;
     description: string;
-    motion: Array<Omit<SceneMotionClip, "id">>;
+    motion: Array<Omit<SceneMotionClip, "id" | "after_previous" | "show_parts">>;
     lighting: Array<Omit<SceneLightingEvent, "id">>;
     audio: Array<Omit<SceneAudioEvent, "id">>;
     finish: SceneFinish;
@@ -243,7 +261,7 @@ export interface GatewayCapabilities {
     cancel: Array<"movement" | "scene" | "speech">;
     scene_publish: { format_version: 2; max_body_bytes: number };
     scene_preview: { format_version: 2; max_body_bytes: number; persisted: false };
-    scene_library: { read: boolean; create: boolean; update: "revision" };
+    scene_library: { read: boolean; create: boolean; update: "revision"; delete?: boolean };
     joint_limits: JointLimit[];
     pose_library: { read: boolean; create: boolean; update: false };
     motion_library: { read: boolean; create: boolean; update: false };

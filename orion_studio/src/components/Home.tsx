@@ -18,12 +18,13 @@ interface Props {
   onConnect: () => void;
   onVoice: () => void;
   onCreate: () => void;
+  onDiagnostics?: () => void;
   onRefresh: () => Promise<void>;
   onNotice: (message: string) => void;
   onRun: (run: TrackedRun | null) => void;
 }
 
-export function Home({ catalog, theme, voiceLabel, connection, status, onConnect, onVoice, onCreate, onRefresh, onNotice, onRun }: Props) {
+export function Home({ catalog, theme, voiceLabel, connection, status, onConnect, onVoice, onCreate, onDiagnostics, onRefresh, onNotice, onRun }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [mood, setMood] = useState<LampMood>("Warm white");
   const [hue, setHue] = useState(210);
@@ -100,14 +101,15 @@ export function Home({ catalog, theme, voiceLabel, connection, status, onConnect
         </div>
         <div className="oh-range"><SunDim size={18} /><input id="lamp-brightness" type="range" min="1" max="100" value={brightness} onChange={event => setBrightness(Number(event.target.value))} /><Sun size={18} /></div>
         <fieldset className="oh-light-moods"><legend>Light mood</legend><div>{(["Warm white", "Custom color"] as const).map(value => <button key={value} type="button" aria-pressed={mood === value} onClick={() => setMood(value)}>{value}</button>)}</div></fieldset>
-        {mood === "Custom color" && <div className="oh-color"><div><label htmlFor="lamp-color">Choose your color</label><span className="oh-swatch" style={{ background: `hsl(${hue} 75% 65%)` }} aria-hidden="true" /></div><input id="lamp-color" type="range" min="0" max="360" value={hue} aria-valuetext={hueName(hue)} onChange={event => setHue(Number(event.target.value))} /></div>}
+        {mood === "Custom color" && <div className="oh-color"><div><label htmlFor="lamp-color">Choose your color</label><span className="oh-swatch" style={{ background: `hsl(${hue} 75% 65%)` }} aria-hidden="true" /></div><input className="orion-hue-slider" id="lamp-color" type="range" min="0" max="360" value={hue} aria-valuetext={hueName(hue)} onChange={event => setHue(Number(event.target.value))} /></div>}
         <button className="oh-apply" disabled={disabled} onClick={() => applyLight(true)}>{pending === "Warm white light" || pending === "Custom color" ? "Applying…" : `Apply ${mood.toLowerCase()}`}</button>
         <p className="oh-note" id="lamp-command-help">The switch shows your last lamp command. Character and speech can temporarily take over the light.</p>
       </section>
     </div>
-    <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>Make an expression <Plus size={15} /></button></header>
+    <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>Explore animations <Plus size={15} /></button></header>
       <div className="oh-expression-list">{[["acknowledge_left", "Acknowledge left"], ["acknowledge_right", "Acknowledge right"]].map(([name, label], index) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(label, value => runScene(value, name))}><span className="oh-expression-icon">{index === 0 ? <MoveUpLeft size={16} /> : <MoveUpRight size={16} />}</span>{label}<Play className="oh-arrow" size={14} /></button>)}</div>
     </section>
+    <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>
     <p className="oh-feedback" role="status"><Info size={14} /><span>{pending ? `${pending}…` : result || (!connection ? "Connect Orion to use character, lamp, and expression controls." : "Connected to Orion.")}</span></p>
   </section>;
 }

@@ -59,10 +59,19 @@ following a restart. **Discard changes** restores the catalog version.
 published before running. Browser-storage errors remain visible and prevent
 switching away from an unsaved asset.
 
+Scene movements added in Studio automatically follow the preceding movement.
+Use **Move earlier** and **Move later** to arrange them without start timestamps;
+reordering makes the movement track a continuous sequence. Existing explicit gaps
+remain until reordering, and overlapping clips shift forward after compilation.
+Timing uses full compiler precision. Runs and publishing wait for the current
+sequence to finish compiling. Automatic placement is saved in Studio drafts;
+published v2 files contain resolved numeric starts. Marker-linked light and sound
+follow their movement; explicitly timed effects keep their authored timestamps.
+
 The preview distinguishes a static pose, compilation in progress, a failed
 compile, and a compiled preview. Compiled movement uses the Rust trajectory
 compiler and connected calibration; it does not establish physical clearance.
-Unresolved timeline events stay in **Awaiting compilation**. Each resolved event
+Unresolved timeline events stay in **Calculating scene timing**. Each resolved event
 has a separate selectable row; zoom expands the time scale.
 
 Robot activity shows accepted run IDs, progress, terminal results, and a
@@ -176,3 +185,91 @@ and [scene reference](../scenes/README.md).
 
 See the [Studio home audit](../docs/project/studio-home-audit-2026-09-04.md) for
 the original findings and validation of their fixes.
+
+
+## Animation library and scene editor
+
+**Animation** opens a scene/pose library with separate **Orion collection** and
+**My scenes / My poses** groups. Selecting an item never sends a robot command.
+**Play preview / Preview pose** affects the model; **Play on Orion / Go to pose on
+Orion** explicitly requests hardware playback. **Full scene** previews movement,
+lighting colours/intensity/fades, and local audio cues; **Movement only** omits
+scene lighting/audio events. The runtime's normal finish/idle lighting policy
+still applies after hardware playback. The visual light is an approximation of
+runtime effects, not a photometric simulation.
+
+**Return to home pose** plays the existing `return_home` scene on Orion only,
+and is disabled while disconnected, busy, or reporting `home_idle`. To view the
+home pose in the model, select **Home** under **Poses** and use **Preview pose**.
+Studio does not receive measured joint telemetry through this status API.
+Scene preview compilation requires a connected
+Orion, while static pose browsing works offline.
+
+**Create scene** starts from a scene copy or pose, and opens the separate editor.
+System scenes remain intact. User drafts survive restarts and appear in the user
+collection. Pose-based scenes get an internal starting movement; publishing the
+scene first publishes any new movement dependencies. The editor retains event
+and timeline controls and supports saving a copied destination pose. The theme
+preference applies to every screen and persists locally. Diagnostics is a Home
+quick action. All views illuminate the diffuser with a light parented to its mesh,
+so the beam follows the lamp head.
+
+**Delete scene** follows **Edit scene** for user scenes and asks for confirmation.
+Deleting a local draft removes it from this device. Deleting a published scene
+requires a connected gateway advertising `scene_library.delete`; it removes the
+scene from Orion and its local draft, including scene-owned poses and movements.
+Standalone library poses and sounds remain intact. The gateway
+checks the scene revision before deletion and restores the file if catalog reload
+fails. System scenes cannot be deleted from Studio.
+
+
+The scene editor places its editable name, **Save**, and **Publish to Orion** at
+the top. A labelled status icon indicates local save state. Playback controls sit
+below the model in a separate layout row. On desktop, the preview and timeline
+share the available screen height; long timelines and selection panels scroll
+independently. Right-click a movement and choose **Split into components** to
+replace its clip with individual pose and nonzero delay clips within the Motion
+track. Collapsed, the track keeps all clips on one row. Expanding Motion reveals
+its grouped component rows.
+Select a component to edit it in the inspector; right-click to delete that component.
+Deleting a pose also removes its attached delay. Split state persists in the draft.
+Keyboard users can open the same menu with Shift+F10. Internally, components retain
+their shared movement compilation so smooth transitions and speed checks remain
+intact. Edits use a private movement copy. Component positions use compiled preview
+samples (at the preview sampling resolution); before compilation, rows remain
+selectable with timing pending. Split metadata is omitted from published scenes.
+
+
+Motion, Light, and Sound each have a collapsible track. Drag the playhead to scrub;
+its grab cursor and keyboard arrow controls support precise positioning. Drag a
+clip to reposition it, with a 12-pixel snap threshold at the track start and nearby
+clip edges. Components reorder within their parent movement. Media items queue
+within their own track; sound durations come from WAV metadata. Movement cue links
+remain authored links, while publication uses their resolved, non-overlapping times.
+**Starts** explains scene-time, previous-item, and movement-cue timing. **Delay** adds
+waiting time to the selected item: a hold after a motion pose, or a wait before a
+light or sound. Select the resulting Delay component to change its duration.
+
+The lighting picker separates **Custom effects** (Constant, Pulse, Breathe, Fade)
+from **Orion presets**, which always lists all developer-prepared effects. Choosing
+a preset clears custom stage overrides. Brightness sliders show percentages.
+Each custom stage has Warm white or a
+single custom-color hue slider and brightness. Effect explanations expand in place.
+The browser and runtime use the same stage curves; existing character presets remain
+unchanged until the user selects another effect.
+
+Right-click a pose and choose **Edit pose**. The inspector shows calibrated joint
+controls and updates the model without sending hardware commands. **Complete edit**
+stores `<scene>_custom_pose_<n>` inside the scene draft. These poses do not appear in
+the pose library. Scene renaming updates the embedded pose and movement references;
+deleting the scene removes its embedded assets. Relative components are converted
+from their compiled positions into scene-owned absolute poses when edited.
+
+Custom pose previews require the updated gateway's optional trajectory `poses`
+document. It writes a temporary compiler input, leaving the Pi library unchanged.
+Publishing includes a `studio` bundle: the gateway stages its owned pose/movement
+files in `_scene_owned` directories and uses `asset reload`. Failed publication
+restores the previous files. Published custom scenes must be updated before their
+changed poses can play on Orion. Deploy the matching runtime and gateway before
+using custom effects or bundled assets on hardware; a frontend update alone is
+insufficient.

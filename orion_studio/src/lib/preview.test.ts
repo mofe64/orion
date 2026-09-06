@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { CompiledTrajectoryPreview, SceneDefinition } from "../types";
 import {
+  appendSceneMotion,
+  moveSceneMotion,
+  sequenceSceneMotions,
   markerTime,
   sampleCompiledTrajectory,
   sampleSceneLight,
@@ -33,6 +36,14 @@ const scene: SceneDefinition = {
 const trajectories = { m: trajectory };
 
 describe("Rust trajectory preview", () => {
+  it("applies scene intensity, fade-in, and effect duration to diffuser lighting", () => {
+    const lit = { ...scene, lighting: [{ id: "light", at: 0, effect: "settle_glow" as const, intensity: 0.5, transition: 1, duration: 2 }] };
+    expect(sampleSceneLight(lit, 0, {}).white).toBe(0);
+    expect(sampleSceneLight(lit, 0.5, {}).white).toBeCloseTo(86 * 0.25);
+    expect(sampleSceneLight(lit, 1, {}).white).toBeCloseTo(86 * 0.5);
+    expect(sampleSceneLight(lit, 2, {}).white).toBeCloseTo(86 * 0.5);
+    expect(sampleSceneLight(lit, 3, {}).white).toBe(0);
+  });
   it("samples the exact 50 Hz document without inventing interpolation", () => {
     expect(sampleCompiledTrajectory(trajectory, 0.49).base_yaw_joint).toBe(0);
     expect(sampleCompiledTrajectory(trajectory, 0.5).base_yaw_joint).toBe(0.5);
@@ -81,5 +92,50 @@ describe("Rust trajectory preview", () => {
     };
     expect(() => validateSceneMotionSchedule(overlap, { m: trajectory, m2: trajectory }))
       .toThrow(/overlaps the preceding clip/);
+  });
+});
+
+
+describe("automatic scene sequencing", () => {
+  it("appends after the compiled end and follows later duration changes", () => {
+    const added = appendSceneMotion(scene, "next", "nod");
+    const compiled = { m: { ...trajectory, duration_seconds: 1.3137 }, next: trajectory };
+    const fixed = sequenceSceneMotions(added, compiled);
+    expect(fixed.motion[1].at).toBeCloseTo(1.5137);
+    validateSceneMotionSchedule(fixed, compiled);
+    const shorter = sequenceSceneMotions(fixed, { ...compiled, m: { ...trajectory, duration_seconds: 0.4 } });
+    expect(shorter.motion[1].at).toBeCloseTo(0.6);
+    expect(sequenceSceneMotions(shorter, { ...compiled, m: { ...trajectory, duration_seconds: 0.4 } })).toBe(shorter);
+  });
+
+  it("shifts overlapping legacy clips while preserving explicit gaps and cue definitions", () => {
+    const draft = { ...scene, motion: [
+      { id: "m", at: 0, play: "first" },
+      { id: "next", at: 0, play: "second" },
+      { id: "last", at: 7, play: "third" },
+    ] };
+    const compiled = { m: trajectory, next: trajectory, last: trajectory };
+    const fixed = sequenceSceneMotions(draft, compiled);
+    expect(fixed.motion.map(event => event.at)).toEqual([0, 1, 7]);
+    expect(fixed.lighting).toBe(draft.lighting);
+    expect(fixed.audio).toBe(draft.audio);
+    expect(draft.motion[1].at).toBe(0);
+    validateSceneMotionSchedule(fixed, compiled);
+  });
+
+  it("reorders the sequence and recalculates every start without timestamps", () => {
+    const added = appendSceneMotion(scene, "next", "nod");
+    const reordered = moveSceneMotion(added, "next", -1);
+    const fixed = sequenceSceneMotions(reordered, { m: trajectory, next: { ...trajectory, duration_seconds: 0.7 } });
+    expect(fixed.motion.map(event => event.id)).toEqual(["next", "m"]);
+    expect(fixed.motion.map(event => event.at)).toEqual([0, 0.7]);
+    expect(moveSceneMotion(fixed, "next", -1)).toBe(fixed);
+    expect(moveSceneMotion(fixed, "missing", 1)).toBe(fixed);
+  });
+
+  it("supports adding offline but never guesses the final duration", () => {
+    const added = appendSceneMotion(appendSceneMotion({ ...scene, motion: [] }, "first", "a"), "second", "b");
+    expect(added.motion.map(event => event.id)).toEqual(["first", "second"]);
+    expect(() => sequenceSceneMotions(added, {})).toThrow(/No Rust preview/);
   });
 });

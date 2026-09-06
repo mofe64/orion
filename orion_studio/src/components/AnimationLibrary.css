@@ -1,0 +1,128 @@
+.animation-page { width: min(100%, 84rem); margin: 0 auto; padding: 1.2rem clamp(1rem, 4vw, 3rem); }
+.animation-heading, .animation-preview > header, .scene-dialog header, .scene-dialog footer, .scene-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.animation-heading { margin-bottom: 1.2rem; }
+.animation-heading h1 { font-size: clamp(1.8rem, 3vw, 2.3rem); font-weight: 500; margin: .4rem 0; }
+.animation-page p, .scene-dialog p { color: var(--muted); line-height: 1.6; font-size: .85rem; }
+.animation-layout { display: grid; grid-template-columns: minmax(13rem, .32fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.animation-library { padding: .25rem 0; }
+.animation-tabs { display: flex; gap: .3rem; padding: .3rem; background: var(--surface-2); border-radius: 1rem; }
+.animation-tabs button { flex: 1; min-height: 2.6rem; padding: .5rem .9rem; border: 0; border-radius: .75rem; background: transparent; color: var(--muted); }
+.animation-tabs button[aria-pressed="true"] { color: var(--text); background: var(--surface-1); box-shadow: 0 2px 8px #00000010; }
+.animation-library input { margin: 1rem 0 .3rem; border-radius: .85rem; }
+.animation-library h2 { font-size: .7rem; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 1.4rem .8rem .65rem; }
+.animation-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: .5rem; text-align: left; padding: .95rem .8rem; border: 1px solid transparent; background: transparent; border-radius: .85rem; font-size: .85rem; text-transform: capitalize; }
+.animation-item:hover { background: var(--surface-2); }
+.animation-item[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--line-strong); color: var(--accent); }
+.animation-item small { font-size: .65rem; color: var(--muted); }
+.animation-empty { padding: 0 .8rem; }
+.animation-preview { border: 1px solid var(--line); border-radius: 1.5rem; background: var(--surface-1); overflow: hidden; }
+.animation-preview > header { padding: 1.5rem 1.6rem 0; align-items: start; }
+.animation-preview h2 { text-transform: capitalize; font-size: 1.5rem; font-weight: 500; margin: .4rem 0; }
+.animation-preview > header p:last-child { max-width: 35rem; }
+.animation-model { height: clamp(13rem, 30vh, 25rem); margin: 1.2rem; position: relative; overflow: hidden; border-radius: 1.1rem; background: var(--bg); }
+.animation-model .robot-viewport { inset: 0 0 2.6rem; }
+.animation-model .viewport-orbit-controls { position: absolute; bottom: -2.6rem; width: 100%; height: 2.6rem; display: flex; align-items: center; justify-content: center; gap: 1rem; background: var(--surface-1); font-size: .7rem; color: var(--muted); }
+.animation-model .viewport-orbit-controls button { background: transparent; border: 0; border-radius: 50%; display: grid; place-items: center; width: 2.5rem; height: 2.5rem; }
+.animation-model .viewport-loading { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-1); }
+.animation-controls { padding: 0 1.5rem 1rem; display: grid; gap: .65rem; }
+.animation-controls > .animation-tabs { width: max-content; max-width: 100%; }
+.animation-controls > .animation-tabs button { flex: 0 0 auto; white-space: nowrap; }
+.animation-play { display: flex; gap: .65rem; flex-wrap: wrap; }
+.animation-scene-actions { display: flex; gap: .5rem; flex-wrap: wrap; flex-shrink: 0; }
+.animation-home { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 1rem; }
+.animation-home strong { font-size: .8rem; margin-right: auto; }
+.home-shell button { border-radius: .85rem; }
+.home-shell input, .home-shell select, .home-shell textarea { border-radius: .8rem; }
+.home-shell .topbar { position: sticky; top: 0; z-index: 30; }
+.scene-dialog { width: min(34rem, calc(100% - 2rem)); padding: 1.7rem; color: var(--text); background: var(--surface-1); border: 1px solid var(--line-strong); border-radius: 1.5rem; }
+.scene-dialog::backdrop { background: #0009; backdrop-filter: blur(5px); }
+.scene-dialog > p, .scene-dialog > .animation-tabs, .scene-dialog > label { margin: 1.2rem 0; }
+.scene-dialog h2 { font-weight: 500; font-size: 1.6rem; }
+.scene-dialog footer { margin-top: 1.5rem; }
+.scene-editor-heading { padding: 1.5rem 2rem; justify-content: start; }
+.scene-editor-heading h1 { font-size: 1.5rem; }
+.home-shell.create-shell .workspace { grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
+.home-shell.create-shell .stage, .home-shell.create-shell .inspector-panel, .home-shell.create-shell .authoring-dock { border-radius: 1.5rem; background: var(--surface-1); }
+.home-shell.create-shell .stage { min-height: 34rem; overflow: hidden; }
+.home-shell.create-shell .stage-header { background: var(--surface-1); }
+.home-shell.create-shell .transport { background: var(--surface-1); }
+@media (max-width: 760px) {
+ .animation-page { padding: 1.25rem 1rem; }
+ .animation-layout { grid-template-columns: 1fr; }
+ .animation-library { max-height: 18rem; overflow-y: auto; }
+ .animation-heading { align-items: start; }
+ .animation-preview > header { padding: 1rem; }
+ .animation-model { height: 23rem; margin: .5rem; }
+ .home-shell.create-shell .workspace { grid-template-columns: 1fr; }
+ .animation-home strong { flex: 1; }
+ .animation-play > button { flex: 1; }
+}
+
+@media (min-width: 761px) { .animation-library { max-height: calc(100dvh - 15rem); overflow-y: auto; } }
+.studio-shell.home-shell.create-shell { display: block; }
+.home-shell.create-shell .workspace { height: auto; gap: 1rem; margin: 0 1.5rem 1rem; }
+.home-shell.create-shell .stage { min-height: 30rem; }
+.home-shell.create-shell .authoring-dock { margin: 0 1.5rem 1rem; }
+.home-shell.create-shell .publish-bar { position: static; }
+.home-shell.create-shell .statusbar { min-height: 2.5rem; }
+
+.animation-home > span { color: var(--muted); font-size: .8rem; }
+/* Editor controls occupy their own rows, never the model's drawing area. */
+.home-shell.create-shell .scene-editor-heading { display: grid; gap: 1rem; padding: 1rem 1.5rem; }
+.editor-back { justify-self: start; }
+.editor-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
+.home-shell .editor-title { width: min(100%, 36rem); min-width: 0; font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 550; border: 1px solid transparent; background: transparent; padding: .3rem 0; text-transform: none; }
+.home-shell .editor-title:hover, .home-shell .editor-title:focus { border-color: var(--line-strong); }
+.editor-save-actions { display: flex; align-items: center; gap: .7rem; flex-shrink: 0; }
+.save-indicator { display: grid; place-items: center; color: var(--muted); }
+.home-shell.create-shell .stage { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+.home-shell.create-shell .editor-viewport { position: relative; min-height: 0; grid-row: 2; }
+.home-shell.create-shell .stage-header { position: static; grid-row: 1; padding: .7rem 1rem; color: var(--muted); font-size: .8rem; }
+.home-shell.create-shell .transport { position: static; margin: .6rem; grid-row: 3; }
+.home-shell.create-shell .inspector-panel { max-height: 100%; }
+.movement-details:empty { display: none; }
+.track-clip.component-pending { position: static; width: calc(100% - 1rem) !important; margin: .5rem; min-height: 2.5rem; border: 1px dashed var(--line-strong); background: var(--surface-2); color: var(--muted); }
+.track-clip.delay { background: var(--surface-2); color: var(--text); border: 1px dashed var(--line-strong); }
+.movement-details { scroll-margin-top: 4rem; }
+.movement-details > button { margin: .3rem .8rem; }
+.movement-parts { padding: .75rem 1rem; background: var(--surface-2); border-radius: 1rem; margin: .5rem .8rem; }
+.movement-part { display: grid; grid-template-columns: 1.5rem minmax(10rem, 1fr) minmax(7rem, .4fr) minmax(7rem, .4fr); align-items: center; gap: .8rem; padding: .7rem 0; }
+.movement-parts p, .part-flow { color: var(--muted); font-size: .8rem; }
+.part-number { color: var(--accent); }
+.movement-context-menu { position: fixed; z-index: 150; min-width: 15rem; background: var(--surface-1); border: 1px solid var(--line-strong); border-radius: .8rem; padding: .4rem; box-shadow: 0 12px 32px #0005, 0 2px 6px #0003; }
+.movement-context-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: .7rem .8rem; color: var(--text); transition: background .12s ease; }
+.movement-context-menu button:hover, .movement-context-menu button:focus-visible { background: var(--accent-soft); color: var(--accent); outline: 2px solid transparent; }
+.movement-context-menu .menu-delete:hover, .movement-context-menu .menu-delete:focus-visible { background: #e0525226; color: var(--text); }
+@media (max-width: 760px) {
+ .editor-title-row { flex-wrap: wrap; gap: .7rem; }
+ .editor-save-actions { width: 100%; justify-content: flex-end; }
+ .home-shell.create-shell .stage { height: auto; min-height: 28rem; grid-template-rows: auto minmax(20rem, 1fr) auto; }
+ .movement-part { grid-template-columns: 1.5rem minmax(0, 1fr); }
+ .movement-part label, .movement-part .part-flow { grid-column: 2; }
+}
+
+.home-shell.create-shell .scene-editor-heading { grid-template-columns: minmax(0, 1fr); justify-content: stretch; }
+.editor-title-row { width: 100%; }
+
+/* Budget the desktop editor as one screen, including the timeline. */
+@media (min-width: 769px) {
+ .studio-shell.home-shell.create-shell { display: flex; flex-direction: column; height: 100dvh; min-height: 40rem; }
+ .home-shell.create-shell > .topbar,
+ .home-shell.create-shell > .scene-editor-heading,
+ .home-shell.create-shell > .statusbar { flex-shrink: 0; }
+ .home-shell.create-shell .scene-editor-heading { gap: .5rem; padding-block: .75rem; }
+ .home-shell.create-shell .workspace { display: grid; flex: 1 1 0; min-height: 0; margin-bottom: .75rem; }
+ .home-shell.create-shell .authoring-dock { flex: 0 0 clamp(18rem, 31dvh, 22rem); min-height: 0; overflow: auto; margin-bottom: .75rem; }
+ .home-shell.create-shell .stage-header { padding-block: .35rem; }
+ .home-shell.create-shell .transport { padding: .25rem; margin: .4rem; }
+ .home-shell.create-shell .dock-toolbar { position: sticky; top: 0; z-index: 6; background: var(--surface-1); }
+}
+
+.track-event-label { scroll-margin-block: 4rem 1rem; }
+.motion-group-header > .track-event-label { font-weight: 650; }
+.motion-group-children { box-shadow: inset 3px 0 var(--accent); }
+.motion-group-children .track-event-label { padding-left: 1rem; }
+.motion-summary .track-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.motion-summary.untimed { display: flex; gap: .25rem; padding: .5rem; }
+.motion-summary.untimed .motion-summary-clip { flex: 1; min-width: 0; }
+.motion-summary.untimed .track-clip { position: static; width: 100% !important; margin: 0; min-height: 2.5rem; }

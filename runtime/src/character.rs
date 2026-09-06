@@ -1174,31 +1174,68 @@ fn blend_speech_head(
 }
 
 fn thinking_motion() -> MotionDefinition {
-    let mut motion = speech_settle_motion();
-    motion.name = "thinking_head".into();
-    motion.description = "Small head-led thought around the conversational anchor.".into();
-    for (yaw, tilt) in [(0.05, 0.035), (-0.04, -0.025), (0.025, 0.02)]
-        .into_iter()
-        .rev()
-    {
-        motion.keyframes.insert(
-            0,
-            MotionKeyframe {
-                pose_name: None,
-                target: [
-                    ("head_roll_joint".into(), yaw),
-                    ("head_pitch_joint".into(), tilt),
-                    ("base_yaw_joint".into(), yaw * 0.25),
-                ]
-                .into(),
-                duration_seconds: 1.6,
-                arrival: KeyframeArrival::Through,
-                hold_seconds: 0.0,
-                marker: None,
-            },
-        );
-    }
-    motion.keyframes.last_mut().unwrap().duration_seconds = 1.6;
+    // Radians relative to the conversational anchor. The existing thinking
+    // style scales these drawings; calibration may uniformly reduce them.
+    let drawings = [
+        // marker, seconds, head roll, head pitch, yaw, shoulder, elbow
+        ("think_prepare", 0.22, -0.035, -0.025, -0.012, -0.015, 0.018),
+        ("think_head_lead", 0.65, 0.24, 0.16, 0.085, -0.015, 0.018),
+        ("think_body_follow", 0.40, 0.21, 0.13, 0.12, -0.028, 0.035),
+        (
+            "think_counter_lead",
+            0.90,
+            -0.18,
+            -0.10,
+            -0.07,
+            -0.028,
+            0.035,
+        ),
+        (
+            "think_counter_follow",
+            0.40,
+            -0.15,
+            -0.07,
+            -0.09,
+            0.020,
+            -0.025,
+        ),
+        ("think_resolve", 0.75, 0.09, 0.065, 0.035, 0.0, 0.0),
+    ];
+    let mut motion = MotionDefinition {
+        name: "thinking_head".into(),
+        description: "Readable head-led thought with anticipation and delayed body support.".into(),
+        space: MotionSpace::AnchorRelative,
+        style: MotionStyle::named("thinking").expect("built-in thinking style exists"),
+        return_to_anchor: true,
+        keyframes: drawings
+            .into_iter()
+            .map(
+                |(marker, duration, roll, pitch, yaw, shoulder, elbow)| MotionKeyframe {
+                    pose_name: None,
+                    target: [
+                        ("head_roll_joint".into(), roll),
+                        ("head_pitch_joint".into(), pitch),
+                        ("base_yaw_joint".into(), yaw),
+                        ("shoulder_pitch_joint".into(), shoulder),
+                        ("elbow_pitch_joint".into(), elbow),
+                    ]
+                    .into(),
+                    duration_seconds: duration,
+                    arrival: KeyframeArrival::Through,
+                    hold_seconds: 0.0,
+                    marker: Some(marker.into()),
+                },
+            )
+            .collect(),
+    };
+    motion.keyframes.push(MotionKeyframe {
+        pose_name: None,
+        target: JointPositions::new(),
+        duration_seconds: 0.75,
+        arrival: KeyframeArrival::Settle,
+        hold_seconds: 0.0,
+        marker: Some("thinking_settled".into()),
+    });
     motion
 }
 
@@ -1874,15 +1911,31 @@ mod tests {
         assert!(character.thinking_run.is_none());
         assert_eq!(character.status.active_anchor, Some(anchor));
         assert_eq!(character.status.state, CharacterState::Speaking);
-        for frame in &thinking_motion().keyframes {
+        let motion = thinking_motion();
+        assert_eq!(motion.style.name, "thinking");
+        let frames = &motion.keyframes;
+        let lead = &frames[1].target;
+        let follow = &frames[2].target;
+        assert!(frames[0].target["head_roll_joint"] * lead["head_roll_joint"] < 0.0);
+        assert!(
+            lead["head_roll_joint"] * motion.style.amplitude > 0.14,
+            "dominant tilt must remain legible after artistic scaling"
+        );
+        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+            assert_eq!(
+                frames[0].target[joint], lead[joint],
+                "body waits for head lead"
+            );
+            assert_ne!(lead[joint], follow[joint], "body follows the head");
             assert!(
-                frame
-                    .target
+                frames
                     .iter()
-                    .all(|(name, offset)| name.starts_with("head_")
-                        || (name == "base_yaw_joint" && offset.abs() <= 0.015))
+                    .all(|frame| frame.target.get(joint).unwrap_or(&0.0).abs() <= 0.035)
             );
         }
+        assert!(frames[..frames.len()-1].iter().all(|frame| frame.arrival == KeyframeArrival::Through && frame.hold_seconds == 0.0));
+        assert_eq!(frames.last().unwrap().arrival, KeyframeArrival::Settle);
+        assert!(frames.last().unwrap().target.is_empty());
     }
 
     #[test]

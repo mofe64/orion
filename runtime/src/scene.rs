@@ -29,6 +29,9 @@ pub enum SceneAction {
     },
     Effect {
         effect: String,
+        colors: Vec<String>,
+        levels: Vec<f64>,
+        period: f64,
         intensity: f64,
         duration_seconds: f64,
         transition_seconds: f64,
@@ -161,6 +164,8 @@ fn collect_yaml_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SceneDocument {
+    #[serde(default, rename = "studio")]
+    _studio: Option<serde_json::Value>,
     #[serde(default)]
     format_version: u32,
     scene: Option<SceneEntry>,
@@ -197,6 +202,12 @@ struct LightingTrackDocument {
     #[serde(default)]
     on_marker: Option<String>,
     effect: String,
+    #[serde(default)]
+    colors: Vec<String>,
+    #[serde(default)]
+    levels: Vec<f64>,
+    #[serde(default = "default_period")]
+    period: f64,
     #[serde(default = "default_intensity")]
     intensity: f64,
     #[serde(default = "default_effect_duration")]
@@ -222,6 +233,28 @@ struct AudioTrackDocument {
 struct FinishDocument {
     anchor: String,
     lighting: String,
+}
+
+fn parse_color(value: &str) -> Option<Rgbw8> {
+    if value == "warm_white" {
+        return Some(Rgbw8::new(0, 0, 0, 255));
+    }
+    if value.len() != 7
+        || !value.starts_with('#')
+        || !value[1..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(Rgbw8::new(
+        u8::from_str_radix(&value[1..3], 16).ok()?,
+        u8::from_str_radix(&value[3..5], 16).ok()?,
+        u8::from_str_radix(&value[5..7], 16).ok()?,
+        0,
+    ))
+}
+
+fn default_period() -> f64 {
+    2.0
 }
 
 fn default_intensity() -> f64 {
@@ -320,7 +353,20 @@ pub fn parse_scene_document(
         });
     }
     for light in entry.lighting {
-        if !LIGHTING_EFFECT_NAMES.contains(&light.effect.as_str())
+        if (!LIGHTING_EFFECT_NAMES.contains(&light.effect.as_str())
+            && !["constant", "pulse", "breathe", "fade"].contains(&light.effect.as_str()))
+            || !light.period.is_finite()
+            || light.period < 0.1
+            || light
+                .levels
+                .iter()
+                .any(|level| !level.is_finite() || !(0.0..=1.0).contains(level))
+            || light
+                .colors
+                .iter()
+                .any(|color| parse_color(color).is_none())
+            || (["constant", "pulse", "breathe", "fade"].contains(&light.effect.as_str())
+                && light.colors.len() != if light.effect == "constant" { 1 } else { 2 })
             || !light.intensity.is_finite()
             || !(0.0..=1.0).contains(&light.intensity)
             || !light.duration.is_finite()
@@ -345,6 +391,9 @@ pub fn parse_scene_document(
         }
         let action = SceneAction::Effect {
             effect: light.effect,
+            colors: light.colors,
+            levels: light.levels,
+            period: light.period,
             intensity: light.intensity,
             duration_seconds: light.duration,
             transition_seconds: light.transition,
@@ -574,6 +623,9 @@ struct LightTransition {
 #[derive(Clone, Debug)]
 struct ActiveEffect {
     name: String,
+    colors: Vec<String>,
+    levels: Vec<f64>,
+    period: f64,
     starts_at: f64,
     duration_seconds: f64,
     intensity: f64,
@@ -716,12 +768,18 @@ impl ScenePlayer {
                 }
                 SceneAction::Effect {
                     effect,
+                    colors,
+                    levels,
+                    period,
                     intensity,
                     duration_seconds,
                     transition_seconds,
                 } => {
                     self.effect = Some(ActiveEffect {
                         name: effect,
+                        colors,
+                        levels,
+                        period,
                         starts_at: elapsed,
                         duration_seconds: duration_seconds + transition_seconds,
                         intensity,
@@ -739,11 +797,35 @@ impl ScenePlayer {
         self.advance_light(elapsed)?;
         if let Some(effect) = &self.effect {
             let effect_elapsed = elapsed - effect.starts_at;
-            lighting.render(&render_effect(
-                &effect.name,
-                effect_elapsed,
-                effect.intensity,
-            )?)?;
+            if effect.colors.is_empty() {
+                lighting.render(&render_effect(
+                    &effect.name,
+                    effect_elapsed,
+                    effect.intensity,
+                )?)?;
+            } else {
+                let a = parse_color(&effect.colors[0]).expect("validated scene color");
+                let b = parse_color(effect.colors.get(1).unwrap_or(&effect.colors[0]))
+                    .expect("validated scene color");
+                let base_level = effect.levels.first().copied().unwrap_or(
+                    if ["pulse", "breathe"].contains(&effect.name.as_str()) {
+                        0.15
+                    } else {
+                        1.0
+                    },
+                );
+                let a = Rgbw8::OFF.interpolate(a, base_level)?;
+                let b = Rgbw8::OFF.interpolate(b, effect.levels.get(1).copied().unwrap_or(1.0))?;
+                let phase = (effect_elapsed / effect.period).fract();
+                let blend = match effect.name.as_str() {
+                    "pulse" => (1.0 - phase * 4.0).max(0.0),
+                    "breathe" => (1.0 - (phase * std::f64::consts::TAU).cos()) / 2.0,
+                    "fade" => (effect_elapsed / effect.duration_seconds.max(0.02)).min(1.0),
+                    _ => 0.0,
+                };
+                let color = Rgbw8::OFF.interpolate(a.interpolate(b, blend)?, effect.intensity)?;
+                lighting.render_uniform(color)?;
+            }
             if effect_elapsed >= effect.duration_seconds {
                 self.effect = None;
             }
@@ -1055,6 +1137,61 @@ mod tests {
         fn cancel(&mut self, _now_seconds: f64) -> Result<()> {
             self.cancel_count += 1;
             Ok(())
+        }
+    }
+
+    #[test]
+    fn custom_effect_stages_render_and_validate() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let poses = PoseLibrary::load(
+            root.join("motion/config/poses.yaml"),
+            &crate::ORION_JOINT_NAMES,
+        )
+        .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        for (effect, colors, time, expected) in [
+            (
+                "constant",
+                vec!["warm_white"],
+                0.5,
+                Rgbw8::new(0, 0, 0, 255),
+            ),
+            (
+                "pulse",
+                vec!["#000000", "#ffffff"],
+                0.0,
+                Rgbw8::new(255, 255, 255, 0),
+            ),
+            (
+                "breathe",
+                vec!["#000000", "#ffffff"],
+                1.0,
+                Rgbw8::new(255, 255, 255, 0),
+            ),
+            (
+                "fade",
+                vec!["#000000", "#ffffff"],
+                1.0,
+                Rgbw8::new(128, 128, 128, 0),
+            ),
+        ] {
+            let document = serde_json::json!({"format_version":2,"scene":{"name":"custom","lighting":[{"at":0,"effect":effect,"colors":colors,"period":2,"duration":2}],"finish":{"anchor":"final_pose","lighting":"pose_default"}}});
+            let definition =
+                parse_scene_document(&document.to_string(), "test", &poses, &motions).unwrap();
+            let mut player = ScenePlayer::new(1, definition, 0.0, Rgbw8::OFF).unwrap();
+            let mut motion = FakeMotionDevice::new();
+            let mut lighting = RecordingLightingDevice::new(1).unwrap();
+            let mut audio = RecordingAudioDevice::default();
+            player
+                .tick(0.0, &mut motion, &mut lighting, &mut audio)
+                .unwrap();
+            player
+                .tick(time, &mut motion, &mut lighting, &mut audio)
+                .unwrap();
+            assert_eq!(lighting.last_frame().unwrap(), &[expected]);
+            let mut invalid = document.clone();
+            invalid["scene"]["lighting"][0]["colors"] = serde_json::json!(["#zzzzzz"]);
+            assert!(parse_scene_document(&invalid.to_string(), "test", &poses, &motions).is_err());
         }
     }
 

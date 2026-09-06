@@ -110,15 +110,20 @@ export function compileMotionPreview(
   motion: string | object,
   startPose: string,
   anchorPose?: string,
+  poses?: object,
 ): Promise<CompiledTrajectoryPreview> {
   return request(connection, "/api/v2/trajectory", {
     method: "POST",
     body: JSON.stringify({
       ...(typeof motion === "string" ? { motion } : { document: motion }),
       start_pose: startPose,
+      ...(poses ? { poses } : {}),
       ...(anchorPose ? { anchor_pose: anchorPose } : {}),
     }),
-  });
+  }).catch(error => {
+    if (poses && error instanceof Error && error.message.includes("Trajectory preview accepts")) throw new Error("Update Orion’s Studio gateway to preview scene-specific poses.");
+    throw error;
+  }) as Promise<CompiledTrajectoryPreview>;
 }
 
 export function prepareMovement(connection: GatewayConnection): Promise<unknown> {
@@ -154,6 +159,12 @@ export function getUserScene(
   name: string,
 ): Promise<UserSceneSource> {
   return request(connection, `/api/v2/scenes/${encodeURIComponent(name)}`);
+}
+
+export function deleteUserScene(connection: GatewayConnection, name: string, expectedRevision: string): Promise<{ deleted: boolean }> {
+  return request(connection, `/api/v2/scenes/${encodeURIComponent(name)}`, {
+    method: "DELETE", body: JSON.stringify({ expected_revision: expectedRevision }),
+  });
 }
 
 export function updateUserScene(

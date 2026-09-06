@@ -177,8 +177,11 @@ upload. Feedback events carry the Pi voice session ID. Runtime guards suppress
 duplicates and stale transitions, and enforce a bounded feedback lease.
 
 Wake feedback uses one quiet tone and a brief three-colour pulse, followed by
-steady listening light. Thinking uses one quiet entry cue, warm-white breathing
-and small head motion through the existing calibrated compiler. Buffered
+steady listening light. Thinking uses one quiet entry cue and a three-second
+breath through the same amber, teal and lavender palette. Its visible diagonal
+head tilt leads delayed shoulder/elbow support, with opposing preparation and
+an asymmetric counter-tilt. The existing thinking style and calibrated compiler
+preserve the conversational anchor and smooth speech handover. Buffered
 follow-up audio survives a bare-wake transition back to listening. Local
 capture continues throughout cues; acoustic echo cancellation is not implemented.
 

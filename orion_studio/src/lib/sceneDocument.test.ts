@@ -6,7 +6,7 @@ describe("buildSceneDocument", () => {
   it("strips Studio identities and preserves parallel v2 tracks", () => {
     const document = buildSceneDocument({
       format_version: 2, name: "draft", description: "Parallel", source: "draft",
-      motion: [{ id: "motion-ui", at: 0, play: "return_home" }],
+      motion: [{ id: "motion-ui", after_previous: true, show_parts: true, at: 0, play: "return_home" }],
       lighting: [{ id: "light-ui", on_marker: "settled", effect: "settle_glow" }],
       audio: [{ id: "audio-ui", at: 0.4, cue: "settle_soft" }],
       finish: { anchor: "final_pose", lighting: "pose_default" },

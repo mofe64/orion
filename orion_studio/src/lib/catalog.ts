@@ -49,7 +49,7 @@ function loadPoses(): Record<string, PoseDefinition> {
   const poses: Record<string, PoseDefinition> = {};
   const documents: Array<[string, StoredPoseDocument, PoseDefinition["source"]]> = [
     ["motion/config/poses.yaml", load(posesYaml) as StoredPoseDocument, "built_in"],
-    ...Object.entries(userPoseFiles).map(([path, yaml]) => [path, load(yaml) as StoredPoseDocument, "user"] as [string, StoredPoseDocument, "user"]),
+    ...Object.entries(userPoseFiles).filter(([path]) => !path.includes("/_scene_owned/")).map(([path, yaml]) => [path, load(yaml) as StoredPoseDocument, "user"] as [string, StoredPoseDocument, "user"]),
   ];
   for (const [path, document, source] of documents) {
     requireVersionTwo(document, path);
@@ -111,10 +111,12 @@ function loadScenes(): Record<string, SceneDefinition> {
     const scene = document.scene;
     if (scenes[scene.name]) throw new Error(`Duplicate Orion scene name: ${scene.name}`);
     for (const event of scene.lighting ?? []) {
-      if (!LIGHTING_EFFECTS.includes(event.effect)) throw new Error(`Scene '${scene.name}' uses unknown lighting '${event.effect}'.`);
+      if (!(LIGHTING_EFFECTS as readonly string[]).includes(event.effect) && !["constant","pulse","breathe","fade"].includes(event.effect)) throw new Error(`Scene '${scene.name}' uses unknown lighting '${event.effect}'.`);
     }
     scenes[scene.name] = {
       format_version: 2,
+      custom_poses: document.studio?.poses,
+      custom_motions: document.studio?.motions,
       name: scene.name,
       description: scene.description ?? "",
       source: path.includes("/scenes/user/") ? "user" : "built_in",

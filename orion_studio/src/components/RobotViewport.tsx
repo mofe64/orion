@@ -89,15 +89,15 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
     renderer.domElement.setAttribute("aria-label", mode === "home" ? "Orion 3D model. Drag to rotate; zoom is disabled." : "Orion 3D model");
     renderer.domElement.setAttribute("role", "img");
 
-    scene.add(new THREE.HemisphereLight(0xb9d6ff, 0x18202a, 2.1));
-    const key = new THREE.DirectionalLight(0xffffff, 3.2);
+    scene.add(new THREE.HemisphereLight(0xb9d6ff, 0x18202a, 1.5));
+    const key = new THREE.DirectionalLight(0xffffff, 1.8);
     key.position.set(1.2, 1.5, 0.8);
     key.castShadow = true;
     scene.add(key);
 
-    const lampLight = new THREE.PointLight(0xffc56d, 0, 1.6, 1.5);
-    lampLight.position.set(0, 0.56, 0.12);
-    scene.add(lampLight);
+    const lampLight = new THREE.SpotLight(0xffc56d, 0, 1.6, Math.PI / 3, .85, 1.5);
+    lampLight.castShadow = true;
+    lampLight.shadow.bias = -.0002;
 
     const floor = new THREE.Mesh(
       new THREE.CircleGeometry(mode === "home" ? 0.39 : 0.62, 64),
@@ -113,9 +113,9 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
     else { grid.geometry.dispose(); (grid.material as THREE.Material).dispose(); }
 
     themeUpdateRef.current = () => {
-      const pale = mode === "home" && themeRef.current === "light";
+      const pale = themeRef.current === "light";
       scene.background = new THREE.Color(pale ? 0xf0f3f8 : 0x0a0f17);
-      scene.fog = mode === "home" ? null : new THREE.FogExp2(0x0a0f17, .55);
+      scene.fog = mode === "home" ? null : new THREE.FogExp2(pale ? 0xf0f3f8 : 0x0a0f17, .55);
       floor.material.color.set(pale ? 0xe2e8f0 : 0x111a26);
       invalidateRef.current();
     };
@@ -126,7 +126,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
       const current = lightRef.current;
       const color = previewColor(current);
       lampLight.color.copy(color);
-      lampLight.intensity = Math.max(current.red, current.green, current.blue, current.white) / 22;
+      lampLight.intensity = Math.max(current.red, current.green, current.blue, current.white) / 180;
       for (const material of diffusers) {
         material.emissive.copy(color);
         material.emissiveIntensity = Math.max(current.red, current.green, current.blue, current.white) / 255 * 1.8;
@@ -170,7 +170,15 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
           );
           mesh.castShadow = true;
           mesh.receiveShadow = true;
-          if (mode === "home" && name.includes("diffuser")) {
+          if (name.includes("diffuser")) {
+            geometry.computeBoundingBox();
+            const bounds = geometry.boundingBox!;
+            const center = bounds.getCenter(new THREE.Vector3());
+            // The diffuser is a thin XY surface in its CAD mesh. Its outward
+            // face is local -Z; parenting follows all calibrated head joints.
+            lampLight.position.set(center.x, center.y, bounds.min.z - .003);
+            lampLight.target.position.set(center.x, center.y, bounds.min.z - .15);
+            mesh.add(lampLight, lampLight.target);
             diffusers.push(mesh.material);
             lightUpdateRef.current();
           }
@@ -253,6 +261,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
       observer.disconnect();
       controls.dispose();
       key.shadow.dispose();
+      lampLight.shadow.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
@@ -288,7 +297,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
           {loading && <p className="viewport-loading" role="status">Loading Orion’s 3D model…</p>}
           <div className="viewport-orbit-controls">
             <button aria-label="Rotate model left" disabled={loading} onClick={() => rotateRef.current(-.22)}><ChevronLeft size={16} /></button>
-            <span>Drag to rotate · Fixed zoom</span>
+            <span>Drag to rotate</span>
             <button aria-label="Rotate model right" disabled={loading} onClick={() => rotateRef.current(.22)}><ChevronRight size={16} /></button>
           </div>
         </>

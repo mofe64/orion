@@ -45,3 +45,24 @@ export function saveDraft(kind: DraftKind, value: DraftAsset): void {
 export function discardDraft(kind: DraftKind, name: string): void {
   localStorage.removeItem(prefix + kind + ":" + name);
 }
+
+
+export function readUserDrafts(): Record<string, DraftAsset> {
+  const assets: Record<string, DraftAsset> = {};
+  try {
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      const kind = key.slice(prefix.length).split(":")[0] as DraftKind;
+      if (!["scene", "pose", "motion"].includes(kind)) continue;
+      let value;
+      try { value = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { continue; }
+      if (!value || !["user", "draft"].includes(value.source) || !value.name) continue;
+      if (kind === "scene" && (!events(value.motion, event => number(event.at) && typeof event.play === "string") || !events(value.lighting, event => timing(event) && typeof event.effect === "string") || !events(value.audio, event => timing(event) && typeof event.cue === "string") || !record(value.finish))) continue;
+      if (kind === "motion" && (!Array.isArray(value.keyframes) || !value.keyframes.every((frame: unknown) => record(frame) && number(frame.duration) && number(frame.hold)))) continue;
+      if (kind === "pose" && (!record(value.positions) || !JOINT_NAMES.every(joint => number(value.positions[joint])))) continue;
+      assets[`${kind}:${value.name}`] = value;
+    }
+  } catch { /* A damaged entry must not prevent Studio opening. */ }
+  return assets;
+}

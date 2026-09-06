@@ -333,3 +333,32 @@ h1, h2 { color: var(--text); font-weight: 620; letter-spacing: -.025em; }
 .voice-debug summary { cursor: pointer; }
 .voice-debug dl > div { display: flex; justify-content: space-between; gap: 1rem; margin: .4rem 0; }
 .voice-popover { max-height: calc(100dvh - 6rem); overflow-y: auto; }
+
+/* A wider transparent hit area keeps the thin playhead easy to grab. */
+.timeline-playhead { width: 14px; margin-left: -7px; pointer-events: auto; cursor: grab; touch-action: none; background: linear-gradient(90deg, transparent 6px, var(--text) 6px, var(--text) 8px, transparent 8px); }
+.timeline-playhead:active, .track-clip:active { cursor: grabbing; }
+.timeline-playhead:focus-visible { outline: 2px solid var(--accent); }
+.track-clip { cursor: grab; touch-action: none; }
+.effect-help { font-size: .8rem; color: var(--muted); margin: .5rem 0; }
+.effect-help summary { cursor: pointer; }
+.stage-colors { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .5rem; }
+.stage-colors input[type=color] { width: 100%; height: 2.5rem; padding: .2rem; }
+.pose-edit-actions { display: flex; gap: .5rem; padding: 1rem; position: sticky; bottom: 0; background: var(--surface-1); }
+.stage-colors { grid-template-columns: 1fr; }
+.stage-color { border: 0; padding: .5rem 0; min-width: 0; }
+.stage-color legend { font-size: .8rem; color: var(--muted); }
+.stage-color-modes { display: flex; gap: .4rem; }
+.stage-color-modes button { flex: 1; font-size: .75rem; padding: .5rem; border: 1px solid var(--line); border-radius: .6rem; background: var(--surface-1); }
+.stage-color-modes button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); }
+.stage-color .oh-color { display: flex; align-items: center; gap: .5rem; padding-top: .5rem; }
+
+.lighting-brightness-label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.lighting-brightness-label output { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Shared by Home and scene lighting; scope must include both screens. */
+.home-shell input.orion-hue-slider[type="range"] { appearance: none; -webkit-appearance: none; width: 100%; min-width: 0; min-height: 2.75rem; height: 2.75rem; padding: 0; border: 0; border-radius: 2rem; background: linear-gradient(to right, #eb6565, #e5d45e, #63c773, #58cacc, #638fe1, #b875df, #eb6565) center / 100% .8rem no-repeat; }
+.home-shell input.orion-hue-slider::-webkit-slider-runnable-track { background: transparent; border: 0; }
+.home-shell input.orion-hue-slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 1.35rem; height: 1.35rem; border-radius: 50%; background: var(--text); border: 3px solid var(--surface-1); box-shadow: 0 0 0 1px var(--muted); }
+.home-shell input.orion-hue-slider::-moz-range-track, .home-shell input.orion-hue-slider::-moz-range-progress { background: transparent; border: 0; }
+.home-shell input.orion-hue-slider::-moz-range-thumb { width: 1.1rem; height: 1.1rem; border-radius: 50%; background: var(--text); border: 3px solid var(--surface-1); }
+.home-shell .oh-swatch { width: 1.4rem; height: 1.4rem; flex-shrink: 0; border: 2px solid var(--text); border-radius: 50%; }

@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { projectCatalog } from "./catalog";
-import { readDraft, saveDraft, discardDraft, resetAcknowledgementDrafts } from "./drafts";
+import { readDraft, saveDraft, discardDraft, resetAcknowledgementDrafts, readUserDrafts } from "./drafts";
 
 beforeEach(() => {
   const values = new Map<string, string>();
-  vi.stubGlobal("localStorage", { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) });
+  vi.stubGlobal("localStorage", { get length() { return values.size; }, key: (index: number) => [...values.keys()][index] ?? null, getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) });
 });
 describe("workspace drafts", () => {
+  it("restores user creations across reload without loading system drafts", () => {
+    localStorage.setItem("orion-studio:draft:v1:scene:broken", "{");
+    saveDraft("scene", projectCatalog.scenes.acknowledge_left);
+    const scene = { ...projectCatalog.scenes.agreement, name: "my_agreement", source: "draft" as const };
+    saveDraft("scene", scene);
+    expect(readUserDrafts()).toEqual({ "scene:my_agreement": scene });
+  });
   it("clears only the two requested system-scene drafts once, preserving later edits", () => {
     for (const name of ["acknowledge_left", "agreement", "acknowledge_right"]) {
       saveDraft("scene", { ...projectCatalog.scenes[name], description: "Edited" });

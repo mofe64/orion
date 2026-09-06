@@ -3,6 +3,14 @@ use crate::Rgbw8;
 use serde::Serialize;
 use std::collections::VecDeque;
 
+// Both voice states share one palette; wake pulses are brief, thinking breathes.
+const VOICE_PALETTE: [Rgbw8; 3] = [
+    Rgbw8::new(65, 32, 6, 8),
+    Rgbw8::new(8, 45, 38, 8),
+    Rgbw8::new(35, 22, 48, 8),
+];
+const THINKING_BREATH_SECONDS: f64 = 3.0;
+
 #[derive(Default, Serialize)]
 pub struct VoiceFeedback {
     session: Option<String>,
@@ -136,28 +144,8 @@ impl VoiceFeedback {
         let (color, gain) = match self.phase.as_str() {
             "listening" if elapsed < 0.9 => {
                 let index = (elapsed / 0.3).floor() as usize;
-                let colors = [
-                    Rgbw8 {
-                        red: 65,
-                        green: 32,
-                        blue: 6,
-                        white: 8,
-                    },
-                    Rgbw8 {
-                        red: 8,
-                        green: 45,
-                        blue: 38,
-                        white: 8,
-                    },
-                    Rgbw8 {
-                        red: 35,
-                        green: 22,
-                        blue: 48,
-                        white: 8,
-                    },
-                ];
                 (
-                    colors[index.min(2)],
+                    VOICE_PALETTE[index.min(2)],
                     (std::f64::consts::PI * (elapsed % 0.3) / 0.3).sin().powi(2),
                 )
             }
@@ -170,15 +158,18 @@ impl VoiceFeedback {
                 },
                 1.0,
             ),
-            "thinking" => (
-                Rgbw8 {
-                    red: 10,
-                    green: 6,
-                    blue: 0,
-                    white: 35,
-                },
-                0.65 - 0.25 * (elapsed * std::f64::consts::TAU / 3.0).cos(),
-            ),
+            "thinking" => {
+                let cycle = elapsed / THINKING_BREATH_SECONDS;
+                let index = cycle.floor() as usize % VOICE_PALETTE.len();
+                let progress = cycle.fract();
+                let fade = progress * progress * (3.0 - 2.0 * progress);
+                let color = VOICE_PALETTE[index]
+                    .interpolate(VOICE_PALETTE[(index + 1) % VOICE_PALETTE.len()], fade)
+                    .expect("bounded palette interpolation");
+                // Stay visibly lit at the trough; no flashing or white washout.
+                let gain = 0.90 - 0.45 * (cycle * std::f64::consts::TAU).cos();
+                (color, gain)
+            }
             "unavailable" => (
                 Rgbw8 {
                     red: 35,
@@ -202,6 +193,44 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn thinking_breathes_in_all_acknowledgment_colors_without_flashes() {
+        let mut feedback = VoiceFeedback::default();
+        feedback.event(ID, "wake", 0.0).unwrap();
+        feedback.event(ID, "endpoint", 1.0).unwrap();
+        let amber = feedback.light(1.0).unwrap();
+        let teal = feedback.light(4.0).unwrap();
+        let lavender = feedback.light(7.0).unwrap();
+        assert!(amber.red > amber.green && amber.green > amber.blue);
+        assert!(teal.green > teal.red && teal.blue > teal.red);
+        assert!(lavender.blue > lavender.red && lavender.red > lavender.green);
+        assert_eq!(amber, feedback.light(10.0).unwrap());
+        let mut previous = amber;
+        let mut peak = 0;
+        for frame in 1..=450 {
+            let color = feedback.light(1.0 + frame as f64 * 0.02).unwrap();
+            let rgb = [color.red, color.green, color.blue];
+            assert!(*rgb.iter().max().unwrap() > color.white);
+            assert!(rgb.iter().map(|value| *value as u16).sum::<u16>() > 20);
+            peak = peak.max(*rgb.iter().max().unwrap());
+            for (before, after) in [
+                (previous.red, color.red),
+                (previous.green, color.green),
+                (previous.blue, color.blue),
+                (previous.white, color.white),
+            ] {
+                assert!(
+                    before.abs_diff(after) <= 3,
+                    "abrupt color or brightness change"
+                );
+            }
+            previous = color;
+        }
+        assert!(peak > 55, "breath must rise visibly above its trough");
+        feedback.playback_started(11.0);
+        assert!(feedback.light(11.0).is_none());
+    }
+
     #[test]
     fn unavailable_plays_error_once_and_releases_feedback() {
         let mut feedback = VoiceFeedback::default();
