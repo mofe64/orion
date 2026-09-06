@@ -180,8 +180,10 @@ The runtime analyzes accumulated audio and extends the character spline under
 its existing motion run ID. Extension starts from the commanded position and
 velocity, keeps the immutable anchor and calibration checks, and retains head-led
 staging, secondary body beats and clip variation. Network chunks do not become
-separate gestures. Open-stream plans carry a short continuation horizon. The end
-marker revises that plan without requiring another chunk, and late finalization
+separate gestures. Extensions wait until the current gesture and any quiet hold
+finish, and only reached gesture checkpoints advance variation history.
+Open-stream plans carry a short continuation horizon. The end marker revises
+that plan at a gesture boundary without requiring another chunk, and late finalization
 installs only a settle. Terminal playback blends an executing performance into
 a settle from commanded position and velocity; an existing settle continues.
 Software player elapsed time drives

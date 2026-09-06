@@ -162,11 +162,15 @@ are sufficient to communicate life.
 ## Speech-driven animation
 
 Speech uses one continuous performance lifecycle. Complete files can be planned
-up front; streaming replies extend the spline from its current commanded position
-and velocity as more waveform becomes available. The motion run and immutable
+up front; streaming replies extend the spline from commanded position and
+velocity after the current body follow and any hold finish. Newly received audio
+does not replace a gesture midway through its head lead. Gesture history, random
+state, and body shape advance only when the runtime passes a planned body-follow
+checkpoint; composing an unperformed future does not advance that history. The motion run and immutable
 anchor persist across extensions. Network chunks do not trigger separate gestures
 or intermediate returns to rest. The stream end marker revises the remaining
-plan even when audio duration has not changed. With at most 0.9 seconds remaining,
+plan at the next gesture boundary even when audio duration has not changed.
+With at most 0.9 seconds remaining,
 finalization installs only a settle rather than another expressive gesture.
 
 ### Audio ownership and analysis
@@ -205,10 +209,12 @@ variation:
 
 - ordinary phrases prefer `speak_calm_sway` and `speak_reflective_tilt`, with
 occasional explanatory shapes;
-- detected peaks prefer `speak_emphasis_nod` and explanatory shapes;
-- immediate clip repetition is excluded;
+- eligible peaks prefer `speak_emphasis_nod`, reflective tilts, or restrained sways;
+  strong, sufficiently spaced peaks may receive an explanatory body beat;
+- immediate clip repetition is excluded, and recent shapes receive lower
+  selection weights without forcing a fixed three-clip cycle;
 - duration varies around the phrase category's nominal timing;
-- head roll alternates direction and varies in magnitude;
+- head roll may retain its direction, ease toward neutral, or change sides;
 - head pitch supplies nods, lifts, and counter-shapes;
 - small base-yaw turns are chosen without repeating a direction and are
 constrained away from a directional anchor's nearby limit.
@@ -219,7 +225,7 @@ joint targets.
 
 ### Head-led staging
 
-Every planned phrase is divided into two `through` drawings:
+Every planned phrase is divided into a head lead and body follow:
 
 1. **Head lead:** roll, pitch, and optional yaw establish the phrase direction
   while the body retains the preceding secondary shape.
@@ -229,13 +235,15 @@ Every planned phrase is divided into two `through` drawings:
 The head lead receives roughly two-thirds of the phrase duration. During the
 body follow, the head target includes an 18% look-ahead toward the following
 phrase's head target. That staging creates anticipation and overlap inside the
-same continuous spline.
+same continuous spline. At selected quiet intervals, the body follow instead
+settles at the phrase pose and holds briefly without returning to the anchor.
 
 The planner scales ordinary shoulder and elbow offsets to remain visibly
 subordinate to the head. It allows a larger explanatory body beat only when all
 of these conditions hold:
 
-- the drawing is associated with a detected phrase peak;
+- the drawing is associated with an eligible phrase peak, with at least 3.5
+  seconds of planned performance time since the previous emphasis;
 - its peak energy is at least 72% of the available waveform maximum;
 - its drawing index is at least three greater than the preceding body beat
 (at least two drawings intervene); and
@@ -252,7 +260,8 @@ audio                               timing source and semantic content
 ```
 
 The performance ends with one zero-offset `settle` around the pre-speech
-anchor. All internal drawings are `through`. There is no independent periodic
+anchor. Internal drawings are `through` except intentional quiet holds, which
+use `settle` at a non-neutral phrase pose. There is no independent periodic
 elbow oscillator and no scheduler gap between gestures.
 
 ### Implemented performance policy
@@ -265,8 +274,11 @@ These values are character policy, not hardware limits:
 | Motion end lead before audio duration       | `0.12 s`                                              |
 | Nominal final settle budget                 | `0.55 s`, bounded for short utterances                |
 | Phrase-duration scale                       | `1.35`                                                |
-| Ordinary phrase base duration               | `1.05 s` before scale, randomization, and style tempo |
-| Emphasis phrase base duration               | `0.72 s` before scale, randomization, and style tempo |
+| Ordinary phrase base duration               | `1.35 s` before scale, randomization, and style tempo |
+| Emphasis phrase base duration               | `0.90 s` before scale, randomization, and style tempo |
+| Emphasis eligibility spacing               | At least `3.5 s` of planned performance time          |
+| Peak look-ahead                             | `0.5 s`                                              |
+| Quiet hold eligibility                      | Quiet interval at least `0.4 s`; hold capped at `1.2 s` before retiming |
 | Duration randomization                      | `0.90–1.10`                                           |
 | Ordinary head amplitude multiplier          | `0.88–1.10`                                           |
 | Emphasis head amplitude multiplier          | `1.05–1.24`                                           |
@@ -292,7 +304,8 @@ valid response. If movement cannot start, audio continues.
 When playback ends before the generated movement, the runtime replaces the
 executing spline with an anchor-relative settle from commanded position and
 velocity, preserving the motion run. A settle already installed by stream
-finalization continues without restarting. If spline replacement is unavailable,
+finalization, or a performance waiting for measured settling, continues without
+restarting. If spline replacement is unavailable,
 the runtime falls back to stopping and settling from measured state.
 Cancellation does the same. Position and velocity are preserved at replacement;
 acceleration continuity across replacements is not guaranteed.
