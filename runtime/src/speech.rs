@@ -36,6 +36,8 @@ pub struct SpeechStatus {
     pub error: Option<String>,
     pub first_playback_ms: Option<u64>,
     pub elapsed_ms: u64,
+    /// Received audio minus software playback elapsed; not an ALSA measurement.
+    pub buffered_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,6 +125,7 @@ impl SpeechCoordinator {
             error: None,
             first_playback_ms: None,
             elapsed_ms: 0,
+            buffered_ms: None,
         };
         self.active = Some(ActiveSpeech {
             status: status.clone(),
@@ -199,6 +202,15 @@ impl SpeechCoordinator {
         stream.updated = Instant::now();
         active.analysis = analyze_pcm(&stream.pcm)?;
         active.analysis.streaming = true;
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "event": "speech.chunk_received", "run_id": run_id, "sequence": sequence,
+                "audio_ms": pcm.len() / 48,
+                "buffered_ms": ((active.analysis.duration_seconds
+                    - active.playing_at.map(|at| at.elapsed().as_secs_f64()).unwrap_or(0.0)) * 1000.0) as i64,
+            })
+        );
         let _ = fs::remove_file(path);
         Ok(())
     }
@@ -228,6 +240,14 @@ impl SpeechCoordinator {
 
         active.status.elapsed_ms = active.created.elapsed().as_millis() as u64;
         if let Some(stream) = active.stream.as_ref() {
+            active.status.buffered_ms = Some(
+                ((active.analysis.duration_seconds
+                    - active
+                        .playing_at
+                        .map(|at| at.elapsed().as_secs_f64())
+                        .unwrap_or(0.0))
+                    * 1000.0) as i64,
+            );
             let underrun = active.playing_at.is_some_and(|at| {
                 !stream.finished
                     && at.elapsed().as_secs_f64() > active.analysis.duration_seconds + 0.12
@@ -235,8 +255,22 @@ impl SpeechCoordinator {
             if underrun || (!stream.finished && stream.updated.elapsed().as_secs_f64() > 10.0) {
                 let _ = audio.stop();
                 active.status.state = SpeechPhase::Failed;
-                active.status.error =
-                    Some("Speech stream stalled or playback exhausted its buffer.".into());
+                active.status.error = Some(if underrun {
+                    "Speech playback exhausted its buffer before more audio arrived.".into()
+                } else {
+                    "Speech upload stalled: no audio or end marker arrived for 10 seconds.".into()
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "speech.failed", "run_id": active.status.run_id,
+                        "reason": if underrun { "buffer_exhausted" } else { "upload_timeout" },
+                        "buffered_ms": active.status.buffered_ms,
+                        "received_ms": (active.analysis.duration_seconds * 1000.0) as u64,
+                        "last_upload_age_ms": stream.updated.elapsed().as_millis() as u64,
+                        "elapsed_ms": active.status.elapsed_ms,
+                    })
+                );
             }
         }
         if active.status.state == SpeechPhase::Queued {
@@ -577,6 +611,49 @@ mod tests {
             crate::audio::AudioCommand::Stop
         ));
         assert_eq!(audio.commands().len(), 3);
+    }
+
+    #[test]
+    fn underrun_and_upload_timeout_have_distinct_diagnostics() {
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        write_energy_test_wav(&directory.path().join("second.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let mut audio = RecordingAudioDevice::blocking();
+        let run = speech.start_stream("first").unwrap().run_id;
+        speech.append_stream(run, 1, "second").unwrap();
+        speech.tick(&mut audio);
+        speech.active.as_mut().unwrap().playing_at =
+            Some(Instant::now() - Duration::from_millis(2200));
+        speech.tick(&mut audio);
+        let failed = speech.last_status().unwrap();
+        assert_eq!(failed.state, SpeechPhase::Failed);
+        assert!(
+            failed
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("exhausted its buffer")
+        );
+        assert!(failed.buffered_ms.unwrap() <= -200);
+        assert!(!audio.is_playing());
+
+        write_energy_test_wav(&directory.path().join("third.wav"));
+        speech.start_stream("third").unwrap();
+        speech
+            .active
+            .as_mut()
+            .unwrap()
+            .stream
+            .as_mut()
+            .unwrap()
+            .updated = Instant::now() - Duration::from_secs(11);
+        speech.tick(&mut audio);
+        let failed = speech.last_status().unwrap();
+        assert_eq!(failed.state, SpeechPhase::Failed);
+        assert!(failed.error.as_ref().unwrap().contains("upload stalled"));
+        assert_eq!(failed.first_playback_ms, None);
     }
 
     #[test]

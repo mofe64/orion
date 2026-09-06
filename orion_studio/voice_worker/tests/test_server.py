@@ -61,12 +61,12 @@ class FakeTts:
 
 
 class ServerPipelineTests(unittest.IsolatedAsyncioTestCase):
-    async def test_first_audio_is_sent_before_generator_finishes(self):
+    async def test_short_reply_is_buffered_until_generator_finishes(self):
         websocket = FakeWebSocket()
         class StreamingTts:
             def stream(self, _text):
                 yield SpeechAudio(b"\x01\x00", 24000)
-                assert any(isinstance(item, bytes) for item in websocket.messages)
+                assert not any(isinstance(item, bytes) for item in websocket.messages)
                 yield SpeechAudio(b"\x02\x00", 24000)
         asr = FakeAsr()
         session = VoiceSession(asr)

@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from orion_voice_worker.tts import ChatterboxSynthesizer
+from orion_voice_worker.tts import ChatterboxSynthesizer, speech_segments
 
 
 class FakeModel:
@@ -28,6 +28,23 @@ class ChatterboxSynthesizerTests(unittest.TestCase):
         self.assertEqual(options['streaming_interval'], .8)
         self.assertEqual(np.frombuffer(first.pcm, dtype='<i2')[0], 26213)
         self.assertEqual(np.frombuffer(second.pcm, dtype='<i2')[0], 13106)
+
+    def test_sentence_boundaries_reset_model_context_but_preserve_gain(self):
+        calls = []
+        class Model:
+            def generate(self, **kwargs):
+                calls.append(kwargs['text'])
+                yield SimpleNamespace(audio=np.array([.2 if len(calls) == 1 else .1]), sample_rate=24000)
+        chunks = list(ChatterboxSynthesizer('test', model_loader=lambda _: Model()).stream('Hello there. How are you?'))
+        self.assertEqual(calls, ['Hello there.', 'How are you?'])
+        self.assertEqual([np.frombuffer(c.pcm, dtype='<i2')[0] for c in chunks], [26213, 13106])
+
+    def test_long_sentences_are_bounded_without_losing_words(self):
+        text = ' '.join(['something'] * 80) + '.'
+        segments = list(speech_segments(text))
+        self.assertTrue(all(len(segment) <= 160 for segment in segments))
+        self.assertEqual(' '.join(segments), text)
+        self.assertEqual(''.join(speech_segments('x' * 500)), 'x' * 500)
 
     def test_converts_generated_float_audio_to_pcm16(self) -> None:
         model = FakeModel([

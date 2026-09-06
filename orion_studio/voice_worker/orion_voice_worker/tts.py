@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Protocol
+import re
 
 import numpy as np
 
@@ -29,6 +30,20 @@ class TtsModel(Protocol):
     def generate(self, text: str, **options: object): ...
 
 
+def speech_segments(text: str, limit: int = 160):
+    """Bound decoder context, preferring sentence ends and then word boundaries."""
+    for sentence in re.split(r'(?<=[.!?])\s+|\n+', text.strip()):
+        while sentence:
+            if len(sentence) <= limit:
+                yield sentence
+                break
+            cut = sentence.rfind(" ", 0, limit + 1)
+            if cut <= 0:
+                cut = limit
+            yield sentence[:cut]
+            sentence = sentence[cut:].lstrip()
+
+
 class ChatterboxSynthesizer:
     provider = "chatterbox-turbo"
 
@@ -48,7 +63,11 @@ class ChatterboxSynthesizer:
         sample_rate = None
         gain = None
         audible = False
-        for result in self._model.generate(text=text, stream=True, streaming_interval=0.8):
+        # Each segment resets the decoder's accumulated context. Keep gain and
+        # sample-rate validation outside that boundary for continuous playback.
+        results = (result for segment in speech_segments(text)
+                   for result in self._model.generate(text=segment, stream=True, streaming_interval=0.8))
+        for result in results:
             result_rate = int(result.sample_rate)
             if result_rate <= 0:
                 raise RuntimeError("Chatterbox returned an invalid sample rate.")

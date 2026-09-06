@@ -38,6 +38,11 @@ ownership. Microphone control is an explicit authenticated Pi operation.
 
 The worker loads models once and serializes inference. A separate bounded
 executor keeps HTTP uploads and playback polling from waiting behind model work.
+Speech generation continues independently of uploads through a bounded queue.
+Sentence segmentation limits decoder growth; measured generation speed determines
+whether playback starts with a reserve or waits for the complete generated reply.
+The buffering policy and limits are specified in the
+[streaming architecture](../../docs/explanation/voice-architecture.md#streaming-replies-and-timing).
 Studio keeps one child per app instance; the Pi rejects competing processing
 attachments. Qwen rejects unconfirmed wakes before invoking the agent. The Codex
 provider cannot invoke movement or raw device operations.

@@ -116,13 +116,13 @@ owns capture, Rustpotter, endpointing, playback, and character animation; it
 runs no speech-recognition or speech-synthesis model. Conversational voice
 requires the paired Studio app open on an awake Mac.
 
-The pipeline waits for an endpointed utterance before transcription, then uploads
-Chatterbox chunks as they arrive while the Pi prebuffers for playback. Response
+The pipeline waits for an endpointed utterance before transcription, then buffers
+Chatterbox audio locally before starting ordered uploads to the Pi. Response
 latency therefore includes endpointing, transport, ASR, agent response, TTS,
 WAV upload, and playback startup. The worker reports ASR, agent, and synthesis
 durations; these do not constitute a complete end-to-end latency measurement.
 Measure the stages on the deployed setup before changing model quality or
-introducing streaming.
+buffering thresholds.
 
 ## Direction evidence
 
@@ -140,19 +140,41 @@ values disable direction-based attention.
 
 ## Streaming replies and timing
 
-Chatterbox generates native audio chunks on Studio. The Studio worker uploads ordered PCM16 mono 24 kHz WAV chunks directly to
+Chatterbox generates native audio chunks on Studio from sentence segments bounded
+to 160 characters, splitting long sentences at word boundaries. Each segment resets
+the decoder context; gain remains fixed across the reply. A producer generates
+audio independently of uploads through an eight-chunk queue. Cancellation waits
+for any in-flight native inference before closing its generator or reusing the model.
+The Studio worker uploads ordered PCM16 mono 24 kHz WAV chunks directly to
 the authenticated gateway. UI observers receive status and timing events; they
 have no upload or completion responsibility. `POST /api/v2/speech/stream` creates one
 runtime speech run, `/api/v2/speech/{run}/chunks/{sequence}` appends audio, and
 `/api/v2/speech/{run}/end` declares the final sequence. The existing complete-WAV
 endpoint remains available for other callers.
 
-The Pi prebuffers two seconds (or a shorter complete reply), then feeds one
+Before the first upload, Studio collects at least six seconds of audio. Its startup
+reserve is the larger of six seconds or twice the longest measured generation step
+plus two seconds. After collecting six seconds, generation taking more than 75% of
+the audio duration, or a required reserve above twelve seconds, selects complete-reply
+buffering. Short replies also finish generation before upload. The 120-second audio
+limit bounds this local buffer to about 5.8 MB of PCM; it does not extend the existing
+Pi voice-session deadline. Slower generation therefore increases the wait before speech.
+
+The Pi still prebuffers two seconds (or a shorter complete reply), then feeds one
 `aplay` process continuously. Upload end does not mean playback completion.
 Chunks are bounded to two seconds and the whole reply to 120 seconds. Out-of-order
 chunks are rejected; cancellation, upload stalls and buffer exhaustion terminate
-the run. Generation slower than real-time can exhaust the prebuffer; its physical
-behavior still needs commissioning.
+the run. The initial measurements cannot guarantee future generation or network
+speed: a later slowdown can still exhaust the buffer. Sentence transitions and
+long-reply playback with this buffering policy still require physical acceptance.
+
+Worker stderr records `speech.buffer_ready` and `speech.chunk` events with request
+IDs, the buffering decision, audio duration, generation time and upload time. The
+runtime journal records `speech.chunk_received` with run IDs, sequence numbers and
+remaining audio estimates, plus `speech.failed` with separate `buffer_exhausted`
+and `upload_timeout` reasons. Speech status exposes `buffered_ms`: received duration
+minus software playback elapsed, which can become negative. It is not a hardware
+buffer measurement. Diagnostics contain no reply text, PCM or credentials.
 
 The runtime analyzes accumulated audio and extends the character spline under
 its existing motion run ID. Extension starts from the commanded position and

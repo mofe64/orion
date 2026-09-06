@@ -18,6 +18,7 @@ from .protocol import ProtocolError, event, parse_hello, parse_json_message
 from .providers import Qwen3AsrTranscriber
 from .session import PendingTranscription, SessionEvent, VoiceSession
 from .tts import ChatterboxSynthesizer
+from .speech_pipeline import buffered_chunks, diagnostic
 
 
 @dataclass(frozen=True)
@@ -108,26 +109,23 @@ async def generate_response(
     try:
         await websocket.send(event("synthesis.started", requestId=request_id))
         started = time.monotonic()
-        chunks = iter(models.tts.stream(response))
+        chunks = buffered_chunks(iter(models.tts.stream(response)), request_id)
         sequence = 0
-        total_samples = 0
-        while True:
-            audio = await asyncio.to_thread(next, chunks, None)
-            if audio is None:
-                break
-            if audio.sample_rate != 24000:
-                raise RuntimeError("Streaming playback requires Chatterbox PCM16 at 24 kHz")
-            total_samples += audio.samples
-            if total_samples > 120 * 24000:
-                raise RuntimeError("Synthesized reply exceeds the 120-second playback limit")
+        async for chunk in chunks:
+            audio = chunk.audio
             if sequence == 0:
                 session.begin_playback(request_id)
                 if pi is not None and not hasattr(websocket, "gateway"):
                     await pi.send(event("session.playing", sessionId=session_id))
             await websocket.send(event("speech.chunk", requestId=request_id, sequence=sequence,
                 sampleRate=audio.sample_rate, samples=audio.samples, durationMs=audio.duration_ms,
-                synthesisMs=round((time.monotonic() - started) * 1000)))
+                synthesisMs=round(chunk.synthesis_ms)))
+            upload_started = time.monotonic()
             await websocket.send(audio.pcm)
+            diagnostic("speech.chunk", request_id=request_id, sequence=sequence,
+                       run_id=getattr(websocket, "run_id", None),
+                       audio_ms=audio.duration_ms, generation_ms=round(chunk.generation_ms),
+                       upload_ms=round((time.monotonic() - upload_started) * 1000))
             sequence += 1
         if sequence == 0:
             raise RuntimeError("Speech synthesis returned no chunks")
@@ -146,8 +144,8 @@ async def generate_response(
         ))
 
     finally:
-        if chunks is not None and hasattr(chunks, "close"):
-            await asyncio.to_thread(chunks.close)
+        if chunks is not None:
+            await chunks.aclose()
 
 
 def validate_pi_url(url: str) -> None:
