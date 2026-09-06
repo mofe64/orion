@@ -17,8 +17,8 @@ impl Default for VoiceSettings {
     fn default() -> Self {
         Self {
             provider: "codex".into(),
-            model: "gpt-5.6-sol".into(),
-            effort: "medium".into(),
+            model: orion_agent::DEFAULT_MODEL.into(),
+            effort: orion_agent::DEFAULT_EFFORT.into(),
             asr_model: "Qwen/Qwen3-ASR-0.6B".into(),
             tts_model: "mlx-community/chatterbox-turbo-8bit".into(),
             asr_path: String::new(),

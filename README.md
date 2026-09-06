@@ -62,8 +62,11 @@ expressive synthesis; the Pi plays replies and owns character animation. See the
 
 | Path | Responsibility |
 | --- | --- |
+| `agent/` | Rust conversation runtime and Codex integration, compiled into Studio |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
-| `orion_studio/` | Tauri/React desktop application, Pi gateway, and primary voice worker |
+| `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
+| `speech/` | Python Qwen ASR and Chatterbox inference worker |
+| `orion_studio/` | Tauri/React desktop application and Pi gateway |
 | `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
 | `scenes/` | Versioned multimodal scene documents |
 | `description/` | Neutral Unified Robot Description Format (URDF) model and shared mesh assets |
@@ -79,6 +82,8 @@ expressive synthesis; the Pi plays replies and owns character animation. See the
 Run these from the repository root unless a linked guide says otherwise:
 
 ```bash
+cargo test --manifest-path coordinator/Cargo.toml
+cargo test --manifest-path agent/Cargo.toml
 cargo test --manifest-path runtime/Cargo.toml --all-targets
 PYTHONPATH=motion .venv/bin/python -m pytest -q motion/test
 python3 -m unittest discover -s orion_studio/tests -v
@@ -90,11 +95,11 @@ pnpm build
 
 Some runtime integration tests expect the repository Python environment at
 `.venv/bin/python`. Model-independent voice-worker tests use the worker's own
-environment; see its [validation instructions](orion_studio/voice_worker/README.md#validation).
+environment; see its [validation instructions](speech/README.md#validation).
 Orion-managed environments use Python 3.12, selected by `.python-version` and
 package metadata. The simulator environment (`.venv`) is for workstation development and is not
 installed or required on the Pi. Keep separate environments for Pi
-capture (`voice/.venv`), Studio inference (`orion_studio/voice_worker/.venv`), and
+capture (`voice/.venv`), Studio inference (`speech/.venv`), and
 servo commissioning (`hardware/servo_setup/.venv`). Use `uv sync --locked` for
 packages with a lockfile. The Pi gateway and the `uv` bootstrap use system Python;
 they do not require changing the operating system interpreter.

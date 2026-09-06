@@ -10,19 +10,22 @@ environment variables.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ORION_PROJECT_ROOT` | Resolved from the Tauri crate during development | Points a packaged or relocated Studio build at an Orion checkout |
-| `ORION_STUDIO_VOICE_PYTHON` | `orion_studio/voice_worker/.venv/bin/python` on macOS | Overrides the Python executable used to start the voice worker |
+| `ORION_STUDIO_VOICE_PYTHON` | `speech/.venv/bin/python` on macOS | Overrides the Python executable used to start the voice worker |
 | `ORION_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-0.6B` | Qwen3-ASR repository ID or compatible local model path |
 | `ORION_STUDIO_TTS_MODEL` | `mlx-community/chatterbox-turbo-8bit` | Chatterbox repository ID or compatible local model path |
 | `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
-| `ORION_STUDIO_AGENT_PROVIDER` | `codex` | Agent adapter name; only `codex` is implemented |
 | `ORION_STUDIO_CODEX_BIN` | First installed runtime advertising the selected model and effort | Explicit executable override; when set, automatic fallback is disabled |
 | `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |
 
 Choose the reply model and reasoning effort in Studio’s Voice → Reply model section.
 The defaults are `gpt-5.6-sol` and `medium`; preferences are saved in `~/.config/orion/voice-settings.json` and
-applied with **Save reply settings**, which restarts Studio’s voice worker. Runtime discovery tries installed Codex/ChatGPT app
-executables, then the PATH CLI, then the SDK runtime. Each candidate must report
+applied with **Save reply settings**, which restarts Studio’s coordinator and speech worker. Runtime discovery tries installed Codex/ChatGPT app
+executables, then the PATH CLI. The Python SDK bundled runtime is no longer a
+fallback; install Codex or set `ORION_STUDIO_CODEX_BIN`. Each candidate must report
 the selected model and effort in its catalog. Debug shows the selected executable.
+The Rust agent service is separate from voice inference: ASR/TTS reloads preserve
+conversation context when no agent request is interrupted. Changing agent model,
+effort, or executable starts a new conversation.
 
 From the repository root, `./scripts/studio-dev.sh` starts Studio without a
 working-directory change or Codex environment override.
@@ -53,7 +56,7 @@ credentials pause automatic retries and show **Pair Orion again**. **Disconnect*
 pauses connection for the current session; **Forget Orion on this computer**
 removes the saved credential. Neither action changes Pi torque or character
 mode. Closing the Voice panel detaches its UI observer; quitting Studio stops its
-voice worker. Pi capture continues unless explicitly muted. If no Studio worker
+coordinator and speech worker. Pi capture continues unless explicitly muted. If no Studio worker
 is connected when capture finishes, Orion plays an error cue and listens again.
 Only model and effort are saved in `voice-settings.json`; pairing credentials
 remain in the desktop credential store. Microphone mute is a persistent Pi setting.

@@ -27,11 +27,11 @@ Windows, and Linux workstations do not support the complete voice pipeline.
 From the repository root:
 
 ```bash
-cd orion_studio/voice_worker
+cd speech
 uv sync --python 3.12
 ```
 
-This creates `voice_worker/.venv` and installs the processing worker. It does
+This creates `speech/.venv` and installs the processing worker. It does
 not install Rustpotter or download the large ASR and TTS weights.
 
 ## 2. Download the configured models
@@ -97,7 +97,7 @@ invoke other physical capabilities.
 ## Troubleshooting
 
 - **Worker environment missing:** rerun `uv sync --python 3.12` inside
-  `orion_studio/voice_worker`.
+  `speech`.
 - **Startup times out during a download:** stop Voice, run
   `.venv/bin/orion-voice-models`, and retry after all three paths print.
 - **Codex authentication fails:** run `codex login` in a terminal and restart

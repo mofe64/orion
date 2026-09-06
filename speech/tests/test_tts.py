@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from orion_voice_worker.tts import ChatterboxSynthesizer, speech_segments
+from orion_speech_worker.tts import ChatterboxSynthesizer, speech_segments
 
 
 class FakeModel:

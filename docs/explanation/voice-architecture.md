@@ -1,7 +1,8 @@
 # Orion voice architecture
 
 The Raspberry Pi owns Orion's microphone and Rustpotter wake detector. Studio
-owns Qwen3-ASR, the configured agent and Chatterbox synthesis. Studio never opens
+hosts a reusable Rust coordinator and agent runtime. The coordinator owns a
+Python Qwen3-ASR/Chatterbox inference worker. Studio never opens
 its workstation microphone or loads a wake detector.
 
 ## Audio and control flow
@@ -12,8 +13,10 @@ Pi ReSpeaker stereo capture (16 kHz signed PCM16)
   -> mono Rustpotter + three-second in-memory pre-roll
   -> wake candidate notification over token-authenticated WebSocket
   -> Pi speech endpoint -> bounded complete utterance upload
-  -> Studio Qwen ASR confirms "Hey Orion" and extracts command
-  -> configured AgentProvider -> Chatterbox Turbo
+  -> Rust coordinator sends an ASR job to the Python speech worker
+  -> Rust confirms "Hey Orion" and extracts the command
+  -> in-process AgentHandle -> Rust agent runtime -> Codex App Server
+  -> Rust sends a synthesis job to the Python speech worker
   -> ordered WAV chunk uploads -> one oriond-owned streaming player
   -> speech animation -> terminal playback acknowledgement
   -> echo guard -> five-second conversation invitation -> command or wake rearm
@@ -87,14 +90,14 @@ This is turn-taking, not acoustic echo cancellation or barge-in. Speak after
 the teal invitation appears. Sustained noise or delayed echo can still cause a
 false onset; threshold, guard, and pulse timing require physical acceptance. Session deadlines, bounded socket queues and
 strict state transitions prevent indefinite buffering and stale command replay.
-A disconnected session is discarded; the Studio worker reconnects automatically.
+A disconnected session is discarded; the Rust coordinator reconnects automatically.
 Processing has a 120-second session lease; entering playback grants 180 seconds.
 
 ## Transport and deployment
 
 Studio saves the paired gateway address and token in the OS credential store.
 Gateway reconnect restores status/authoring connectivity without replaying robot
-operations. Paired Studio starts its own voice worker while the app is open. The listener token is reused from
+operations. Paired Studio starts its coordinator while the app is open. The listener token is reused from
 that saved connection. See [pairing configuration](../reference/configuration.md#saved-pairing).
 
 The Pi listener uses plain WebSockets on port 7448 and the Pi's existing
@@ -105,13 +108,17 @@ unencrypted, so this development connection is intended for a trusted LAN.
 Token authentication controls access but does not protect against network
 interception.
 
-Studio's native launcher owns one voice-worker child and stops it when the app
-exits. Closing the Voice panel only detaches its status connection. Credentials
-reach the worker through its parent pipe and are not saved in a service file.
-The worker connects directly to the Pi and exposes status through an authenticated
-loopback socket; the Pi permits only one processing owner. Version 7 of that
-local protocol rejects workstation microphone frames. Pi protocol version 1
-uses JSON session messages and length-checked PCM16 utterances.
+Studio starts the top-level `orion-coordinator` library and stops it when the
+app exits. Closing the Voice panel only detaches its status connection. The
+coordinator owns Pi credentials and connects directly to the Pi; the Python
+speech worker receives only model configuration and inference jobs through its
+private stdin/stdout pipes. It has no Pi connection or agent client.
+
+The coordinator exposes status through an authenticated loopback WebSocket;
+the Pi permits only one processing owner. Version 7 of the observer protocol
+rejects workstation microphone frames and UI playback claims. Pi protocol
+version 1 uses JSON session messages and length-checked PCM16 utterances.
+The existing Studio command name `start_voice_worker` starts this coordinator.
 
 The existing HTTP gateway still handles response WAV upload and robot control;
 both transports are unencrypted. Production pairing and encryption for voice
@@ -136,31 +143,55 @@ animation brief, priority, commissioning and acceptance requirements.
 ## Agent conversation and memory
 
 Voice session IDs identify capture/playback turns, not agent conversations.
-`CodexAgentProvider` creates one ephemeral Codex thread when models load and
-reuses it for every confirmed command, including post-response follow-ups and
-later wake-word requests. Pi transport reconnects reuse the loaded models.
-Worker restart or model reload creates a new thread; there is no idle-time
-rotation, explicit new-conversation command, or persisted thread-resume policy.
-The five-second listening deadline does not erase agent context.
+The top-level [`orion-agent` crate](../../agent/README.md) owns one ephemeral
+Codex thread and reuses it for confirmed commands, post-response follow-ups,
+and later wake-word requests. Studio compiles this library through a Cargo path
+dependency and owns its service separately from the coordinator and speech worker.
+
+Pi reconnects and idle coordinator/model reloads preserve the agent thread.
+Quitting Studio, changing the agent model/effort or executable, and failed or
+cancelled active agent requests retire it. The next request starts a fresh
+thread. There is no idle-time rotation, explicit new-conversation command, or
+persisted thread-resume policy. The five-second listening deadline does not
+erase agent context.
+
+The coordinator calls `AgentHandle::respond` directly through bounded Rust
+message channels. Each request has a separate reply channel; dropping an active
+call cancels its Codex turn and retires that uncertain conversation. There is no
+agent TCP server or Python agent client. The independent agent executor survives
+coordinator restarts while Studio retains `AgentService`.
+
+The coordinator owns wake confirmation, follow-up state, voice request IDs,
+Pi reconnection, buffering, uploads, and playback acknowledgement. Python owns
+only ASR and TTS model execution. A speech job has an ID; synthesis responses
+have ordered chunk sequence numbers and an explicit end marker. Channel closure
+without that marker is failure, never permission to upload held startup audio.
 
 The configured base instructions are `ORION_INSTRUCTIONS` in
-[`agent.py`](../../orion_studio/voice_worker/orion_voice_worker/agent.py). They
-request a conversational desk-lamp reply of at most two concise spoken
-sentences, prohibit tools/file operations, and prohibit claims of physical
-actions. The wrapper caps spoken output at 800 characters.
+[`agent/src/lib.rs`](../../agent/src/lib.rs). They request a conversational
+desk-lamp reply of at most two concise spoken sentences, prohibit tools/file
+operations, and prohibit claims of physical actions. The Rust wrapper normalizes
+whitespace and truncates long output at 800 Unicode characters before adding an
+ellipsis. Only final assistant messages from the matching thread and turn become
+speech; intermediate commentary is excluded.
 
 Orion does not load a `soul.md`, user profile, durable memory store, or memory
-retrieval/write pipeline. Conversation context lasts with the worker; it is not
-durable personal memory. A future memory design should distinguish character
-instructions from user facts and retain explicit provenance for saved facts.
+retrieval/write pipeline. Conversation context lasts with the agent service;
+it is not durable personal memory. A future memory design should distinguish
+character instructions from user facts and retain explicit provenance for saved
+facts.
 
-The agent boundary currently exposes `respond(text) -> str` and `close()`.
+The Rust agent handle supports status and text-response requests. It controls an
+installed `codex app-server` process through its JSON protocol over stdin/stdout;
+it does not embed Codex's internal Rust implementation or require the Python
+Codex SDK. See [runtime discovery](../reference/configuration.md#orion-studio).
+
 Orion registers no robot tools or structured tool-result dispatcher. The Codex
-runtime is launched with read-only sandboxing and denied approvals, but the
-prompt's no-tools instruction is not itself an enforced tool allowlist. Adding
-robot tools requires explicit schemas, authorization, validated gateway calls,
-timeouts/cancellation, and results fed back to the agent. Physical operations
-must remain owned by `oriond`.
+runtime is launched with read-only sandboxing and denied approvals. Unexpected
+interactive server requests are rejected, but the prompt's no-tools instruction
+is not itself an enforced tool allowlist. Adding robot tools requires explicit
+schemas, authorization, validated gateway calls, timeouts/cancellation, and
+results fed back to the agent. Physical operations remain owned by `oriond`.
 
 ## Processing station and latency
 
@@ -197,9 +228,12 @@ values disable direction-based attention.
 Chatterbox generates native audio chunks on Studio from sentence segments bounded
 to 160 characters, splitting long sentences at word boundaries. Each segment resets
 the decoder context; gain remains fixed across the reply. A producer generates
-audio independently of uploads through an eight-chunk queue. Cancellation waits
-for any in-flight native inference before closing its generator or reusing the model.
-The Studio worker uploads ordered PCM16 mono 24 kHz WAV chunks directly to
+audio independently of uploads through an eight-chunk Rust queue. Cancellation
+of an active native inference job terminates that Python process; the next job
+loads fresh models. Completed jobs keep the worker and models available. Speech
+jobs have a 240-second host deadline, but the Pi session lease still bounds a
+voice turn.
+The Rust coordinator uploads ordered PCM16 mono 24 kHz WAV chunks directly to
 the authenticated gateway. UI observers receive status and timing events; they
 have no upload or completion responsibility. `POST /api/v2/speech/stream` creates one
 runtime speech run, `/api/v2/speech/{run}/chunks/{sequence}` appends audio, and
@@ -222,7 +256,7 @@ the run. The initial measurements cannot guarantee future generation or network
 speed: a later slowdown can still exhaust the buffer. Sentence transitions and
 long-reply playback with this buffering policy still require physical acceptance.
 
-Worker stderr records `speech.buffer_ready` and `speech.chunk` events with request
+Coordinator stderr records `speech.buffer_ready` and `speech.chunk` events with request
 IDs, the buffering decision, audio duration, generation time and upload time. The
 runtime journal records `speech.chunk_received` with run IDs, sequence numbers and
 remaining audio estimates, plus `speech.failed` with separate `buffer_exhausted`

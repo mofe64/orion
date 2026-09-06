@@ -136,7 +136,12 @@ streams.
 
 The Pi owns Rustpotter and microphone capture. Studio receives endpointed
 utterances over the local network, confirms them with Qwen, invokes the agent and synthesizes
-responses with Chatterbox. Playback is Pi-owned:
+responses with Chatterbox. The top-level [`orion-agent` library](../agent/README.md)
+is compiled into Studio and owns the Codex conversation separately from the
+[`orion-coordinator`](../coordinator/README.md) pipeline. The coordinator calls
+the agent directly and owns the top-level Python speech worker. Idle voice-model
+reloads preserve the conversation.
+Playback is Pi-owned:
 
 ```text
 Chatterbox signed 16-bit pulse-code modulation (PCM16)
@@ -149,8 +154,8 @@ Chatterbox signed 16-bit pulse-code modulation (PCM16)
   -> Studio playback acknowledgement
 ```
 
-Studio polls the run through queued, playing, and terminal states and reports
-completion to the voice worker only after Pi playback completes. Cancellation
+The Rust coordinator polls the run through queued, playing, and terminal states
+and acknowledges completion to the Pi listener only after playback completes. Cancellation
 is run-scoped. The runtime deletes spool files after completion, cancellation,
 or failure. Pi-local Piper uses the same speech coordinator, so it receives the
 same motion and lighting behavior.
@@ -158,7 +163,7 @@ same motion and lighting behavior.
 Prepare the optional Apple Silicon voice models separately:
 
 ```bash
-cd orion_studio/voice_worker
+cd speech
 uv sync --python 3.12
 .venv/bin/orion-voice-models
 ```
@@ -302,7 +307,7 @@ Install the updated gateway on Orion to use logs; its service account needs jour
 read access. Missing journal support or access produces an unavailable message.
 The former Voice modal is removed; its controls live in Settings and Debug.
 
-Codex model and effort dropdowns use the voice worker’s advertised catalog; no
+Codex model and effort dropdowns use the coordinator’s advertised catalog; no
 manual or assumed options are offered. Speech model information is read-only:
 Hub snapshot folders identify their repository, while copied folders may only
 identify an architecture from `config.json`. The worker loads selected folders

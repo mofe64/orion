@@ -7,13 +7,13 @@ and a Pi-owned 104 KB Rustpotter reference, but not the automatic speech recogni
 ## Download the defaults
 
 ```bash
-cd orion_studio/voice_worker
+cd speech
 uv sync --python 3.12
 .venv/bin/orion-voice-models
 ```
 
 The downloader calls `huggingface_hub.snapshot_download` for the model IDs
-defined in `orion_voice_worker/models.py`. Existing verified cache content is
+defined in `orion_speech_worker/models.py`. Existing verified cache content is
 reused, so rerunning it is safe and normally downloads only missing files.
 
 The default cache is `~/.cache/huggingface/hub`. Set `HF_HOME` before both the
@@ -28,7 +28,7 @@ HF_HOME=/absolute/path/to/hugging-face-cache \
   pnpm tauri dev
 ```
 
-Do not place downloaded weights under `voice_worker/models/`. The commissioned
+Keep downloaded speech weights in the Hugging Face cache. The commissioned
 Rustpotter reference is tracked at `voice/models/wake/hey_orion_reference.rpw`
 and is loaded only by the Pi listener.
 

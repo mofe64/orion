@@ -1,0 +1,18 @@
+[package]
+name = "orion-coordinator"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Orion voice orchestration independent of Studio and speech inference"
+
+[dependencies]
+orion-agent = { path = "../agent" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "net", "process", "io-util", "sync", "time"] }
+tokio-tungstenite = "0.28"
+futures-util = { version = "0.3", features = ["sink"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+regex = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
