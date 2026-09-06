@@ -165,7 +165,9 @@ Speech uses one continuous performance lifecycle. Complete files can be planned
 up front; streaming replies extend the spline from its current commanded position
 and velocity as more waveform becomes available. The motion run and immutable
 anchor persist across extensions. Network chunks do not trigger separate gestures
-or intermediate returns to rest. Playback completion triggers the final settle.
+or intermediate returns to rest. The stream end marker revises the remaining
+plan even when audio duration has not changed. With at most 0.9 seconds remaining,
+finalization installs only a settle rather than another expressive gesture.
 
 ### Audio ownership and analysis
 
@@ -287,9 +289,14 @@ to respect the motor-speed ceiling.
 Speech motion is best-effort: a movement-planning failure must not silence a
 valid response. If movement cannot start, audio continues.
 
-When playback ends before the generated movement, the runtime cancels the
-performance and compiles a short anchor-relative settle from measured state.
-Cancellation does the same. If audio upload, validation, synthesis, or playback
+When playback ends before the generated movement, the runtime replaces the
+executing spline with an anchor-relative settle from commanded position and
+velocity, preserving the motion run. A settle already installed by stream
+finalization continues without restarting. If spline replacement is unavailable,
+the runtime falls back to stopping and settling from measured state.
+Cancellation does the same. Position and velocity are preserved at replacement;
+acceleration continuity across replacements is not guaranteed.
+If audio upload, validation, synthesis, or playback
 fails, the speech run becomes `failed`, the coordinator removes its temporary
 file, and character motion returns to the anchor. Idle resumes only after the
 scheduler chooses another randomized delay.

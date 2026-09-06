@@ -180,9 +180,18 @@ The runtime analyzes accumulated audio and extends the character spline under
 its existing motion run ID. Extension starts from the commanded position and
 velocity, keeps the immutable anchor and calibration checks, and retains head-led
 staging, secondary body beats and clip variation. Network chunks do not become
-separate gestures. Open-stream plans carry a short continuation horizon; terminal
-playback triggers the existing final settle. Software player elapsed time drives
+separate gestures. Open-stream plans carry a short continuation horizon. The end
+marker revises that plan without requiring another chunk, and late finalization
+installs only a settle. Terminal playback blends an executing performance into
+a settle from commanded position and velocity; an existing settle continues.
+Software player elapsed time drives
 the audio frame estimate; ALSA buffering and physical motion require live review.
+
+Runtime logs include `speech.stream_end` and `speech.terminal` with the speech
+run ID. `speech.motion_finalized` and `speech.motion_settle` identify the motion
+run, remaining audio estimate, and commanded or measured-fallback handover.
+These events distinguish normal finalization from buffer failure and recovery;
+they do not measure acoustic timing or physical joint smoothness.
 
 Voice → Debug reports capture after wake detection, transcription, agent time,
 first synthesized chunk, total synthesis, summed upload round trips, and Pi

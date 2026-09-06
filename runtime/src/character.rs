@@ -97,6 +97,7 @@ pub struct CharacterCoordinator {
     speech_motion_started: bool,
     last_speech_clip: Option<String>,
     speech_planned_until: f64,
+    speech_plan_streaming: bool,
     speech_gesture_index: usize,
     speech_last_body_beat: Option<usize>,
     speech_last_tilt: f64,
@@ -129,6 +130,7 @@ impl CharacterCoordinator {
             speech_motion_started: false,
             last_speech_clip: None,
             speech_planned_until: 0.0,
+            speech_plan_streaming: false,
             speech_gesture_index: 0,
             speech_last_body_beat: None,
             speech_last_tilt: 0.0,
@@ -412,6 +414,7 @@ impl CharacterCoordinator {
         self.speech_motion_started = false;
         self.reset_timers(now);
         self.speech_planned_until = 0.0;
+        self.speech_plan_streaming = false;
         self.speech_gesture_index = 0;
         self.speech_last_body_beat = None;
         self.speech_last_tilt = 0.0;
@@ -546,6 +549,30 @@ impl CharacterCoordinator {
         if self.status.state == CharacterState::Speaking {
             if let Some(run_id) = self.speech_motion_run_id {
                 if terminal_phase(core, run_id).is_none() {
+                    if self.status.active_clip.as_deref() == Some("speak_settle") {
+                        self.status.state = CharacterState::Settling;
+                        return Ok(());
+                    }
+                    // Keep the executing spline's commanded position and velocity.
+                    // Telemetry recovery below is only needed when it cannot be replaced.
+                    if let Some(anchor) = self.status.active_anchor.clone()
+                        && core
+                            .extend_character_performance(
+                                run_id,
+                                speech_settle_motion(),
+                                anchor,
+                                now,
+                            )
+                            .is_ok()
+                    {
+                        self.status.active_clip = Some("speak_settle".into());
+                        self.status.state = CharacterState::Settling;
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"event": "speech.motion_settle", "motion_run_id": run_id, "handover": "commanded"})
+                        );
+                        return Ok(());
+                    }
                     if core.mode() == RuntimeMode::Moving {
                         let _ = checked(core.handle_command("stop", now));
                     }
@@ -561,6 +588,10 @@ impl CharacterCoordinator {
                         self.speech_motion_run_id = Some(settle_run_id);
                         self.status.active_clip = Some("speak_settle".into());
                         self.status.state = CharacterState::Settling;
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"event": "speech.motion_settle", "motion_run_id": settle_run_id, "handover": "measured_fallback"})
+                        );
                         return Ok(());
                     }
                 }
@@ -708,8 +739,10 @@ impl CharacterCoordinator {
         };
         let elapsed = frame as f64 * 0.020;
         if let Some(run_id) = self.speech_motion_run_id {
-            if analysis.duration_seconds > self.speech_planned_until
-                && self.speech_planned_until - elapsed < 1.5
+            let finalizing = self.speech_plan_streaming && !analysis.streaming;
+            if finalizing
+                || (analysis.duration_seconds > self.speech_planned_until
+                    && self.speech_planned_until - elapsed < 1.5)
             {
                 if let Some(anchor) = self.status.active_anchor.clone() {
                     let tail = SpeechAnalysis {
@@ -723,14 +756,29 @@ impl CharacterCoordinator {
                         duration_seconds: (analysis.duration_seconds - elapsed).max(0.0),
                         streaming: analysis.streaming,
                     };
-                    if let Ok(performance) =
+                    // Do not introduce a new minimum-length gesture at a late EOF.
+                    let settle_only = !tail.streaming && tail.duration_seconds <= 0.9;
+                    let performance = if settle_only {
+                        Ok(speech_settle_motion())
+                    } else {
                         self.compose_speech_performance(&tail, core.motions(), &anchor)
-                    {
+                    };
+                    if let Ok(performance) = performance {
                         if core
                             .extend_character_performance(run_id, performance, anchor, now)
                             .is_ok()
                         {
                             self.speech_planned_until = analysis.duration_seconds;
+                            self.speech_plan_streaming = analysis.streaming;
+                            if settle_only {
+                                self.status.active_clip = Some("speak_settle".into());
+                            }
+                            if finalizing {
+                                eprintln!(
+                                    "{}",
+                                    serde_json::json!({"event": "speech.motion_finalized", "motion_run_id": run_id, "remaining_ms": (tail.duration_seconds * 1000.0) as u64, "settle_only": settle_only})
+                                );
+                            }
                         }
                     }
                 }
@@ -766,6 +814,7 @@ impl CharacterCoordinator {
         }
         self.speech_motion_started = true;
         self.speech_planned_until = analysis.duration_seconds;
+        self.speech_plan_streaming = analysis.streaming;
         let Ok(performance) = self.compose_speech_performance(analysis, core.motions(), &anchor)
         else {
             return;
@@ -1993,6 +2042,89 @@ mod tests {
     }
 
     #[test]
+    fn stream_end_without_new_audio_replans_once_and_late_end_only_settles() {
+        for end_frame in [20, 95] {
+            let mut core = following_core();
+            checked(core.handle_command("configure", 0.0)).unwrap();
+            checked(core.handle_command("enable", 0.0)).unwrap();
+            let anchor = core.poses().pose("home").unwrap().clone();
+            let mut analysis = SpeechAnalysis {
+                rms_20ms: vec![0.2; 100],
+                quiet_regions: vec![],
+                phrase_peaks: vec![40],
+                duration_seconds: 2.0,
+                streaming: true,
+            };
+            let mut character = CharacterCoordinator::new(42);
+            character.status.enabled = true;
+            character.status.active_anchor = Some(anchor.clone());
+            character.note_speech_started(0.0);
+            character
+                .tick(0.0, &mut core, false, None, true, Some(&analysis), Some(0))
+                .unwrap();
+            let run = character.speech_motion_run_id;
+            for frame in 1..=end_frame {
+                core.tick(frame as f64 * 0.02).unwrap();
+            }
+            let before = character.speech_gesture_index;
+            analysis.streaming = false;
+            let now = end_frame as f64 * 0.02;
+            character
+                .tick(
+                    now,
+                    &mut core,
+                    false,
+                    None,
+                    true,
+                    Some(&analysis),
+                    Some(end_frame),
+                )
+                .unwrap();
+            assert_eq!(character.speech_motion_run_id, run);
+            assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+            if end_frame == 95 {
+                assert_eq!(
+                    character.status.active_clip.as_deref(),
+                    Some("speak_settle")
+                );
+                assert_eq!(character.speech_gesture_index, before);
+            } else {
+                assert!(
+                    character.speech_gesture_index > before,
+                    "end marker must revise the plan without another chunk"
+                );
+            }
+            let after = character.speech_gesture_index;
+            character
+                .tick(
+                    now,
+                    &mut core,
+                    false,
+                    None,
+                    true,
+                    Some(&analysis),
+                    Some(end_frame),
+                )
+                .unwrap();
+            assert_eq!(
+                character.speech_gesture_index, after,
+                "finalization must not repeat"
+            );
+            if end_frame == 95 {
+                // Playback ending must not rewind a settle that EOF already installed.
+                core.tick(now + 0.02).unwrap();
+                let progress = core.snapshot().motion.as_ref().unwrap().progress;
+                character
+                    .tick(now + 0.02, &mut core, false, None, false, None, None)
+                    .unwrap();
+                assert_eq!(character.status.state, CharacterState::Settling);
+                assert_eq!(core.snapshot().motion.as_ref().unwrap().progress, progress);
+                assert_eq!(character.speech_motion_run_id, run);
+            }
+        }
+    }
+
+    #[test]
     fn ending_speech_interrupts_the_long_performance_and_blends_to_anchor() {
         let mut core = core();
         checked(core.handle_command("configure", 0.0)).unwrap();
@@ -2025,7 +2157,7 @@ mod tests {
             character.status.active_clip.as_deref(),
             Some("speak_settle")
         );
-        assert_ne!(character.speech_motion_run_id, Some(performance_run));
+        assert_eq!(character.speech_motion_run_id, Some(performance_run));
 
         let mut now = 0.2;
         while character.status.state == CharacterState::Settling {

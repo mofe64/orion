@@ -230,6 +230,14 @@ impl SpeechCoordinator {
         }
         stream.finished = true;
         active.analysis.streaming = false;
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "event": "speech.stream_end", "run_id": run_id, "sequence": sequence,
+                "audio_ms": (active.analysis.duration_seconds * 1000.0) as u64,
+                "playback_started": active.playing_at.is_some(),
+            })
+        );
         Ok(())
     }
 
@@ -421,6 +429,13 @@ impl SpeechCoordinator {
         let Some(active) = self.active.take() else {
             return;
         };
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "event": "speech.terminal", "run_id": active.status.run_id,
+                "state": active.status.state, "elapsed_ms": active.status.elapsed_ms,
+            })
+        );
         let _ = fs::remove_file(active.wav_path);
         self.last = Some(active.status);
     }

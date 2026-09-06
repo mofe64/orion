@@ -864,6 +864,46 @@ mod tests {
     }
 
     #[test]
+    fn speech_settle_replacement_preserves_commanded_state_at_multiple_phases() {
+        for at in [0.1, 0.3, 0.7] {
+            let mut core = core();
+            activate(&mut core);
+            let anchor = core.poses().pose("home").unwrap().clone();
+            let definition = core
+                .motions()
+                .motion("speak_reflective_tilt")
+                .unwrap()
+                .clone();
+            let run = core
+                .play_generated_anchored_relative(definition.clone(), anchor.clone(), 0.0)
+                .unwrap();
+            let before = core
+                .motion_sequence
+                .as_ref()
+                .unwrap()
+                .sample_state(at)
+                .unwrap();
+            core.tick(at).unwrap();
+            let mut settle = definition;
+            settle.keyframes = vec![settle.keyframes.last().unwrap().clone()];
+            settle.keyframes[0].target.clear();
+            settle.keyframes[0].duration_seconds = 0.42;
+            settle.style = crate::style::MotionStyle::named("speaking_calm").unwrap();
+            core.extend_character_performance(run, settle, anchor.clone(), at)
+                .unwrap();
+            let sequence = core.motion_sequence.as_ref().unwrap();
+            let after = sequence.sample_state(0.0).unwrap();
+            for name in ORION_JOINT_NAMES {
+                assert!((before.positions[name] - after.positions[name]).abs() < 1e-9);
+                assert!((before.velocities[name] - after.velocities[name]).abs() < 1e-9);
+            }
+            let end = sequence.sample_state(100.0).unwrap();
+            assert_eq!(end.positions, anchor);
+            assert!(end.velocities.values().all(|v| v.abs() < 1e-9));
+        }
+    }
+
+    #[test]
     fn enforces_configuration_and_torque_lifecycle() {
         let mut core = core();
         assert!(
