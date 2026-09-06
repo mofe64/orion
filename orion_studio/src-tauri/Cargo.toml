@@ -19,6 +19,7 @@ url = "2"
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 uuid = { version = "1", features = ["v4"] }
+rfd = "0.15"
 
 # Explicit native backends: no plaintext file or mock-store fallback on desktop.
 [target.'cfg(target_os = "macos")'.dependencies]

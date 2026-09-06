@@ -153,6 +153,20 @@ class OrionGateway:
             "character": character.get("character"),
         }
 
+    def runtime_logs(self) -> dict[str, Any]:
+        journal = shutil.which("journalctl")
+        if not journal:
+            raise GatewayError(HTTPStatus.NOT_IMPLEMENTED, "logs_unavailable", "Service logs are unavailable on this gateway.")
+        try:
+            result = subprocess.run([journal, "--no-pager", "--output=short-iso", "--lines=200",
+                "-u", "oriond.service", "-u", "orion-studio-gateway.service", "-u", "orion-listener.service"],
+                capture_output=True, text=True, timeout=3, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "logs_unavailable", "Could not read Orion service logs.") from error
+        if result.returncode != 0:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "logs_unavailable", "The gateway cannot read service logs. Check its journal permissions.")
+        return {"api_version": API_VERSION, "lines": result.stdout[-100000:].splitlines()[-200:]}
+
     def capabilities(self) -> dict[str, Any]:
         poses = self._checked("pose list")
         motions = self._checked("motion list")
@@ -1311,6 +1325,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == "/api/v2/debug/logs":
+                return HTTPStatus.OK, gateway.runtime_logs()
             if path == "/api/v2/status":
                 return HTTPStatus.OK, gateway.status()
             if path == "/api/v2/capabilities":

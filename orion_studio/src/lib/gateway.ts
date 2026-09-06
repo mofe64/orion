@@ -307,3 +307,7 @@ export function uploadSpeechChunk(connection: GatewayConnection, wav: Uint8Array
 export function endSpeechStream(connection: GatewayConnection, runId: number, sequence: number): Promise<unknown> {
   return request(connection, `/api/v2/speech/${runId}/end`, { method: "POST", body: JSON.stringify({ sequence }) });
 }
+
+export function getRuntimeLogs(connection: GatewayConnection): Promise<{ lines: string[] }> {
+  return request(connection, "/api/v2/debug/logs");
+}

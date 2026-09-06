@@ -9,11 +9,11 @@ const props = { catalog, theme: "dark" as const, voiceLabel: "Off", connection: 
   onConnect: vi.fn(), onVoice: vi.fn(), onCreate: vi.fn(), onRefresh: async () => {}, onNotice: vi.fn(), onRun: vi.fn() };
 
 describe("Home control availability", () => {
-  it("disables hardware actions while disconnected but keeps lamp drafts and voice access available", () => {
+  it("disables hardware actions while disconnected but keeps lamp drafts available", () => {
     const html = renderToStaticMarkup(<Home {...props} />);
     expect(html).toMatch(/role="switch"[^>]*disabled=""/);
     expect(html).toMatch(/<button class="oh-apply" disabled=""/);
-    expect(html).toMatch(/<button class="oh-talk"[^>]*>/);
+    expect(html).toMatch(/aria-label="Orion listening"[^>]*aria-checked="false"[^>]*disabled=""/);
     expect(html).not.toContain('type="color"');
     expect(html).not.toContain('id="lamp-color"');
     expect(html).toContain("Custom color");

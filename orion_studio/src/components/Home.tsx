@@ -13,6 +13,8 @@ interface Props {
   catalog: ProjectCatalog;
   theme: "dark" | "light";
   voiceLabel: string;
+  listening?: boolean;
+  voiceAvailable?: boolean;
   connection: GatewayConnection | null;
   status: GatewayStatus | null;
   onConnect: () => void;
@@ -24,7 +26,7 @@ interface Props {
   onRun: (run: TrackedRun | null) => void;
 }
 
-export function Home({ catalog, theme, voiceLabel, connection, status, onConnect, onVoice, onCreate, onDiagnostics, onRefresh, onNotice, onRun }: Props) {
+export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvailable = false, connection, status, onConnect, onVoice, onCreate, onDiagnostics, onRefresh, onNotice, onRun }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [mood, setMood] = useState<LampMood>("Warm white");
   const [hue, setHue] = useState(210);
@@ -90,7 +92,7 @@ export function Home({ catalog, theme, voiceLabel, connection, status, onConnect
             <button className="oh-mode" disabled={disabled || status?.runtime.motion?.name === "rest"} onClick={() => void act("Go to rest", restOrion)}><Moon size={18} /><span><strong>Go to rest</strong><small>Gently settle down</small></span></button>
           </div>
         </section>
-        <button className="oh-talk" onClick={onVoice}><span className="oh-mic"><Mic size={19} /></span><span><strong>Talk with Orion</strong><small>Microphone · {voiceLabel}</small></span><ArrowUpRight className="oh-arrow" size={17} /></button>
+        <div className="oh-talk"><span className="oh-mic"><Mic size={19} /></span><span><strong>Listening</strong><small>{voiceLabel}</small></span><button className="studio-switch" role="switch" aria-label="Orion listening" aria-checked={listening} disabled={!voiceAvailable} onClick={onVoice}><span /></button></div>
       </div>
       <section className="oh-lamp" aria-label="Lamp controls" aria-busy={pending !== null}>
         <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={appliedLamp?.enabled ?? false} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled} onClick={() => applyLight(!appliedLamp?.enabled)}><span /></button></header>
@@ -109,7 +111,7 @@ export function Home({ catalog, theme, voiceLabel, connection, status, onConnect
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>Explore animations <Plus size={15} /></button></header>
       <div className="oh-expression-list">{[["acknowledge_left", "Acknowledge left"], ["acknowledge_right", "Acknowledge right"]].map(([name, label], index) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(label, value => runScene(value, name))}><span className="oh-expression-icon">{index === 0 ? <MoveUpLeft size={16} /> : <MoveUpRight size={16} />}</span>{label}<Play className="oh-arrow" size={14} /></button>)}</div>
     </section>
-    <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>
+    {onDiagnostics && <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>}
     <p className="oh-feedback" role="status"><Info size={14} /><span>{pending ? `${pending}…` : result || (!connection ? "Connect Orion to use character, lamp, and expression controls." : "Connected to Orion.")}</span></p>
   </section>;
 }

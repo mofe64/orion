@@ -11,12 +11,13 @@ import "./AnimationLibrary.css";
 const RobotViewport = lazy(() => import("./RobotViewport").then(module => ({ default: module.RobotViewport })));
 type Prepared = Awaited<ReturnType<typeof prepareAnimation>>;
 interface Props {
+  previewAudio?: boolean;
   catalog: ProjectCatalog; theme: "dark" | "light"; connection: GatewayConnection | null;
   status: GatewayStatus | null; onEdit: (scene: SceneDefinition) => void;
   onDelete?: (scene: SceneDefinition) => Promise<void>;
   onRun: (run: TrackedRun) => void; onNotice: (message: string) => void;
 }
-export function AnimationLibrary({ catalog: baseCatalog, theme, connection, status, onEdit, onDelete, onRun, onNotice }: Props) {
+export function AnimationLibrary({ catalog: baseCatalog, previewAudio = true, theme, connection, status, onEdit, onDelete, onRun, onNotice }: Props) {
   const [kind, setKind] = useState<"scene" | "pose">("scene");
   const [selected, setSelected] = useState("acknowledge_left");
   const [query, setQuery] = useState("");
@@ -75,7 +76,7 @@ export function AnimationLibrary({ catalog: baseCatalog, theme, connection, stat
     const tick = (now: number) => {
       const time = Math.min(duration, (now - start) / 1000);
       setElapsed(time);
-      for (const event of active.audio) {
+      for (const event of previewAudio ? active.audio : []) {
         const at = triggerTime(event, active, activePreview.trajectories);
         const url = catalog.cueUrls[event.cue];
         if (at !== null && at <= time && url && !fired.has(event.id)) {
@@ -90,7 +91,7 @@ export function AnimationLibrary({ catalog: baseCatalog, theme, connection, stat
     };
     frame = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(frame); stopAudio(); };
-  }, [playing, activePreview, full, catalog]);
+  }, [playing, activePreview, full, catalog, previewAudio]);
   const activeScene = activePreview && (full ? activePreview.scene : movementOnly(activePreview.scene));
   const joints = playing && activePreview ? sampleSceneTrajectory(activePreview.scene, activePreview.trajectories, elapsed) ?? (catalog.poses[heldPose] ?? catalog.poses.home).positions : (catalog.poses[heldPose] ?? catalog.poses.home).positions;
   const light = playing && activeScene && activePreview && (full)

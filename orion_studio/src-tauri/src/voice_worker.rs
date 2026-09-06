@@ -50,22 +50,6 @@ fn python(root: &Path) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join(".venv/bin/python"))
 }
-fn config_path() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .map(|p| PathBuf::from(p).join(".config/orion/voice-settings.json"))
-        .ok_or_else(|| "HOME is unavailable".into())
-}
-#[tauri::command]
-pub fn load_voice_settings() -> Result<serde_json::Value, String> {
-    let path = config_path()?;
-    if !path.exists() {
-        return Ok(serde_json::json!({"model":"gpt-5.6-sol", "effort":"medium"}));
-    }
-    let config: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"model":config["agent_model"], "effort":config["agent_effort"]}))
-}
 #[tauri::command]
 pub fn start_voice_worker(
     manager: State<'_, VoiceWorkerManager>,
@@ -74,23 +58,49 @@ pub fn start_voice_worker(
     gateway_url: String,
     agent_model: Option<String>,
     agent_effort: Option<String>,
+    asr_model: Option<String>,
+    tts_model: Option<String>,
+    asr_path: Option<String>,
+    tts_path: Option<String>,
+    cache_path: Option<String>,
 ) -> Result<VoiceWorkerConnection, String> {
     let mut slot = manager.worker.lock().map_err(|e| e.to_string())?;
     let root = worker_root()?;
-    let mut values = serde_json::json!({"pi_url":pi_url, "pi_token":pi_token, "gateway_url":gateway_url,
-        "agent_model":agent_model.unwrap_or_else(|| "gpt-5.6-sol".into()),
-        "agent_effort":agent_effort.unwrap_or_else(|| "medium".into()),
-        "asr_model":"Qwen/Qwen3-ASR-0.6B", "tts_model":"mlx-community/chatterbox-turbo-8bit", "agent_provider":"codex"});
-    for (environment, field) in [
-        ("ORION_PI_VOICE_URL", "pi_url"),
-        ("ORION_STUDIO_ASR_MODEL", "asr_model"),
-        ("ORION_STUDIO_TTS_MODEL", "tts_model"),
-        ("ORION_STUDIO_AGENT_PROVIDER", "agent_provider"),
-    ] {
-        if let Ok(value) = std::env::var(environment) {
-            values[field] = value.into();
-        }
+    let mut settings = crate::settings::load_voice_settings()?;
+    if let Some(value) = agent_model {
+        settings.model = value;
     }
+    if let Some(value) = agent_effort {
+        settings.effort = value;
+    }
+    if let Some(value) = asr_model {
+        settings.asr_model = value;
+    }
+    if let Some(value) = tts_model {
+        settings.tts_model = value;
+    }
+    if let Some(value) = asr_path {
+        settings.asr_path = value;
+    }
+    if let Some(value) = tts_path {
+        settings.tts_path = value;
+    }
+    if let Some(value) = cache_path {
+        settings.cache_path = value;
+    }
+    settings.validate()?;
+    let resolve = |path: &str, model: &str| -> Result<String, String> {
+        if path.is_empty() {
+            Ok(model.into())
+        } else {
+            Ok(crate::settings::expand_path(path)?
+                .to_string_lossy()
+                .into_owned())
+        }
+    };
+    let values = serde_json::json!({"pi_url":std::env::var("ORION_PI_VOICE_URL").unwrap_or(pi_url), "pi_token":pi_token, "gateway_url":gateway_url,
+        "agent_model":settings.model,"agent_effort":settings.effort,
+        "asr_model":resolve(&settings.asr_path,&settings.asr_model)?, "tts_model":resolve(&settings.tts_path,&settings.tts_model)?, "agent_provider":"codex", "cache_path":settings.cache_path});
     if values["pi_token"].as_str().unwrap_or("").len() < 32
         || values["agent_model"]
             .as_str()
@@ -111,10 +121,6 @@ pub fn start_voice_worker(
             return Ok(worker.connection.clone());
         }
     }
-    let settings_path = config_path()?;
-    std::fs::create_dir_all(settings_path.parent().ok_or("Invalid settings path")?)
-        .map_err(|e| e.to_string())?;
-    std::fs::write(&settings_path, serde_json::json!({"agent_model":values["agent_model"], "agent_effort":values["agent_effort"]}).to_string()).map_err(|e| e.to_string())?;
     *slot = None; // Retire the previous child before starting another owner.
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -127,7 +133,14 @@ pub fn start_voice_worker(
     let mut launch = values.clone();
     launch["token"] = connection.token.clone().into();
     launch["port"] = port.into();
-    let mut child = Command::new(python(&root))
+    let mut command = Command::new(python(&root));
+    if !settings.cache_path.is_empty() {
+        let cache = crate::settings::expand_path(&settings.cache_path)?;
+        command
+            .env("HF_HOME", &cache)
+            .env("HF_HUB_CACHE", cache.join("hub"));
+    }
+    let mut child = command
         .args(["-m", "orion_voice_worker.processor"])
         .current_dir(root)
         .stdin(Stdio::piped())

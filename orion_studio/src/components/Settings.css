@@ -1,0 +1,54 @@
+.settings-page { width: min(76rem,100%); margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+.settings-heading { margin-bottom: 1.6rem; }
+.settings-heading h1 { font-size: 2rem; margin: .35rem 0; letter-spacing: -.05em; }
+.settings-heading > p:last-child,.settings-card header p,.settings-help,.settings-row p { color: var(--muted); font-size: .82rem; line-height: 1.5; }
+.settings-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap: 1.2rem; align-items: start; }
+.settings-stack { display: grid; gap: 1.2rem; min-width: 0; }
+.settings-card { border: 1px solid var(--line); background: var(--surface-1); border-radius: 1.5rem; padding: 1.5rem; min-width: 0; }
+.settings-card > header { display: flex; align-items: start; gap: .7rem; margin-bottom: 1.1rem; }
+.settings-card > header > svg { color: var(--accent); flex-shrink: 0; margin-top: .15rem; }
+.settings-card > header > button { margin-left: auto; }
+.settings-card h2 { font-size: 1.05rem; margin: 0; }
+.settings-card header p { margin: .3rem 0 0; }
+.settings-card label { display: grid; gap: .5rem; font-size: .85rem; margin: .9rem 0; }
+.settings-card input,.settings-card select { width: 100%; min-width: 0; padding: .7rem .8rem; border-radius: .7rem; }
+.settings-card fieldset { border: 0; border-top: 1px solid var(--line); padding: .6rem 0; margin: 1rem 0; }
+.settings-card legend { font-weight: 600; font-size: .85rem; padding-right: .6rem; }
+.settings-card small { color: var(--muted); }
+.settings-row,.settings-card label.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 1.2rem; padding: .9rem 0; margin: 0; }
+.settings-row + .settings-row { border-top: 1px solid var(--line); }
+.settings-row strong { font-size: .85rem; font-weight: 550; }
+.settings-row p { margin: .25rem 0 0; max-width: 24rem; }
+.settings-row select { width: auto; }
+.home-shell .studio-switch { width: 2.65rem; height: 1.55rem; flex: 0 0 auto; padding: .15rem; border-radius: 2rem; background: var(--line); display: flex; align-items: center; border: 0; }
+.home-shell .studio-switch span { width: 1.25rem; height: 1.25rem; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #0003; transition: transform .15s; }
+.home-shell .studio-switch[aria-checked="true"] { background: var(--accent); }
+.home-shell .studio-switch[aria-checked="true"] span { transform: translateX(1.1rem); }
+.oh-talk .studio-switch { margin-left: auto; }
+.settings-error { color: var(--danger, #e77e78); font-size: .85rem; }
+.settings-unavailable { padding: .5rem 1rem; border-radius: 1rem; background: var(--surface-2); }
+.debug-values { margin: 0; font-size: .82rem; }
+.debug-values > div { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.debug-values dt { color: var(--muted); }
+.debug-values dd { text-align: right; margin: 0; overflow-wrap: anywhere; max-width: 65%; }
+.debug-joints,.debug-joints + .settings-card { margin-top: 1.2rem; }
+.debug-table { overflow-x: auto; }
+.debug-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: .8rem; white-space: nowrap; }
+.debug-table th,.debug-table td { padding: .75rem .5rem; border-bottom: 1px solid var(--line); }
+.debug-logs { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; line-height: 1.6; }
+.settings-card details { margin-top: 1rem; }
+.settings-card summary { cursor: pointer; padding: .5rem 0; }
+.home-shell[data-reduce-motion="true"] *, .home-shell[data-reduce-motion="true"] *::before, .home-shell[data-reduce-motion="true"] *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+@media(max-width: 850px) { .settings-columns { grid-template-columns: 1fr; } .settings-page { padding: 1rem 0; } }
+
+.settings-folder { margin: 1rem 0; font-size: .85rem; }
+.settings-folder-path { overflow-wrap: anywhere; padding: .8rem; border: 1px solid var(--line); border-radius: .7rem; color: var(--muted); line-height: 1.5; }
+.settings-folder > div { display: flex; gap: .5rem; margin-bottom: .5rem; }
+
+.home-shell .settings-folder { display: grid; gap: .75rem; margin: 1.25rem 0 1.75rem; }
+.home-shell .settings-folder-path { margin: 0; }
+.home-shell .settings-folder > div { margin: 0; gap: .65rem; }
+.home-shell .settings-folder button { padding: .65rem 1rem; }
+.home-shell .settings-card fieldset { margin: 1.25rem 0; padding: 1rem 0 .25rem; }
+.settings-model-identity { color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; margin: .5rem 0 1rem; }
+.debug-torque { margin-top: 1.25rem; }

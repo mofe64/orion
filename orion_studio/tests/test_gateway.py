@@ -277,6 +277,12 @@ class HttpAuthenticationTests(unittest.TestCase):
             urllib.request.urlopen(self.request("/api/v1/status"))
         self.assertEqual(context.exception.code, HTTPStatus.NOT_FOUND)
 
+    def test_debug_logs_require_authentication(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            urllib.request.urlopen(self.request("/api/v2/debug/logs", authorized=False))
+        self.assertEqual(context.exception.code, HTTPStatus.UNAUTHORIZED)
+        context.exception.close()
+
     def test_serves_authenticated_v2_status_and_scene_publish(self) -> None:
         with urllib.request.urlopen(self.request("/api/v2/status")) as response:
             body = json.load(response); self.assertEqual(response.headers["Access-Control-Allow-Origin"], "tauri://localhost")

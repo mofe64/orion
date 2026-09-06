@@ -64,8 +64,8 @@ export interface StudioVoiceSnapshot {
   latency?: Record<string, number>;
 }
 
-export interface VoiceSettings { model: string; effort: string; }
-export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { model: "gpt-5.6-sol", effort: "medium" };
+export interface VoiceSettings { model: string; effort: string; provider?: "codex"; asrModel?: string; ttsModel?: string; asrPath?: string; ttsPath?: string; cachePath?: string; }
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-5.6-sol", effort: "medium", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "mlx-community/chatterbox-turbo-8bit", asrPath: "", ttsPath: "", cachePath: "" };
 
 export interface StudioVoicePipelineOptions {
   settings?: VoiceSettings;
@@ -93,7 +93,7 @@ class TauriVoiceWorkerLauncher implements VoiceWorkerLauncher {
   start(): Promise<VoiceWorkerConnection> {
     if (!this.connection) throw new Error("Connect Orion before starting Voice.");
     return invoke<VoiceWorkerConnection>("start_voice_worker", {
-      gatewayUrl: this.connection.url, piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token, agentModel: this.settings.model, agentEffort: this.settings.effort,
+      gatewayUrl: this.connection.url, piUrl: piVoiceUrl(this.connection.url), piToken: this.connection.token, agentModel: this.settings.model, agentEffort: this.settings.effort, asrModel: this.settings.asrModel, ttsModel: this.settings.ttsModel, asrPath: this.settings.asrPath, ttsPath: this.settings.ttsPath, cachePath: this.settings.cachePath,
     });
   }
 

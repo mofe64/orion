@@ -18,7 +18,7 @@ the gateway.
 
 ## Home and Create
 
-Home provides voice access, character status, curated expressions, and three
+Home provides a listening switch, character status, curated expressions, and three
 routine controls:
 
 - **Go to rest** cancels active speech or scenes, turns character mode off, and
@@ -273,3 +273,42 @@ restores the previous files. Published custom scenes must be updated before thei
 changed poses can play on Orion. Deploy the matching runtime and gateway before
 using custom effects or bundled assets on hardware; a frontend update alone is
 insufficient.
+
+## Settings and Debug
+
+Settings follows Animation in navigation and shares Home’s light and dark themes.
+Studio preferences (appearance, preview sound, reduced interface motion, and debug
+mode) persist in local webview storage. Character mode and the listening switch
+control Orion through the existing runtime and listener interfaces.
+
+Codex model/effort, Qwen3 ASR and Chatterbox model IDs, optional local weight
+folders, and the model download cache save atomically to
+`~/.config/orion/voice-settings.json` on the Studio computer. Older reply settings
+migrate when loaded. Turn listening off before saving voice changes. Speech settings display the detected local cache snapshots and provide native
+folder pickers for weights and the download cache. Cancel keeps the selection;
+Use default removes the override. Cached weights are reused, then loaded into
+memory when the worker starts; model IDs can check for updated revisions. Local folders
+must exist and take precedence over model IDs; weights must match the named engine.
+The cache sets `HF_HOME` and `HF_HUB_CACHE` for future worker starts and does not move
+existing downloads. Speech engines require Apple Silicon. API-key provider fields
+are placeholders: submitting, saving, and sending their contents is disabled.
+
+Enable debug mode to expose Debug navigation and Home’s Diagnostics shortcut.
+Debug shows local voice state, transcripts, model details, timing, and runtime joint
+position, velocity, current, voltage, and temperature when reported by Orion.
+`GET /api/v2/debug/logs` uses the existing gateway authentication and reads only the
+latest 200 journal entries for `oriond`, `orion-studio-gateway`, and `orion-listener`.
+Install the updated gateway on Orion to use logs; its service account needs journal
+read access. Missing journal support or access produces an unavailable message.
+The former Voice modal is removed; its controls live in Settings and Debug.
+
+Codex model and effort dropdowns use the voice worker’s advertised catalog; no
+manual or assumed options are offered. Speech model information is read-only:
+Hub snapshot folders identify their repository, while copied folders may only
+identify an architecture from `config.json`. The worker loads selected folders
+directly without requiring their original repository IDs.
+
+Debug’s **Turn torque off** uses `release_movement`, refreshes robot status, and
+blocks release during character mode or active movement. The gateway independently
+rejects active motion or scenes. Releasing torque stops joints holding position;
+support Orion before using it.

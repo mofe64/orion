@@ -73,6 +73,14 @@ class CodexAgentProviderTests(unittest.TestCase):
         self.assertEqual(provider.provider, "codex")
         self.assertEqual(provider.model_name, "test-model")
 
+    def test_selected_model_and_effort_reach_each_agent_request(self):
+        thread = FakeThread("Hello.")
+        provider = CodexAgentProvider("chosen-model", effort="high", thread_factory=lambda _: thread)
+        provider.respond("First command")
+        self.assertEqual(thread.options, {"model": "chosen-model", "effort": "high"})
+        provider.respond("Second command")
+        self.assertEqual(thread.options, {"model": "chosen-model", "effort": "high"})
+
     def test_rejects_empty_input_and_output(self) -> None:
         provider = CodexAgentProvider(thread_factory=lambda _model: FakeThread("  "))
         with self.assertRaisesRegex(ValueError, "cannot be empty"):

@@ -54,3 +54,11 @@ machine-learning framework.
 | Context-aware expression | Apply the ELEGNT model to modulate timing and expression without compromising task clarity or safety |
 | Product hardening | Complete packaging, production pairing, recovery, evaluation, privacy policy, and release evidence |
 | Custom Orion hardware | Move beyond the LeLamp-compatible prototype only after behaviour requirements justify mechanical changes |
+
+### Studio settings and diagnostics
+
+Studio includes persistent local preferences and voice model/path configuration,
+a Home listening switch, and an optional Debug section for voice timing, joint
+telemetry, and authenticated service logs. API-key providers remain unavailable.
+The service-log endpoint requires deploying the updated Studio gateway to Orion;
+remote log access has not been commissioned as part of this UI change.

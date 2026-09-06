@@ -13,7 +13,10 @@ import { PoseEditor } from "./components/PoseEditor";
 const RobotViewport = lazy(() => import("./components/RobotViewport").then(module => ({ default: module.RobotViewport })));
 import { deleteMovementComponent, moveMovementComponent } from "./lib/movementComponents";
 import { Timeline, type TrackSelection } from "./components/Timeline";
-import { VoicePanel } from "./components/VoicePanel";
+import { Settings } from "./components/Settings";
+import { Debug } from "./components/Debug";
+import { useStudioVoice } from "./hooks/useStudioVoice";
+import { loadPreferences, savePreferences } from "./lib/preferences";
 import { PairingController } from "./lib/pairing";
 import { PairingPanel } from "./components/PairingPanel";
 import { projectCatalog } from "./lib/catalog";
@@ -57,7 +60,7 @@ export default function App() {
   const [runPending, setRunPending] = useState(false);
   const [poseEdit, setPoseEdit] = useState<{ value: PoseDefinition; eventId: string; index: number; baseScene?: SceneDefinition } | null>(null);
 
-  const [destination, setDestination] = useState<"home" | "animation" | "create">("home");
+  const [destination, setDestination] = useState<"home" | "animation" | "create" | "settings" | "debug">("home");
   const [homeTheme, setHomeTheme] = useState<"dark" | "light">(() => { try { return localStorage.getItem("orion-studio:theme") === "light" ? "light" : "dark"; } catch { return "dark"; } });
   const [kind, setKind] = useState<AssetKind>("scene");
   const [scene, setScene] = useState(() => readDraft("scene", initialScene));
@@ -84,12 +87,11 @@ export default function App() {
   }, [kind, currentAsset, destination]);
   const [notice, setNotice] = useState("Connect Orion to use voice, character and lamp controls.");
   const [connectionOpen, setConnectionOpen] = useState(false);
-  const [voiceLabel, setVoiceLabel] = useState("Off");
-  const [voiceOpen, setVoiceOpen] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [preferences, setPreferences] = useState(loadPreferences);
   const [pairing] = useState(() => new PairingController());
   const pairingState = useSyncExternalStore(pairing.subscribe, pairing.current);
   const { connection, status, capabilities } = pairingState;
+  const voice = useStudioVoice(connection, setNotice);
   const sceneTimingReady = timedScene?.scene === scene && timedScene.anchor === anchorName && timedScene.connection === connection;
   useEffect(() => {
     // Retire the previous session-only credential; secrets live in the OS store.
@@ -102,6 +104,7 @@ export default function App() {
     : ["connecting", "reconnecting", "loading"].includes(pairingState.phase) ? "Connecting to Orion…"
     : pairingState.phase === "error" ? "Connection needs attention"
     : pairingState.paired ? "Orion disconnected" : "Pair Orion";
+  useEffect(() => { window.scrollTo(0,0); }, [destination]);
   const frame = useRef(0);
   useEffect(() => { try { localStorage.setItem("orion-studio:theme", homeTheme); } catch {} }, [homeTheme]);
   const editScene = (value: SceneDefinition) => {
@@ -131,13 +134,13 @@ export default function App() {
     if (scene.name === value.name) setScene(clone(initialScene));
     setNotice("Scene deleted.");
   };
-  const leaveEditor = () => {
+  const navigate = (target: typeof destination) => {
     setPublishedAssets(assets => ({ ...assets, ...readUserDrafts() }));
     if (destination === "create") {
       try { saveDraft(kind, currentAsset); } catch { setNotice("Could not save this draft. Please keep the editor open."); return; }
       setPublishedAssets(assets => ({ ...assets, [`${kind}:${currentAsset.name}`]: currentAsset }));
     }
-    setPlaying(false); setDestination("animation");
+    setPlaying(false); setDestination(target);
   };
 
   const catalog = useMemo(() => {
@@ -173,9 +176,6 @@ export default function App() {
         ? sampleCompiledTrajectory(compiled, currentTime)
         : anchor.positions, [kind, pose.positions, sceneJoints, anchor.positions, compiled, currentTime]);
   const light = useMemo(() => kind === "scene" ? sampleSceneLight(scene, currentTime, sceneCompiled) : { red: 26, green: 10, blue: 1, white: 80 }, [kind, scene, currentTime, sceneCompiled]);
-  const peakVelocity = kind === "scene"
-    ? compiledSceneValues.reduce((peak, trajectory) => Math.max(peak, trajectory.peak_velocity_rad_s), 0)
-    : compiled?.peak_velocity_rad_s ?? 0;
   const previewReady = kind === "pose"
     || (kind === "motion" && compiled !== null)
     || (kind === "scene" && (scene.motion.length === 0 || sceneTimingReady) && scene.motion.length === compiledSceneValues.length);
@@ -249,7 +249,7 @@ export default function App() {
   }, [currentTime, duration, playing]);
 
   useEffect(() => {
-    if (!playing || kind !== "scene") return;
+    if (!playing || kind !== "scene" || !preferences.previewAudio) return;
     const started = performance.now()-currentTime*1000;
     const fired = new Set<string>();
     let active: HTMLAudioElement | null = null;
@@ -268,7 +268,7 @@ export default function App() {
     };
     audioFrame = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(audioFrame); active?.pause(); };
-  },[playing,scene,sceneCompiled,kind]);
+  },[playing,scene,sceneCompiled,kind,preferences.previewAudio]);
 
   const chooseAsset = (nextKind: AssetKind, name: string) => {
     if (assetDirty) {
@@ -433,21 +433,22 @@ export default function App() {
   const deleteSelection = () => { if (selection) deleteTrackItem(selection); };
 
   return (
-    <main className={`studio-shell home-shell ${destination === "create" ? "create-shell" : ""}`} data-home-theme={homeTheme} id="main-content">
+    <main className={`studio-shell home-shell ${destination === "create" ? "create-shell" : ""}`} data-home-theme={homeTheme} data-reduce-motion={preferences.reduceMotion} id="main-content">
       <a className="skip-link" href="#workspace">Skip to workspace</a>
       <header className="topbar">
         <button className="brand-lockup" onClick={() => { setDestination("home"); setPlaying(false); }} aria-label="Open Orion Studio home"><span className="brand-mark" aria-hidden="true" /><span><strong>ORION</strong><small>CHARACTER STUDIO</small></span></button>
-        <nav className="mode-tabs" aria-label="Studio"><button aria-current={destination === "home" ? "page" : undefined} className={destination === "home" ? "active" : ""} onClick={() => { setDestination("home"); setPlaying(false); }}>Home</button><button aria-current={destination !== "home" ? "page" : undefined} className={destination !== "home" ? "active" : ""} onClick={leaveEditor}>Animation</button></nav>
+        <nav className="mode-tabs" aria-label="Studio">{(["home", "animation", "settings", ...(preferences.debugMode ? ["debug"] : [])] as const).map(item => <button key={item} aria-current={(destination === item || (item === "animation" && destination === "create")) ? "page" : undefined} className={(destination === item || (item === "animation" && destination === "create")) ? "active" : ""} onClick={() => navigate(item as typeof destination)}>{item[0].toUpperCase()+item.slice(1)}</button>)}</nav>
         <div className="topbar-actions"><button className={connection ? "connection-button connected" : "connection-button"} aria-label={connectionLabel} title={connectionLabel} aria-expanded={connectionOpen} aria-controls="orion-pairing" onClick={() => setConnectionOpen((open) => !open)}>{connection ? <Radio size={15} /> : <Link2 size={15} />}{connectionLabel}</button><button className="quiet-button home-theme-toggle" onClick={() => setHomeTheme(value => value === "dark" ? "light" : "dark")}><SunMoon size={16} />{homeTheme === "dark" ? "Light mode" : "Dark mode"}</button></div>
         {connectionOpen && <PairingPanel controller={pairing} state={pairingState} onClose={() => setConnectionOpen(false)} />}
-        <VoicePanel onPhaseChange={setVoiceLabel} open={voiceOpen} connection={connection} onClose={() => setVoiceOpen(false)} onNotice={setNotice} />
       </header>
 
-      {destination === "home" && <Home catalog={catalog} theme={homeTheme} voiceLabel={voiceLabel} connection={connection} status={status} onConnect={() => setConnectionOpen(true)} onVoice={() => setVoiceOpen(true)} onCreate={() => setDestination("animation")} onDiagnostics={() => setDiagnosticsOpen(true)} onRefresh={() => pairing.refresh()} onNotice={setNotice} onRun={setTrackedRun} />}
-      {destination === "animation" && <AnimationLibrary catalog={catalog} theme={homeTheme} connection={connection} status={status} onEdit={editScene} onDelete={deleteScene} onRun={setTrackedRun} onNotice={setNotice} />}
+      {destination === "home" && <Home catalog={catalog} theme={homeTheme} voiceLabel={voice.label} listening={voice.listening} voiceAvailable={!!connection && voice.snapshot.muted !== undefined && !voice.toggling} connection={connection} status={status} onConnect={() => setConnectionOpen(true)} onVoice={() => void voice.toggle()} onCreate={() => setDestination("animation")} onDiagnostics={preferences.debugMode ? () => navigate("debug") : undefined} onRefresh={() => pairing.refresh()} onNotice={setNotice} onRun={setTrackedRun} />}
+      {destination === "animation" && <AnimationLibrary previewAudio={preferences.previewAudio} catalog={catalog} theme={homeTheme} connection={connection} status={status} onEdit={editScene} onDelete={deleteScene} onRun={setTrackedRun} onNotice={setNotice} />}
+      {destination === "settings" && <Settings voice={voice} preferences={preferences} onPreferences={value => { try { savePreferences(value); setPreferences(value); } catch { setNotice("Settings could not be saved on this computer."); } }} theme={homeTheme} onTheme={setHomeTheme} status={status} connected={!!connection} onConnect={() => setConnectionOpen(true)} onCharacter={async enabled => { if (!connection) return; await setCharacterMode(connection,enabled); await pairing.refresh(); }} />}
+      {destination === "debug" && preferences.debugMode && <Debug onRefresh={() => pairing.refresh()} voice={voice} connection={connection} status={status} />}
       {destination === "create" && <>
         <header className="scene-editor-heading">
-          <button className="quiet-button editor-back" onClick={leaveEditor}>← Animation library</button>
+          <button className="quiet-button editor-back" onClick={() => navigate("animation")}>← Animation library</button>
           <div className="editor-title-row"><input className="editor-title" aria-label="Scene name" value={saveAs.replaceAll("_", " ")} onChange={event => setSaveAs(event.target.value)} placeholder="Name your scene" />
             <div className="editor-save-actions"><span role="status" className="save-indicator" aria-label={draftError ? "Could not save" : saveAs.replaceAll(" ", "_") !== scene.name ? "Name has unsaved changes" : "Saved on this device"} title={draftError ? "Could not save" : saveAs.replaceAll(" ", "_") !== scene.name ? "Name has unsaved changes" : "Saved on this device"}>{draftError ? <AlertCircle size={20} /> : saveAs.replaceAll(" ", "_") !== scene.name ? <Save size={20} /> : <CheckCircle2 size={20} />}</span><button className="secondary-button" onClick={saveScene}><Save size={16} />Save</button><button className="primary-button" disabled={!connection || (scene.motion.length > 0 && !sceneTimingReady)} onClick={() => void publish()}><CloudUpload size={16} />Publish to Orion</button></div>
           </div>
@@ -468,8 +469,7 @@ export default function App() {
       </>}
 
       <RunFeedback status={status} connection={connection} tracked={trackedRun} onNotice={setNotice} />
-      {destination === "home" && diagnosticsOpen && <aside className="diagnostics-drawer"><header><div><p className="eyebrow">Live diagnostics</p><h2>Character state</h2></div><button className="icon-button" onClick={() => setDiagnosticsOpen(false)} aria-label="Close diagnostics"><CircleStop size={15} /></button></header><dl><div><dt>State</dt><dd>{status ? displayName(status.character.state) : "Unavailable"}</dd></div><div><dt>Active clip</dt><dd>{status?.character.active_clip ? displayName(status.character.active_clip) : "None"}</dd></div><div><dt>Next idle</dt><dd>{status?.character.next_idle_category ?? "Not scheduled"}</dd></div><div><dt>Anchor</dt><dd>{status?.character.active_anchor ? Object.values(status.character.active_anchor).map((value) => value.toFixed(2)).join(" · ") : "Not captured"}</dd></div><div><dt>Runtime</dt><dd>{status?.runtime.mode ?? "Offline"} · torque {status?.runtime.torque_enabled ? "on" : "off"}</dd></div><div><dt>Hardware</dt><dd>{capabilities?.capabilities.hardware_profile.variant ?? "7.4 V STS3215"} · 52 RPM ceiling</dd></div><div><dt>Calibration</dt><dd>{catalog.jointLimits.length} {capabilities ? "robot calibration ranges" : "reference ranges"}</dd></div><div><dt>Preview velocity</dt><dd>{displayTrajectory ? `${peakVelocity.toFixed(2)} rad/s peak` : "Not compiled"}</dd></div></dl></aside>}
-      <footer className="statusbar" aria-live="polite"><span className={connection ? "status-dot online" : "status-dot"} /><p>{notice}</p>{destination === "home" && diagnosticsOpen && <span>{status?.runtime.build_revision ?? "Not connected"}</span>}</footer>
+      <footer className="statusbar" aria-live="polite"><span className={connection ? "status-dot online" : "status-dot"} /><p>{notice}</p></footer>
     </main>
   );
 }
