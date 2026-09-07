@@ -27,6 +27,9 @@ use tokio_tungstenite::{
 };
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+#[cfg(test)]
+#[path = "microphone_tests.rs"]
+mod microphone_tests;
 #[derive(Clone)]
 struct Pi(Arc<Mutex<SplitSink<Socket, Message>>>);
 impl Pi {
@@ -92,7 +95,7 @@ pub(crate) async fn microphone(
     config: &CoordinatorConfig,
     muted: Option<bool>,
 ) -> Result<Value, String> {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let (pi, mut input, muted) = tokio::time::timeout(Duration::from_secs(10), async {
         let (pi, mut input, mut status) = connect(config, true).await?;
         if let Some(muted) = muted {
             pi.send(json!({"type":"microphone.mute", "muted":muted}))
@@ -102,10 +105,24 @@ pub(crate) async fn microphone(
         let muted = status["muted"]
             .as_bool()
             .ok_or("Invalid Pi microphone status")?;
-        Ok(json!({"type":"microphone.status", "muted":muted}))
+        Ok::<_, String>((pi, input, muted))
     })
     .await
-    .map_err(|_| "Pi microphone control timed out")?
+    .map_err(|_| "Pi microphone control timed out")??;
+    // Dropping the split socket without a Close frame makes every status poll
+    // look like a failed connection on the Pi. Cleanup has its own deadline so
+    // it can't invalidate a mute acknowledged near the request deadline.
+    let _ = tokio::time::timeout(Duration::from_secs(1), async {
+        pi.0.lock().await.send(Message::Close(None)).await?;
+        while let Some(message) = input.next().await {
+            if matches!(message?, Message::Close(_)) {
+                break;
+            }
+        }
+        Ok::<(), tokio_tungstenite::tungstenite::Error>(())
+    })
+    .await;
+    Ok(json!({"type":"microphone.status", "muted":muted}))
 }
 pub(crate) fn error(code: &str, message: &str, recoverable: bool) -> Value {
     json!({"type":"worker.error", "code":code, "message":message, "recoverable":recoverable})

@@ -228,6 +228,7 @@ async def daemon_command(command, socket_path):
 
 async def serve(args):
     from websockets.asyncio.server import serve as websocket_serve
+    from websockets.exceptions import ConnectionClosed
     token = args.token_file.read_text().strip()
     if len(token) < 32:
         raise ValueError("Voice token must contain at least 32 characters")
@@ -365,12 +366,15 @@ async def serve(args):
             await ws.close(4003, "Invalid listener handshake")
             return
         if hello.get("role") == "control":
-            await ws.send(json.dumps({"type": "microphone.status", "muted": muted, "timingHistory": list(timing_history)}))
-            async for raw in ws:
-                message = json.loads(raw)
-                if message.get("type") != "microphone.mute": raise ValueError("Invalid microphone control")
-                await set_muted(message.get("muted"))
+            # Status clients don't own capture; their disconnect ends only
+            # this control request, including when they disappear abruptly.
+            with suppress(ConnectionClosed):
                 await ws.send(json.dumps({"type": "microphone.status", "muted": muted, "timingHistory": list(timing_history)}))
+                async for raw in ws:
+                    message = json.loads(raw)
+                    if message.get("type") != "microphone.mute": raise ValueError("Invalid microphone control")
+                    await set_muted(message.get("muted"))
+                    await ws.send(json.dumps({"type": "microphone.status", "muted": muted, "timingHistory": list(timing_history)}))
             return
         if lock.locked():
             await ws.close(4009, "Listener already owned")

@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import suppress
 import json
+import logging
 from pathlib import Path
 import socket
 import tempfile
@@ -33,6 +34,45 @@ class FakeCapture:
         return np.full((320,2),2000 if self.frames<25 else 0,dtype='<i2').tobytes()
 
 class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_abrupt_control_disconnect_is_quiet_and_capture_survives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+            args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+                wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+                daemon_socket=str(Path(directory) / 'missing.sock'))
+            with patch('orion_voice.satellite.RustpotterWakeDetector', FakeWake), \
+                 patch('orion_voice.satellite.StereoCapture', FakeCapture), \
+                 patch.object(logging.getLogger('websockets.server'), 'error') as errors:
+                task = asyncio.create_task(serve(args))
+                try:
+                    for _ in range(100):
+                        try:
+                            client = await connect(f'ws://127.0.0.1:{port}')
+                            break
+                        except OSError:
+                            await asyncio.sleep(.01)
+                    else:
+                        self.fail('Listener did not start')
+                    await client.send(json.dumps(dict(type='hello', protocol=1, token='a' * 32, role='control')))
+                    self.assertFalse(json.loads(await client.recv())['muted'])
+                    client.transport.abort()
+                    await client.wait_closed()
+                    await asyncio.sleep(.03)
+                    self.assertTrue(FakeCapture.instances[-1].opened)
+                    async with connect(f'ws://127.0.0.1:{port}') as controller:
+                        await controller.send(json.dumps(dict(type='hello', protocol=1, token='a' * 32, role='control')))
+                        self.assertFalse(json.loads(await controller.recv())['muted'])
+                        await controller.send(json.dumps(dict(type='microphone.mute', muted=True)))
+                        self.assertTrue(json.loads(await controller.recv())['muted'])
+                    self.assertFalse(task.done())
+                    self.assertFalse(FakeCapture.instances[-1].opened)
+                    errors.assert_not_called()
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
     async def test_authentication_exclusive_capture_utterance_and_disconnect_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
             token_file=Path(directory)/'token';token_file.write_text('a'*32)

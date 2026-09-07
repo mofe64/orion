@@ -11,6 +11,12 @@ preserve conversations. `connection()` returns the authenticated protocol-7
 observer endpoint; `set_microphone()` sends an explicit Pi control request.
 Dropping the coordinator cancels its owned speech run and stops its Python child.
 
+Microphone status checks run once per second over temporary control WebSockets.
+Each successful request closes with a WebSocket handshake, allowing up to one
+second for cleanup after the ten-second request deadline. A missing close reply
+does not invalidate an acknowledged mute change. The Pi listener tolerates abrupt
+control-client disconnects without interrupting capture or logging a traceback.
+
 The Python worker lives in [`speech/`](../speech/README.md) and receives only
 inference jobs over private pipes. The Rust agent handle is called directly;
 there is no Python agent client or agent TCP bridge. Studio remains the supplied
