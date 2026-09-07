@@ -3,7 +3,6 @@ dist/
 src-tauri/target/
 src-tauri/gen/schemas/
 target/
-src-tauri/scene-store/Cargo.lock
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

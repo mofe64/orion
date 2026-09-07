@@ -17,6 +17,17 @@ Pi physical pin 30 / ground -> shield ground
 Pi physical pin 32 / BCM12 -> shield D6 / DIN
 ```
 
+The 2026-08-28 assembly record reports the head cable allocation below. These
+colours describe that prototype; verify continuity before reconnecting a
+modified or replacement cable.
+
+| Conductors | Reported connection |
+| --- | --- |
+| Orange and white/orange | LED 5 V |
+| Brown, white/brown, and white/green | LED ground |
+| Solid green | LED data |
+| Blue and white/blue | Differential speaker pair; neither conductor is ground |
+
 The assembled robot has no 3.3 V-to-5 V data level shifter. The physical
 backend must therefore use BCM12, pulse-width modulation (PWM) channel 0,
 non-inverted output, 40 pixels,

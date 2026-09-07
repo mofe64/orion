@@ -60,6 +60,16 @@ what matters after setup.
 The program requires the exact confirmation word `PROGRAM` before each
 persistent write.
 
+## Prototype assembly observations
+
+The 2026-08-28 bring-up record reports a separate nominal 6 V, 5 A servo
+supply, a base servo pocket fitted using heated air, and a servo lead extended
+with original cable soldered colour-to-colour. The final splice construction
+was not independently verified. Before further hardware commissioning, inspect
+the pocket for distortion or trapped connectors and the extension for individual
+insulation and strain relief. These are dated observations of the assembled
+prototype, not a wiring specification or a fresh inspection result.
+
 ## Install the isolated tool
 
 From the Orion repository:
