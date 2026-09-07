@@ -1,6 +1,6 @@
-mod pairing;
 mod agent;
 mod coordinator;
+mod pairing;
 mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10,6 +10,8 @@ pub fn run() {
         .manage(agent::AgentManager::default())
         .invoke_handler(tauri::generate_handler![
             coordinator::start_voice_worker,
+            agent::load_agent_profile,
+            agent::change_agent_profile,
             settings::load_voice_settings,
             settings::save_voice_settings,
             settings::voice_model_locations,

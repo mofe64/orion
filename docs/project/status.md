@@ -35,7 +35,8 @@ machine-learning framework.
 | Area | What exists | What remains |
 | --- | --- | --- |
 | Studio platform support | Tauri targets macOS, Windows, and Linux | MLX voice inference is Apple-Silicon-only; Windows and Linux packages are uncommissioned |
-| Agent tools | Delimited Markdown append/search memory tools, native Codex live search, validated lighting moods/palettes/effects, and intermediate search speech with processing feedback | Matching Pi deployment, physical acceptance, personality controls, memory editing/deletion UI, and richer retrieval remain |
+| Personality and memory controls | Studio Settings exposes curated traits/habits, generated `SOUL.md`, memory search/add/edit/delete/clear, conflict protection, and conversation reset after saves | Browser checks use test data; native profile persistence is covered by Rust tests |
+| Agent tools | Delimited Markdown append/search memory tools, native Codex live search, validated lighting moods/palettes/effects, and intermediate search speech with processing feedback | Matching Pi deployment, physical acceptance, and richer retrieval remain |
 | Agent abstraction | Top-level Rust `orion-agent` library compiled into Studio, Codex App Server client, and direct Rust handle with independent conversation lifetime | OpenAI Platform and local-LLM providers are not implemented |
 | Conversational privacy | Raw audio, ASR, and TTS stay local | Codex receives confirmed text; provider disclosure must remain explicit |
 | Voice packaging | Source development starts a persistent local worker | Signed installers do not package Python, the native extension, or model weights |

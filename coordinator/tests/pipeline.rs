@@ -121,7 +121,8 @@ impl Harness {
         });
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let agent = AgentService::start(AgentConfig {
-            memory_path: None,
+            soul_path: None,
+        memory_path: None,
             model: "test-model".into(),
             effort: "high".into(),
             codex_bin: Some(root.join("../agent/tests/fixtures/codex.py")),

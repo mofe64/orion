@@ -5,6 +5,7 @@ import type { StudioVoice } from "../hooks/useStudioVoice";
 import type { StudioPreferences } from "../lib/preferences";
 import type { GatewayStatus } from "../types";
 import "./Settings.css";
+import { AgentProfileSettings } from "./AgentProfileSettings";
 interface Props {
   voice: StudioVoice; preferences: StudioPreferences; onPreferences: (value: StudioPreferences) => void;
   theme: "light" | "dark"; onTheme: (theme: "light" | "dark") => void; status: GatewayStatus | null;
@@ -30,6 +31,7 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
   const efforts = model?.efforts ?? [];
   const canSave = voice.loaded && !voice.saving && (!connected || voice.snapshot.muted === true || voice.snapshot.phase === "error") && provider === "codex" && !!model && efforts.includes(draft.effort);
   return <section className="settings-page" aria-labelledby="settings-title"><header className="settings-heading"><p className="eyebrow">YOUR STUDIO</p><h1 id="settings-title">Settings</h1><p>Make Orion feel at home.</p></header>
+    <AgentProfileSettings />
     <div className="settings-columns"><div className="settings-stack">
       <section className="settings-card"><header><SlidersHorizontal size={20} /><div><h2>Studio</h2><p>Appearance and preview preferences.</p></div></header>
         <label className="settings-row"><span>Appearance</span><select value={theme} onChange={event => onTheme(event.target.value as "light" | "dark")}><option value="dark">Dark</option><option value="light">Light</option></select></label>

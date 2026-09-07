@@ -182,8 +182,12 @@ identical entries reuse the existing entry. Retrieval uses bounded keyword
 matching, returning at most eight entries. The agent saves only explicitly
 requested memories and treats retrieved text as data. Current UTC time is
 supplied on each turn. See [agent storage and tools](../../agent/README.md).
-Personality selection, memory editing/deletion UI, and automatic memory
-collection are not implemented.
+Studio Settings exposes curated personality choices and memory management.
+Personality selections generate local `SOUL.md` instructions; free-form prompt
+editing is not exposed. Profile changes wait behind any active agent request,
+then retire its conversation without restarting speech models. Revision checks
+reject stale personality saves and conflicting memory edits. Profile reads
+preserve conversation context. Automatic memory collection is not implemented.
 
 `AgentHandle::respond_with_events` emits request-scoped activity while awaiting
 a final answer. Search emits one acknowledgement per agent turn. The coordinator

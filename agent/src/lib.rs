@@ -12,3 +12,6 @@ pub use types::{AgentInfo, ModelInfo};
 mod memory;
 pub mod tools;
 pub use tools::AgentEvent;
+
+mod personality;
+pub mod profile;

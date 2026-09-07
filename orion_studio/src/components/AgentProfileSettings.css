@@ -1,0 +1,34 @@
+.agent-profile { margin-bottom: 1.5rem; }
+.profile-status:empty { display: none; }
+.profile-status,.profile-error { font-size: .85rem; line-height: 1.5; margin-bottom: 1rem; }
+.profile-error { color: var(--danger, #e77e78); }
+.profile-actions,.memory-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1rem; }
+.memory-toolbar > span { margin-left: auto; color: var(--muted); font-size: .8rem; }
+.personality-traits { display: flex; flex-wrap: wrap; gap: .5rem; }
+.settings-card label.personality-trait { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--line); border-radius: 2rem; padding: .6rem .8rem; margin: 0; cursor: pointer; }
+.personality-trait.selected { border-color: var(--accent); background: color-mix(in srgb,var(--accent) 10%,var(--surface-1)); }
+.settings-card .personality-trait input,.settings-card .personality-behavior input { width: 1rem; height: 1rem; flex: 0 0 auto; margin: 0; accent-color: var(--accent); }
+.settings-card label.personality-behavior { display: flex; align-items: start; gap: .8rem; margin: 0; padding: .8rem 0; cursor: pointer; }
+.personality-behavior + .personality-behavior { border-top: 1px solid var(--line); }
+.personality-behavior input { margin-top: .2rem !important; }
+.personality-behavior strong,.personality-behavior small { display: block; }
+.personality-behavior strong { font-weight: 600; color: var(--text); }
+.personality-behavior small { font-weight: 400; margin-top: .3rem; line-height: 1.5; }
+.personality-preview { font-size: .85rem; line-height: 1.6; color: var(--muted); }
+.personality-preview ul { padding-left: 1.2rem; }
+.memory-list { list-style: none; padding: 0; margin: 1rem 0; max-height: 30rem; overflow: auto; }
+.memory-list > li { border-top: 1px solid var(--line); padding: 1rem 0; }
+.memory-text { margin: 0 0 .5rem; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; line-height: 1.6; }
+.memory-list time { font-size: .75rem; color: var(--muted); }
+.memory-list .profile-actions { margin-top: .55rem; }
+.memory-empty { border-top: 1px solid var(--line); margin-top: 1.25rem; padding: 1.5rem 0 .5rem; }
+.memory-empty p { margin: 0 0 .4rem; font-size: .9rem; }
+.memory-empty small { line-height: 1.6; }
+.memory-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: .8rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--surface-2); color: inherit; font: inherit; font-size: .9rem; line-height: 1.5; }
+.memory-confirm { border-top: 1px solid var(--line); padding-top: 1rem; margin-top: 1rem; }
+.memory-confirm blockquote { margin: .6rem 0; padding-left: .8rem; border-left: 2px solid var(--line); font-size: .85rem; overflow-wrap: anywhere; }
+.home-shell .memory-delete { color: var(--danger, #c45750); }
+.agent-profile button { min-height: 2.5rem; }
+.agent-profile :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.profile-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media(max-width: 500px) { .memory-toolbar > span { width: 100%; margin-left: 0; } }

@@ -22,11 +22,32 @@ impl AgentHandle {
             .send(Request {
                 text,
                 events,
+                profile: None,
                 reply,
             })
             .await
             .map_err(|_| "Agent runtime stopped")?;
         receive.await.map_err(|_| "Agent request cancelled")?
+    }
+
+    pub async fn profile(
+        &self,
+        change: Option<crate::profile::ProfileChange>,
+    ) -> Result<crate::profile::Profile, String> {
+        let (reply, receive) = oneshot::channel();
+        self.0
+            .send(Request {
+                text: None,
+                events: None,
+                profile: Some(change),
+                reply,
+            })
+            .await
+            .map_err(|_| "Agent runtime stopped")?;
+        match receive.await.map_err(|_| "Profile request cancelled")?? {
+            Reply::Profile(profile) => Ok(profile),
+            _ => Err("Invalid profile response".into()),
+        }
     }
 
     pub async fn info(&self) -> Result<AgentInfo, String> {
@@ -58,9 +79,11 @@ impl AgentHandle {
 struct Request {
     text: Option<String>,
     events: Option<mpsc::Sender<crate::AgentEvent>>,
+    profile: Option<Option<crate::profile::ProfileChange>>,
     reply: oneshot::Sender<Result<Reply, String>>,
 }
 enum Reply {
+    Profile(crate::profile::Profile),
     Info(AgentInfo),
     Text(String),
 }
@@ -91,13 +114,13 @@ impl AgentService {
                     _ = &mut stopped => break,
                     request = receive.recv() => match request { Some(request) => request, None => break },
                 };
-                let Request { text, events, mut reply } = request;
+                let Request { text, events, profile, mut reply } = request;
                 if reply.is_closed() { continue; }
                 let result = tokio::select! {
                     biased;
                     _ = &mut stopped => break,
                     _ = reply.closed() => continue,
-                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text, events)) =>
+                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text, events, profile)) =>
                         result.unwrap_or_else(|_| Err("Agent request timed out; conversation reset".into())),
                 };
                 let _ = reply.send(result);
@@ -120,7 +143,18 @@ async fn dispatch(
     slot: &mut Option<Codex>,
     text: Option<String>,
     events: Option<mpsc::Sender<crate::AgentEvent>>,
+    profile: Option<Option<crate::profile::ProfileChange>>,
 ) -> Result<Reply, String> {
+    if let Some(change) = profile {
+        if let Some(change) = change {
+            crate::profile::change(config, change)?;
+            // Take before awaiting: cancellation cannot retain the old context.
+            if let Some(mut client) = slot.take() {
+                client.close().await;
+            }
+        }
+        return crate::profile::load(config).map(Reply::Profile);
+    }
     // Cancellation owns and drops an uncertain child before another turn starts.
     let mut client = match slot.take() {
         Some(client) => client,

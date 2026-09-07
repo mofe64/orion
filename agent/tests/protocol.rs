@@ -2,6 +2,7 @@ use orion_agent::{AgentConfig, AgentService};
 use std::{path::PathBuf, time::Duration};
 fn service() -> AgentService {
     AgentService::start(AgentConfig {
+        soul_path: None,
         memory_path: None,
         model: "test-model".into(),
         effort: "high".into(),
@@ -67,6 +68,7 @@ async fn invalid_input_does_not_reset_conversation() {
 #[tokio::test]
 async fn incompatible_model_is_not_substituted() {
     let service = AgentService::start(AgentConfig {
+        soul_path: None,
         memory_path: None,
         model: "missing-model".into(),
         effort: "high".into(),
@@ -91,6 +93,7 @@ async fn memory_tools_persist_and_invalid_tools_cannot_write() {
         model: "test-model".into(),
         effort: "high".into(),
         codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+        soul_path: None,
         memory_path: Some(path.clone()),
     })
     .unwrap();
@@ -157,6 +160,7 @@ async fn installed_runtime_memory_tool_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("MEMORY.md");
     let service = AgentService::start(AgentConfig {
+        soul_path: None,
         memory_path: Some(path.clone()),
         ..AgentConfig::default()
     })
@@ -171,6 +175,7 @@ async fn installed_runtime_memory_tool_roundtrip() {
 #[ignore = "Invokes installed Codex web search and intercepts lighting without hardware"]
 async fn installed_runtime_search_and_lighting_tools() {
     let service = AgentService::start(AgentConfig {
+        soul_path: None,
         memory_path: None,
         ..AgentConfig::default()
     })
@@ -210,4 +215,83 @@ async fn installed_runtime_search_and_lighting_tools() {
     );
     answer.unwrap();
     assert!(changed, "Expected lighting tool call");
+}
+
+#[tokio::test]
+async fn profile_edits_reset_context_but_reads_and_conflicts_preserve_it() {
+    use orion_agent::profile::{Personality, ProfileChange};
+    let dir = tempfile::tempdir().unwrap();
+    let memory = dir.path().join("MEMORY.md");
+    let soul = dir.path().join("SOUL.md");
+    let service = AgentService::start(AgentConfig {
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+        memory_path: Some(memory.clone()),
+        soul_path: Some(soul.clone()),
+    })
+    .unwrap();
+    let agent = service.handle();
+    // Profile editing is available before any Codex process is started.
+    let profile = agent.profile(None).await.unwrap();
+    assert!(profile.memories.is_empty());
+    let profile = agent
+        .profile(Some(ProfileChange::AddMemory {
+            text: "Prefers Celsius".into(),
+        }))
+        .await
+        .unwrap();
+    let old = agent.info().await.unwrap().conversation_id;
+    agent.profile(None).await.unwrap();
+    assert_eq!(agent.info().await.unwrap().conversation_id, old);
+    let entry = profile.memories[0].clone();
+    let updated = agent
+        .profile(Some(ProfileChange::EditMemory {
+            expected: entry.clone(),
+            text: "Prefers Fahrenheit".into(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(updated.memories[0].id, entry.id);
+    let next = agent.info().await.unwrap().conversation_id;
+    assert_ne!(next, old);
+    assert!(
+        agent
+            .profile(Some(ProfileChange::DeleteMemory { expected: entry }))
+            .await
+            .is_err()
+    );
+    assert_eq!(agent.info().await.unwrap().conversation_id, next);
+    let changed = agent
+        .profile(Some(ProfileChange::Personality {
+            expected_revision: profile.soul.revision,
+            personality: Personality {
+                traits: vec!["direct".into()],
+                behaviors: vec![],
+            },
+        }))
+        .await
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(&soul)
+            .unwrap()
+            .contains("Lead with the answer")
+    );
+    assert_ne!(agent.info().await.unwrap().conversation_id, next);
+    assert!(
+        agent
+            .profile(Some(ProfileChange::Personality {
+                expected_revision: "default".into(),
+                personality: Personality::default()
+            }))
+            .await
+            .is_err()
+    );
+    agent
+        .profile(Some(ProfileChange::ClearMemories {
+            expected: changed.memories,
+        }))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(memory).unwrap(), "");
 }

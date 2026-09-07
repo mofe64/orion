@@ -25,11 +25,36 @@ impl AgentManager {
         Ok(connection)
     }
 
+    fn profile_handle(&self) -> Result<AgentHandle, String> {
+        {
+            let slot = self.0.lock().map_err(|e| e.to_string())?;
+            if let Some((_, service)) = slot.as_ref() {
+                return Ok(service.handle());
+            }
+        }
+        let settings = crate::settings::load_voice_settings()?;
+        self.ensure(&settings.model, &settings.effort)
+    }
+
     pub fn shutdown(&self) {
         if let Ok(mut slot) = self.0.lock() {
             *slot = None;
         }
     }
+}
+
+#[tauri::command]
+pub async fn load_agent_profile(
+    manager: tauri::State<'_, AgentManager>,
+) -> Result<orion_agent::profile::Profile, String> {
+    manager.profile_handle()?.profile(None).await
+}
+#[tauri::command]
+pub async fn change_agent_profile(
+    manager: tauri::State<'_, AgentManager>,
+    change: orion_agent::profile::ProfileChange,
+) -> Result<orion_agent::profile::Profile, String> {
+    manager.profile_handle()?.profile(Some(change)).await
 }
 
 #[cfg(test)]

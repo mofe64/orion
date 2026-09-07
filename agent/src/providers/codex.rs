@@ -1,4 +1,4 @@
-use crate::{AgentConfig, AgentInfo, ModelInfo, ORION_INSTRUCTIONS, prompt::spoken_response};
+use crate::{AgentConfig, AgentInfo, ModelInfo, prompt::spoken_response};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -189,7 +189,7 @@ impl Codex {
             .rpc(
                 "thread/start",
                 json!({
-                    "model":config.model, "baseInstructions":ORION_INSTRUCTIONS,
+                    "model":config.model, "baseInstructions":crate::profile::instructions(config)?,
                     "approvalPolicy":"never", "sandbox":"read-only", "ephemeral":true,
                     "cwd":client._workspace.path(), "environments":[],
                     "dynamicTools":crate::tools::schemas(),

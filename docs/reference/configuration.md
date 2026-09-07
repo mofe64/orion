@@ -14,6 +14,7 @@ environment variables.
 | `ORION_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-0.6B` | Qwen3-ASR repository ID or compatible local model path |
 | `ORION_STUDIO_TTS_MODEL` | `mlx-community/chatterbox-turbo-8bit` | Chatterbox repository ID or compatible local model path |
 | `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
+| `ORION_SOUL_PATH` | `$HOME/.local/share/orion/SOUL.md` | Generated personality selections owned by the Rust agent; created on first save |
 | `ORION_MEMORY_PATH` | `$HOME/.local/share/orion/MEMORY.md` | Delimited persistent memory file owned by the Rust agent |
 | `ORION_STUDIO_CODEX_BIN` | First installed runtime advertising the selected model and effort | Explicit executable override; when set, automatic fallback is disabled |
 | `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |

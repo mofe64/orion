@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     path::Path,
@@ -6,14 +6,15 @@ use std::{
 
 const END: &str = "<!-- memoryEntryEnd -->";
 const MAX_FILE: u64 = 1024 * 1024;
-#[derive(Debug, Serialize)]
-pub(crate) struct Entry {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Entry {
     pub id: String,
     pub created: String,
     pub text: String,
 }
 
-fn read(path: &Path) -> Result<Vec<Entry>, String> {
+pub(crate) fn read(path: &Path) -> Result<Vec<Entry>, String> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
@@ -68,17 +69,7 @@ fn validate(text: &str) -> Result<(), String> {
 }
 pub(crate) fn append(path: &Path, text: &str) -> Result<Entry, String> {
     validate(text)?;
-    let parent = path.parent().ok_or("Invalid memory path")?;
-    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path.with_extension("md.lock"))
-        .map_err(|e| e.to_string())?;
-    lock.try_lock()
-        .map_err(|_| "Memory is being edited; retry shortly")?;
+    let _lock = edit_lock(path)?;
     let mut entries = read(path)?;
     if let Some(index) = entries.iter().position(|entry| entry.text == text.trim()) {
         return Ok(entries.remove(index));
@@ -88,8 +79,13 @@ pub(crate) fn append(path: &Path, text: &str) -> Result<Entry, String> {
         created: chrono::Utc::now().to_rfc3339(),
         text: text.trim().into(),
     };
+    entries.push(entry.clone());
+    write(path, &entries)?;
+    Ok(entry)
+}
+fn write(path: &Path, entries: &[Entry]) -> Result<(), String> {
     let mut content = String::new();
-    for value in entries.iter().chain(std::iter::once(&entry)) {
+    for value in entries {
         content.push_str(&format!(
             "<!-- memoryEntry {} -->\n{}\n{END}\n\n",
             serde_json::json!({"id":value.id,"created":value.created}),
@@ -101,15 +97,58 @@ pub(crate) fn append(path: &Path, text: &str) -> Result<Entry, String> {
     }
     let parent = path.parent().ok_or("Invalid memory path")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    // The serialized agent executor is the only writer. Atomic replacement also
+    // All writers hold the same file lock. Atomic replacement also
     // protects existing entries if the process exits during a save.
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
     temp.write_all(content.as_bytes())
         .map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
     temp.persist(path).map_err(|e| e.to_string())?;
-    Ok(entry)
+    Ok(())
 }
+
+pub(crate) fn edit(path: &Path, expected: &Entry, replacement: Option<&str>) -> Result<(), String> {
+    if let Some(text) = replacement {
+        validate(text)?;
+    }
+    let _lock = edit_lock(path)?;
+    let mut entries = read(path)?;
+    let index = entries
+        .iter()
+        .position(|entry| entry.id == expected.id)
+        .ok_or("Memory no longer exists. Refresh the list.")?;
+    if entries[index] != *expected {
+        return Err("This memory changed. Refresh before editing it.".into());
+    }
+    if let Some(text) = replacement {
+        entries[index].text = text.trim().into();
+    } else {
+        entries.remove(index);
+    }
+    write(path, &entries)
+}
+pub(crate) fn clear(path: &Path, expected: &[Entry]) -> Result<(), String> {
+    let _lock = edit_lock(path)?;
+    if read(path)? != expected {
+        return Err("Memories changed. Refresh before clearing them.".into());
+    }
+    write(path, &[])
+}
+fn edit_lock(path: &Path) -> Result<std::fs::File, String> {
+    let parent = path.parent().ok_or("Invalid memory path")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("md.lock"))
+        .map_err(|e| e.to_string())?;
+    file.try_lock()
+        .map_err(|_| "Memory is being edited; retry shortly")?;
+    Ok(file)
+}
+
 pub(crate) fn search(path: &Path, query: &str) -> Result<Vec<Entry>, String> {
     if query.trim().is_empty() || query.len() > 500 {
         return Err("Search requires 1–500 bytes".into());
@@ -152,5 +191,24 @@ mod tests {
             std::fs::read_to_string(path).unwrap(),
             "<!-- memoryEntry broken"
         );
+    }
+}
+
+#[cfg(test)]
+mod editing_tests {
+    use super::*;
+    #[test]
+    fn edits_and_clear_do_not_overwrite_concurrent_memories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("MEMORY.md");
+        let first = append(&path, "First fact").unwrap();
+        let snapshot = read(&path).unwrap();
+        let second = append(&path, "Second fact").unwrap();
+        assert!(clear(&path, &snapshot).is_err());
+        edit(&path, &first, Some("Updated fact")).unwrap();
+        assert!(edit(&path, &first, None).is_err());
+        assert_eq!(read(&path).unwrap()[1], second);
+        edit(&path, &second, None).unwrap();
+        assert_eq!(read(&path).unwrap().len(), 1);
     }
 }

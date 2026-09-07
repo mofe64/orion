@@ -7,12 +7,19 @@ pub struct AgentConfig {
     pub model: String,
     pub effort: String,
     pub codex_bin: Option<PathBuf>,
+    pub soul_path: Option<PathBuf>,
     pub memory_path: Option<PathBuf>,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            soul_path: std::env::var_os("ORION_SOUL_PATH")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME")
+                        .map(|home| PathBuf::from(home).join(".local/share/orion/SOUL.md"))
+                }),
             memory_path: std::env::var_os("ORION_MEMORY_PATH")
                 .map(PathBuf::from)
                 .or_else(|| {
