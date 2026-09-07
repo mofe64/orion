@@ -1,6 +1,7 @@
 # Author and validate Orion motion
 
-Install a working Rust toolchain and the repository Python environment before
+Install a working Rust toolchain and the
+[repository Python environment](../tutorials/first-runtime-run.md#1-create-the-simulator-environment) before
 changing movement. Physical validation also requires a commissioned Orion and
 an operator with access to the hardware power or torque interruption.
 
@@ -41,11 +42,12 @@ drawings remain ordinary reviewed anchor-relative motion assets.
 
 ## 3. Author or tune poses
 
-Edit complete poses through the calibrated MuJoCo pose editor:
+From the Orion repository root, edit complete poses through the calibrated
+MuJoCo pose editor:
 
 ```bash
-../mujoco-local/.venv/bin/python simulation/mujoco/pose_editor.py --check
-../mujoco-local/.venv/bin/python simulation/mujoco/pose_editor.py
+.venv/bin/python simulation/mujoco/pose_editor.py --check
+.venv/bin/python simulation/mujoco/pose_editor.py
 ```
 
 Review each pose for:

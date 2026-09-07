@@ -17,18 +17,19 @@ for the complete engineering workflow.
 separate from `pose_tuner.py`: the editor browses and saves the canonical pose
 library, while the tuner remains a non-writing numeric development tool.
 
-From the Orion repository, validate the model, calibration, and every pose
-without opening windows:
+Prepare the [repository Python environment](../../docs/tutorials/first-runtime-run.md#1-create-the-simulator-environment),
+then run these commands from the Orion repository root. Validate the model,
+calibration, and every pose without opening windows:
 
 ```bash
-../mujoco-local/.venv/bin/python simulation/mujoco/pose_editor.py \
+.venv/bin/python simulation/mujoco/pose_editor.py \
   --check
 ```
 
 Open the editor and MuJoCo viewer:
 
 ```bash
-../mujoco-local/.venv/bin/python simulation/mujoco/pose_editor.py
+.venv/bin/python simulation/mujoco/pose_editor.py
 ```
 
 The default editable library is

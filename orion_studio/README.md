@@ -145,20 +145,21 @@ Playback is Pi-owned:
 
 ```text
 Chatterbox signed 16-bit pulse-code modulation (PCM16)
-  -> exact mono 24 kHz RIFF/WAV
-  -> authenticated POST /api/v2/speech
-  -> random Pi spool identifier
+  -> Rust coordinator encodes mono 24 kHz RIFF/WAV chunks
+  -> authenticated /api/v2/speech/stream and run-scoped chunk/end requests
   -> oriond/ReSpeaker playback
   -> energy-driven speaking motion + warm red-green-blue-white (RGBW) light
   -> terminal status
-  -> Studio playback acknowledgement
+  -> Rust coordinator acknowledges completion to the Pi listener
 ```
 
 The Rust coordinator polls the run through queued, playing, and terminal states
 and acknowledges completion to the Pi listener only after playback completes. Cancellation
 is run-scoped. The runtime deletes spool files after completion, cancellation,
-or failure. Pi-local Piper uses the same speech coordinator, so it receives the
-same motion and lighting behavior.
+or failure. Conversational speech requires the Studio processing station;
+there is no Pi-local Piper fallback. See the
+[voice architecture](../docs/explanation/voice-architecture.md#streaming-replies-and-timing)
+for buffering and streaming behaviour.
 
 Prepare the optional Apple Silicon voice models separately:
 
@@ -187,10 +188,6 @@ from one Git revision.
 See the [system architecture](../docs/explanation/system-architecture.md),
 [motion architecture](../docs/explanation/motion-and-animation-architecture.md),
 and [scene reference](../scenes/README.md).
-
-See the [Studio home audit](../docs/project/studio-home-audit-2026-09-04.md) for
-the original findings and validation of their fixes.
-
 
 ## Animation library and scene editor
 

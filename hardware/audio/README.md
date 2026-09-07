@@ -107,7 +107,7 @@ hardware/audio/configure-capture.sh
 
 The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
 routes, disables the codec's automatic gain control (AGC), and applies a fixed
-50 dB programmable-gain amplifier (PGA) capture gain. The wake worker runs this
+50 dB programmable-gain amplifier (PGA) capture gain. The Pi listener runs this
 script automatically before opening `arecord`; direct recording tests can run
 it explicitly. This prevents wake-word behavior from depending on whatever
 capture level a previous process left in the codec. Physical commissioning
@@ -129,8 +129,7 @@ speaker.
 
 ## Stereo voice capture
 
-The primary Rustpotter listener requests synchronized stereo PCM16 at 16 kHz,
+The Pi Rustpotter listener requests synchronized stereo PCM16 at 16 kHz,
 retains stereo for coarse direction estimates, and downmixes to mono for wake
 and ASR. Stereo channel independence, orientation and direction accuracy still
 require physical commissioning; see [Pi voice setup](../../voice/README.md).
-The legacy diagnostic listener continues to consume mono.

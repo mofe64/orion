@@ -32,8 +32,11 @@ See [implementation status](status.md) for capability and commissioning coverage
   rooms, microphones, and speaking styles.
 - The Codex provider sends the confirmed text command to a cloud service. Raw
   microphone audio remains local.
-- Agent output can generate speech only. It has no supported path to movement,
-  lights, cues, or scenes.
+- The agent can generate speech, save and retrieve requested memories, search
+  the web, and request validated lighting changes through the coordinator and
+  gateway. Direct agent tools for movement, cues, and scenes are not implemented.
+  Lighting requires matching Pi gateway/runtime deployment and physical
+  acceptance; see [agent tools](../../agent/README.md).
 - Conversational voice is unavailable without the Studio processing station.
 
 ## State and history
