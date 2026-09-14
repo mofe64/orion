@@ -34,6 +34,64 @@ class FakeCapture:
         return np.full((320,2),2000 if self.frames<25 else 0,dtype='<i2').tobytes()
 
 class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_confirmation_reaches_runtime_before_optional_fresh_attention(self):
+        for side, age in [("unknown", 0), ("left", 0), ("right", 4)]:
+            with self.subTest(side=side, age=age), tempfile.TemporaryDirectory() as directory:
+                class Direction:
+                    def __init__(self, *args): pass
+                    def reset(self): pass
+                    def accept(self, audio): pass
+                    def observation(self):
+                        return {"side": side, "confidence": 0.9, "observed_at": time.monotonic() - age}
+                token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)
+                with socket.socket() as reservation:
+                    reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+                args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+                    wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+                    daemon_socket=str(Path(directory) / 'no-robot.sock'))
+                expressions = []
+                async def daemon(command, path):
+                    expressions.append(command)
+                    return {'ok': True}
+                with patch('orion_voice.satellite.RustpotterWakeDetector', FakeWake), \
+                     patch('orion_voice.satellite.StereoCapture', FakeCapture), \
+                     patch('orion_voice.satellite.DirectionEstimator', Direction), \
+                     patch('orion_voice.satellite.daemon_command', daemon):
+                    task = asyncio.create_task(serve(args))
+                    try:
+                        for _ in range(100):
+                            try:
+                                client = await connect(f'ws://127.0.0.1:{port}')
+                                break
+                            except OSError: await asyncio.sleep(.01)
+                        else: self.fail('Listener did not start')
+                        async with client:
+                            await client.send(json.dumps(dict(type='hello', protocol=1, token='a' * 32)))
+                            await client.recv()
+                            candidate = json.loads(await asyncio.wait_for(client.recv(), 2))
+                            await client.recv(); await client.recv()
+                            identity = candidate['sessionId']
+                            await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': identity, 'followup': True}))
+                            for _ in range(100):
+                                if f'voice {identity} followup' in expressions: break
+                                await asyncio.sleep(.01)
+                            else: self.fail('Confirmation was not forwarded')
+                            wake = f'voice {identity} wake'
+                            endpoint = f'voice {identity} endpoint'
+                            confirmed = f'voice {identity} confirmed'
+                            self.assertEqual(expressions.count(confirmed), 1)
+                            self.assertLess(expressions.index(wake), expressions.index(endpoint))
+                            self.assertLess(expressions.index(endpoint), expressions.index(confirmed))
+                            attention = [value for value in expressions if f'voice {identity} attend_' in value]
+                            if side == 'left':
+                                self.assertEqual(len(attention), 1)
+                                self.assertLess(expressions.index(confirmed), expressions.index(attention[0]))
+                                self.assertLess(float(attention[0].split()[-1]), 3000)
+                            else: self.assertEqual(attention, [])
+                    finally:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
     async def test_abrupt_control_disconnect_is_quiet_and_capture_survives(self):
         with tempfile.TemporaryDirectory() as directory:
             token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)

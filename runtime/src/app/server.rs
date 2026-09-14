@@ -139,21 +139,23 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     motions: MotionLibrary,
     scene_library: SceneLibrary,
     asset_reload: AssetReloadContext,
-    mut lighting: Box<dyn LightingDevice>,
+    lighting: Box<dyn LightingDevice>,
     mut audio: Box<dyn AudioDevice>,
     options: &Options,
     backend: &str,
 ) -> crate::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
+    let mut lighting = crate::expression::rest::RestLighting::new(lighting);
+    let mut rest = crate::expression::rest::RestCoordinator::new(options.rest_after_seconds);
     lighting.clear()?;
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
     let mut feedback = crate::voice_feedback::VoiceFeedback::default();
     let mut playing_run = None;
-    let mut voice_speech_run: Option<u64> = None;
+    let mut voice_speech_run: Option<(u64, String)> = None;
     let mut feedback_was_lit = false;
-    let server = UnixCommandServer::bind(&options.socket_path)?;
+    let mut server = UnixCommandServer::bind(&options.socket_path)?;
     let stopping = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stopping))?;
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stopping))?;
@@ -168,6 +170,8 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             eprintln!(
                 "oriond: character startup failed; remaining available for recovery: {error}"
             );
+        } else {
+            rest.started();
         }
     }
     let mut next_sample = started_at;
@@ -177,25 +181,45 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
-        scenes.tick(now_seconds, &mut core, lighting.as_mut(), audio.as_mut())?;
+        lighting.update(rest.dark(), now_seconds)?;
+        scenes.tick(now_seconds, &mut core, &mut lighting, audio.as_mut())?;
         if !scenes.is_active() && !speech.is_active() {
             let _ = audio.update();
         }
-        speech.tick(audio.as_mut());
+        // Expire ownership before queued audio can start on this tick.
+        if feedback.expire(now_seconds) {
+            let _ = character.set_reaction("neutral", now_seconds, &mut core);
+        }
+        if rest.failed()
+            || voice_speech_run.as_ref().is_some_and(|(run, session)| {
+                speech
+                    .active_status()
+                    .is_some_and(|active| active.run_id == *run)
+                    && !feedback.owns(session)
+            })
+        {
+            let _ = speech.cancel(audio.as_mut());
+        }
+        let scoped_voice = speech.active_status().is_some_and(|active| {
+            voice_speech_run
+                .as_ref()
+                .is_some_and(|(run, _)| *run == active.run_id)
+        });
+        speech.tick_when_ready(
+            audio.as_mut(),
+            rest.speech_ready(&character) && (!scoped_voice || feedback.confirmed_activity()),
+        );
         let current_playing = speech
             .active_status()
             .filter(|status| status.state == crate::speech::SpeechPhase::Playing)
             .map(|status| status.run_id);
         if current_playing.is_some() && current_playing != playing_run {
-            if current_playing == voice_speech_run {
+            if current_playing == voice_speech_run.as_ref().map(|(run, _)| *run) {
                 feedback.playback_started(now_seconds);
             }
             character.note_speech_started(now_seconds);
         }
         playing_run = current_playing;
-        if feedback.expire(now_seconds) {
-            let _ = character.set_reaction("neutral", now_seconds, &mut core);
-        }
         if let Some(energy) = speech.active_energy() {
             speaking_light_intensity = smooth_speaking_light(speaking_light_intensity, energy);
             lighting.render(&render_effect(
@@ -218,6 +242,14 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             speech.active_analysis(),
             speech.active_energy_frame(),
         )?;
+        rest.tick(
+            now_seconds,
+            &mut core,
+            &mut character,
+            &feedback,
+            scenes.is_active() || speech.is_active(),
+        );
+        lighting.update(rest.dark(), now_seconds)?;
         if character_just_stopped(character_was_enabled, character.status().enabled) {
             lighting.clear()?;
             speaking_light_intensity = 0.0;
@@ -253,7 +285,6 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             dispatch_command(
                 command,
                 now_seconds,
-                started_at,
                 &mut core,
                 &mut scenes,
                 &mut speech,
@@ -263,8 +294,10 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
                 &mut feedback,
                 &mut manual_light,
                 &mut voice_speech_run,
+                &mut rest,
             )
         })?;
+        rest.light_on = lighting.is_on();
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }
     Ok(0)

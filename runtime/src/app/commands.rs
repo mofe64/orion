@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::Instant;
 
 use super::options::parse_rgbw;
 use crate::expression::{lamp::LampProgram, voice_feedback::VoiceFeedback};
@@ -428,7 +427,6 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
 pub(super) fn dispatch_command<D: RuntimeDriver>(
     command: &str,
     now_seconds: f64,
-    started_at: Instant,
     core: &mut RuntimeCore<D>,
     scenes: &mut SceneCoordinator,
     speech: &mut SpeechCoordinator,
@@ -437,22 +435,46 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     asset_reload: &AssetReloadContext,
     feedback: &mut VoiceFeedback,
     manual_light: &mut Option<LampProgram>,
-    voice_speech_run: &mut Option<u64>,
+    voice_speech_run: &mut Option<(u64, String)>,
+    rest: &mut crate::expression::rest::RestCoordinator,
 ) -> String {
+    if command == "character status" {
+        return serde_json::json!({"ok": true, "character": character.status(), "rest": rest.status(now_seconds)}).to_string();
+    }
     if let Some(fields) = command.strip_prefix("voice ") {
         if fields == "status" {
             return serde_json::json!({"ok": true, "voice": feedback}).to_string();
         }
         let parts: Vec<_> = fields.split_whitespace().collect();
-        if parts.len() != 2 {
+        if parts.len() < 2 || parts.len() > 3 {
             return serde_json::json!({"ok": false, "error": "Expected voice SESSION EVENT"})
                 .to_string();
         }
         if matches!(parts[1], "attend_left" | "attend_right") {
-            if feedback.owns(parts[0]) {
+            let age = parts.get(2).map_or(Ok(0.0), |value| value.parse::<f64>());
+            let Ok(age) = age else {
+                return serde_json::json!({"ok": false, "error": "Invalid direction age"})
+                    .to_string();
+            };
+            if !age.is_finite() || age < 0.0 {
+                return serde_json::json!({"ok": false, "error": "Invalid direction age"})
+                    .to_string();
+            }
+            if feedback.owns(parts[0]) && feedback.confirmed_activity() && age < 3000.0 {
                 let side = parts[1].strip_prefix("attend_").unwrap();
-                let _ = character.attend(side, 0.75, now_seconds, core);
-                let _ = character.set_reaction("thinking", now_seconds, core);
+                rest.queue_attention(parts[0], side, now_seconds + (3000.0 - age) / 1000.0);
+            }
+            return serde_json::json!({"ok": true}).to_string();
+        }
+        if parts.len() != 2 {
+            return serde_json::json!({"ok": false, "error": "Unexpected voice arguments"})
+                .to_string();
+        }
+        if parts[1] == "confirmed" {
+            if feedback.confirm(parts[0], now_seconds) {
+                rest.confirmed(parts[0], now_seconds);
+            } else if !feedback.owns(parts[0]) || !feedback.confirmed_activity() {
+                return serde_json::json!({"ok": false, "error": "No current wake awaits confirmation."}).to_string();
             }
             return serde_json::json!({"ok": true}).to_string();
         }
@@ -460,14 +482,18 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         match action {
             Ok(Some((reaction, cue))) => {
                 if cue == Some("error_muted")
-                    && speech
-                        .active_status()
-                        .is_some_and(|status| Some(status.run_id) == *voice_speech_run)
+                    && speech.active_status().is_some_and(|status| {
+                        voice_speech_run
+                            .as_ref()
+                            .is_some_and(|(run, _)| *run == status.run_id)
+                    })
                 {
                     let _ = speech.cancel(audio);
                 }
-                let _ = character.set_reaction(reaction, now_seconds, core);
-                if !speech.is_active() && !scenes.is_active() {
+                if rest.reactions_ready() {
+                    let _ = character.set_reaction(reaction, now_seconds, core);
+                }
+                if rest.reactions_ready() && !speech.is_active() && !scenes.is_active() {
                     if let Some(cue) = cue {
                         if cue == "error_muted" {
                             let _ = audio.stop();
@@ -489,6 +515,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         command,
         "stop" | "disable" | "character stop" | "character rest"
     ) {
+        if matches!(command, "stop" | "disable" | "character stop") {
+            rest.disable();
+        }
         feedback.clear();
         if matches!(command, "stop" | "disable") {
             let _ = character.set_reaction("neutral", now_seconds, core);
@@ -544,6 +573,19 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     if scoped_speech && !feedback.owns(fields[3]) {
         return serde_json::json!({"ok": false, "error": "Stale voice session"}).to_string();
     }
+    if rest.failed()
+        && (command.starts_with("speech file ") || command.starts_with("speech stream "))
+    {
+        return serde_json::json!({"ok": false, "error": "Recover character startup before speech playback."}).to_string();
+    }
+    if rest.transitioning()
+        && (command.starts_with("goto ")
+            || command.starts_with("play ")
+            || command.starts_with("scene start ")
+            || command.starts_with("scene preview "))
+    {
+        return serde_json::json!({"ok": false, "error": "Start character mode or release movement before explicit motion."}).to_string();
+    }
     let normalized = if scoped_speech {
         fields[..3].join(" ")
     } else {
@@ -551,7 +593,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     };
     let response = handle_daemon_command_with_character(
         &normalized,
-        started_at.elapsed().as_secs_f64(),
+        now_seconds,
         core,
         scenes,
         speech,
@@ -562,7 +604,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     if scoped_speech {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) {
             if value["ok"] == true {
-                *voice_speech_run = value["run_id"].as_u64();
+                *voice_speech_run = value["run_id"].as_u64().map(|run| (run, fields[3].into()));
                 let _ = feedback.event(fields[3], "first_chunk", now_seconds);
             }
         }
@@ -571,7 +613,20 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         && serde_json::from_str::<serde_json::Value>(&response)
             .is_ok_and(|value| value["ok"] == true)
     {
+        rest.started();
         *manual_light = None;
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) {
+        if value["ok"] == true {
+            if command == "character rest" {
+                if let Err(error) = rest.track_rest(&value) {
+                    return serde_json::json!({"ok": false, "error": error.to_string()})
+                        .to_string();
+                }
+            } else if matches!(command, "enable" | "configure") && rest.transitioning() {
+                rest.disable();
+            }
+        }
     }
     response
 }

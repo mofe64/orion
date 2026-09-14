@@ -71,6 +71,7 @@ fn execute() -> crate::Result<i32> {
 mod tests {
     use super::{client::*, commands::*, options::*, server::*};
     use crate::SpeechPhase;
+    use crate::expression::{rest::RestCoordinator, voice_feedback::VoiceFeedback};
     use crate::*;
     use crate::{
         AudioCommand, JointPositions, JointState, RecordingAudioDevice, UnavailableAudioDevice,
@@ -161,6 +162,34 @@ mod tests {
         bytes.extend_from_slice(&2_u32.to_le_bytes());
         bytes.extend_from_slice(&0_i16.to_le_bytes());
         std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn rest_timeout_defaults_to_ten_minutes_and_rejects_invalid_values() {
+        assert_eq!(
+            parse(&["--serve", "--backend", "mujoco"])
+                .unwrap()
+                .rest_after_seconds,
+            600.0
+        );
+        assert_eq!(
+            parse(&[
+                "--serve",
+                "--backend",
+                "mujoco",
+                "--rest-after-seconds",
+                "4.5"
+            ])
+            .unwrap()
+            .rest_after_seconds,
+            4.5
+        );
+        for value in ["0", "-1", "NaN", "inf", "hello"] {
+            assert!(
+                parse(&["--serve", "--rest-after-seconds", value]).is_err(),
+                "{value}"
+            );
+        }
     }
 
     #[test]
@@ -715,5 +744,160 @@ mod tests {
             error_exit_code(&crate::Error::InvalidArgument("bad option".into())),
             2
         );
+    }
+
+    struct DispatchFixture {
+        now: f64,
+        core: RuntimeCore<TestDriver>,
+        character: CharacterCoordinator,
+        rest: RestCoordinator,
+        feedback: VoiceFeedback,
+        scenes: SceneCoordinator,
+        speech: SpeechCoordinator,
+        audio: RecordingAudioDevice,
+        manual: Option<crate::lamp::LampProgram>,
+        voice_run: Option<(u64, String)>,
+        assets: AssetReloadContext,
+        _spool: tempfile::TempDir,
+    }
+    impl DispatchFixture {
+        fn new(timeout: f64) -> Self {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap();
+            let poses =
+                PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES)
+                    .unwrap();
+            let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+            let scenes = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+            let spool = tempfile::tempdir().unwrap();
+            Self {
+                now: 0.0,
+                core: RuntimeCore::new(TestDriver, poses, motions).unwrap(),
+                character: CharacterCoordinator::new(42),
+                rest: RestCoordinator::new(timeout),
+                feedback: VoiceFeedback::default(),
+                scenes: SceneCoordinator::new(scenes, Rgbw8::OFF),
+                speech: SpeechCoordinator::new(spool.path()),
+                audio: RecordingAudioDevice::blocking(),
+                manual: None,
+                voice_run: None,
+                assets: AssetReloadContext {
+                    poses_file: root.join("motion/config/poses.yaml"),
+                    user_poses_directory: root.join("motion/user/poses"),
+                    motions_directory: root.join("motion/motions"),
+                    scenes_directory: root.join("scenes"),
+                    cues: CueLibrary::load(root.join("audio/cues")).unwrap(),
+                },
+                _spool: spool,
+            }
+        }
+        fn command(&mut self, command: &str) -> serde_json::Value {
+            serde_json::from_str(&dispatch_command(
+                command,
+                self.now,
+                &mut self.core,
+                &mut self.scenes,
+                &mut self.speech,
+                &mut self.character,
+                &mut self.audio,
+                &self.assets,
+                &mut self.feedback,
+                &mut self.manual,
+                &mut self.voice_run,
+                &mut self.rest,
+            ))
+            .unwrap()
+        }
+        fn ok(&mut self, command: &str) {
+            let result = self.command(command);
+            assert_eq!(result["ok"], true, "{command}: {result}");
+        }
+    }
+
+    #[test]
+    fn confirmation_requires_current_endpointed_wake_and_resets_deadline_once() {
+        let mut h = DispatchFixture::new(600.0);
+        h.rest.started();
+        let session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert_eq!(
+            h.command(&format!("voice {session} confirmed"))["ok"],
+            false
+        );
+        h.ok(&format!("voice {session} wake"));
+        assert_eq!(
+            h.command(&format!("voice {session} confirmed"))["ok"],
+            false
+        );
+        h.ok(&format!("voice {session} endpoint"));
+        assert_eq!(h.command(&format!("voice {other} confirmed"))["ok"], false);
+        assert_eq!(h.rest.status(h.now).last_confirmed_at, None);
+        h.now = 10.0;
+        h.ok(&format!("voice {session} confirmed"));
+        assert_eq!(h.rest.status(h.now).last_confirmed_at, Some(10.0));
+        h.now = 11.0;
+        h.ok(&format!("voice {session} confirmed"));
+        assert_eq!(h.rest.status(h.now).last_confirmed_at, Some(10.0));
+        assert_eq!(h.rest.status(h.now).remaining_seconds, Some(599.0));
+        h.ok(&format!("voice {session} finish"));
+        assert_eq!(
+            h.command(&format!("voice {session} confirmed"))["ok"],
+            false
+        );
+        h.ok(&format!("voice {other} wake"));
+        h.ok(&format!("voice {other} endpoint"));
+        h.ok(&format!("voice {other} reject"));
+        assert_eq!(h.command(&format!("voice {other} confirmed"))["ok"], false);
+        assert_eq!(h.rest.status(h.now).last_confirmed_at, Some(10.0));
+        assert_eq!(h.rest.status(h.now).remaining_seconds, Some(599.0));
+    }
+
+    #[test]
+    fn dark_commands_retain_session_and_lamp_preferences_without_cues() {
+        let mut h = DispatchFixture::new(600.0);
+        h.rest
+            .track_rest(&serde_json::json!({"run_id": 1}))
+            .unwrap();
+        let session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        h.ok("lamp 1 2 3 40");
+        h.ok(&format!("voice {session} wake"));
+        h.ok(&format!("voice {session} endpoint"));
+        assert!(h.feedback.owns(session));
+        assert!(h.audio.commands().is_empty());
+        assert!(!h.character.status().enabled);
+        h.ok("lamp 20 30 40 50");
+        let frame = h.manual.as_ref().unwrap().render(h.now).unwrap();
+        assert!(
+            frame
+                .iter()
+                .all(|pixel| *pixel == Rgbw8::new(20, 30, 40, 50))
+        );
+        let status = h.command("character status");
+        assert_eq!(status["rest"]["state"], "going_to_rest");
+        assert_eq!(status["rest"]["light_on"], false);
+        assert_eq!(status["character"]["enabled"], false);
+    }
+
+    #[test]
+    fn scoped_reply_rejects_stale_session_and_records_current_owner() {
+        let mut h = DispatchFixture::new(600.0);
+        let session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        write_test_wav(&h._spool.path().join("reply.wav"));
+        h.ok(&format!("voice {session} wake"));
+        assert_eq!(
+            h.command(&format!("speech file reply {other}"))["ok"],
+            false
+        );
+        assert!(h.voice_run.is_none());
+        assert!(!h.speech.is_active());
+        let result = h.command(&format!("speech file reply {session}"));
+        assert_eq!(result["ok"], true);
+        assert_eq!(
+            h.voice_run,
+            Some((result["run_id"].as_u64().unwrap(), session.into()))
+        );
+        assert_eq!(h.speech.active_status().unwrap().state, SpeechPhase::Queued);
     }
 }

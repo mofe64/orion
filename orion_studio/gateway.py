@@ -151,6 +151,7 @@ class OrionGateway:
                 "last": speech.get("last_speech"),
             },
             "character": character.get("character"),
+            "rest": character.get("rest"),
         }
 
     def runtime_logs(self) -> dict[str, Any]:

@@ -242,6 +242,12 @@ impl SpeechCoordinator {
     }
 
     pub fn tick<A: AudioDevice + ?Sized>(&mut self, audio: &mut A) {
+        self.tick_when_ready(audio, true);
+    }
+
+    /// Continue upload timeout checks while home/attention owns movement, but
+    /// keep accepted audio queued until the runtime permits playback.
+    pub fn tick_when_ready<A: AudioDevice + ?Sized>(&mut self, audio: &mut A, ready: bool) {
         let Some(active) = self.active.as_mut() else {
             return;
         };
@@ -282,6 +288,9 @@ impl SpeechCoordinator {
             }
         }
         if active.status.state == SpeechPhase::Queued {
+            if !ready {
+                return;
+            }
             if active
                 .stream
                 .as_ref()

@@ -131,6 +131,18 @@ class GatewayContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = FakeOrionClient(); self.gateway = OrionGateway(self.client)
 
+    def test_rest_telemetry_survives_gateway_status_and_legacy_is_optional(self):
+        self.assertIsNone(self.gateway.status()['rest'])
+        original = self.client.request
+        rest = {'state': 'resting', 'light_on': False, 'remaining_seconds': None,
+                'timeout_seconds': 600, 'movement_run_id': None, 'last_confirmed_at': 42, 'error': None}
+        def request(command):
+            result = original(command)
+            if command == 'character status': result['rest'] = rest
+            return result
+        self.client.request = request
+        self.assertEqual(self.gateway.status()['rest'], rest)
+
     def test_capabilities_are_v2_and_calibration_owned(self) -> None:
         capabilities = self.gateway.capabilities()["capabilities"]
         self.assertEqual((capabilities["pose_format_version"], capabilities["motion_format_version"],

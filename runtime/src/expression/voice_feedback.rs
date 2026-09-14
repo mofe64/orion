@@ -13,6 +13,7 @@ const THINKING_BREATH_SECONDS: f64 = 3.0;
 pub struct VoiceFeedback {
     session: Option<String>,
     phase: String,
+    confirmed: bool,
     processing_cued: bool,
     since: f64,
     deadline: f64,
@@ -20,6 +21,29 @@ pub struct VoiceFeedback {
     history: VecDeque<(String, String, f64)>,
 }
 impl VoiceFeedback {
+    /// Confirmation is accepted once for the currently endpointed wake. Raw
+    /// candidates and continuation speech never extend the inactivity deadline.
+    pub fn confirm(&mut self, id: &str, now: f64) -> bool {
+        if !self.owns(id) || self.confirmed || self.phase != "thinking" {
+            return false;
+        }
+        self.confirmed = true;
+        self.record("confirmed", now);
+        true
+    }
+
+    pub fn confirmed_activity(&self) -> bool {
+        self.session.is_some() && self.confirmed && self.phase != "unavailable"
+    }
+
+    pub fn reaction(&self) -> &'static str {
+        match self.phase.as_str() {
+            "listening" | "window" => "listening",
+            "thinking" => "thinking",
+            _ => "neutral",
+        }
+    }
+
     pub fn owns(&self, id: &str) -> bool {
         self.session.as_deref() == Some(id)
     }
@@ -44,6 +68,7 @@ impl VoiceFeedback {
         );
     }
     pub fn clear(&mut self) {
+        self.confirmed = false;
         if let Some(id) = self.session.take() {
             self.retired.push_back(id);
             if self.retired.len() > 128 {
@@ -75,6 +100,7 @@ impl VoiceFeedback {
                 return Ok(None);
             }
             self.session = Some(id.into());
+            self.confirmed = event == "continue";
             self.phase = "listening".into();
             self.since = if event == "continue" { now - 1.0 } else { now };
             self.deadline = now + 120.0;

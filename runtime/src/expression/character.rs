@@ -498,6 +498,33 @@ impl CharacterCoordinator {
         &self.status
     }
 
+    /// Automatic rest may interrupt background idles, but never foreground work
+    /// or a movement whose completion another character transition owns.
+    pub fn can_auto_rest<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
+        self.status.enabled
+            && self.starting_run_id.is_none()
+            && !self.foreground_pending
+            && self.foreground_scene_run_id.is_none()
+            && self.speech_motion_run_id.is_none()
+            && matches!(
+                self.status.state,
+                CharacterState::HomeIdle
+                    | CharacterState::PoseIdle
+                    | CharacterState::Listening
+                    | CharacterState::Thinking
+            )
+            && (core.mode() == RuntimeMode::Holding
+                || self.active_idle_run_id.is_some()
+                || self.thinking_run.is_some())
+    }
+
+    /// A confirmed wake's first reply waits for its attention turn as well as home.
+    pub fn attention_is_moving(&self) -> bool {
+        self.attention
+            .as_ref()
+            .is_some_and(|attention| attention.run_id.is_some())
+    }
+
     /// Select the lowest-priority character light for the current held state.
     pub fn background_lighting_effect<D: RuntimeDriver>(
         &self,

@@ -32,12 +32,17 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   const [hue, setHue] = useState(210);
   const [brightness, setBrightness] = useState(40);
   const [appliedLamp, setAppliedLamp] = useState<ManualLampSetting | null>(null);
-  const previewLight = useMemo(() => lampPreview(appliedLamp ?? INITIAL_LAMP), [appliedLamp]);
+  const lightOn = status?.rest?.light_on ?? appliedLamp?.enabled ?? false;
+  const resting = status?.rest?.state === "resting" || status?.rest?.state === "going_to_rest";
+  const previewLight = useMemo(() => lampPreview({ ...(appliedLamp ?? INITIAL_LAMP),
+    enabled: status?.rest ? lightOn : (appliedLamp ?? INITIAL_LAMP).enabled }), [appliedLamp, lightOn, status?.rest]);
   const [result, setResult] = useState("");
   const request = useRef<symbol | null>(null);
 
   useEffect(() => {
+    // Legacy gateways only report the last requested lamp setting:
     // The gateway has no lamp telemetry. Never carry a previous session's command into a new connection.
+    // Rest-aware gateways add effective power, but still do not report saved color preferences.
     request.current = null;
     setPending(null); setAppliedLamp(null); setResult("");
     return () => { request.current = null; };
@@ -72,7 +77,10 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   };
   const disabled = !connection || pending !== null;
   const foregroundBusy = !!(status?.scene.active || status?.speech.active || (status?.runtime.motion && !status.runtime.motion.name?.startsWith("idle_")));
-  const characterLabel = !connection ? "Disconnected" : !status ? "Awaiting status" : status.character.enabled
+  const characterLabel = !connection ? "Disconnected" : !status ? "Awaiting status" : status.rest?.state === "resting"
+    ? "Resting · torque off" : status.rest?.state === "going_to_rest" ? "Moving to rest"
+    : status.rest?.state === "waking" ? "Waking · returning home"
+    : status.rest?.state === "fault" ? "Rest / wake needs attention" : status.character.enabled
     ? `Character · ${status.character.state.replaceAll("_", " ")}` : "Character off";
 
   return <section className="home-dashboard" id="workspace" aria-label="Orion home">
@@ -89,14 +97,14 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
           <p className="oh-model-caption">Attentive pose · Model preview, not live position</p>
           <div className="oh-modes">
             <button className="oh-mode" disabled={disabled || status?.character.enabled} aria-pressed={!!status?.character.enabled} onClick={() => void act("Character mode", value => setCharacterMode(value, true))}><Sparkles size={18} /><span><strong>Character mode</strong><small>A little personality</small></span></button>
-            <button className="oh-mode" disabled={disabled || status?.runtime.motion?.name === "rest"} onClick={() => void act("Go to rest", restOrion)}><Moon size={18} /><span><strong>Go to rest</strong><small>Gently settle down</small></span></button>
+            <button className="oh-mode" disabled={disabled || resting || status?.runtime.motion?.name === "rest"} onClick={() => void act("Go to rest", restOrion)}><Moon size={18} /><span><strong>Go to rest</strong><small>Gently settle down</small></span></button>
           </div>
         </section>
         <div className="oh-talk"><span className="oh-mic"><Mic size={19} /></span><span><strong>Listening</strong><small>{voiceLabel}</small></span><button className="studio-switch" role="switch" aria-label="Orion listening" aria-checked={listening} disabled={!voiceAvailable} onClick={onVoice}><span /></button></div>
       </div>
       <section className="oh-lamp" aria-label="Lamp controls" aria-busy={pending !== null}>
-        <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={appliedLamp?.enabled ?? false} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled} onClick={() => applyLight(!appliedLamp?.enabled)}><span /></button></header>
-        <p id="lamp-command-state">{!connection ? "Connect to control the light" : appliedLamp ? `Last set: ${appliedLamp.enabled ? `${appliedLamp.mood} · On` : "Off"}` : "Not set in this session"}</p>
+        <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={lightOn} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled || resting} onClick={() => applyLight(!lightOn)}><span /></button></header>
+        <p id="lamp-command-state">{!connection ? "Connect to control the light" : resting ? (lightOn ? "Fading off for rest" : "Off while resting · lamp setting saved") : status?.rest ? `Light ${lightOn ? "on" : "off"}` : appliedLamp ? `Last set: ${appliedLamp.enabled ? `${appliedLamp.mood} · On` : "Off"}` : "Not set in this session"}</p>
         <div className="oh-dial">
           <svg viewBox="0 0 216 216" aria-hidden="true"><circle className="oh-dial-track" cx="108" cy="108" r="91" fill="none" strokeWidth="8" strokeLinecap="round" strokeDasharray="429 572" /><circle className="oh-dial-value" cx="108" cy="108" r="91" fill="none" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${429 * brightness / 100} 572`} /></svg>
           <div><output htmlFor="lamp-brightness">{brightness}<small>%</small></output><label htmlFor="lamp-brightness">Brightness</label></div>
@@ -105,13 +113,14 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         <fieldset className="oh-light-moods"><legend>Light mood</legend><div>{(["Warm white", "Custom color"] as const).map(value => <button key={value} type="button" aria-pressed={mood === value} onClick={() => setMood(value)}>{value}</button>)}</div></fieldset>
         {mood === "Custom color" && <div className="oh-color"><div><label htmlFor="lamp-color">Choose your color</label><span className="oh-swatch" style={{ background: `hsl(${hue} 75% 65%)` }} aria-hidden="true" /></div><input className="orion-hue-slider" id="lamp-color" type="range" min="0" max="360" value={hue} aria-valuetext={hueName(hue)} onChange={event => setHue(Number(event.target.value))} /></div>}
         <button className="oh-apply" disabled={disabled} onClick={() => applyLight(true)}>{pending === "Warm white light" || pending === "Custom color" ? "Applying…" : `Apply ${mood.toLowerCase()}`}</button>
-        <p className="oh-note" id="lamp-command-help">The switch shows your last lamp command. Character and speech can temporarily take over the light.</p>
+        <p className="oh-note" id="lamp-command-help">{status?.rest ? "The switch shows runtime light power. Rest keeps the light off; your lamp setting is saved." : "The switch shows your last lamp command. Character and speech can temporarily take over the light."}</p>
       </section>
     </div>
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>Explore animations <Plus size={15} /></button></header>
       <div className="oh-expression-list">{[["acknowledge_left", "Acknowledge left"], ["acknowledge_right", "Acknowledge right"]].map(([name, label], index) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(label, value => runScene(value, name))}><span className="oh-expression-icon">{index === 0 ? <MoveUpLeft size={16} /> : <MoveUpRight size={16} />}</span>{label}<Play className="oh-arrow" size={14} /></button>)}</div>
     </section>
     {onDiagnostics && <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>}
+    {status?.rest?.error && <p className="oh-feedback" role="alert">{status.rest.error}</p>}
     <p className="oh-feedback" role="status"><Info size={14} /><span>{pending ? `${pending}…` : result || (!connection ? "Connect Orion to use character, lamp, and expression controls." : "Connected to Orion.")}</span></p>
   </section>;
 }

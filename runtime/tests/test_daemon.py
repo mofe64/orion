@@ -1,80 +1,12 @@
-import contextlib
 import json
-import os
 from pathlib import Path
-import socket
-import subprocess
 import tempfile
-import time
 import unittest
 
-
-PACKAGE = Path(__file__).resolve().parents[1]
-ROOT = PACKAGE.parent
-BIN_DIRECTORY = Path(os.environ.get('ORION_TEST_BIN_DIR', str(PACKAGE / 'target/debug')))
-BINARY = BIN_DIRECTORY / 'oriond'
+from daemon_support import DaemonTestCase, client, daemon, request
 
 
-def client(path, *arguments):
-    return subprocess.run(
-        [str(BINARY), '--socket', str(path), *arguments], cwd=ROOT,
-        capture_output=True, text=True, timeout=40,
-    )
-
-
-def request(path, command):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-        stream.settimeout(5)
-        stream.connect(str(path))
-        stream.sendall(command.encode())
-        received = bytearray()
-        while not received.endswith(b'\n'):
-            chunk = stream.recv(65536)
-            if not chunk:
-                break
-            received.extend(chunk)
-        return json.loads(received)
-
-
-@contextlib.contextmanager
-def daemon(automatic_character=False):
-    with tempfile.TemporaryDirectory(prefix='orion-daemon-test-', dir='/tmp') as temporary:
-        path = Path(temporary) / 'daemon.sock'
-        arguments = [str(BINARY), '--serve', '--backend', 'mujoco', '--socket', str(path),
-                     '--start-pose', 'home', '--python', str(ROOT / '.venv/bin/python')]
-        if not automatic_character:
-            arguments += ['--character-on-start', 'off']
-        with tempfile.TemporaryFile(mode='w+') as output:
-            process = subprocess.Popen(arguments, cwd=ROOT, stdout=output, stderr=output)
-            try:
-                deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
-                    if process.poll() is not None:
-                        output.seek(0)
-                        raise AssertionError(output.read())
-                    if path.exists():
-                        request(path, 'status')
-                        break
-                    time.sleep(0.02)
-                else:
-                    raise AssertionError('Daemon did not create its socket')
-                yield path
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-
-
-class DaemonTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if not BINARY.is_file():
-            raise AssertionError(f'Build {BINARY} before running daemon tests')
-
+class DaemonTests(DaemonTestCase):
     def test_help_and_invalid_arguments_use_documented_exit_codes(self):
         with tempfile.TemporaryDirectory(prefix='orion-client-test-', dir='/tmp') as temporary:
             path = Path(temporary) / 'absent.sock'
@@ -124,15 +56,6 @@ class DaemonTests(unittest.TestCase):
             self.wait_for_character(path, 'home_idle', True)
             self.assertTrue(request(path, 'character stop')['ok'])
             self.wait_for_character(path, 'off', False)
-
-    def wait_for_character(self, path, expected_state, enabled):
-        deadline = time.monotonic() + 12
-        while time.monotonic() < deadline:
-            status = request(path, 'character status')['character']
-            if status['state'] == expected_state and status['enabled'] == enabled:
-                return
-            time.sleep(0.02)
-        self.fail(f'Character did not reach {expected_state}: {status}')
 
 
 if __name__ == '__main__':

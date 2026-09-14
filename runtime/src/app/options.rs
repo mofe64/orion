@@ -40,6 +40,7 @@ pub(super) struct Options {
     pub(super) backend: Backend,
     pub(super) help: bool,
     pub(super) character_on_start: bool,
+    pub(super) rest_after_seconds: f64,
     pub(super) wait: bool,
     pub(super) port: String,
     pub(super) baud_rate: i32,
@@ -72,6 +73,7 @@ impl Default for Options {
             backend: Backend::Hardware,
             help: false,
             character_on_start: true,
+            rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
             wait: false,
             port: "/dev/ttyACM0".into(),
             baud_rate: DEFAULT_BAUD_RATE,
@@ -155,6 +157,7 @@ pub(super) fn usage() -> &'static str {
   --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
   --character-on-start on|off  Start character automatically (default: on).\n\
+  --rest-after-seconds SECONDS  Confirmed-wake inactivity before rest (default: 600).\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
   --help              Show this help.\n\n\
 Check never enables torque. Serve starts powered character mode unless --character-on-start off.\n"
@@ -270,6 +273,17 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                             ));
                         }
                     };
+            }
+            "--rest-after-seconds" => {
+                options.rest_after_seconds = require_value(&mut arguments, &argument)?
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .ok_or_else(|| {
+                        crate::Error::InvalidArgument(
+                            "--rest-after-seconds requires a finite positive number.".into(),
+                        )
+                    })?;
             }
             "--start-pose" => options.start_pose = require_value(&mut arguments, &argument)?,
             "--lighting-device" => {

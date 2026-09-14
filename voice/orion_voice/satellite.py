@@ -252,7 +252,7 @@ async def serve(args):
         identity = session_id or session.session_id
         if identity:
             try:
-                feedback.put_nowait(f"voice {identity} {kind}")
+                feedback.put_nowait((f"voice {identity} {kind}", None, time.monotonic()))
             except asyncio.QueueFull:
                 # The runtime's own lease bounds feedback if its socket is unavailable.
                 pass
@@ -267,9 +267,27 @@ async def serve(args):
 
     async def character():
         while True:
-            command = await feedback.get()
-            with suppress(OSError, ValueError, asyncio.TimeoutError):
-                await daemon_command(command, args.daemon_socket)
+            command, receipt, queued_at = await feedback.get()
+            if receipt is not None and receipt.cancelled(): continue
+            fields = command.split()
+            if len(fields) == 4 and fields[2] in {'attend_left', 'attend_right'}:
+                fields[3] = str(float(fields[3]) + (time.monotonic() - queued_at) * 1000)
+                command = ' '.join(fields)
+            try:
+                result = await daemon_command(command, args.daemon_socket)
+                if receipt is not None and not receipt.done(): receipt.set_result(result)
+            except (OSError, ValueError, asyncio.TimeoutError) as error:
+                if receipt is not None and not receipt.done(): receipt.set_exception(error)
+
+    async def confirm_activity(identity):
+        # Use the same FIFO as candidate/endpoint feedback. Confirmation must
+        # reach oriond even when direction is unknown; a lost notification must
+        # fail the turn instead of silently leaving the body asleep.
+        receipt = asyncio.get_running_loop().create_future()
+        await feedback.put((f"voice {identity} confirmed", receipt, time.monotonic()))
+        result = await asyncio.wait_for(receipt, 5)
+        if result.get("ok") is not True:
+            raise ValueError("Runtime did not accept wake confirmation")
 
     async def deliver(messages):
         nonlocal outgoing
@@ -402,14 +420,16 @@ async def serve(args):
                     if message.get("sessionId") != session.session_id: continue
                     identity = session.session_id
                     observation = session.observation.copy()
-                    fresh_direction = session.direction_is_fresh()
+                    observed_at = session.observed_at
                     result = session.control(message)
                     if message["type"] == "session.processing":
                         expression("processing", identity)
                     elif message["type"] == "wake.confirmed":
+                        await confirm_activity(identity)
                         side, confidence = observation["side"], observation["confidence"]
-                        if fresh_direction and side in {"left", "right"} and confidence >= 0.75:
-                            expression(f"attend_{side}", identity)
+                        direction_age = session.clock() - observed_at
+                        if 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
+                            expression(f"attend_{side} {direction_age * 1000:.3f}", identity)
                         if message["followup"]: expression("followup", identity)
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
                         expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"

@@ -247,6 +247,15 @@ export interface GatewayStatus {
   scene: { active: RunStatus | null; last: RunStatus | null };
   speech: { active: RunStatus | null; last: RunStatus | null };
   character: CharacterStatus;
+  rest?: {
+    state: "disabled" | "awake" | "going_to_rest" | "resting" | "waking" | "fault";
+    timeout_seconds: number;
+    last_confirmed_at: number | null;
+    remaining_seconds: number | null;
+    movement_run_id: number | null;
+    light_on: boolean;
+    error: string | null;
+  } | null;
 }
 
 export interface GatewayCapabilities {
