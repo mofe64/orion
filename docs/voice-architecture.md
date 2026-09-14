@@ -1,9 +1,6 @@
 # Orion voice architecture
 
-The Raspberry Pi captures Orion's microphone, detects wake candidates, and plays
-replies. Studio confirms the wake through automatic speech recognition (ASR), processes the
-command with its Rust agent, and synthesizes a response. Its Rust voice
-coordinator manages these stages through a Python Qwen3-ASR/Chatterbox worker.
+The Onboard computer captures Orion's microphone, detects wake candidates, and plays replies. Studio confirms the wake through automatic speech recognition (ASR), processes the command with its Rust agent, and synthesizes a response. Its Rust voice coordinator manages these stages through a Python Qwen3-ASR/Chatterbox worker.
 
 ## Audio and control flow
 
@@ -162,7 +159,7 @@ Follow [Pi voice setup](../voice/README.md) and the
 
 ## Studio service lifecycle
 
-The shared [`studio-service`](../studio-service/README.md) crate owns the agent,
+The shared `[studio-service](../studio-service/README.md)` crate owns the agent,
 coordinator, saved settings, and pairing access. Desktop Studio starts an embedded
 owner when headless mode is uninstalled. Installing headless mode moves this
 ownership into `orion-studio-headless`; the UI then attaches as a client. Quitting
@@ -213,7 +210,7 @@ enabled in either state.
 ## Agent conversation and memory
 
 Voice session IDs identify capture/playback turns, not agent conversations.
-The top-level [`orion-agent` crate](../agent/README.md) owns one ephemeral
+The top-level `orion-agent` [crate](../agent/README.md) owns one ephemeral
 Codex thread and reuses it for confirmed commands, post-response follow-ups,
 and later wake-word requests. Studio compiles this library through a Cargo path
 dependency and owns its service separately from the coordinator and speech worker.
@@ -238,7 +235,7 @@ have ordered chunk sequence numbers and an explicit end marker. Channel closure
 without that marker is failure, never permission to upload held startup audio.
 
 The base instructions live in
-[`agent/src/prompt/mod.rs`](../agent/src/prompt/mod.rs). Orion uses Codex's
+`[agent/src/prompt/mod.rs](../agent/src/prompt/mod.rs)`. Orion uses Codex's
 built-in live web search and three client-executed tools: `append_memory`,
 `search_memories`, and `set_lighting`. Dynamic tool calls are bound to the active
 thread and turn, limited to 16 per turn, and validated before execution.

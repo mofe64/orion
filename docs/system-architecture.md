@@ -2,10 +2,7 @@
 
 ## System boundary
 
-Orion's Raspberry Pi owns movement, lighting, and audio capture and playback.
-Orion Studio runs on an external computer and provides asset authoring, speech
-recognition, the agent, and speech synthesis. Control commands and reply audio
-follow this path:
+Orion's oboard computer owns movement, lighting, and audio capture and playback. Orion Studio runs on an external computer and provides asset authoring, speech recognition, the agent, and speech synthesis. Control commands and reply audio follow this path:
 
 ```text
 External Computer                                     Onboard Computer
@@ -39,6 +36,8 @@ The hardware and MuJoCo backends use the same `oriond` movement lifecycle and
 trajectory compiler. Each backend supplies its own device feedback.
 
 ## Authority boundaries
+
+
 
 ### `oriond`
 
@@ -75,7 +74,7 @@ gateway. The agent's available tools do not include motion control. The
 [voice architecture](voice-architecture.md) describes its conversation and
 playback lifecycle.
 
-### Pi listener
+### Onboard computer listener
 
 The listener owns microphone capture, Rustpotter wake detection, and utterance
 endpointing. It sends captured utterances to Studio over an authenticated
@@ -94,6 +93,8 @@ motion/user/poses/
 motion/motions/user/
 scenes/user/
 ```
+
+
 
 ## Runtime state
 
