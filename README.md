@@ -5,6 +5,8 @@ and acts as the external voice processing and agent runtime.
 
 ## Start here
 
+- [Quickstart](docs/quickstart.md) — run the UI or headless service, update Studio,
+  and deploy to the Pi.
 - [Understand the system](docs/system-architecture.md) — component
   boundaries, data flow, and safety ownership.
 - [Understand motion and animation](docs/motion-and-animation-architecture.md)
@@ -54,7 +56,7 @@ Studio Voice processes audio captured exclusively by the onboard Pi. The Pi
 runs Rustpotter and forwards bounded utterances over the local network; Studio confirms the
 wake with Qwen3-ASR, invokes the configured agent, and synthesizes replies with
 Chatterbox. Studio provides the compute for speech recognition, the agent, and
-expressive synthesis; the Pi plays replies and owns character animation. See the
+expressive synthesis through the desktop app or background headless service; the Pi plays replies and owns character animation. See the
 [voice architecture](docs/voice-architecture.md) and
 [Pi setup](voice/README.md).
 
@@ -62,7 +64,8 @@ expressive synthesis; the Pi plays replies and owns character animation. See the
 
 | Path | Responsibility |
 | --- | --- |
-| `agent/` | Rust conversation runtime, memory/tools, and Codex integration, compiled into Studio |
+| `agent/` | Rust conversation runtime, memory/tools, and Codex integration |
+| `studio-service/` | Shared Studio ownership, settings, pairing, and standalone headless launcher |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
 | `speech/` | Python Qwen ASR and Chatterbox inference worker |
@@ -82,6 +85,8 @@ expressive synthesis; the Pi plays replies and owns character animation. See the
 Run these from the repository root unless a linked guide says otherwise:
 
 ```bash
+cargo test --manifest-path studio-service/Cargo.toml
+python3 -m unittest discover -s scripts/tests -v
 cargo test --manifest-path coordinator/Cargo.toml
 cargo test --manifest-path agent/Cargo.toml
 cargo test --manifest-path runtime/Cargo.toml --all-targets

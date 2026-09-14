@@ -6,8 +6,7 @@ mod settings;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(coordinator::CoordinatorManager::default())
-        .manage(agent::AgentManager::default())
+        .manage(orion_studio_service::Backend::default())
         .invoke_handler(tauri::generate_handler![
             coordinator::start_voice_worker,
             agent::load_agent_profile,
@@ -26,8 +25,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
-                app.state::<coordinator::CoordinatorManager>().shutdown();
-                app.state::<agent::AgentManager>().shutdown();
+                app.state::<orion_studio_service::Backend>().shutdown();
             }
         });
 }

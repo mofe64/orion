@@ -15,7 +15,7 @@ pub struct Profile {
     pub memory_enabled: bool,
     pub personality_enabled: bool,
 }
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProfileChange {
     Personality {

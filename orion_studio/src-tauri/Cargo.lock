@@ -2695,14 +2695,24 @@ dependencies = [
 name = "orion-studio"
 version = "0.1.0"
 dependencies = [
- "keyring",
  "orion-agent",
- "orion-coordinator",
+ "orion-studio-service",
  "rfd",
- "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+]
+
+[[package]]
+name = "orion-studio-service"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "orion-agent",
+ "orion-coordinator",
+ "serde",
+ "serde_json",
+ "tokio",
  "url",
  "uuid",
 ]

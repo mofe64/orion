@@ -97,6 +97,10 @@ pnpm build
 pnpm tauri dev
 ```
 
+Use the [quickstart](../docs/quickstart.md) to install the background service.
+The desktop attaches to an installed headless owner; closing the UI leaves voice
+running. Without headless installed, quitting the app stops its embedded owner.
+
 `pnpm dev` runs the UI-only frontend on `http://localhost:1420`. Voice worker
 startup and other native commands require Tauri. macOS, Windows, and Linux
 packages must be built and signed on their respective target platforms.
@@ -139,7 +143,7 @@ streams.
 The Pi owns Rustpotter and microphone capture. Studio receives endpointed
 utterances over the local network, confirms them with Qwen, invokes the agent and synthesizes
 responses with Chatterbox. The top-level [`orion-agent` library](../agent/README.md)
-is compiled into Studio and owns the Codex conversation separately from the
+is owned by the shared [Studio service](../studio-service/README.md) and keeps the Codex conversation separately from the
 [`orion-coordinator`](../coordinator/README.md) pipeline. The coordinator calls
 the agent directly and owns the top-level Python speech worker. Idle voice-model
 reloads preserve the conversation.
@@ -288,7 +292,8 @@ control Orion through the existing runtime and listener interfaces.
 Codex model/effort, Qwen3 ASR and Chatterbox model IDs, optional local weight
 folders, and the model download cache save atomically to
 `~/.config/orion/voice-settings.json` on the Studio computer. Older reply settings
-migrate when loaded. Turn listening off before saving voice changes. Speech settings display the detected local cache snapshots and provide native
+migrate when loaded. Turn listening off before saving voice changes. The same native commands apply
+settings to an attached headless service. Speech settings display the detected local cache snapshots and provide native
 folder pickers for weights and the download cache. Cancel keeps the selection;
 Use default removes the override. Cached weights are reused, then loaded into
 memory when the worker starts; model IDs can check for updated revisions. Local folders

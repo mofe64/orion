@@ -15,3 +15,5 @@ voice/rustpotter_native/target/
 
 .playwright-cli/
 runtime_archive/
+
+studio-service/target/

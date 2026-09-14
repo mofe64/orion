@@ -19,8 +19,9 @@ control-client disconnects without interrupting capture or logging a traceback.
 
 The Python worker lives in [`speech/`](../speech/README.md) and receives only
 inference jobs over private pipes. The Rust agent handle is called directly;
-there is no Python agent client or agent TCP bridge. Studio remains the supplied
-launcher. A standalone headless launcher is not implemented.
+there is no Python agent client or agent TCP bridge. The shared
+[Studio service](../studio-service/README.md) launches the coordinator from the
+desktop app or standalone headless process.
 
 ## Modules
 

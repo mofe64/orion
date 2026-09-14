@@ -23,6 +23,8 @@
 
 ## Setup and validation
 
+- [Quickstart: UI, headless service, updates, and Pi deployment](quickstart.md)
+- [Studio service development and validation](../studio-service/README.md)
 - [Build and test the runtime](../runtime/README.md#build-and-test)
 - [Run the runtime in MuJoCo](../runtime/README.md#mujoco-first-daemon)
 - [MuJoCo pose editor](../simulation/mujoco/README.md#calibrated-pose-editor)

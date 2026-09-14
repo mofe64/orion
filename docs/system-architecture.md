@@ -56,11 +56,19 @@ token over HTTP; deployment currently assumes a trusted local network.
 
 ### Orion Studio
 
-Studio owns asset browsing, editing, preview, and connection state. Its Rust
-voice coordinator runs transcription and synthesis jobs through a Python speech
-worker and sends confirmed commands to the Rust agent. The agent can search the
-web, manage explicitly requested memories, and request validated lamp changes.
+Studio's UI owns asset browsing, editing, preview, and its gateway connection.
+The shared `studio-service` crate owns the agent, voice coordinator, pairing, and
+settings. Its Rust coordinator runs transcription and synthesis through a Python
+speech worker and sends confirmed commands to the Rust agent. The agent can search
+the web, manage explicitly requested memories, and request validated lamp changes.
 Lighting requests pass through the coordinator, gateway, and `oriond`.
+
+The service runs inside the desktop app or in `orion-studio-headless`. An installed
+headless owner keeps processing when the UI exits. The UI sends service commands
+through an authenticated loopback connection and observes the same coordinator.
+An OS-held lock prevents two local owners; the Pi independently permits one voice
+processing connection. See [service lifecycle](voice-architecture.md#studio-service-lifecycle)
+and [launch commands](quickstart.md).
 
 Studio can request execution of built-in and user-authored motion through the
 gateway. The agent's available tools do not include motion control. The
@@ -119,7 +127,7 @@ Orion returns to mechanical rest after ten minutes without a wake confirmation
 accepted through speech recognition. Successful initial homing arms the timer. Each current wake
 session can reset it once; raw candidates, rejected wakes, repeated
 confirmations, and ordinary animation leave the deadline unchanged.
-[Configuration](configuration.md#pi-listener-and-character-startup) describes
+[Configuration](configuration.md#pi-runtime-and-listener) describes
 the timeout option.
 
 An active confirmed conversation, including its listening window and continuation

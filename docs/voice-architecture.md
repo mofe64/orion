@@ -133,8 +133,8 @@ ended.
 
 Studio saves the paired gateway address and token in the OS credential store.
 Gateway reconnect restores status/authoring connectivity without replaying robot
-operations. Paired Studio starts its coordinator while the app is open. The listener token is reused from
-that saved connection. See [pairing configuration](configuration.md#saved-pairing).
+operations. The desktop or headless owner starts the coordinator from the saved
+pairing and reuses its token for the listener. See [pairing configuration](configuration.md#saved-pairing).
 
 The Pi listener uses plain WebSockets on port 7448 and the Pi's existing
 Studio token for authentication. Studio derives `ws://GATEWAY_HOST:7448/`
@@ -144,17 +144,14 @@ unencrypted, so this development connection is intended for a trusted LAN.
 Token authentication controls access but does not protect against network
 interception.
 
-Studio starts the top-level `orion-coordinator` library and stops it when the
-app exits. Closing the Voice panel only detaches its status connection. The
-coordinator owns Pi credentials and connects directly to the Pi; the Python
-speech worker receives only model configuration and inference jobs through its
-private stdin/stdout pipes. It has no Pi connection or agent client.
+The coordinator owns Pi credentials and connects directly to the Pi. The Python
+speech worker receives model configuration and inference jobs through private
+stdin/stdout pipes. It has no Pi connection or agent client.
 
 The coordinator exposes status through an authenticated loopback WebSocket;
 the Pi permits only one processing owner. Version 7 of the observer protocol
 rejects workstation microphone frames and UI playback claims. Pi protocol
 version 1 uses JSON session messages and length-checked PCM16 utterances.
-The existing Studio command name `start_voice_worker` starts this coordinator.
 
 The existing HTTP gateway still handles response WAV upload and robot control;
 both transports are unencrypted. Production pairing and encryption for voice
@@ -162,6 +159,41 @@ and gateway transport remain separate work.
 
 Follow [Pi voice setup](../voice/README.md) and the
 [speech worker setup](../speech/README.md#setup-on-apple-silicon).
+
+## Studio service lifecycle
+
+The shared [`studio-service`](../studio-service/README.md) crate owns the agent,
+coordinator, saved settings, and pairing access. Desktop Studio starts an embedded
+owner when headless mode is uninstalled. Installing headless mode moves this
+ownership into `orion-studio-headless`; the UI then attaches as a client. Quitting
+the UI leaves headless processing active. Quit an embedded UI session before the
+first installation so it releases its owner lock.
+
+The headless process publishes a random loopback address and token in a private
+service directory. UI commands use bounded, authenticated JSON requests over TCP.
+The existing `start_voice_worker` command returns the coordinator's protocol-7
+observer connection. Repeated starts with matching configuration reuse that
+coordinator. The service control protocol and observer protocol have separate
+versions and credentials. Pi authoring and hardware commands still use the gateway.
+
+An OS file lock prevents simultaneous local owners and is released on process
+exit, including a crash. An installation marker tells the UI to report an
+unavailable background service when it is stopped. It cannot silently create a
+replacement embedded owner. Pairing and voice settings changes are serialized
+with coordinator startup; profile edits use the agent's existing request queue.
+
+On startup, headless reads saved pairing and settings. It retries a stopped
+coordinator every five seconds; the coordinator handles Pi network reconnection.
+SIGTERM stops the coordinator, cancels its speech run, and shuts down the agent
+and speech child. Restarting the process starts a fresh agent conversation while
+preserving saved memory and personality.
+
+The macOS LaunchAgent starts after login and restarts a crashed process. Updates
+prepare and test a complete release before stopping the old owner, switching the
+active symlink, and starting through launchd. Startup failure restores the previous
+release and registration. A responsive control service confirms process startup;
+voice readiness also depends on pairing, models, Codex, and the Pi. See the
+[quickstart](quickstart.md) for commands and login constraints.
 
 ## Agent and physical boundary
 

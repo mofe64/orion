@@ -2,7 +2,8 @@
 
 `orion-agent` owns Orion's Codex conversation, instructions, runtime discovery,
 and spoken-response handling. It has no Tauri, audio-model, gateway, or hardware
-dependencies. Studio keeps it alive independently of the voice coordinator.
+dependencies. The [Studio service](../studio-service/README.md) keeps it alive
+independently of the voice coordinator in desktop and headless modes.
 
 `AgentService::start(AgentConfig)` starts an independent executor. Pass its
 cloneable `service.handle()` to the [coordinator](../coordinator/README.md).
