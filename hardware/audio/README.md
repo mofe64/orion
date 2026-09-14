@@ -98,6 +98,28 @@ The runtime applies the same mixer contract when its physical WAV backend is
 opened, so source-run development does not depend on a system boot service or
 a globally stored ALSA snapshot.
 
+On Pi desktop installations, WirePlumber can probe the same card after Orion
+starts and reset PCM to `-23.5 dB`. The Pi service installer installs
+`90-orion-respeaker.conf` under `/etc/wireplumber/wireplumber.conf.d/` to exclude
+the commissioned Pi 5 ReSpeaker device from WirePlumber 0.5. Orion's direct
+ALSA playback and capture remain available; desktop applications no longer
+see this card. HDMI audio is unaffected.
+
+To apply this fix to an existing Pi without rebooting, run as the desktop user
+from the Orion checkout:
+
+```bash
+sudo install -D -m 0644 hardware/audio/90-orion-respeaker.conf \
+  /etc/wireplumber/wireplumber.conf.d/90-orion-respeaker.conf
+systemctl --user restart wireplumber
+hardware/audio/configure-playback.sh
+```
+
+Check that `amixer -c seeed2micvoicec sget PCM` reports `0.00dB` on both
+channels and that `wpctl status -n` does not list the ReSpeaker device
+`alsa_card.platform-soc_107c000000_sound`. The device-name match is specific
+to the commissioned Pi 5 overlay; recheck it when changing boards or overlays.
+
 Orion also keeps the confirmed dual-microphone capture route as a repeatable
 command:
 

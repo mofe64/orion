@@ -26,6 +26,12 @@ for command in sed install systemctl sudo mktemp; do
 done
 sudo -v
 
+# Keep the Pi desktop audio manager from changing Orion's hardware mixer.
+# WirePlumber 0.5 reads this fragment at its next start (including reboot).
+sudo install -D -o root -g root -m 0644 \
+  "${project_root}/hardware/audio/90-orion-respeaker.conf" \
+  /etc/wireplumber/wireplumber.conf.d/90-orion-respeaker.conf
+
 template_directory="${project_root}/scripts/systemd"
 temporary_directory="$(mktemp -d)"
 cleanup() {
