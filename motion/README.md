@@ -21,16 +21,14 @@ consumes the exported 50 Hz sample document.
 
 ## Canonical documentation
 
-- [Motion asset reference](../docs/reference/motion-assets.md) — pose and
+- [Motion asset reference](../docs/motion-assets.md) — pose and
   motion schemas, styles, catalog, and validation invariants.
-- [Motion and animation architecture](../docs/explanation/motion-and-animation-architecture.md)
+- [Motion and animation architecture](../docs/motion-and-animation-architecture.md)
   — how intent becomes a physical action.
-- [Character animation design](../docs/explanation/character-animation.md) —
+- [Character animation design](../docs/character-animation.md) —
   the 12 principles, idle behavior, and speech performance.
-- [Trajectory and joint-control reference](../docs/reference/trajectory-and-joint-control.md)
+- [Trajectory and joint-control reference](../docs/trajectory-and-joint-control.md)
   — compiler, runtime, calibration, and servo details.
-- [Author and validate motion](../docs/how-to/author-and-validate-motion.md) —
-  the required engineering workflow.
 
 ## Compile a portable trajectory
 

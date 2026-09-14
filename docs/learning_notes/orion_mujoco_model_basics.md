@@ -544,7 +544,7 @@ The adapter keeps the free root unactuated and uses measured simulated state
 for completion and stability checks.
 
 The shared movement path is explained in
-[Motion and animation architecture](../explanation/motion-and-animation-architecture.md).
+[Motion and animation architecture](../motion-and-animation-architecture.md).
 
 ## Quick Reference
 

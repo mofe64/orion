@@ -18,10 +18,11 @@ adapter, verifies the wake model, and installs the services. It requires an
 existing calibrated Pi with the [ReSpeaker driver](../hardware/audio/README.md)
 and Rust toolchain. The deployment includes physical movement tests.
 
-Prepare the Mac worker using the [Studio Voice setup](../docs/tutorials/first-studio-voice-run.md).
+Prepare the Mac worker using the [speech worker setup](../speech/README.md#setup-on-apple-silicon).
 Open Studio manually and pair it with Orion to run voice processing.
 Pi capture defaults on unless explicitly muted. If Studio is unavailable after
-capture ends, Orion plays its error cue and returns to listening.
+capture ends, awake Orion plays its error cue and returns to listening. Resting
+Orion stays dark and silent until confirmation is available.
 
 ## Runtime
 
@@ -36,15 +37,19 @@ Capture opens with the listener service and survives processing disconnects.
 **Mute Orion microphone** closes capture, clears buffered audio and saves mute
 across restarts; Character Stop controls animation separately.
 
+[Automatic rest](../docs/system-architecture.md#automatic-rest-and-waking) leaves capture running.
+Deploy the listener and runtime together: every ASR-confirmed wake is forwarded
+to `oriond`, even without a usable microphone direction.
+
 Say “Hey Orion” followed by a request, or pause after the wake phrase and then
 speak. Qwen rejects unconfirmed wake candidates before they reach the agent.
 After a successful reply, wait for the soft teal pulse and continue without
 "Hey Orion". The invitation closes after five seconds without speech; the next
 request then needs the wake phrase. A silent echo guard precedes the pulse.
-See [conversation timing and limitations](../docs/explanation/voice-architecture.md#capture-ownership-and-session-lifecycle).
+See [conversation timing and limitations](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
 
 Endpoint decisions use background-relative, DC-corrected energy without
-altering captured audio. See the [endpoint rules](../docs/explanation/voice-architecture.md#capture-ownership-and-session-lifecycle).
+altering captured audio. See the [endpoint rules](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
 Allow a short quiet interval after enabling capture before the first wake.
 The listener logs `voice.endpoint` with the frozen threshold, capture time,
 and `silence` or `max_duration` reason; it does not log audio or transcripts.
@@ -92,8 +97,8 @@ have been measured. Settings live in `~/.config/orion/voice.env`:
 `ORION_MIC_SPACING` is the distance in metres and `ORION_CHANNEL_SIGN` is `1`
 or `-1`. Both default to zero. Restart the listener after changing them.
 
-Use the [attention setup and constraints](../docs/explanation/voice-attention.md)
-and [physical validation procedure](../docs/how-to/validate-character-v2.md)
+Review the [direction evidence and constraints](../docs/voice-architecture.md#direction-evidence)
+and [runtime attention behavior](../runtime/README.md#character-startup-and-voice-attention)
 before enabling directional motion.
 
 ## Intermediate tool speech

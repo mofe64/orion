@@ -15,8 +15,7 @@ uv sync --python 3.12 --locked
 .venv/bin/orion-voice-models
 ```
 
-Weights live in the Hugging Face cache, not this directory. See
-[model management](../docs/how-to/manage-studio-voice-models.md).
+Weights live in the Hugging Face cache, not this directory.
 After moving an existing checkout, run `uv sync` here to refresh editable-package
 paths and console scripts. Studio defaults to `speech/.venv/bin/python`.
 

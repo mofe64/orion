@@ -66,7 +66,9 @@ Any enabled state ── character stop ──▶ ShuttingDown ──▶ Off
 
 Starting character mode applies the servo profile if necessary, enables holding torque, moves to `home` pose, and captures a measured anchor. Stopping character mode cancels owned foreground and speech work, returns to `home`,
 clears character lighting, and leaves powered holding torque on. Moving to
-mechanical `rest` and releasing torque are separate, explicit operations.
+mechanical `rest` and releasing torque remain separate low-level operations.
+The [automatic rest coordinator](system-architecture.md#automatic-rest-and-waking) sequences them after
+inactivity or Studio's **Go to rest**, releasing torque only after measured arrival.
 
 The priority order prevents competing performances:
 
@@ -335,11 +337,11 @@ Before adding an asset, answer these questions:
 9. What should happen on interruption, timeout, or cancellation?
 10. What MuJoCo and physical evidence will establish that the acting reads?
 
-Then use [Author and validate motion](../how-to/author-and-validate-motion.md)
-and update the [catalog animation review](../reference/animation-principles-review.md)
-as part of the same change.
+Update the [animation catalogue](orion-animation-catalogue.md) as part of the
+same change.
 ## Voice attention
 
 Confirmed Pi voice sessions can request restrained absolute attention turns.
-The [attention brief](voice-attention.md) defines their 12-principles and ELEGNT
-staging, temporary anchor, quiet hold, return timing and interruption rules.
+See the [animation catalogue](orion-animation-catalogue.md#motion-review) for
+staging and the [runtime attention contract](../runtime/README.md#character-startup-and-voice-attention)
+for anchor, return timing, and interruption behavior.

@@ -29,7 +29,7 @@ flowchart TD
 
 The diagram separates responsibilities; the compiler is called by the core while preparing a movement. It is not another independently scheduled character service.
 
-Sources: [voice architecture](docs/explanation/voice-architecture.md), [daemon loop](runtime/src/app/server.rs), [runtime core](runtime/src/control/core.rs), and [motion architecture](docs/explanation/motion-and-animation-architecture.md).
+Sources: [voice architecture](docs/voice-architecture.md), [daemon loop](runtime/src/app/server.rs), [runtime core](runtime/src/control/core.rs), and [motion architecture](docs/motion-and-animation-architecture.md).
 
 ### The runtime's application layout
 
@@ -37,7 +37,7 @@ The character implementation lives in [expression/character.rs](runtime/src/expr
 
 The thin `runtime/src/main.rs` delegates to the application module. [app/server.rs](runtime/src/app/server.rs) owns startup and the daemon loop, while [app/commands.rs](runtime/src/app/commands.rs) dispatches commands. The control, motion, device, expression, and IPC modules supply those application operations.
 
-Deployment builds the package in `runtime/`. See [runtime instructions](runtime/README.md) for build and operation commands and [implementation status](docs/project/status.md) for product and physical-acceptance scope.
+Deployment builds the package in `runtime/`. See [runtime instructions](runtime/README.md) for build and operation commands.
 
 ### What happens during each application update
 
@@ -875,9 +875,8 @@ Keep numbers attached to their units and conditions. Say “authored travel dura
 | [motion styles](runtime/src/motion/style.rs) | Exact tempo, amplitude, and interpolation settings. |
 | [trajectory compiler](runtime/src/motion/trajectory.rs) | Travel/hold timing, interpolation, segment indices, constraints, and retiming. |
 | [Authored speech motions](motion/motions/speaking) | Source gesture shapes from which the composer borrows its first targets. |
-| [Voice architecture](docs/explanation/voice-architecture.md) | The Pi, Studio, voice processing, and runtime application boundaries. |
-| [Motion and animation architecture](docs/explanation/motion-and-animation-architecture.md) | How authoring, character behavior, and motion execution fit together. |
-| [Trajectory and joint control reference](docs/reference/trajectory-and-joint-control.md) | Broader movement terminology and control constraints. |
-| [Project status](docs/project/status.md) | Implemented, partial, planned, and physical-acceptance scope beyond these unit tests. |
+| [Voice architecture](docs/voice-architecture.md) | The Pi, Studio, voice processing, and runtime application boundaries. |
+| [Motion and animation architecture](docs/motion-and-animation-architecture.md) | How authoring, character behavior, and motion execution fit together. |
+| [Trajectory and joint control reference](docs/trajectory-and-joint-control.md) | Broader movement terminology and control constraints. |
 
 Use symbol names to locate the implementation when comments move line numbers. If the code changes after the check date, recheck the affected formulas, selection rules, lifecycle transitions, and tests before presenting them as facts about the later version.

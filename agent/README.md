@@ -13,8 +13,8 @@ Dropping an active call cancels it; dropping the service shuts down Codex.
 The first call starts an installed `codex app-server` process, checks its account
 and model catalog, and creates an ephemeral conversation. Successful calls reuse
 it. Keep the service alive when restarting the coordinator or reloading speech
-models. See [conversation lifecycle](../docs/explanation/voice-architecture.md#agent-conversation-and-memory)
-and [runtime discovery](../docs/reference/configuration.md#orion-studio).
+models. See [conversation lifecycle](../docs/voice-architecture.md#agent-conversation-and-memory)
+and [runtime discovery](../docs/configuration.md#orion-studio).
 
 The crate groups code by responsibility:
 

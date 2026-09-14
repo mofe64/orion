@@ -5,19 +5,19 @@ environment variables.
 
 ## Orion Studio
 
-`ASR` means automatic speech recognition, and `TTS` means text-to-speech.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ORION_PROJECT_ROOT` | Resolved from the Tauri crate during development | Points a packaged or relocated Studio build at an Orion checkout |
-| `ORION_STUDIO_VOICE_PYTHON` | `speech/.venv/bin/python` on macOS | Overrides the Python executable used to start the voice worker |
-| `ORION_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-0.6B` | Qwen3-ASR repository ID or compatible local model path |
-| `ORION_STUDIO_TTS_MODEL` | `mlx-community/chatterbox-turbo-8bit` | Chatterbox repository ID or compatible local model path |
-| `ORION_PI_VOICE_URL` | `ws://GATEWAY_HOST:7448/` | Pi listener endpoint |
-| `ORION_SOUL_PATH` | `$HOME/.local/share/orion/SOUL.md` | Generated personality selections owned by the Rust agent; created on first save |
-| `ORION_MEMORY_PATH` | `$HOME/.local/share/orion/MEMORY.md` | Delimited persistent memory file owned by the Rust agent |
-| `ORION_STUDIO_CODEX_BIN` | First installed runtime advertising the selected model and effort | Explicit executable override; when set, automatic fallback is disabled |
-| `HF_HOME` | Hugging Face platform default | Relocates the model cache when set for both downloader and Studio |
+| Variable                    | Default                                                           | Purpose                                                                         |
+| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `ORION_PROJECT_ROOT`        | Resolved from the Tauri crate during development                  | Points a packaged or relocated Studio build at an Orion checkout                |
+| `ORION_STUDIO_VOICE_PYTHON` | `speech/.venv/bin/python` on macOS                                | Overrides the Python executable used to start the voice worker                  |
+| `ORION_STUDIO_ASR_MODEL`    | `Qwen/Qwen3-ASR-0.6B`                                             | Qwen3-ASR repository ID or compatible local model path                          |
+| `ORION_STUDIO_TTS_MODEL`    | `mlx-community/chatterbox-turbo-8bit`                             | Chatterbox repository ID or compatible local model path                         |
+| `ORION_PI_VOICE_URL`        | `ws://GATEWAY_HOST:7448/`                                         | Pi listener endpoint                                                            |
+| `ORION_SOUL_PATH`           | `$HOME/.local/share/orion/SOUL.md`                                | Generated personality selections owned by the Rust agent; created on first save |
+| `ORION_MEMORY_PATH`         | `$HOME/.local/share/orion/MEMORY.md`                              | Delimited persistent memory file owned by the Rust agent                        |
+| `ORION_STUDIO_CODEX_BIN`    | First installed runtime advertising the selected model and effort | Explicit executable override; when set, automatic fallback is disabled          |
+| `HF_HOME`                   | Hugging Face platform default                                     | Relocates the model cache when set for both downloader and Studio               |
+
 
 Choose the reply model and reasoning effort in Studio’s Voice → Reply model section.
 The defaults are `gpt-5.6-sol` and `medium`; preferences are saved in `~/.config/orion/voice-settings.json` and
@@ -73,11 +73,13 @@ still requires platform validation.
 The deployment script accepts command-line flags or these environment
 variables:
 
-| Variable | Default | Equivalent flag |
-| --- | --- | --- |
-| `ORION_PI_HOST` | `mofe@orion.local` | `--host USER@HOST` |
-| `ORION_PI_ROOT` | `/home/mofe/dev/orion` | `--root PATH` |
-| `ORION_PI_BRANCH` | `main` | `--branch BRANCH` |
+
+| Variable          | Default                | Equivalent flag    |
+| ----------------- | ---------------------- | ------------------ |
+| `ORION_PI_HOST`   | `mofe@orion.local`     | `--host USER@HOST` |
+| `ORION_PI_ROOT`   | `/home/mofe/dev/orion` | `--root PATH`      |
+| `ORION_PI_BRANCH` | `main`                 | `--branch BRANCH`  |
+
 
 Explicit flags replace environment values. The script validates the target,
 path, and branch before opening SSH and never disables host-key checking.
@@ -89,6 +91,8 @@ scripts/deploy_pi.sh \
   --branch main
 ```
 
+
+
 ## Runtime command options
 
 `oriond` uses command-line options rather than environment variables for its
@@ -99,7 +103,7 @@ and start pose. Run:
 runtime/target/release/oriond --help
 ```
 
-See [runtime commands](../../runtime/README.md) for the normal MuJoCo and
+See [runtime commands](../runtime/README.md) for the normal MuJoCo and
 hardware sequences. The ReSpeaker card, RGBW dimensions, GPIO, and executable
 paths are compiled into the runtime and cannot be overridden through the
 environment.
@@ -110,11 +114,16 @@ The listener's `--wake-model` defaults to `voice/models/wake/hey_orion_reference
 and `--threshold` defaults to 0.400. They are Pi settings; Studio has no wake
 model settings. Service microphone geometry uses `ORION_MIC_SPACING` (metres)
 and `ORION_CHANNEL_SIGN` (-1 or 1) from `~/.config/orion/voice.env`; zero defaults
-disable direction estimation pending commissioning. See [Pi voice setup](../../voice/README.md).
+disable direction estimation pending commissioning. See [Pi voice setup](../voice/README.md).
 
 `oriond --serve` defaults to `--character-on-start on`. Select `off` explicitly
 for torque-off maintenance startup. Studio Stop affects the current daemon
 session, not the next restart.
+
+`--rest-after-seconds SECONDS` sets the inactivity timeout (default `600`). It
+requires a finite positive number; short values support simulator tests. Only
+accepted ASR wake confirmations reset it. See [automatic rest](system-architecture.md#automatic-rest-and-waking)
+for foreground priority, maintenance, light, and torque rules.
 
 The listener's `--mute-file` defaults to `~/.config/orion/microphone.json`.
 Absent a saved preference, capture starts enabled. The authenticated protocol-1

@@ -5,23 +5,23 @@ and acts as the external voice processing and agent runtime.
 
 ## Start here
 
-- [Understand the system](docs/explanation/system-architecture.md) — component
+- [Understand the system](docs/system-architecture.md) — component
   boundaries, data flow, and safety ownership.
-- [Understand motion and animation](docs/explanation/motion-and-animation-architecture.md)
+- [Understand motion and animation](docs/motion-and-animation-architecture.md)
   — character intent, continuous trajectories, runtime execution, and joint
   control.
-- [Understand character animation](docs/explanation/character-animation.md) —
+- [Understand character animation](docs/character-animation.md) —
   the 12 principles, autonomous idle, and speech-driven performance.
-- [Build and run the simulator](docs/tutorials/first-runtime-run.md) — the
-  shortest hardware-free path to a working Orion runtime.
-- [Run Orion Studio](docs/tutorials/first-studio-run.md) — install the desktop
+- [Build the runtime](runtime/README.md#build-and-test) and
+  [run it in MuJoCo](runtime/README.md#mujoco-first-daemon).
+- [Run Orion Studio](orion_studio/README.md#development) — install the desktop
   dependencies and open the application.
-- [Set up Studio Voice](docs/tutorials/first-studio-voice-run.md) — install the
-  local worker, pre-download its models, and test the complete voice path.
+- [Set up Studio Voice](speech/README.md#setup-on-apple-silicon) — install the
+  inference worker and models, then [connect Pi capture](voice/README.md#setup).
 - [Deploy to the Raspberry Pi](runtime/README.md#deploy-an-update-to-the-raspberry-pi)
   — update the source-backed services and run the bounded hardware smoke test.
-- [Browse all documentation](docs/README.md) — tutorials, how-to guides,
-  explanations, reference material, project status, and learning notes.
+- [Browse all documentation](docs/README.md) — architecture, reference material,
+  component setup, and learning notes.
 
 ## System at a glance
 
@@ -55,7 +55,7 @@ runs Rustpotter and forwards bounded utterances over the local network; Studio c
 wake with Qwen3-ASR, invokes the configured agent, and synthesizes replies with
 Chatterbox. Studio provides the compute for speech recognition, the agent, and
 expressive synthesis; the Pi plays replies and owns character animation. See the
-[voice architecture](docs/explanation/voice-architecture.md) and
+[voice architecture](docs/voice-architecture.md) and
 [Pi setup](voice/README.md).
 
 ## Repository map
@@ -74,7 +74,7 @@ expressive synthesis; the Pi plays replies and owns character animation. See the
 | `hardware/` | Commissioning and operating instructions for servos, audio, and lighting |
 | `voice/` | Pi microphone capture, Rustpotter wake detection, and Studio transport |
 | `audio/` | Named local audio cues |
-| `docs/` | Cross-system documentation, project status, decisions, and learning material |
+| `docs/` | Cross-system architecture, configuration, animation references, and learning notes |
 
 
 ## Common validation commands
@@ -107,10 +107,10 @@ they do not require changing the operating system interpreter.
 ## Implementation status
 
 Orion implements the runtime, simulator, Pi hardware path, scene system, Studio
-authoring and gateway, and Studio speech-response pipeline. Deterministic
-agent-to-robot capability routing is planned. Production network pairing,
+authoring and gateway, and Studio speech-response pipeline. Allowlisted agent
+lighting commands are implemented; broader agent motion capabilities are planned. Production network pairing,
 packaged voice models, and non-Apple-Silicon Studio inference remain partial.
-See [project status](docs/project/status.md) for each capability boundary.
+Component READMEs describe setup, validation, and remaining platform constraints.
 
 ## Safety
 

@@ -5,11 +5,22 @@ Rust-compiled joint targets, 50 Hz lifecycle, markers, cancellation, and
 measured-settling logic as the hardware runtime. It adds physics and diagnostic
 reporting; it does not own a second interpolation algorithm.
 
-Read the [motion and animation architecture](../../docs/explanation/motion-and-animation-architecture.md)
-and [trajectory and joint-control reference](../../docs/reference/trajectory-and-joint-control.md)
-before changing the backend or motion-player contract. Follow
-[Author and validate Orion motion](../../docs/how-to/author-and-validate-motion.md)
-for the complete engineering workflow.
+Read the [motion and animation architecture](../../docs/motion-and-animation-architecture.md)
+and [trajectory and joint-control reference](../../docs/trajectory-and-joint-control.md)
+before changing the backend or motion-player contract.
+
+## Python environment
+
+From the Orion repository root, create the simulator environment and install
+its dependencies:
+
+```bash
+uv venv .venv --python 3.12
+uv pip install --python .venv/bin/python \
+  -r simulation/mujoco/requirements.txt pytest
+```
+
+The runtime uses `.venv/bin/python` for the MuJoCo bridge by default.
 
 ## Calibrated pose editor
 
@@ -17,8 +28,8 @@ for the complete engineering workflow.
 separate from `pose_tuner.py`: the editor browses and saves the canonical pose
 library, while the tuner remains a non-writing numeric development tool.
 
-Prepare the [repository Python environment](../../docs/tutorials/first-runtime-run.md#1-create-the-simulator-environment),
-then run these commands from the Orion repository root. Validate the model,
+Prepare the [Python environment](#python-environment), then run the commands
+below from the Orion repository root. Validate the model,
 calibration, and every pose without opening windows:
 
 ```bash

@@ -57,18 +57,22 @@ poses:
       head_pitch_joint: -0.04
 ```
 
+
+
 ### Pose fields
 
-| Field | Required | Contract |
-| --- | --- | --- |
-| `format_version` | Yes | Integer `2` |
-| `units` | No | If present, must be `radians` |
-| `poses` | Yes | Non-empty mapping keyed by unique semantic names |
-| `description` | No | Human-readable intent and silhouette |
-| `tags` | No | Semantic-name list used for lifecycle and catalog policy |
-| `idle_profile` | No | Semantic profile used by character idle selection |
-| `default_lighting` | No | Must name a built-in lighting effect |
-| `positions` | Yes | Exactly one finite radian value for every Orion joint |
+
+| Field              | Required | Contract                                                 |
+| ------------------ | -------- | -------------------------------------------------------- |
+| `format_version`   | Yes      | Integer `2`                                              |
+| `units`            | No       | If present, must be `radians`                            |
+| `poses`            | Yes      | Non-empty mapping keyed by unique semantic names         |
+| `description`      | No       | Human-readable intent and silhouette                     |
+| `tags`             | No       | Semantic-name list used for lifecycle and catalog policy |
+| `idle_profile`     | No       | Semantic profile used by character idle selection        |
+| `default_lighting` | No       | Must name a built-in lighting effect                     |
+| `positions`        | Yes      | Exactly one finite radian value for every Orion joint    |
+
 
 A semantic name is non-empty and contains only ASCII letters, digits,
 underscore, or hyphen.
@@ -80,7 +84,7 @@ Tags communicate intended use:
 - `powered` identifies poses safe to hold with torque enabled.
 - `idle_anchor` identifies stable character silhouettes.
 - `transition` identifies a drawing used inside an action rather than held as
-  ambient state.
+ambient state.
 - `authored_overshoot` documents intentional target overshoot.
 - `shutdown_only` and `mechanical` reserve `rest` for supported torque release.
 - `calibration_reference` reserves `zero_reference` for commissioning.
@@ -117,34 +121,44 @@ motion:
       marker: settled
 ```
 
+
+
 ### Motion fields
 
-| Field | Required | Contract |
-| --- | --- | --- |
-| `format_version` | Yes | Integer `2` |
-| `motion` | Yes | One motion mapping |
-| `name` | Yes | Unique semantic name |
-| `description` | No | User-facing purpose and acting intent |
-| `space` | Yes | `absolute` or `anchor_relative` |
-| `style` | Yes | One named style from the table below |
+
+| Field              | Required      | Contract                                                           |
+| ------------------ | ------------- | ------------------------------------------------------------------ |
+| `format_version`   | Yes           | Integer `2`                                                        |
+| `motion`           | Yes           | One motion mapping                                                 |
+| `name`             | Yes           | Unique semantic name                                               |
+| `description`      | No            | User-facing purpose and acting intent                              |
+| `space`            | Yes           | `absolute` or `anchor_relative`                                    |
+| `style`            | Yes           | One named style from the table below                               |
 | `return_to_anchor` | Relative only | Must be `true` for relative motion; prohibited for absolute motion |
-| `keyframes` | Yes | Non-empty ordered list |
+| `keyframes`        | Yes           | Non-empty ordered list                                             |
+
+
+
 
 ### Keyframe fields
 
-| Field | Required | Contract |
-| --- | --- | --- |
-| `pose` | Absolute only | Existing named pose; `offsets` must be absent |
-| `offsets` | Relative only | Partial finite joint map; `pose` must be absent; omitted joints mean zero |
-| `duration` | Yes | Finite seconds greater than zero before style tempo is applied |
-| `arrival` | Yes | `through` or `settle` |
-| `hold` | No | Finite, non-negative seconds; greater than zero only with `settle` |
-| `marker` | No | Unique semantic name reached at the compiled arrival time |
+
+| Field      | Required      | Contract                                                                  |
+| ---------- | ------------- | ------------------------------------------------------------------------- |
+| `pose`     | Absolute only | Existing named pose; `offsets` must be absent                             |
+| `offsets`  | Relative only | Partial finite joint map; `pose` must be absent; omitted joints mean zero |
+| `duration` | Yes           | Finite seconds greater than zero before style tempo is applied            |
+| `arrival`  | Yes           | `through` or `settle`                                                     |
+| `hold`     | No            | Finite, non-negative seconds; greater than zero only with `settle`        |
+| `marker`   | No            | Unique semantic name reached at the compiled arrival time                 |
+
 
 The final keyframe must use `settle`. The final relative keyframe must have no
 non-zero offsets.
 
 ## Absolute and relative target resolution
+
+
 
 ### Absolute motion
 
@@ -173,6 +187,8 @@ it cannot establish another anchor.
 
 ## Arrival semantics
 
+
+
 ### `through`
 
 The compiler derives internal velocity and acceleration from the neighboring
@@ -191,32 +207,37 @@ retimed keyframe arrival so scene light and audio remain synchronized.
 
 ## Motion styles
 
-Rust defines styles as compiled constants. They are artistic policy and contain
-no calibration or motor limits.
+We defines styles as compiled constants. They are artistic policy and contain no calibration or motor limits.
 
-| Style | Tempo | Tangent tension | Joint lag | Amplitude | Overshoot scale | Settle character | Intended use |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `living_idle` | 0.82 | 0.38 | 0.18 | 0.90 | 0.00 | 0.85 | Unhurried low-amplitude ambient motion |
-| `attentive` | 1.08 | 0.58 | 0.12 | 1.00 | 0.15 | 0.58 | Upward attentive entry and hold detail |
-| `expressive_turn` | 1.00 | 0.72 | 0.22 | 1.00 | 1.00 | 0.62 | Anticipation, lean, authored overshoot, settle |
-| `speaking_calm` | 0.72 | 0.42 | 0.16 | 0.95 | 0.00 | 0.82 | Restrained conversational source clips |
-| `speaking_emphatic` | 1.12 | 0.62 | 0.12 | 1.00 | 0.18 | 0.62 | Generated utterance performance and phrase emphasis |
-| `thinking` | 0.68 | 0.36 | 0.24 | 0.62 | 0.08 | 0.88 | Slow asymmetric thought |
-| `quick_reaction` | 1.34 | 0.70 | 0.08 | 0.92 | 0.24 | 0.48 | Short decisive acknowledgement |
-| `return_home` | 0.74 | 0.32 | 0.20 | 1.00 | 0.00 | 1.00 | Weighted final return |
+
+| Style               | Tempo | Tangent tension | Joint lag | Amplitude | Overshoot scale | Settle character | Intended use                                        |
+| ------------------- | ----- | --------------- | --------- | --------- | --------------- | ---------------- | --------------------------------------------------- |
+| `living_idle`       | 0.82  | 0.38            | 0.18      | 0.90      | 0.00            | 0.85             | Unhurried low-amplitude ambient motion              |
+| `attentive`         | 1.08  | 0.58            | 0.12      | 1.00      | 0.15            | 0.58             | Upward attentive entry and hold detail              |
+| `expressive_turn`   | 1.00  | 0.72            | 0.22      | 1.00      | 1.00            | 0.62             | Anticipation, lean, authored overshoot, settle      |
+| `speaking_calm`     | 0.72  | 0.42            | 0.16      | 0.95      | 0.00            | 0.82             | Restrained conversational source clips              |
+| `speaking_emphatic` | 1.12  | 0.62            | 0.12      | 1.00      | 0.18            | 0.62             | Generated utterance performance and phrase emphasis |
+| `thinking`          | 0.68  | 0.36            | 0.24      | 0.62      | 0.08            | 0.88             | Slow asymmetric thought                             |
+| `quick_reaction`    | 1.34  | 0.70            | 0.08      | 0.92      | 0.24            | 0.48             | Short decisive acknowledgement                      |
+| `return_home`       | 0.74  | 0.32            | 0.20      | 1.00      | 0.00            | 1.00             | Weighted final return                               |
+
 
 Interpretation:
 
 - A higher `tempo` shortens authored segment duration.
 - `tangent_tension` scales internal derivative energy.
 - `joint_lag` changes derivative character across the ordered joint chain; it
-  is not a separate scheduler delay.
+is not a separate scheduler delay.
 - `amplitude` scales anchor-relative offsets.
 - `overshoot_scale` affects internal acceleration character; it never creates
-  permission to leave the interval between authored segment endpoints.
+permission to leave the interval between authored segment endpoints.
 - `settle_character` changes the timing weight of settle segments.
 
+
+
 ## Built-in motion catalog
+
+
 
 ### Expressive
 
@@ -231,11 +252,15 @@ Interpretation:
 - `delight_lift`
 - `thinking_shift`
 
+
+
 ### Functional
 
 - `look_at_left`
 - `look_at_right`
 - `return_home`
+
+
 
 ### Idle
 
@@ -247,6 +272,8 @@ Interpretation:
 - `idle_soft_head_shake`
 - `idle_attentive_hold`
 - `idle_directional_hold`
+
+
 
 ### Speaking source drawings
 
@@ -265,15 +292,15 @@ Validation happens in this order:
 
 1. Serde rejects unknown fields and malformed types.
 2. Pose loading checks version, units, names, complete joints, finite values,
-   metadata, and duplicate names.
+  metadata, and duplicate names.
 3. Motion loading checks version, names, styles, space-specific fields,
-   durations, holds, markers, final settle, and anchor return.
+  durations, holds, markers, final settle, and anchor return.
 4. `RuntimeCore` validates all absolute pose and motion targets against the
-   active driver limits at startup and transactional reload.
+  active driver limits at startup and transactional reload.
 5. Relative targets are uniformly scaled and validated when instantiated
-   around a concrete anchor.
+  around a concrete anchor.
 6. The trajectory compiler validates full joint maps, derivative inputs,
-   calibration containment, and motor-speed retiming.
+  calibration containment, and motor-speed retiming.
 
 No loader silently drops an invalid field, clips an authored absolute target,
 or substitutes a missing pose.

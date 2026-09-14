@@ -7,15 +7,15 @@ profile, 50 Hz state snapshots, the Pi 5 red-green-blue-white (RGBW) output
 backend, ReSpeaker V2 WAV playback, character coordination, and multimodal
 scenes.
 
-See the [system architecture](../docs/explanation/system-architecture.md) for
+See the [system architecture](../docs/system-architecture.md) for
 workstation/Pi boundaries and device ownership.
 
 For movement internals, use the canonical cross-system documents:
 
-- [Motion and animation architecture](../docs/explanation/motion-and-animation-architecture.md)
-- [Character animation design](../docs/explanation/character-animation.md)
-- [Trajectory and joint-control reference](../docs/reference/trajectory-and-joint-control.md)
-- [Motion asset reference](../docs/reference/motion-assets.md)
+- [Motion and animation architecture](../docs/motion-and-animation-architecture.md)
+- [Character animation design](../docs/character-animation.md)
+- [Trajectory and joint-control reference](../docs/trajectory-and-joint-control.md)
+- [Motion asset reference](../docs/motion-assets.md)
 
 The physical transport uses
 [`rustypot`](https://github.com/pollen-robotics/rustypot) for the STS3215
@@ -38,12 +38,23 @@ cargo test --manifest-path runtime/Cargo.toml --doc --locked
 python3 -m unittest discover -s runtime/tests -p 'test_*.py' -v
 ```
 
-The tests cover the complete runtime contract and launch Orion's native MuJoCo
-model through the same Rust daemon state machine used by hardware.
-MuJoCo tests expect the repository Python environment at `.venv/bin/python`.
-The daemon smoke tests use this package's built `oriond`, private temporary
-Unix sockets, and recording audio and lighting. They exercise default startup,
-maintenance startup, command handling, and movement/scene completion.
+Component tests live beside their Rust implementations. Rest policy tests use
+explicit clock values and injected driver failures; app tests check command
+validation and session ownership without reproducing the server loop.
+
+Integration tests live in `tests/` and send commands to the built `oriond` through
+private temporary Unix sockets. `test_daemon.py` covers startup, maintenance,
+command handling, and movement/scene completion. `test_rest.py` covers automatic
+rest, confirmation during descent, attention freshness, speech ordering, and
+fault handling through the real server loop. Both share process and socket
+helpers in `daemon_support.py` and use recording audio and lighting.
+
+The deterministic following driver verifies software coordination, including
+injected stalled movement and torque-release failure. It does not model physics.
+Native MuJoCo tests use the tracked model and expect the
+[simulator Python environment](../simulation/mujoco/README.md#python-environment)
+at `.venv/bin/python`. Physical rest/wake acceptance remains separate;
+see the [rest/wake integration tests](tests/test_rest.py).
 Set `ORION_TEST_BIN_DIR` to an absolute binary directory to test a release build.
 
 ## Deploy an update to the Raspberry Pi
@@ -94,6 +105,13 @@ current daemon session. Use `--character-on-start off` for maintenance that
 must remain torque-off; in that mode, an explicit movement request can prepare
 and enable the servos. Use **Release torque** only after mechanical rest is
 confirmed.
+
+Character startup arms [automatic rest and confirmed waking](../docs/system-architecture.md#automatic-rest-and-waking).
+`--rest-after-seconds` configures the inactivity deadline. Studio's **Go to rest**
+also follows measured rest completion, fades the light off, and releases torque.
+Character Stop and low-level `goto rest` retain their separate contracts.
+Native MuJoCo's captured-rest contact mismatch is covered by the
+[rest/wake integration tests](tests/test_rest.py); a failed rest run keeps torque enabled.
 
 Logs are owned by journald:
 
@@ -273,6 +291,7 @@ trials.
 | `src/devices/mujoco.rs` and `mujoco_bridge.py` | Simulator driver and its Python worker. |
 | `src/devices/audio.rs` and `src/devices/lighting.rs` | Local sound and RGBW device implementations. |
 | `src/expression/` | Character behavior, scenes, speech, voice feedback, and lamp programs. |
+| `src/expression/rest.rs` | Inactivity deadline, rest/wake completion, voice readiness, and light gating. |
 | `src/ipc/socket.rs` | Private Unix command transport. |
 | `src/bin/orion-trajectory.rs` | Shared trajectory export executable. |
 
@@ -386,6 +405,11 @@ only when no scene is active. No command accepts an arbitrary asset path;
 inline preview is the sole non-persisted scene-body operation and the raw
 socket remains Pi-local.
 
+Unix requests are UTF-8 lines terminated by a newline (or a client write-side
+EOF). The server retains partial reads and writes without blocking the motor
+loop, bounds pending clients to 32, and retires incomplete connections after
+one second. Oversized commands are rejected before dispatch.
+
 For manual development, build and run `oriond` directly from this source tree
 only after stopping the installed service. Normal Pi operation uses the
 source-backed `oriond.service`.
@@ -397,7 +421,7 @@ Studio generates expressive speech with Chatterbox and uploads mono PCM16
 speech. `oriond` accepts a validated spool identifier through its private
 `speech file` operation and owns ReSpeaker playback. Streaming uses `speech stream`,
 ordered `speech append` commands and an explicit `speech end`, all under one run
-ID and one player process. See [streaming replies](../docs/explanation/voice-architecture.md#streaming-replies-and-timing)
+ID and one player process. See [streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)
 for buffering, limits and timing semantics.
 
 Inspect or cancel playback with:
@@ -414,7 +438,7 @@ WAV is removed after completion, cancellation, or playback failure.
 `SpeechCoordinator` validates and analyzes the waveform, while
 `CharacterCoordinator` composes one anchor-relative utterance performance and
 the daemon drives the `speaking_energy` light. See
-[Character animation design](../docs/explanation/character-animation.md#speech-driven-animation)
+[Character animation design](../docs/character-animation.md#speech-driven-animation)
 for the animation policy.
 
 The Pi listener captures stereo ReSpeaker audio and runs Rustpotter, then
@@ -426,16 +450,23 @@ processing. See [Pi voice setup](../voice/README.md).
 Serving starts character mode by default: configure servos, enable holding torque,
 move home, then enter idle after measured completion. Use
 `--serve --character-on-start off` for an observation-only maintenance startup.
-Studio Stop lasts until the next daemon restart. A timed-out or cancelled home
+Studio Stop lasts until an explicit character start or the next daemon startup
+with character mode enabled. A timed-out or cancelled home
 movement leaves character off; the terminal movement remains visible in status.
 
-The Pi listener may send `character attend left CONFIDENCE` or
-`character attend right CONFIDENCE` on the local socket after Qwen confirmation.
-The coordinator requires confidence in [0.75, 1], a powered available character
-and a bounded yaw transition. It holds the completed attention anchor, then
-returns to the prior anchor 15 seconds after neutral inactivity. Explicit
-foreground work discards that pending return. See the
-[attention brief](../docs/explanation/voice-attention.md).
+The Pi listener sends `voice SESSION confirmed` after ASR accepts the wake and
+waits for its acknowledgement. If direction is known with confidence at least
+0.75, it may then send `voice SESSION attend_left AGE_MS` or `attend_right AGE_MS`.
+The rest coordinator waits for home and checks that the observation is still
+younger than three seconds before requesting attention.
+
+The lower-level `character attend left CONFIDENCE` and `character attend right
+CONFIDENCE` commands remain available for explicit attention requests. They
+require confidence in [0.75, 1], a powered available character, and a bounded yaw
+transition. The character holds the completed attention anchor, then returns to
+the prior anchor 15 seconds after neutral inactivity. Explicit foreground work
+discards that pending return. See the
+[animation catalogue](../docs/orion-animation-catalogue.md#motion-review).
 
 ## Agent lighting commands
 

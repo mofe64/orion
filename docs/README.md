@@ -1,52 +1,40 @@
 # Orion documentation
 
-Choose the Orion task or subject you need.
+## Architecture and animation
 
-## Tutorials
-
-- [Run the Orion runtime in MuJoCo](tutorials/first-runtime-run.md)
-- [Run Orion Studio](tutorials/first-studio-run.md)
-- [Run Studio Voice for the first time](tutorials/first-studio-voice-run.md)
-
-## How-to guides
-
-- [Validate character v2 on physical Orion](how-to/validate-character-v2.md)
-- [Author and validate Orion motion](how-to/author-and-validate-motion.md)
-- [Manage Studio Voice models](how-to/manage-studio-voice-models.md)
-- [Deploy the runtime and gateway to the Pi](../runtime/README.md#deploy-an-update-to-the-raspberry-pi)
-- [Commission the STS3215 servos](../hardware/servo_setup/README.md)
-- [Commission the ReSpeaker audio path](../hardware/audio/README.md)
-- [Commission the RGBW light](../hardware/lighting/README.md)
-
-## Explanation
-
-- [System architecture](explanation/system-architecture.md)
-- [Motion and animation architecture](explanation/motion-and-animation-architecture.md)
-- [Character animation design](explanation/character-animation.md)
-- [Voice architecture](explanation/voice-architecture.md)
-- [Product vision and principles](explanation/product-vision.md)
-- [ELEGNT expression model](explanation/expression-design.md)
+- [System architecture](system-architecture.md)
+- [Voice architecture](voice-architecture.md)
+- [Motion and animation architecture](motion-and-animation-architecture.md)
+- [Character animation design](character-animation.md)
+- [ELEGNT expression model](elegnt.md)
+- [Orion animation catalogue](orion-animation-catalogue.md)
 
 ## Reference
 
-- [Motion asset schemas and catalog](reference/motion-assets.md)
-- [Trajectory and joint-control internals](reference/trajectory-and-joint-control.md)
-- [Animation-principles catalog review](reference/animation-principles-review.md)
-- [Studio platform prerequisites](tutorials/first-studio-run.md#prerequisites)
-- [Configuration and environment variables](reference/configuration.md)
+- [Configuration and environment variables](configuration.md)
+- [Motion asset schemas and catalog](motion-assets.md)
+- [Trajectory and joint-control internals](trajectory-and-joint-control.md)
 - [Runtime command and lifecycle reference](../runtime/README.md)
+- [Runtime code walkthrough](../runtime.md)
 - [Scene format and lifecycle](../scenes/README.md)
 - [Motion asset rules](../motion/README.md)
 - [Local audio cue rules](../audio/README.md)
 - [Robot description](../description/README.md)
 
-## Project information
+## Setup and validation
 
-- [Implementation status](project/status.md)
-- [Roadmap](project/roadmap.md)
-- [Known limitations](project/known-limitations.md) — important operational and
-  product constraints.
-- [Architecture decisions](decisions/README.md)
+- [Build and test the runtime](../runtime/README.md#build-and-test)
+- [Run the runtime in MuJoCo](../runtime/README.md#mujoco-first-daemon)
+- [MuJoCo pose editor](../simulation/mujoco/README.md#calibrated-pose-editor)
+- [Run Orion Studio](../orion_studio/README.md#development)
+- [Set up the speech worker and models](../speech/README.md#setup-on-apple-silicon)
+- [Set up Pi voice capture](../voice/README.md#setup)
+- [Voice coordinator setup and validation](../coordinator/README.md)
+- [Agent runtime, memory, and tools](../agent/README.md)
+- [Deploy the runtime and gateway to the Pi](../runtime/README.md#deploy-an-update-to-the-raspberry-pi)
+- [Commission the STS3215 servos](../hardware/servo_setup/README.md)
+- [Commission the ReSpeaker audio path](../hardware/audio/README.md)
+- [Commission the RGBW light](../hardware/lighting/README.md)
 
 ## Learning notes
 

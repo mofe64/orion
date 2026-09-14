@@ -23,7 +23,8 @@ routine controls:
 
 - **Go to rest** cancels active speech or scenes, turns character mode off, and
   follows the runtime's calibrated three-second movement to the rest pose.
-  Motors continue holding the pose; this is not a torque-release command.
+  After measured arrival the runtime releases torque and keeps the light off.
+  A confirmed wake returns Orion home; microphone mute remains independent.
 - **Character mode** starts autonomous character behaviour and restores
   expressive lighting.
 - The **Lamp power** switch turns manual light on or off through `oriond`.
@@ -32,9 +33,10 @@ routine controls:
   fields. Speech and scenes can temporarily take priority over the manual light.
 
 These controls require the updated gateway and runtime on the Pi. Editing a
-color or brightness alone does not send a command. The switch shows the last
-accepted lamp command in this Home session; the gateway does not report live
-lamp state. Failed requests do not change the switch.
+color or brightness alone does not send a command. With a rest-aware runtime and
+gateway, the switch shows effective light power and Home reports resting, waking,
+and transition errors. Older gateways show the last accepted lamp command in
+this Home session. See [light and rest status](../docs/system-architecture.md#light-and-rest-status).
 
 Home includes a rotatable 3D model with fixed zoom and no camera panning. The
 model shows the attentive pose and the last accepted lamp setting as a preview,
@@ -158,7 +160,7 @@ and acknowledges completion to the Pi listener only after playback completes. Ca
 is run-scoped. The runtime deletes spool files after completion, cancellation,
 or failure. Conversational speech requires the Studio processing station;
 there is no Pi-local Piper fallback. See the
-[voice architecture](../docs/explanation/voice-architecture.md#streaming-replies-and-timing)
+[voice architecture](../docs/voice-architecture.md#streaming-replies-and-timing)
 for buffering and streaming behaviour.
 
 Prepare the optional Apple Silicon voice models separately:
@@ -185,8 +187,8 @@ plus left/right expressive physical smoke tests. It verifies native wake-model
 loading and listener authentication as part of the same command. All components therefore come
 from one Git revision.
 
-See the [system architecture](../docs/explanation/system-architecture.md),
-[motion architecture](../docs/explanation/motion-and-animation-architecture.md),
+See the [system architecture](../docs/system-architecture.md),
+[motion architecture](../docs/motion-and-animation-architecture.md),
 and [scene reference](../scenes/README.md).
 
 ## Animation library and scene editor

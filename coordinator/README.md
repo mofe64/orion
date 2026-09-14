@@ -36,7 +36,7 @@ launcher. A standalone headless launcher is not implemented.
 
 The Pi retains microphone capture, wake detection, echo guard, and the five-second
 listening window. `oriond` retains hardware execution. See the
-[voice architecture](../docs/explanation/voice-architecture.md) for state and
+[voice architecture](../docs/voice-architecture.md) for state and
 transport contracts.
 
 ## Validation

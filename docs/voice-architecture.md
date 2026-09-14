@@ -1,9 +1,9 @@
 # Orion voice architecture
 
-The Raspberry Pi owns Orion's microphone and Rustpotter wake detector. Studio
-hosts a reusable Rust coordinator and agent runtime. The coordinator owns a
-Python Qwen3-ASR/Chatterbox inference worker. Studio never opens
-its workstation microphone or loads a wake detector.
+The Raspberry Pi captures Orion's microphone, detects wake candidates, and plays
+replies. Studio confirms the wake through automatic speech recognition (ASR), processes the
+command with its Rust agent, and synthesizes a response. Its Rust voice
+coordinator manages these stages through a Python Qwen3-ASR/Chatterbox worker.
 
 ## Audio and control flow
 
@@ -27,6 +27,11 @@ live under `voice/`; Studio does not depend on that package. Qwen retains the
 second-stage false-positive check. Rejected wake candidates never reach the
 agent or trigger directional attention. Qwen confirmation is not a guarantee
 that every false positive is eliminated.
+
+After confirmation, the Pi can prepare the body while Studio processes the
+command. The runtime owns [automatic rest and waking](system-architecture.md#automatic-rest-and-waking),
+including the activity deadline and torque checks. Microphone mute remains
+independent of that lifecycle.
 
 ## Capture ownership and session lifecycle
 
@@ -86,19 +91,50 @@ its ready response; workers request it explicitly on `session.finish`, so older
 peers retain one-shot behavior. Deploy the Pi runtime/listener and restart the
 updated Studio worker together to enable the pulse and follow-up behavior.
 
-This is turn-taking, not acoustic echo cancellation or barge-in. Speak after
-the teal invitation appears. Sustained noise or delayed echo can still cause a
-false onset; threshold, guard, and pulse timing require physical acceptance. Session deadlines, bounded socket queues and
-strict state transitions prevent indefinite buffering and stale command replay.
+Speak after the teal invitation appears. Acoustic echo cancellation and
+interruption during playback are not implemented. Sustained noise or delayed
+echo can cause a false onset; threshold, guard, and pulse timing require
+physical acceptance. Session deadlines, bounded socket queues, and state checks
+limit buffering and prevent stale command replay.
 A disconnected session is discarded; the Rust coordinator reconnects automatically.
 Processing has a 120-second session lease; entering playback grants 180 seconds.
+
+## Confirmed waking
+
+When Studio sends `wake.confirmed`, the Pi listener forwards
+`voice SESSION confirmed` to `oriond`. It uses the same ordered queue as wake
+candidate and endpoint events, then waits up to five seconds for the runtime
+acknowledgement. Confirmation is required even when microphone direction is
+unknown. A rejected or undelivered confirmation fails the voice connection.
+The runtime accepts the current session's confirmation once, so duplicate
+delivery cannot keep extending the inactivity deadline.
+
+While Orion rests, the listener still detects and captures wake candidates.
+Unconfirmed candidates leave the body still and the light off. A confirmed wake
+starts the return home. If confirmation arrives during descent, the runtime
+finishes that movement before returning home. Explicit Character Stop and
+maintenance mode require an explicit character start to enable automatic waking.
+
+Capture continues during homing. The listener retains a buffered follow-up
+command spoken while ASR confirms a bare wake phrase. Studio can also process a
+command included in the original utterance while the body moves. Once home
+finishes, the runtime applies the latest listening or thinking state and checks
+whether optional direction evidence is still fresh enough for attention.
+
+A reply uploaded for a voice session stays queued until the runtime recognizes
+it as part of an active confirmed conversation and home and any accepted
+attention movement have finished. Upload
+timeouts continue to apply while playback waits. Cancellation or session expiry
+removes the queued reply; a rest lifecycle fault cancels it and requires explicit
+recovery. These checks prevent a delayed reply from playing after its turn has
+ended.
 
 ## Transport and deployment
 
 Studio saves the paired gateway address and token in the OS credential store.
 Gateway reconnect restores status/authoring connectivity without replaying robot
 operations. Paired Studio starts its coordinator while the app is open. The listener token is reused from
-that saved connection. See [pairing configuration](../reference/configuration.md#saved-pairing).
+that saved connection. See [pairing configuration](configuration.md#saved-pairing).
 
 The Pi listener uses plain WebSockets on port 7448 and the Pi's existing
 Studio token for authentication. Studio derives `ws://GATEWAY_HOST:7448/`
@@ -124,26 +160,28 @@ The existing HTTP gateway still handles response WAV upload and robot control;
 both transports are unencrypted. Production pairing and encryption for voice
 and gateway transport remain separate work.
 
-Follow [Pi voice setup](../../voice/README.md) and the
-[Studio Voice tutorial](../tutorials/first-studio-voice-run.md).
+Follow [Pi voice setup](../voice/README.md) and the
+[speech worker setup](../speech/README.md#setup-on-apple-silicon).
 
 ## Agent and physical boundary
 
-Raw microphone audio travels only between the Pi and Studio. Qwen and
-Chatterbox run on the workstation. With the Codex provider, confirmed command
-text is sent to the configured Codex service; audio is not. The agent produces
-spoken replies and has no motion or device command capability.
+Raw microphone audio travels between the Pi and Studio, where Qwen and
+Chatterbox run. The Codex provider receives confirmed command text. The agent
+produces spoken replies and can request lamp changes through `set_lighting`.
+The tool validates brightness, effect, and color choices and sends them through
+the coordinator and authenticated gateway to `oriond`. Motion control is outside
+the agent's available tools.
 
 The Pi may request allowlisted character reactions based on session events.
-Confirmed, confident direction observations request the existing runtime's
-semantic attention operation. Character Off prevents those movements while
-voice can remain enabled. See [Voice attention](voice-attention.md) for the
-animation brief, priority, commissioning and acceptance requirements.
+Confirmed, confident direction observations can request the runtime's approved
+attention turn. A resting character first returns home. A character explicitly
+stopped by the user remains off until an explicit start; voice capture can stay
+enabled in either state.
 
 ## Agent conversation and memory
 
 Voice session IDs identify capture/playback turns, not agent conversations.
-The top-level [`orion-agent` crate](../../agent/README.md) owns one ephemeral
+The top-level [`orion-agent` crate](../agent/README.md) owns one ephemeral
 Codex thread and reuses it for confirmed commands, post-response follow-ups,
 and later wake-word requests. Studio compiles this library through a Cargo path
 dependency and owns its service separately from the coordinator and speech worker.
@@ -155,7 +193,7 @@ thread. There is no idle-time rotation, explicit new-conversation command, or
 persisted thread-resume policy. The five-second listening deadline does not
 erase agent context.
 
-The coordinator calls `AgentHandle::respond` directly through bounded Rust
+The coordinator calls `AgentHandle::respond_with_events` through bounded Rust
 message channels. Each request has a separate reply channel; dropping an active
 call cancels its Codex turn and retires that uncertain conversation. There is no
 agent TCP server or Python agent client. The independent agent executor survives
@@ -168,7 +206,7 @@ have ordered chunk sequence numbers and an explicit end marker. Channel closure
 without that marker is failure, never permission to upload held startup audio.
 
 The base instructions live in
-[`agent/src/prompt/mod.rs`](../../agent/src/prompt/mod.rs). Orion uses Codex's
+[`agent/src/prompt/mod.rs`](../agent/src/prompt/mod.rs). Orion uses Codex's
 built-in live web search and three client-executed tools: `append_memory`,
 `search_memories`, and `set_lighting`. Dynamic tool calls are bound to the active
 thread and turn, limited to 16 per turn, and validated before execution.
@@ -181,7 +219,7 @@ and reserved delimiters. Writes use a file lock and atomic replacement; repeated
 identical entries reuse the existing entry. Retrieval uses bounded keyword
 matching, returning at most eight entries. The agent saves only explicitly
 requested memories and treats retrieved text as data. Current UTC time is
-supplied on each turn. See [agent storage and tools](../../agent/README.md).
+supplied on each turn. See [agent storage and tools](../agent/README.md).
 Studio Settings exposes curated personality choices and memory management.
 Personality selections generate local `SOUL.md` instructions; free-form prompt
 editing is not exposed. Profile changes wait behind any active agent request,
@@ -201,8 +239,10 @@ search acknowledgements.
 Lighting tool choices resolve into validated brightness, effect, and RGBW
 palette parameters. The coordinator sends them through the authenticated
 `lamp_effect` gateway operation. `oriond` stores the lamp program beneath speech,
-scene, and voice-feedback lighting; it reappears after those finish. Animated
-effects without a palette use warm white plus one randomly selected accent.
+scene, and voice-feedback lighting; it can reappear after those finish when
+the rest lifecycle permits light output. Rest darkness suppresses the output
+while preserving the preference. Animated effects without a palette use warm
+white plus one randomly selected accent.
 Brightness-only changes preserve the current effect and palette. A paired Pi
 with the updated gateway and runtime is required; errors are returned to the
 agent rather than reported as successful actions.
@@ -236,11 +276,17 @@ frames arrive. The `confidence` field measures vote agreement, not a calibrated
 probability of identifying the speaker. At least five votes and 75% agreement
 are required for a known side.
 
-At wake confirmation, the listener checks the age of the oldest vote supporting
-the selected side, rather than timestamping utterance completion as new evidence.
-Evidence aged three seconds or more cannot trigger attention. Microphone spacing
-and channel orientation must still be explicitly commissioned; their default
-values disable direction-based attention.
+The listener measures age from the oldest vote supporting the selected side.
+After the runtime acknowledges confirmation, the listener sends any accepted
+side with its observation age. Time spent waiting in the local command queue
+also counts toward that age.
+
+The runtime checks freshness again when it can begin attention after home.
+Evidence must still be younger than three seconds. Homing therefore consumes
+the same freshness budget as ASR and command delivery. Stale evidence or a
+refused attention turn leaves Orion facing home and allows the voice turn to
+continue. Microphone spacing and channel orientation require physical
+commissioning; their default values disable directional attention.
 
 ## Streaming replies and timing
 
@@ -316,8 +362,9 @@ to the processing station. Endpoint completion queues thinking before utterance
 upload. Feedback events carry the Pi voice session ID. Runtime guards suppress
 duplicates and stale transitions, and enforce a bounded feedback lease.
 
-Wake feedback uses one quiet tone and a brief three-colour pulse, followed by
-steady listening light. Thinking uses one quiet entry cue and a three-second
+When the runtime permits feedback, a wake candidate produces one quiet tone and
+a brief three-colour pulse, followed by steady listening light. Thinking uses
+one quiet entry cue and a three-second
 breath through the same amber, teal and lavender palette. Its visible diagonal
 head tilt leads delayed shoulder/elbow support, with opposing preparation and
 an asymmetric counter-tilt. The existing thinking style and calibrated compiler
@@ -329,6 +376,9 @@ Session-scoped speech uploads bind the Pi speech run to the active voice turn.
 Thinking yields when the runtime starts its player, preserving commanded spline
 position and velocity, the conversational anchor and speech variation. Cues
 cannot displace speech. Stop/rest and foreground work retain their priority.
-When Studio is unavailable after capture, the runtime plays `error_muted` once
-and returns to listening. Physical cue loudness and microphone pickup remain
-unverified.
+When Studio is unavailable after capture and the runtime permits feedback, it
+plays `error_muted` once and the listener returns to wake detection. During
+descent, rest, waking, or a rest lifecycle fault, the runtime suppresses voice
+cues and immediate reaction changes. Waking permits light output and restores
+the latest voice reaction after home completes. Physical cue loudness and
+microphone pickup remain unverified.

@@ -115,7 +115,7 @@ position limits.
 For example, `living_idle` lowers amplitude and tangent energy, while
 `expressive_turn` preserves a stronger authored arc. `return_home` is slower
 and more heavily settled. The exact style table belongs to the
-[motion asset reference](../reference/motion-assets.md#motion-styles).
+[motion asset reference](motion-assets.md#motion-styles).
 
 ## End-to-end control flow
 
@@ -282,10 +282,6 @@ Orion validates the system at multiple boundaries:
 - **Physical acceptance** proves qualities that joint-space tests cannot:
   silhouette, perceived prominence, cable clearance, sound level, lighting,
   and character appeal.
-
-Use [Author and validate motion](../how-to/author-and-validate-motion.md) for the
-change workflow and [Validate the character on physical Orion](../how-to/validate-character-v2.md)
-for the supervised hardware gates.
 
 ## Source map
 

@@ -18,9 +18,9 @@ when I explicitly request a guided exercise or review before implementation.
 
 ## Project context
 
-Before substantial work, read `docs/project/status.md` and
-`docs/project/roadmap.md`, then confirm the relevant behaviour against code,
-tests, and component instructions.
+Before substantial work, use `docs/README.md` to locate the relevant architecture
+and reference documents, then confirm behaviour against code, tests, and
+component instructions.
 
 ## Documentation changes
 
@@ -44,17 +44,10 @@ tests, and component instructions.
   first actions, common validation, and safety warning.
 - `docs/README.md` is a compact link index. It must not explain the
   documentation taxonomy or contributor process.
-- `docs/tutorials/` provides complete first-run paths with prerequisites,
-  working directories, commands, expected results, and safe stopping points.
-- `docs/how-to/` provides focused procedures for one operational outcome.
-- `docs/explanation/` describes Orion's architecture, data flow, boundaries,
-  state transitions, invariants, and design rationale.
-- `docs/reference/` contains exact compatibility, configuration, protocol,
-  licensing, and platform facts.
-- `docs/project/status.md` lists implemented, partial, and planned capability.
-  `docs/project/roadmap.md` orders remaining product outcomes.
-- `docs/decisions/` records cross-component decisions using context, decision,
-  consequences, and status.
+- Architecture documents directly under `docs/` describe data flow,
+  boundaries, state transitions, invariants, and design rationale.
+- Reference documents directly under `docs/` contain configuration, motion
+  schemas, control details, and the animation catalogue.
 - `docs/learning_notes/` teaches Orion concepts while linking to the code or
   configuration that supplies exact values.
 - Component READMEs contain only behaviour, setup, commands, and constraints
