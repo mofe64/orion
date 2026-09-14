@@ -1,0 +1,11 @@
+format_version: 2
+motion:
+  name: drifting
+  description: Relative clips must preserve their anchor.
+  space: anchor_relative
+  style: living_idle
+  return_to_anchor: false
+  keyframes:
+    - duration: 0.5
+      arrival: settle
+      offsets: {head_pitch_joint: 0.1}

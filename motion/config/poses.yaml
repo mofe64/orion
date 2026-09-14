@@ -15,7 +15,7 @@ poses:
   rest:
     description: Captured torque-free mechanical rest; shutdown and release only.
     tags: [mechanical, shutdown_only]
-    default_lighting: off
+    default_lighting: "off"
     positions:
       base_yaw_joint: 0.02454369
       shoulder_pitch_joint: -1.40819436

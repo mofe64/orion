@@ -1,20 +1,28 @@
-pub mod audio;
-pub mod calibration;
-pub mod character;
-pub mod daemon;
-pub mod driver;
+pub mod control;
+pub mod devices;
 pub mod error;
-pub mod lighting;
+pub mod expression;
+pub mod ipc;
 pub mod motion;
-pub mod mujoco;
-pub mod pose;
-pub mod scene;
-pub mod socket;
-pub mod speech;
-pub mod state;
-pub mod style;
-pub mod trajectory;
-pub mod transport;
+
+pub const ORION_JOINT_NAMES: [&str; 5] = [
+    "base_yaw_joint",
+    "shoulder_pitch_joint",
+    "elbow_pitch_joint",
+    "head_roll_joint",
+    "head_pitch_joint",
+];
+
+pub const BUILD_REVISION: &str = env!("ORION_BUILD_REVISION");
+
+pub mod app;
+
+pub use control::{core as daemon, state};
+pub use devices::sts3215::{driver, transport};
+pub use devices::{audio, lighting, mujoco};
+pub use expression::{character, lamp, scene, speech, voice_feedback};
+pub use ipc::socket;
+pub use motion::{calibration, pose, style, trajectory};
 
 pub use audio::{
     AlsaAudioDevice, AudioCommand, AudioDevice, CueLibrary, ORION_AMIXER_PATH, ORION_APLAY_PATH,
@@ -55,17 +63,3 @@ pub use trajectory::{
     TrajectoryWaypoint, WaypointArrival,
 };
 pub use transport::{Register, RustypotTransport, Sts3215RawState, Sts3215Transport};
-
-pub const BUILD_REVISION: &str = env!("ORION_BUILD_REVISION");
-
-pub const ORION_JOINT_NAMES: [&str; 5] = [
-    "base_yaw_joint",
-    "shoulder_pitch_joint",
-    "elbow_pitch_joint",
-    "head_roll_joint",
-    "head_pitch_joint",
-];
-
-pub mod voice_feedback;
-
-pub mod lamp;

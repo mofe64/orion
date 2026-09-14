@@ -192,7 +192,7 @@ echo "Testing and building Orion v2 revision ${revision} while torque remains of
 python3 -m py_compile orion_studio/gateway.py
 python3 -m unittest discover -s orion_studio/tests -v
 cargo test --locked --manifest-path runtime/Cargo.toml --all-targets -- \
-  --skip mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco
+  --skip devices::mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco
 cargo build --release --locked --manifest-path runtime/Cargo.toml
 active_binary="${project_root}/runtime/target/release/oriond"
 "${project_root}/runtime/target/release/orion-trajectory" \

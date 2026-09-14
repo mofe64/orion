@@ -27,23 +27,34 @@ encoder/velocity conversions.
 
 ## Build and test
 
-Install a stable toolchain with Rust 2024 edition support (Rust 1.85 or newer),
-then run from the repository root:
+Use a toolchain that supports the crate's Rust 2024 syntax; validation uses
+Rust 1.98.0. Run from the repository root:
 
 ```bash
 cargo build --manifest-path runtime/Cargo.toml
-cargo test --manifest-path runtime/Cargo.toml --all-targets
+cargo test --manifest-path runtime/Cargo.toml --all-targets --locked
+cargo fmt --manifest-path runtime/Cargo.toml --check
+cargo test --manifest-path runtime/Cargo.toml --doc --locked
+python3 -m unittest discover -s runtime/tests -p 'test_*.py' -v
 ```
 
 The tests cover the complete runtime contract and launch Orion's native MuJoCo
 model through the same Rust daemon state machine used by hardware.
 MuJoCo tests expect the repository Python environment at `.venv/bin/python`.
+The daemon smoke tests use this package's built `oriond`, private temporary
+Unix sockets, and recording audio and lighting. They exercise default startup,
+maintenance startup, command handling, and movement/scene completion.
+Set `ORION_TEST_BIN_DIR` to an absolute binary directory to test a release build.
 
 ## Deploy an update to the Raspberry Pi
 
 During source-run development, Git is Orion's deployment package. Commit and
-push the intended `main` revision, then run this from the development
-workstation:
+push the intended `main` revision before deploying from the development
+workstation.
+
+The workstation needs pnpm and Node.js 20.19 or later in the 20.x line,
+or Node.js 22.12 or later, for Studio's deployment preflight. Validation uses
+Node.js 24.19.0. Run from the repository root:
 
 ```bash
 scripts/deploy_pi.sh
@@ -246,19 +257,29 @@ Neither `--disable` nor stopping the daemon is a physical emergency stop; an
 accessible hardware torque/power interruption remains required during physical
 trials.
 
-## Port structure
+## Runtime structure
 
-- `src/lighting.rs` — RGBW frames and the lighting-device boundary.
-- `src/lamp.rs` — persistent brightness, effect, and palette settings beneath voice/scene feedback.
-- `src/audio.rs` — named local cues and the audio-device boundary.
-- `src/scene.rs` — versioned scene loading, validation, and monotonic playback.
-- `src/transport.rs` — raw `rustypot` STS3215 serial and packet boundary.
-- `src/driver.rs` — calibration conversions and servo safety sequence.
-- `src/daemon.rs` — backend-independent lifecycle and command state machine.
-- `src/socket.rs` — local Unix command server/client.
-- `src/pose.rs`, `motion.rs`, `trajectory.rs` — shared motion semantics.
-- `src/mujoco.rs` and `mujoco_bridge.py` — native simulation backend.
-- `src/main.rs` — `oriond` arguments and 50 Hz control loop.
+| Location | Responsibility |
+| --- | --- |
+| `src/main.rs` and `src/lib.rs` | Thin executable entry point and public library exports. |
+| `src/app/options.rs` | CLI arguments, defaults, help, and validation. |
+| `src/app/client.rs` | Command submission, movement/scene waiting, and exit codes. |
+| `src/app/server.rs` | Startup, device wiring, signal handling, and the 50 Hz loop. |
+| `src/app/commands.rs` | Voice, lamp, character, speech, scene, movement, and reload dispatch. |
+| `src/control/` | Runtime core, movement ownership, measured completion, and status. |
+| `src/motion/` | Pose loading, motion library, trajectory compilation, styles, and calibration. |
+| `src/devices/driver.rs` | Shared `RuntimeDriver` and `JointLimit` contracts. |
+| `src/devices/sts3215/` | Physical servo driver, profiles, registers, and transport. |
+| `src/devices/mujoco.rs` and `mujoco_bridge.py` | Simulator driver and its Python worker. |
+| `src/devices/audio.rs` and `src/devices/lighting.rs` | Local sound and RGBW device implementations. |
+| `src/expression/` | Character behavior, scenes, speech, voice feedback, and lamp programs. |
+| `src/ipc/socket.rs` | Private Unix command transport. |
+| `src/bin/orion-trajectory.rs` | Shared trajectory export executable. |
+
+`CharacterCoordinator::preempt_idle_or_thinking()` interrupts either tracked
+background movement. Generic movement code uses the shared device interface,
+while the STS3215 and MuJoCo implementations provide their own I/O.
+See [the speech runtime walkthrough](../runtime.md) for planning and execution.
 
 ## Lighting, audio, and local scenes
 

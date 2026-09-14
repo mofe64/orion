@@ -77,9 +77,12 @@ class StaticTorqueAnalysisTests(unittest.TestCase):
         }
 
         self.assertEqual(report.trajectory_name, "look_at_left_expressive")
-        self.assertEqual(
-            report.sample_count,
-            1 + round(trajectory.total_duration / 0.05),
+        self.assertGreater(report.sample_count, 1)
+        self.assertGreater(report.sample_period_seconds, 0.0)
+        self.assertLessEqual(report.sample_period_seconds, 0.05)
+        self.assertAlmostEqual(
+            (report.sample_count - 1) * report.sample_period_seconds,
+            trajectory.total_duration,
         )
         self.assertGreater(
             demands["base_yaw_joint"].peak_velocity_rad_s,

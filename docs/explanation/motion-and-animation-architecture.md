@@ -291,14 +291,14 @@ for the supervised hardware gates.
 
 | Concern | Authoritative source |
 | --- | --- |
-| Pose parsing and semantic metadata | `runtime/src/pose.rs` |
-| Motion parsing, relative resolution, and amplitude scaling | `runtime/src/motion.rs` |
-| Motion styles | `runtime/src/style.rs` |
-| Quintic compilation, derivatives, overshoot control, and retiming | `runtime/src/trajectory.rs` |
-| Movement lifecycle and 50 Hz sampling | `runtime/src/daemon.rs` |
-| Character state, idle, and generated speech performance | `runtime/src/character.rs` |
-| WAV lifecycle and energy analysis | `runtime/src/speech.rs` |
-| Scene tracks and marker dispatch | `runtime/src/scene.rs` |
-| Daemon loop and command priority | `runtime/src/main.rs` |
-| Calibration and radians/raw conversion | `runtime/src/calibration.rs`, `runtime/src/driver.rs` |
-| Synchronized STS3215 packets | `runtime/src/transport.rs` |
+| Pose parsing and semantic metadata | `runtime/src/motion/pose.rs` |
+| Motion parsing, relative resolution, and amplitude scaling | `runtime/src/motion/library.rs` |
+| Motion styles | `runtime/src/motion/style.rs` |
+| Quintic compilation, derivatives, overshoot control, and retiming | `runtime/src/motion/trajectory.rs` |
+| Movement lifecycle and 50 Hz sampling | `runtime/src/control/core.rs` |
+| Character state, idle, and generated speech performance | `runtime/src/expression/character.rs` |
+| WAV lifecycle and energy analysis | `runtime/src/expression/speech.rs` |
+| Scene tracks and marker dispatch | `runtime/src/expression/scene.rs` |
+| Daemon loop and command priority | `runtime/src/app/server.rs`, `runtime/src/app/commands.rs` |
+| Calibration and radians/raw conversion | `runtime/src/motion/calibration.rs`, `runtime/src/devices/sts3215/driver.rs` |
+| Synchronized STS3215 packets | `runtime/src/devices/sts3215/transport.rs` |

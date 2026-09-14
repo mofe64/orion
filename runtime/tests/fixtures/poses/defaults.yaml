@@ -1,0 +1,9 @@
+format_version: 2
+poses:
+  studio_keyframe:
+    positions:
+      base_yaw_joint: 0.1
+      shoulder_pitch_joint: -0.1
+      elbow_pitch_joint: 0.2
+      head_roll_joint: 0.0
+      head_pitch_joint: -0.2

@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
-pub enum Error {
+pub enum OrionRuntimeError {
     InvalidArgument(String),
     InvalidState(String),
     OutOfRange(String),
@@ -11,7 +11,8 @@ pub enum Error {
     Yaml(serde_yaml::Error),
 }
 
-impl Display for Error {
+// Display implementation for OrionRuntimeError
+impl Display for OrionRuntimeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidArgument(message)
@@ -25,24 +26,30 @@ impl Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+// Error implementation for OrionRuntimeError
+// means that OrionRuntimeError satisfies Rust standard error trait/interface
+// the Error trait requires us to impl Debug and Display, we've already done that
+// with the Display implementation above and the #[derive(Debug)]
+impl std::error::Error for OrionRuntimeError {}
 
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for OrionRuntimeError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
     }
 }
 
-impl From<serde_json::Error> for Error {
+impl From<serde_json::Error> for OrionRuntimeError {
     fn from(error: serde_json::Error) -> Self {
         Self::Json(error)
     }
 }
 
-impl From<serde_yaml::Error> for Error {
+impl From<serde_yaml::Error> for OrionRuntimeError {
     fn from(error: serde_yaml::Error) -> Self {
         Self::Yaml(error)
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, OrionRuntimeError>;
+
+pub use OrionRuntimeError as Error;

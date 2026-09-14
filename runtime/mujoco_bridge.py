@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Line-delimited JSON bridge between the Rust runtime and native MuJoCo."""
-
 from __future__ import annotations
 
 import argparse
@@ -18,15 +15,15 @@ MUJOCO_DIRECTORY = PROJECT_ROOT / "simulation" / "mujoco"
 sys.path.insert(0, str(MUJOCO_DIRECTORY))
 sys.path.insert(0, str(PROJECT_ROOT / "motion"))
 
-from mujoco_backend import (  # noqa: E402
+from mujoco_backend import (
     read_joint_positions,
     read_joint_velocities,
     resolve_joint_mapping,
     set_actuator_targets,
     set_joint_state,
 )
-from orion_motion.motion_loader import load_yaml_file  # noqa: E402
-from stability_monitor import (  # noqa: E402
+from orion_motion.motion_loader import load_yaml_file
+from stability_monitor import (
     StabilityMonitor,
     stability_policy_from_data,
 )
@@ -161,7 +158,7 @@ def main() -> int:
                 if request.get("command") == "shutdown":
                     return 0
                 emit(bridge.handle(request))
-            except Exception as error:  # keep protocol errors inspectable
+            except Exception as error:
                 emit({"ok": False, "error": str(error)})
     except KeyboardInterrupt:
         return 0

@@ -1,0 +1,10 @@
+format_version: 2
+motion:
+  name: unknown
+  description: Rejected legacy field.
+  space: absolute
+  style: expressive_turn
+  return_to_anchor: false
+  interpolation: linear
+  keyframes:
+    - {pose: home, duration: 0.5, arrival: settle}

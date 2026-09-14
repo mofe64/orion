@@ -1,0 +1,14 @@
+format_version: 2
+units: radians
+poses:
+  studio_keyframe:
+    description: Studio-authored keyframe.
+    tags: ["bad tag"]
+    idle_profile: studio_idle
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.1
+      shoulder_pitch_joint: -0.1
+      elbow_pitch_joint: 0.2
+      head_roll_joint: 0.0
+      head_pitch_joint: -0.2
