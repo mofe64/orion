@@ -1,4 +1,5 @@
 //! Persistent user modes and alerts. Deadlines and audio belong to the Pi runtime.
+use super::alert_sound::AlertSound;
 use crate::AudioDevice;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -11,6 +12,26 @@ pub enum UserMode {
     #[default]
     Idle,
     Lamp,
+}
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertKind {
+    Alarm,
+    Timer,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+struct SoundSettings {
+    alarm: AlertSound,
+    timer: AlertSound,
+}
+#[derive(Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SavedSounds {
+    settings: SoundSettings,
+    ring_until_unix: Option<f64>,
+    ring_sound: Option<AlertSound>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -28,11 +49,18 @@ struct Saved {
     next_id: u64,
     alerts: Vec<Alert>,
     ring_until_unix: Option<f64>,
+    // Sound state uses a companion file so older runtimes can still read alerts.
+    #[serde(skip)]
+    sounds: SoundSettings,
+    // Latched when the first alert rings; preference changes apply to the next group.
+    #[serde(skip)]
+    ring_sound: Option<AlertSound>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     SetMode { mode: UserMode },
+    SetSound { kind: AlertKind, sound: AlertSound },
     Timer { seconds: f64, label: String },
     Alarm { due_unix: f64, label: String },
     List,
@@ -50,7 +78,7 @@ pub struct Routines {
 }
 impl Routines {
     pub fn load(path: Option<PathBuf>, wall: f64, now: f64) -> Result<Self, String> {
-        let saved: Saved = match path.as_ref().map(fs::read) {
+        let mut saved: Saved = match path.as_ref().map(fs::read) {
             Some(Ok(bytes)) => {
                 serde_json::from_slice(&bytes).map_err(|e| format!("Invalid routines file: {e}"))?
             }
@@ -92,6 +120,25 @@ impl Routines {
         let ring_deadline = saved
             .ring_until_unix
             .map(|at| now + (at - wall).clamp(0., ALERT_LIMIT_SECONDS));
+        let sounds: SavedSounds = match path
+            .as_ref()
+            .map(|p| fs::read(p.with_extension("sounds.json")))
+        {
+            Some(Ok(bytes)) => serde_json::from_slice(&bytes)
+                .map_err(|e| format!("Invalid alarm sound settings: {e}"))?,
+            Some(Err(e)) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+            _ => SavedSounds::default(),
+        };
+        saved.sounds = sounds.settings;
+        // A stale sound record can follow a rollback or an interrupted pair of writes.
+        // Only reuse it for the same ringing window; older alerts used two-tone.
+        saved.ring_sound = ring_deadline.map(|_| {
+            if sounds.ring_until_unix == saved.ring_until_unix {
+                sounds.ring_sound.unwrap_or_default()
+            } else {
+                AlertSound::TwoTone
+            }
+        });
         Ok(Self {
             saved,
             path,
@@ -118,26 +165,33 @@ impl Routines {
             }
         }
         json!({"mode":self.mode(), "now_unix":wall, "alerts":alerts, "ringing":self.ringing(),
+            "sounds":self.saved.sounds, "available_sounds":AlertSound::catalog(), "ring_sound":self.saved.ring_sound,
             "remaining_ring_seconds":self.ring_deadline.map(|at|(at-now).max(0.)), "error":self.error})
     }
     fn commit(&mut self, saved: Saved) -> Result<(), String> {
         if let Some(path) = &self.path {
-            let parent = path.parent().ok_or("Routines path needs a parent")?;
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            let temporary = path.with_extension("json.tmp");
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create(true).truncate(true);
-            #[cfg(unix)]
+            if saved.sounds != self.saved.sounds
+                || (saved.ring_sound.is_some()
+                    && (saved.ring_sound != self.saved.ring_sound
+                        || saved.ring_until_unix != self.saved.ring_until_unix))
             {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
+                // Store the chosen sound before firing. Its window key prevents a
+                // partial write from changing another alert's sound after restart.
+                write_saved(
+                    &path.with_extension("sounds.json"),
+                    &SavedSounds {
+                        settings: saved.sounds.clone(),
+                        ring_until_unix: saved.ring_until_unix,
+                        ring_sound: saved.ring_sound,
+                    },
+                )?;
             }
-            let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
-            file.write_all(&serde_json::to_vec(&saved).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
-            // Atomic replacement survives service restarts. Avoid forcing an SD
-            // card flush in the motion loop; sudden power loss can lose a recent write.
-            fs::rename(&temporary, path).map_err(|e| e.to_string())?;
+            // A preference-only write must not rewrite the legacy alert file.
+            if serde_json::to_value(&saved).map_err(|e| e.to_string())?
+                != serde_json::to_value(&self.saved).map_err(|e| e.to_string())?
+            {
+                write_saved(path, &saved)?;
+            }
         }
         self.saved = saved;
         Ok(())
@@ -158,6 +212,10 @@ impl Routines {
                 return Ok(self.status(wall, now));
             }
             Request::SetMode { mode } => saved.mode = mode,
+            Request::SetSound { kind, sound } => match kind {
+                AlertKind::Alarm => saved.sounds.alarm = sound,
+                AlertKind::Timer => saved.sounds.timer = sound,
+            },
             Request::Cancel { id } => {
                 let alert = saved
                     .alerts
@@ -274,6 +332,11 @@ impl Routines {
                 continue;
             }
             alert.state = "ringing".into();
+            saved.ring_sound.get_or_insert(if alert.kind == "timer" {
+                saved.sounds.timer
+            } else {
+                saved.sounds.alarm
+            });
             saved
                 .ring_until_unix
                 .get_or_insert(wall + ALERT_LIMIT_SECONDS - late);
@@ -298,14 +361,17 @@ impl Routines {
         self.ring_deadline = None;
         let mut saved = self.saved.clone();
         saved.ring_until_unix = None;
+        saved.ring_sound = None;
         for alert in &mut saved.alerts {
             if alert.state == "ringing" {
                 alert.state = state.into();
             }
         }
         // Keep the in-memory dismissal even if persistence fails; expose the error.
-        self.saved = saved.clone();
-        self.commit(saved)
+        // Write before updating self.saved, so commit can compare the prior state.
+        let result = self.commit(saved.clone());
+        self.saved = saved;
+        result
     }
     pub fn tick_audio(&mut self, now: f64, audio: &mut dyn AudioDevice) -> Result<(), String> {
         let Some(until) = self.ring_deadline else {
@@ -328,7 +394,11 @@ impl Routines {
             }
             // A bounded 80 ms queue keeps capture and the 50 Hz motor loop responsive.
             for _ in 0..4 {
-                let pcm = alert_pcm(self.sample, 480);
+                let pcm = self
+                    .saved
+                    .ring_sound
+                    .unwrap_or_default()
+                    .pcm(self.sample, 480);
                 if !audio.queue_pcm(&pcm)? {
                     break;
                 }
@@ -344,29 +414,172 @@ impl Routines {
         Ok(())
     }
 }
-/// Repeating high/low double pulse with a short listening gap, 24 kHz PCM16.
-/// Fixed 0.65 peak leaves headroom; no mixer or user volume settings are changed.
-fn alert_pcm(start: usize, count: usize) -> Vec<u8> {
-    (start..start + count)
-        .map(|sample| {
-            let t = (sample % 28800) as f64 / 24000.;
-            let phase = t % 0.6;
-            let envelope = if phase < 0.48 {
-                (phase / 0.012).min(1.) * ((0.48 - phase) / 0.012).min(1.)
-            } else {
-                0.
-            };
-            let hz = if t < 0.6 { 880. } else { 1174.66 };
-            ((std::f64::consts::TAU * hz * t).sin() * envelope * 0.65 * i16::MAX as f64) as i16
-        })
-        .flat_map(i16::to_le_bytes)
-        .collect()
+fn write_saved(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
+    let parent = path.parent().ok_or("Routines path needs a parent")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
+    file.write_all(&serde_json::to_vec(value).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    // Avoid forcing an SD card flush in the motion loop. Sudden power loss can
+    // lose a recent write; atomic replacement protects service restarts.
+    fs::rename(&temporary, path).map_err(|e| e.to_string())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::RecordingAudioDevice;
+    #[test]
+    fn old_state_keeps_mode_alerts_and_timer_deadlines_when_sounds_are_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routines.json");
+        fs::write(&path, r#"{"mode":"lamp","next_id":1,"alerts":[{"id":1,"kind":"timer","label":"Tea","due_unix":110,"state":"pending"}],"ring_until_unix":null}"#).unwrap();
+        let original = fs::read(&path).unwrap();
+        let mut audio = RecordingAudioDevice::blocking();
+        let mut r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
+        assert_eq!(
+            r.status(100., 0.)["sounds"],
+            json!({"alarm":"two_tone","timer":"two_tone"})
+        );
+        for (kind, sound) in [
+            (AlertKind::Alarm, AlertSound::ClubAlarm),
+            (AlertKind::Timer, AlertSound::FunnyAlarm),
+        ] {
+            r.request(Request::SetSound { kind, sound }, 1000., 5., &mut audio)
+                .unwrap();
+        }
+        assert_eq!(r.timer_deadlines[&1], 10.);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        let restored = Routines::load(Some(path), 100., 0.).unwrap();
+        assert_eq!(restored.mode(), UserMode::Lamp);
+        assert_eq!(restored.saved.alerts[0].label, "Tea");
+        assert_eq!(restored.saved.alerts[0].due_unix, 110.);
+        assert_eq!(
+            restored.status(100., 0.)["sounds"],
+            json!({"alarm":"club_alarm","timer":"funny_alarm"})
+        );
+        for body in [
+            r#"{"action":"set_sound","kind":"alarm","sound":"/tmp/file.mp3"}"#,
+            r#"{"action":"set_sound","kind":"scene","sound":"two_tone"}"#,
+        ] {
+            assert!(serde_json::from_str::<Request>(body).is_err());
+        }
+    }
+
+    #[test]
+    fn sound_is_chosen_at_firing_and_survives_preference_changes_overlap_and_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routines.json");
+        let mut audio = RecordingAudioDevice::blocking();
+        let mut r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
+        r.request(
+            Request::Timer {
+                seconds: 1.,
+                label: "Tea".into(),
+            },
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+        r.request(
+            Request::Alarm {
+                due_unix: 102.,
+                label: "Morning".into(),
+            },
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+        r.request(
+            Request::Alarm {
+                due_unix: 500.,
+                label: "Later".into(),
+            },
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+        r.request(
+            Request::SetSound {
+                kind: AlertKind::Timer,
+                sound: AlertSound::FunnyAlarm,
+            },
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+        r.request(
+            Request::SetSound {
+                kind: AlertKind::Alarm,
+                sound: AlertSound::ClubAlarm,
+            },
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+        assert!(r.due(101., 1., &mut audio).unwrap());
+        r.tick_audio(1., &mut audio).unwrap();
+        r.request(
+            Request::SetSound {
+                kind: AlertKind::Timer,
+                sound: AlertSound::TwoTone,
+            },
+            101.,
+            1.,
+            &mut audio,
+        )
+        .unwrap();
+        assert!(!r.due(102., 2., &mut audio).unwrap());
+        audio.stop().unwrap();
+        let mut r = Routines::load(Some(path), 151., 0.).unwrap();
+        assert_eq!(r.saved.ring_sound, Some(AlertSound::FunnyAlarm));
+        assert_eq!(r.status(151., 0.)["remaining_ring_seconds"], 250.);
+        r.tick_audio(0., &mut audio).unwrap();
+        assert!(audio.is_playing());
+        r.tick_audio(250., &mut audio).unwrap();
+        assert!(!audio.is_playing());
+        assert_eq!(r.saved.ring_sound, None);
+        assert!(r.due(500., 349., &mut audio).unwrap());
+        assert_eq!(r.saved.ring_sound, Some(AlertSound::ClubAlarm));
+        r.tick_audio(349., &mut audio).unwrap();
+        r.request(Request::Stop, 500., 349., &mut audio).unwrap();
+        assert!(!audio.is_playing());
+    }
+
+    #[test]
+    fn stale_sound_cache_cannot_change_an_alert_created_by_an_older_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routines.json");
+        fs::write(&path, r#"{"mode":"idle","next_id":1,"alerts":[{"id":1,"kind":"timer","label":"Tea","due_unix":100,"state":"ringing"}],"ring_until_unix":400}"#).unwrap();
+        write_saved(
+            &path.with_extension("sounds.json"),
+            &SavedSounds {
+                settings: SoundSettings {
+                    alarm: AlertSound::ClubAlarm,
+                    timer: AlertSound::FunnyAlarm,
+                },
+                ring_until_unix: Some(200.),
+                ring_sound: Some(AlertSound::FunnyAlarm),
+            },
+        )
+        .unwrap();
+        let r = Routines::load(Some(path), 150., 0.).unwrap();
+        assert_eq!(r.saved.ring_sound, Some(AlertSound::TwoTone));
+        assert_eq!(r.saved.sounds.timer, AlertSound::FunnyAlarm);
+        assert_eq!(r.status(150., 0.)["remaining_ring_seconds"], 250.);
+    }
     #[test]
     fn timer_ignores_clock_jumps_and_ringing_restart_keeps_original_limit() {
         let dir = tempfile::tempdir().unwrap();
@@ -517,6 +730,19 @@ mod tests {
             .is_err()
         );
         assert_eq!(r.mode(), UserMode::Lamp);
+        assert!(
+            r.request(
+                Request::SetSound {
+                    kind: AlertKind::Timer,
+                    sound: AlertSound::FunnyAlarm
+                },
+                100.,
+                0.,
+                &mut audio
+            )
+            .is_err()
+        );
+        assert_eq!(r.saved.sounds.timer, AlertSound::TwoTone);
     }
     #[test]
     fn alert_limits_and_pcm_headroom() {
@@ -558,7 +784,7 @@ mod tests {
             )
             .is_err()
         );
-        let pcm = alert_pcm(0, 28800);
+        let pcm = AlertSound::TwoTone.pcm(0, 28800);
         let samples: Vec<_> = pcm
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]))

@@ -436,6 +436,8 @@ its authenticated `routines` operation; Studio and agent tools use that route.
 routines status
 routines {"action":"set_mode","mode":"lamp"}
 routines {"action":"set_mode","mode":"idle"}
+routines {"action":"set_sound","kind":"alarm","sound":"club_alarm"}
+routines {"action":"set_sound","kind":"timer","sound":"funny_alarm"}
 routines {"action":"timer","seconds":300,"label":"Tea"}
 routines {"action":"alarm","due_unix":1893571200,"label":"Morning"}
 routines {"action":"list"}
@@ -448,6 +450,10 @@ Alarm timestamps are Unix seconds and must be in the future. `sleep` waits for
 the owning voice session and its speech to finish. `character rest` remains the
 immediate controlled rest command. The `character status` response includes
 `rest.mode`, `rest.sleep_requested` and `routines`; alert status includes pending
-and recent entries, remaining ringing time and playback errors. See
+and recent entries, remaining ringing time and playback errors. `sounds` contains
+the saved `alarm` and `timer` defaults; `available_sounds` supplies IDs and display
+names, and `ring_sound` identifies the active sound. Supported IDs are `two_tone`
+(the default), `club_alarm` and `funny_alarm`. `set_sound` changes only the named
+preference and takes effect when a later alert group starts. See
 [timer and alarm behavior](../docs/system-architecture.md#timers-and-alarms) and
 [saved state](../docs/configuration.md#saved-files).

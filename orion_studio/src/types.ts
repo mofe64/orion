@@ -250,6 +250,9 @@ export interface GatewayStatus {
   routines?: {
     mode: "idle" | "lamp";
     ringing: boolean;
+    sounds?: { alarm: string; timer: string };
+    available_sounds?: Array<{ id: string; name: string }>;
+    ring_sound?: string | null;
     remaining_ring_seconds: number | null;
     error: string | null;
     alerts: Array<{ id: number; kind: "timer" | "alarm"; label: string; due_unix: number; state: string }>;

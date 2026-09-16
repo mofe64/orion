@@ -14,7 +14,8 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/voice-settings.json` | Agent model and effort, speech models, optional model/cache paths and voice preset |
 | `.config/orion/voice-stack.env` | Environment for the onboard voice and agent service |
 | `.config/orion/voice.env` | Listener overrides, including microphone spacing, channel orientation and capture gain |
-| `.config/orion/routines.json` | Idle/lamp mode, pending timers and one-time alarms, recent alert results |
+| `.config/orion/routines.json` | Idle/lamp mode, pending timers and one-time alarms, recent alert results and ringing deadline |
+| `.config/orion/routines.sounds.json` | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window |
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
@@ -33,8 +34,9 @@ Studio Settings saves preferences through the Pi gateway. The defaults are
 `alba`. The Pi adapter loads Qwen GGUF files from the configured local folder.
 Pocket accepts the FP32 or INT8 model choice and a named preset.
 
-Presets are Alba, Anna, Azelma, Cosette, Eve, Fantine, Jane and Vera. Changing only
-`ttsVoice` applies to the next response. Studio requires mute before other model
+Presets are Alba, Anna, Azelma, Cosette, Eve, Fantine, Jane and Vera. Studio
+**Settings → Voice and sounds → Default Pocket voice** saves `ttsVoice` automatically
+on the Pi and applies it to the next response. Studio requires mute before other model
 changes, which restart the coordinator and speech workers. An idle restart can
 preserve the agent conversation when its model, effort and executable still
 match. Restarting the whole service starts a fresh conversation.
@@ -146,7 +148,8 @@ automatic rest while preserving idle animations. See
 
 `--routines-file PATH` overrides the saved mode and alert file. Hardware defaults
 to `~/.config/orion/routines.json`; simulation keeps this state in memory unless
-a file is supplied. The installer does not overwrite this file. Writes use atomic
+a file is supplied. Sound settings use the same path with its extension replaced
+by `.sounds.json`. The installer preserves both files. Writes use atomic
 replacement without forcing a storage flush in the motion loop; a sudden power
 loss can lose a recent change. Clock alarms use
 the Pi’s local time and explicit UTC offsets; verify its timezone and clock before

@@ -27,7 +27,7 @@ import {
 } from "./lib/preview";
 import {
   deleteUserScene, getUserScene, updateUserScene, compileMotionPreview, gotoPose, previewScene, publishMotion,
-  publishPose, publishScene, runMotion, runScene, setCharacterMode, setCharacterState,
+  publishPose, publishScene, runMotion, runScene, setCharacterMode, setCharacterState, setAlertSound,
 } from "./lib/gateway";
 import type {
   CompiledTrajectoryPreview, JointPositions,
@@ -444,7 +444,7 @@ export default function App() {
 
       {destination === "home" && <Home catalog={catalog} theme={homeTheme} voiceLabel={voice.label} listening={voice.listening} voiceAvailable={!!connection && voice.snapshot.muted !== undefined && !voice.toggling} connection={connection} status={status} onConnect={() => setConnectionOpen(true)} onVoice={() => void voice.toggle()} onCreate={() => setDestination("animation")} onDiagnostics={preferences.debugMode ? () => navigate("debug") : undefined} onRefresh={() => pairing.refresh()} onNotice={setNotice} onRun={setTrackedRun} />}
       {destination === "animation" && <AnimationLibrary previewAudio={preferences.previewAudio} catalog={catalog} theme={homeTheme} connection={connection} status={status} onEdit={editScene} onDelete={deleteScene} onRun={setTrackedRun} onNotice={setNotice} />}
-      {destination === "settings" && <Settings voice={voice} preferences={preferences} onPreferences={value => { try { savePreferences(value); setPreferences(value); } catch { setNotice("Settings could not be saved on this computer."); } }} theme={homeTheme} onTheme={setHomeTheme} status={status} connected={!!connection} onConnect={() => setConnectionOpen(true)} onCharacter={async enabled => { if (!connection) return; await setCharacterMode(connection,enabled); await pairing.refresh(); }} />}
+      {destination === "settings" && <Settings voice={voice} preferences={preferences} onPreferences={value => { try { savePreferences(value); setPreferences(value); } catch { setNotice("Settings could not be saved on this computer."); } }} theme={homeTheme} onTheme={setHomeTheme} status={status} connected={!!connection} onConnect={() => setConnectionOpen(true)} onCharacter={async enabled => { if (!connection) return; await setCharacterMode(connection,enabled); await pairing.refresh(); }} onSound={async (kind, sound) => { if (!connection) throw new Error("Connect Orion to change its sounds."); await setAlertSound(connection, kind, sound); await pairing.refresh(); }} />}
       {destination === "debug" && preferences.debugMode && <Debug onRefresh={() => pairing.refresh()} voice={voice} connection={connection} status={status} />}
       {destination === "create" && <>
         <header className="scene-editor-heading">

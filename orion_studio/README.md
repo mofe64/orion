@@ -147,7 +147,12 @@ the full response when synthesis is slower than playback.
 ## Settings and Debug
 
 Settings stores appearance, preview sound, reduced UI motion and debug visibility
-locally. Voice models, voice presets, personality and memories save on the Pi.
+locally. Voice models, voice presets, alarm and timer sound choices, personality
+and memories save on the Pi. **Voice and sounds** saves each selection automatically:
+the default Pocket voice applies to the next reply, and each alarm or timer sound
+applies when its next alert starts. An alert already ringing keeps its sound. Sound
+choices come from the connected runtime; an older runtime requires an update before
+these selectors become available.
 Codex model and effort choices come from the active runtime's advertised catalog.
 Pi model paths are displayed as read-only. Other model changes require listening
 to be muted. Saving while voice status reports an error first attempts to mute,

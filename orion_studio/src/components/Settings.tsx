@@ -5,14 +5,15 @@ import type { StudioVoice } from "../hooks/useStudioVoice";
 import type { StudioPreferences } from "../lib/preferences";
 import type { GatewayStatus } from "../types";
 import "./Settings.css";
-import { VOICE_PRESETS } from "../lib/studioVoicePipeline";
 import { AgentProfileSettings } from "./AgentProfileSettings";
+import { SoundSettings } from "./SoundSettings";
 interface Props {
   voice: StudioVoice; preferences: StudioPreferences; onPreferences: (value: StudioPreferences) => void;
   theme: "light" | "dark"; onTheme: (theme: "light" | "dark") => void; status: GatewayStatus | null;
   connected: boolean; onConnect: () => void; onCharacter: (enabled: boolean) => Promise<void>;
+  onSound: (kind: "alarm" | "timer", sound: string) => Promise<void>;
 }
-export function Settings({ voice, preferences, onPreferences, theme, onTheme, status, connected, onConnect, onCharacter }: Props) {
+export function Settings({ voice, preferences, onPreferences, theme, onTheme, status, connected, onConnect, onCharacter, onSound }: Props) {
   const [locations,setLocations] = useState<{asrPath:string|null;ttsPath:string|null;cachePath:string;hubPath:string;asrIdentity:string|null;ttsIdentity:string|null}|null>(null);
   const [locationError,setLocationError] = useState("");
   const [draft,setDraft] = useState(voice.settings);
@@ -45,6 +46,7 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
         <SettingToggle label="Character mode" help="Let Orion use its idle expressions and movement." checked={!!status?.character.enabled} disabled={!connected || !status || characterBusy} onChange={async value => { setCharacterBusy(true); try { await onCharacter(value); } catch (error) { setError(String(error)); } finally { setCharacterBusy(false); } }} />
         <button className="quiet-button" onClick={onConnect}>Manage connection</button>
       </section>
+      <SoundSettings voice={voice} connected={connected} routines={status?.routines} onSound={onSound} />
       <section className="settings-card"><header><Bug size={20} /><div><h2>Developer tools</h2><p>Useful details when something needs attention.</p></div></header><SettingToggle label="Enable debug mode" help="Adds Debug to navigation with voice metrics, joint readings, and runtime logs." checked={preferences.debugMode} onChange={value => onPreferences({ ...preferences,debugMode:value })} /></section>
     </div>
     <form className="settings-stack" onSubmit={event => { event.preventDefault(); if (!canSave) return; void voice.save({ ...draft,provider:"codex" }).then(() => setSaved(true)).catch(error => setError(error instanceof Error ? error.message : String(error))); }}>
@@ -59,8 +61,6 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
       </section>
       <section className="settings-card"><header><AudioLines size={20} /><div><h2>Speech models</h2><p>{onboard ? "Speech recognition and voices run on Orion." : "Local models and their weight locations on this computer."}</p></div></header>
         {onboard ? <>
-          <label>Orion’s voice<select value={voice.settings.ttsVoice ?? "alba"} disabled={voice.saving} onChange={event => void voice.save({ ...voice.settings, ttsVoice: event.target.value }).catch(error => setError(String(error)))}>{VOICE_PRESETS.map(name => <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)}</option>)}</select></label>
-          <p className="settings-help">Applies to the next reply. You can change voices while Orion is listening or speaking.</p>
           <label>Voice precision<select value={draft.ttsModel} onChange={event => patch({ ttsModel: event.target.value })}><option value="pocket-fp32">FP32 · preferred sound</option><option value="pocket-int8">INT8 · lower latency</option></select></label>
           <p className="settings-help">FP32 takes longer to generate speech. Orion buffers slower replies to keep playback smooth. Changing precision requires listening to be off.</p>
           <p className="settings-model-identity">Qwen3 ASR · {draft.asrPath}</p>

@@ -33,3 +33,25 @@ of reply speech and the global ALSA mixer. Regenerate with
 `python3 audio/generate_cues.py` from the repository root after tuning. The
 runtime plays each entry cue under the voice session guard; speech preempts it.
 Physical loudness, microphone pickup and endpoint effects require Pi validation.
+
+## Alarm and timer sounds
+
+The runtime offers the generated **Two-tone** sound by default, plus **Club alarm**
+and **Funny alarm** from the MP3s in `alarms/`. Studio **Settings → Voice and sounds**
+saves separate choices for alarms and timers on Orion. See
+[timer and alarm behavior](../docs/system-architecture.md#timers-and-alarms) for
+repetition, dismissal and overlapping alerts.
+
+The original MP3 filenames retain their source identifiers. `prepare_alarms.py`
+uses ffmpeg to produce `club_alarm.pcm` and `funny_alarm.pcm`: 24 kHz mono, signed
+16-bit little-endian audio, with a 0.65 peak and 12 ms fades at both ends. After
+editing a source recording, regenerate and commit its PCM file:
+
+```bash
+python3 audio/prepare_alarms.py
+```
+
+Both PCM files are embedded in `oriond` at build time. Installation and playback
+require no ffmpeg or MP3 decoder, and the sounds travel with the code release
+independently of the Pi's scene catalog. This adds about 1.2 MB of audio data to
+the runtime binary. Rebuild `oriond` after regenerating these files.

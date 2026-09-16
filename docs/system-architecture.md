@@ -197,10 +197,18 @@ Studio, Codex or a network connection. Timers use elapsed time while the daemon
 runs; clock alarms use an explicit timestamp. On restart, the runtime reconstructs
 timer deadlines from saved wall-clock times, so an accurate Pi clock matters.
 
-A due alert interrupts scene audio and speech, then plays a repeating two-tone
-signal through the normal audio device. Short gaps in the signal help the
-microphone hear the wake phrase. An alert can ring at rest without enabling torque
-or moving home. Ringing defers automatic rest while Orion is awake.
+A due alert interrupts scene audio and speech, then repeats the selected sound
+through the normal audio device. The default two-tone signal includes short gaps
+to help the microphone hear the wake phrase. The two recorded alternatives use
+[prepared PCM embedded in the runtime](../audio/README.md#alarm-and-timer-sounds),
+so the motion loop does no file reads or audio decoding. An alert can ring at rest
+without enabling torque or moving home. Ringing defers automatic rest while Orion
+is awake.
+
+Studio **Settings → Voice and sounds** saves separate alarm and timer defaults on
+the Pi. The runtime chooses a sound when an alert starts, including alerts scheduled
+before the setting changed. Overlapping alerts share the sound chosen by the first
+alert to ring. Changing a default while ringing applies to a later alert group.
 
 The listener checks alert status every 200 ms. While an alert rings, Rustpotter
 runs even if a conversation was playing. Saying “Hey Orion” dismisses the alert
@@ -210,8 +218,11 @@ dismissal; Studio also provides **Stop sound**. The runtime stops playback after
 five minutes. Alerts that overlap share that limit rather than extending it.
 
 Mode, pending alerts and recent results are saved atomically in the
-[routines file](configuration.md#saved-files). A restart resumes a ringing alert
-only for its remaining time. Alerts missed by five minutes or more are marked
+[routines file](configuration.md#saved-files). Sound preferences use its companion
+`routines.sounds.json`, keeping the alert file compatible with older releases.
+Before ringing, the runtime saves the selected sound with its ringing deadline;
+a restart reuses that sound only when the saved deadline matches the alert.
+It resumes playback for the remaining time. Alerts missed by five minutes or more are marked
 missed. A shorter delay uses the remainder of the original five-minute window.
 Playback failures appear in routine status. The scheduler accepts at most 16
 active alerts and retains up to 32 recent entries.

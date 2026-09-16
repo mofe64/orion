@@ -315,6 +315,9 @@ export function getRuntimeLogs(connection: GatewayConnection): Promise<{ lines: 
 export function setUserMode(connection: GatewayConnection, mode: "idle" | "lamp"): Promise<unknown> {
   return updateRoutines(connection, { action: "set_mode", mode });
 }
+export function setAlertSound(connection: GatewayConnection, kind: "alarm" | "timer", sound: string): Promise<unknown> {
+  return updateRoutines(connection, { action: "set_sound", kind, sound });
+}
 export function updateRoutines(connection: GatewayConnection, action: Record<string, unknown>): Promise<unknown> {
   return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "routines", request: action }) });
 }

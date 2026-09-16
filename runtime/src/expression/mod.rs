@@ -1,3 +1,4 @@
+pub mod alert_sound;
 pub mod character;
 pub mod lamp;
 pub mod rest;
