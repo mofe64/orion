@@ -75,18 +75,37 @@ list, so a stale screen cannot silently erase a newer append. Automatic memory
 collection is not enabled.
 
 `respond_with_events(text, Some(sender))` reports `SearchStarted` and routes
-`SetLighting` requests to a coordinator with a one-shot result channel.
+`SetLighting` and `RobotOperation` requests to a coordinator with a one-shot
+result channel.
 `respond(text)` still works for text and memory/search tools; lighting fails
-explicitly if no coordinator is attached. There is no direct hardware client
-inside this crate.
+explicitly if no coordinator is attached, as do mode, sleep and alert tools. There
+is no direct hardware client inside this crate.
 
-Codex's native live search executes inside App Server. Orion's three dynamic
+Codex's native live search executes inside App Server. Orion's dynamic
 tools use the experimental `item/tool/call` protocol. The registered lighting
 schema publishes moods, colors, and effects from `src/tools/lighting.rs`:
 `ambient` combines warm white and amber, `cool` combines cool white and blue,
 `warm` uses warm white, and `warm_red` combines warm white and red. Brightness
 is absolute percent. Effect palettes default to warm white and a random accent;
 explicit palettes contain one or two named colors.
+
+The mode and alert tools use `src/tools/routines.rs`:
+
+| Tool | Request |
+| --- | --- |
+| `set_mode` | `mode`: `idle` or `lamp` |
+| `go_to_sleep` | No arguments; rest after the spoken reply |
+| `set_timer` | `seconds`: 1–604800; `label`: up to 80 characters |
+| `set_alarm` | `at`: future RFC3339 timestamp with UTC offset; `label` |
+| `list_alerts` | No arguments; returns Pi local time, active and recent alerts |
+| `cancel_alert` | `id` from a previous tool result |
+| `stop_alert` | No arguments; silences alerts ringing now |
+
+Read `list_alerts` before choosing a clock-alarm timestamp. Clarify ambiguous
+times and cancellation targets. Clock alarms must fall within the next 366 days;
+recurring alarms are unsupported. Runtime validation returns errors to the agent,
+which confirms a change only after success. See
+[timer and alarm behavior](../docs/system-architecture.md#timers-and-alarms).
 
 Opt-in model tests use temporary memory and intercept lighting without hardware:
 

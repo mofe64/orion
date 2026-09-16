@@ -35,6 +35,32 @@ class FakeCapture:
         return np.full((320,2),2000 if self.frames<25 else 0,dtype='<i2').tobytes()
 
 class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_alarm_wake_dismissal_works_without_a_coordinator_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            token_file=Path(directory)/'token'; token_file.write_text('a'*32)
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1',0)); port=reservation.getsockname()[1]
+            args=SimpleNamespace(token_file=token_file,host='127.0.0.1',port=port,
+                wake_model=Path('unused'),threshold=.4,device='fake',mic_spacing=0,channel_sign=0,
+                daemon_socket=str(Path(directory)/'no-robot.sock'))
+            ringing=True; stopped=asyncio.Event(); commands=[]
+            async def daemon(command,path):
+                nonlocal ringing
+                commands.append(command)
+                if command=='routines status': return {'ok':True,'routines':{'ringing':ringing}}
+                if command=='routines {"action":"stop"}': ringing=False; stopped.set()
+                return {'ok':True}
+            with patch('orion_voice.satellite.RustpotterWakeDetector',FakeWake), \
+                 patch('orion_voice.satellite.StereoCapture',FakeCapture), \
+                 patch('orion_voice.satellite.daemon_command',daemon):
+                task=asyncio.create_task(serve(args))
+                try:
+                    await asyncio.wait_for(stopped.wait(),2)
+                    self.assertFalse(ringing)
+                    self.assertFalse(any(command.startswith('voice ') for command in commands))
+                finally:
+                    task.cancel(); await asyncio.gather(task,return_exceptions=True)
+
     async def test_prefix_confirmation_is_ordered_while_capture_continues(self):
         with tempfile.TemporaryDirectory() as directory:
             token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)

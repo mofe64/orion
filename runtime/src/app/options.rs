@@ -41,6 +41,7 @@ pub(super) struct Options {
     pub(super) help: bool,
     pub(super) character_on_start: bool,
     pub(super) rest_after_seconds: f64,
+    pub(super) routines_file: Option<PathBuf>,
     pub(super) wait: bool,
     pub(super) port: String,
     pub(super) baud_rate: i32,
@@ -74,6 +75,7 @@ impl Default for Options {
             help: false,
             character_on_start: true,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
+            routines_file: None,
             wait: false,
             port: "/dev/ttyACM0".into(),
             baud_rate: DEFAULT_BAUD_RATE,
@@ -157,7 +159,8 @@ pub(super) fn usage() -> &'static str {
   --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
   --character-on-start on|off  Start character automatically (default: on).\n\
-  --rest-after-seconds SECONDS  Confirmed-wake inactivity before rest (default: 1800).\n\
+  --rest-after-seconds SECONDS  Idle-mode inactivity before rest (default: 1800).\n\
+  --routines-file PATH  Saved user mode and alerts (hardware: ~/.config/orion/routines.json).\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
   --help              Show this help.\n\n\
 Check never enables torque. Serve starts powered character mode unless --character-on-start off.\n"
@@ -241,6 +244,9 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
             }
             "--calibration" => {
                 options.calibration_file = require_value(&mut arguments, &argument)?.into()
+            }
+            "--routines-file" => {
+                options.routines_file = Some(require_value(&mut arguments, &argument)?.into())
             }
             "--socket" => options.socket_path = require_value(&mut arguments, &argument)?.into(),
             "--poses" => options.poses_file = require_value(&mut arguments, &argument)?.into(),

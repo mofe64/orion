@@ -85,7 +85,7 @@ class FakeOrionClient:
 
     def request(self, command: str) -> dict[str, object]:
         self.commands.append(command)
-        if command == "character rest" or command.startswith(("lamp ", "lamp-effect ")):
+        if command == "character rest" or command.startswith(("lamp ", "lamp-effect ", "routines ", "sleep ")):
             return {"ok": True, "run_id": 99}
         if command == "status":
             return {"schema_version": 3, "robot": "orion", "build_revision": "test-revision",
@@ -305,6 +305,18 @@ class HttpAuthenticationTests(unittest.TestCase):
 
 
 class HomeOperationTests(unittest.TestCase):
+    def test_routines_use_structured_commands_and_sleep_requires_session_identity(self):
+        self.client = FakeOrionClient(); self.gateway = OrionGateway(self.client)
+        _, result = self.gateway.submit({'operation':'routines','request':{'action':'timer','seconds':60,'label':'Tea'}})
+        self.assertTrue(result['accepted'])
+        self.assertEqual(json.loads(self.client.commands[-1].removeprefix('routines ')), {'action':'timer','seconds':60,'label':'Tea'})
+        self.gateway.submit({'operation':'sleep','session_id':'a'*32})
+        self.assertEqual(self.client.commands[-1],'sleep '+'a'*32)
+        for payload in [ {'operation':'sleep','session_id':'bad\nstop'},
+                {'operation':'routines','request':{'action':'timer','seconds':float('nan'),'label':'tea'}},
+                {'operation':'routines','request':{},'extra':True} ]:
+            with self.assertRaises(GatewayError): self.gateway.submit(payload)
+
     def test_rest_uses_character_owned_shutdown(self):
         client = FakeOrionClient()
         gateway = OrionGateway(client)

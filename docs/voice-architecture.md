@@ -172,14 +172,16 @@ forwards requests to the Pi; an unavailable Pi produces a connection error.
 
 Qwen transcribes microphone audio locally. Codex receives confirmed command text
 and any profile or memory context used for the turn. Its built-in search can
-retrieve online information. Orion registers three dynamic tools:
-`append_memory`, `search_memories` and `set_lighting`.
+retrieve online information. Orion registers memory, lighting, mode, sleep and
+alert tools. See the [tool reference](../agent/README.md#memory-and-tools).
 
 Lighting calls validate brightness, effects and colors, then use the coordinator
 and gateway's `lamp_effect` operation. The runtime stores that lamp program below
 speech, scene and voice-feedback lighting. Rest darkness suppresses the output
 while preserving the preference. An execution error is returned to the agent.
-The agent's available tools do not include joint or motion control.
+Mode and alert calls use the gateway's `routines` operation. Sleep requests attach
+the current confirmed voice session; rest waits until its acknowledgement ends.
+The agent cannot specify joint targets or bypass the rest lifecycle.
 
 Tool requests must match the active Codex thread and turn and are limited to
 16 per turn. Unexpected interactive requests fail the turn. Orion disables Codex
@@ -315,3 +317,13 @@ returns to wake detection. During descent, waking or a rest fault, immediate
 voice reactions are suppressed. Mechanical rest permits only the candidate's
 wake chime. Home completion restores the latest eligible reaction. Capture stays
 open through cues, so speaker pickup must be checked on the assembled robot.
+
+## Alert interruption
+
+A ringing timer or alarm takes the speaker from an active voice reply. The
+listener retires that voice session and sends `session.interrupted`, allowing the
+coordinator to cancel inference and playback. Late messages from the retired
+session cannot replace the alert. Rustpotter continues listening during the sound;
+a detection sends a local `routines` stop request and consumes the wake phrase.
+Qwen and Codex do not participate in dismissal. See
+[timer and alarm behavior](system-architecture.md#timers-and-alarms).

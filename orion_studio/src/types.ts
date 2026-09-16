@@ -247,7 +247,16 @@ export interface GatewayStatus {
   scene: { active: RunStatus | null; last: RunStatus | null };
   speech: { active: RunStatus | null; last: RunStatus | null };
   character: CharacterStatus;
+  routines?: {
+    mode: "idle" | "lamp";
+    ringing: boolean;
+    remaining_ring_seconds: number | null;
+    error: string | null;
+    alerts: Array<{ id: number; kind: "timer" | "alarm"; label: string; due_unix: number; state: string }>;
+  } | null;
   rest?: {
+    mode?: "idle" | "lamp";
+    sleep_requested?: boolean;
     state: "disabled" | "awake" | "going_to_rest" | "resting" | "waking" | "fault";
     timeout_seconds: number;
     last_confirmed_at: number | null;

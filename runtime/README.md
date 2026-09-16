@@ -426,3 +426,28 @@ Brightness-only updates preserve the palette and effect; zero brightness is
 fully off. Lamp programs resume after higher-priority voice feedback or speech.
 Scene or speech playback rejects changes until it finishes. The existing
 `lamp R G B W` command still sets a steady color.
+
+## Mode and alert commands
+
+The private Unix socket accepts these commands. The gateway exposes them through
+its authenticated `routines` operation; Studio and agent tools use that route.
+
+```text
+routines status
+routines {"action":"set_mode","mode":"lamp"}
+routines {"action":"set_mode","mode":"idle"}
+routines {"action":"timer","seconds":300,"label":"Tea"}
+routines {"action":"alarm","due_unix":1893571200,"label":"Morning"}
+routines {"action":"list"}
+routines {"action":"cancel","id":1}
+routines {"action":"stop"}
+sleep CURRENT_CONFIRMED_VOICE_SESSION_ID
+```
+
+Alarm timestamps are Unix seconds and must be in the future. `sleep` waits for
+the owning voice session and its speech to finish. `character rest` remains the
+immediate controlled rest command. The `character status` response includes
+`rest.mode`, `rest.sleep_requested` and `routines`; alert status includes pending
+and recent entries, remaining ringing time and playback errors. See
+[timer and alarm behavior](../docs/system-architecture.md#timers-and-alarms) and
+[saved state](../docs/configuration.md#saved-files).

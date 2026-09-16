@@ -153,6 +153,7 @@ class OrionGateway:
             },
             "character": character.get("character"),
             "rest": character.get("rest"),
+            "routines": character.get("routines"),
         }
 
     def runtime_logs(self) -> dict[str, Any]:
@@ -285,6 +286,21 @@ class OrionGateway:
                     "Speech must be one line and no more than 2000 UTF-8 bytes.",
                 )
             response = self._checked(f"speech start {text}")
+        elif operation == "routines":
+            if set(payload) != {"operation", "request"} or not isinstance(payload["request"], dict):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Expected a routines request object.")
+            try:
+                body = json.dumps(payload["request"], ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+            except (ValueError, TypeError) as error:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Use finite numbers in the routines request.") from error
+            if len(body) > 1024:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Routines request is too large.")
+            response = self._checked("routines " + body)
+        elif operation == "sleep":
+            if set(payload) != {"operation", "session_id"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_sleep", "Sleep needs the current voice session.")
+            session = self._name(payload.get("session_id"), "voice session")
+            response = self._checked(f"sleep {session}")
         elif operation == "rest":
             response = self._checked("character rest")
         elif operation == "lamp_effect":
@@ -322,7 +338,7 @@ class OrionGateway:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, preview_scene, speech, rest, lamp, lamp_effect, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
+                "Supported operations are goto, motion, scene, preview_scene, speech, rest, sleep, routines, lamp, lamp_effect, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {

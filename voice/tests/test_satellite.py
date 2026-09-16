@@ -116,6 +116,22 @@ class SatelliteTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.session.control({'type':'session.finish','sessionId':'old'})
         self.assertEqual(self.session.session_id,sid)
 
+    def test_alarm_wake_interrupts_playback_without_asr_or_a_new_session(self):
+        sid = self.trigger(); self.endpoint()
+        self.session.control({"type":"wake.confirmed","sessionId":sid,"followup":False})
+        self.session.control({"type":"session.playing","sessionId":sid})
+        self.assertEqual(self.session.set_alarm(True), sid)
+        self.assertIsNone(self.session.session_id)
+        self.wake.next = True
+        self.assertEqual(self.session.accept_stereo(frame()), [{"type":"alarm.dismiss"}])
+        self.assertIsNone(self.session.session_id)
+        self.session.set_alarm(False)
+        self.wake.next = True
+        self.assertEqual(self.session.accept_stereo(frame()), [])
+        self.now += .6
+        self.wake.reset()
+        self.trigger()
+
     def test_processing_and_playback_ignore_wake(self):
         sid = self.trigger(); self.endpoint()
         self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})

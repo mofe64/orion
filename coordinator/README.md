@@ -47,7 +47,11 @@ only the final response opens the follow-up window. The listener advertises
 support through `toolFeedback`. Older peers receive final speech directly.
 
 Lighting calls use `lamp_effect` through the gateway. The execution result returns
-to the agent. Memory calls run silently inside the agent service.
+to the agent. Mode and alert tools use the same route through the `routines`
+operation. Sleep attaches the current voice session and suppresses the follow-up
+window after acknowledgement. An alarm interruption cancels the active voice job;
+the listener handles dismissal locally. Memory calls run silently inside the agent
+service.
 
 ## Validation
 

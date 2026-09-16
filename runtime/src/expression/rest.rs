@@ -26,6 +26,8 @@ pub enum RestState {
 #[derive(Serialize)]
 pub struct RestStatus {
     pub state: RestState,
+    pub mode: super::routines::UserMode,
+    pub sleep_requested: bool,
     pub timeout_seconds: f64,
     pub last_confirmed_at: Option<f64>,
     pub remaining_seconds: Option<f64>,
@@ -41,6 +43,8 @@ struct PendingAttention {
 }
 
 pub struct RestCoordinator {
+    mode: super::routines::UserMode,
+    sleep_session: Option<String>,
     state: RestState,
     timeout: f64,
     deadline: Option<f64>,
@@ -55,6 +59,8 @@ pub struct RestCoordinator {
 impl RestCoordinator {
     pub fn new(timeout: f64) -> Self {
         Self {
+            mode: super::routines::UserMode::Idle,
+            sleep_session: None,
             state: RestState::Disabled,
             timeout,
             deadline: None,
@@ -70,9 +76,15 @@ impl RestCoordinator {
     pub fn status(&self, now: f64) -> RestStatus {
         RestStatus {
             state: self.state,
+            mode: self.mode,
+            sleep_requested: self.sleep_session.is_some(),
             timeout_seconds: self.timeout,
             last_confirmed_at: self.last_confirmed_at,
-            remaining_seconds: self.deadline.map(|at| (at - now).max(0.0)),
+            remaining_seconds: if self.mode == super::routines::UserMode::Idle {
+                self.deadline.map(|at| (at - now).max(0.0))
+            } else {
+                None
+            },
             movement_run_id: self.rest_run,
             light_on: self.light_on,
             error: self.error.clone(),
@@ -86,7 +98,18 @@ impl RestCoordinator {
         self.last_confirmed_at = None;
     }
 
+    pub fn set_mode(&mut self, mode: super::routines::UserMode, now: f64) {
+        self.mode = mode;
+        self.sleep_session = None;
+        self.deadline = (self.state == RestState::Awake).then_some(now + self.timeout);
+    }
+
+    pub fn request_sleep(&mut self, session: &str) {
+        self.sleep_session = Some(session.into());
+    }
+
     pub fn disable(&mut self) {
+        self.sleep_session = None;
         self.state = RestState::Disabled;
         self.deadline = None;
         self.rest_run = None;
@@ -99,6 +122,13 @@ impl RestCoordinator {
     pub fn confirmed(&mut self, session: &str, now: f64) {
         if matches!(self.state, RestState::Disabled | RestState::Fault) {
             return;
+        }
+        if self
+            .sleep_session
+            .as_deref()
+            .is_some_and(|id| id != session)
+        {
+            self.sleep_session = None;
         }
         self.last_confirmed_at = Some(now);
         self.deadline = Some(now + self.timeout);
@@ -121,6 +151,7 @@ impl RestCoordinator {
         let run = response["run_id"]
             .as_u64()
             .ok_or_else(|| Error::Runtime("Rest movement has no run ID.".into()))?;
+        self.sleep_session = None;
         self.state = RestState::GoingToRest;
         self.rest_run = Some(run);
         self.wake_session = None;
@@ -248,7 +279,12 @@ impl RestCoordinator {
                     self.disable();
                     return Ok(());
                 }
-                if self.deadline.is_some_and(|deadline| now >= deadline)
+                if (self
+                    .sleep_session
+                    .as_ref()
+                    .is_some_and(|id| !feedback.owns(id))
+                    || (self.mode == super::routines::UserMode::Idle
+                        && self.deadline.is_some_and(|deadline| now >= deadline)))
                     && !foreground_busy
                     && !feedback.confirmed_activity()
                     && character.can_auto_rest(core)
@@ -488,6 +524,43 @@ mod tests {
             assert_eq!(rest.status(2.0).state, RestState::Awake);
             rest
         }
+    }
+
+    #[test]
+    fn lamp_mode_preserves_character_and_idle_mode_starts_a_fresh_timeout() {
+        let mut f = Fixture::home();
+        let mut rest = f.armed(1800.);
+        rest.set_mode(super::super::routines::UserMode::Lamp, 3.);
+        rest.confirmed("wake", 10.);
+        f.policy_tick(&mut rest, 7200., false);
+        assert_eq!(rest.state, RestState::Awake);
+        assert!(f.character.status().enabled);
+        assert!(rest.status(7200.).remaining_seconds.is_none());
+        rest.set_mode(super::super::routines::UserMode::Idle, 7200.);
+        f.policy_tick(&mut rest, 8999.9, false);
+        assert_eq!(rest.state, RestState::Awake);
+        f.policy_tick(&mut rest, 9000., false);
+        assert_eq!(rest.state, RestState::GoingToRest);
+    }
+    #[test]
+    fn explicit_sleep_waits_for_reply_even_in_lamp_mode() {
+        let mut f = Fixture::home();
+        let mut rest = f.armed(1800.);
+        rest.set_mode(super::super::routines::UserMode::Lamp, 3.);
+        let mut feedback = VoiceFeedback::default();
+        let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        feedback.event(id, "wake", 3.).unwrap();
+        feedback.event(id, "endpoint", 4.).unwrap();
+        assert!(feedback.confirm(id, 4.));
+        rest.request_sleep(id);
+        rest.tick(5., &mut f.core, &mut f.character, &feedback, false);
+        assert_eq!(rest.state, RestState::Awake);
+        feedback.event(id, "finish", 6.).unwrap();
+        rest.tick(6., &mut f.core, &mut f.character, &feedback, true);
+        assert_eq!(rest.state, RestState::Awake);
+        rest.tick(7., &mut f.core, &mut f.character, &feedback, false);
+        assert_eq!(rest.state, RestState::GoingToRest);
+        assert!(f.core.snapshot().torque_enabled);
     }
 
     #[test]

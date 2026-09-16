@@ -14,6 +14,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/voice-settings.json` | Agent model and effort, speech models, optional model/cache paths and voice preset |
 | `.config/orion/voice-stack.env` | Environment for the onboard voice and agent service |
 | `.config/orion/voice.env` | Listener overrides, including microphone spacing, channel orientation and capture gain |
+| `.config/orion/routines.json` | Idle/lamp mode, pending timers and one-time alarms, recent alert results |
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
@@ -139,8 +140,17 @@ state. See [Pi deployment](quickstart.md#deploy-to-the-pi).
 paths, Python executable and start pose. `--character-on-start` defaults to `on`.
 Use `off` for maintenance startup with torque disabled. `--rest-after-seconds`
 defaults to `1800`, or 30 minutes. Accepted wake confirmations reset inactivity;
-active conversations and foreground work can defer rest. See
+active conversations and foreground work can defer rest. Lamp mode disables
+automatic rest while preserving idle animations. See
 [automatic rest](system-architecture.md#automatic-rest-and-waking).
+
+`--routines-file PATH` overrides the saved mode and alert file. Hardware defaults
+to `~/.config/orion/routines.json`; simulation keeps this state in memory unless
+a file is supplied. The installer does not overwrite this file. Writes use atomic
+replacement without forcing a storage flush in the motion loop; a sudden power
+loss can lose a recent change. Clock alarms use
+the Pi’s local time and explicit UTC offsets; verify its timezone and clock before
+relying on a clock alarm.
 
 The managed listener uses the Rustpotter reference
 `voice/models/wake/hey_orion_reference.rpw`, wake threshold `0.35` and 25 dB capture

@@ -311,3 +311,10 @@ export function endSpeechStream(connection: GatewayConnection, runId: number, se
 export function getRuntimeLogs(connection: GatewayConnection): Promise<{ lines: string[] }> {
   return request(connection, "/api/v2/debug/logs");
 }
+
+export function setUserMode(connection: GatewayConnection, mode: "idle" | "lamp"): Promise<unknown> {
+  return updateRoutines(connection, { action: "set_mode", mode });
+}
+export function updateRoutines(connection: GatewayConnection, action: Record<string, unknown>): Promise<unknown> {
+  return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "routines", request: action }) });
+}

@@ -437,9 +437,89 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     manual_light: &mut Option<LampProgram>,
     voice_speech_run: &mut Option<(u64, String)>,
     rest: &mut crate::expression::rest::RestCoordinator,
+    routines: &mut crate::expression::routines::Routines,
 ) -> String {
+    use crate::expression::routines::Request;
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    if command == "routines status" {
+        return serde_json::json!({"ok":true,"routines":routines.status(wall, now_seconds)})
+            .to_string();
+    }
+    if let Some(body) = command.strip_prefix("routines ") {
+        let result = (|| -> Result<serde_json::Value, String> {
+            let request: Request = serde_json::from_str(body).map_err(|e| e.to_string())?;
+            let mode = if let Request::SetMode { mode } = &request {
+                Some(*mode)
+            } else {
+                None
+            };
+            if mode.is_some() && (rest.failed() || scenes.is_active() || routines.ringing()) {
+                return Err(
+                    "Finish the scene or alert, or recover the runtime before changing mode".into(),
+                );
+            }
+            if mode.is_some() {
+                if !character.status().enabled {
+                    character
+                        .start(now_seconds, core)
+                        .map_err(|e| e.to_string())?;
+                    rest.started();
+                }
+            }
+            let result = routines.request(request, wall, now_seconds, audio)?;
+            if let Some(mode) = mode {
+                rest.set_mode(mode, now_seconds);
+            }
+            Ok(result)
+        })();
+        return match result {
+            Ok(value) => serde_json::json!({"ok":true,"result":value}).to_string(),
+            Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+        };
+    }
+    if let Some(session) = command.strip_prefix("sleep ") {
+        if !feedback.owns(session)
+            || !feedback.confirmed_activity()
+            || !matches!(
+                rest.status(now_seconds).state,
+                crate::expression::rest::RestState::Awake
+                    | crate::expression::rest::RestState::Waking
+            )
+            || routines.ringing()
+        {
+            return serde_json::json!({"ok":false,"error":"Sleep requires the current confirmed voice session"}).to_string();
+        }
+        rest.request_sleep(session);
+        return serde_json::json!({"ok":true,"sleep_after_reply":true}).to_string();
+    }
+    if routines.ringing() {
+        if matches!(
+            command,
+            "stop" | "disable" | "character stop" | "character rest"
+        ) {
+            if let Err(error) = routines.stop("dismissed", audio) {
+                routines.error = Some(error);
+            }
+        } else if command.starts_with("voice ") && command != "voice status" {
+            // Retired voice replies cannot replace or stop an alert. Wake dismissal
+            // uses the listener's dedicated local routines stop command.
+            return serde_json::json!({"ok":true,"ignored":"alert is ringing"}).to_string();
+        } else if command.starts_with("speech file ")
+            || command.starts_with("speech stream ")
+            || command.starts_with("scene start ")
+            || command.starts_with("scene preview ")
+            || command.starts_with("character ") && command != "character status"
+            || command.starts_with("goto ")
+            || command.starts_with("play ")
+        {
+            return serde_json::json!({"ok":false,"error":"Dismiss the alert first"}).to_string();
+        }
+    }
     if command == "character status" {
-        return serde_json::json!({"ok": true, "character": character.status(), "rest": rest.status(now_seconds)}).to_string();
+        return serde_json::json!({"ok": true, "character": character.status(), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds)}).to_string();
     }
     if let Some(fields) = command.strip_prefix("voice ") {
         if fields == "status" {

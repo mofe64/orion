@@ -52,7 +52,7 @@ compiler. Each backend supplies its own joint feedback. See the
 
 `oriond` owns the servo bus, RGBW device and ReSpeaker playback. It applies
 calibration, compiles trajectories, checks measured movement completion, and
-coordinates scenes, speech animation, idle behavior and automatic rest. Clients
+coordinates scenes, speech animation, idle behavior, rest and scheduled alerts. Clients
 submit named poses, motions, scenes or other supported operations. Every movement
 passes through the runtime's limits and ownership checks.
 
@@ -71,7 +71,8 @@ conversation. Restarting the service starts a fresh conversation and retains
 saved memory and personality.
 
 A confirmed command reaches Codex as text. The available agent tools support web
-search, explicit memory operations and validated lamp changes. Character motion
+search, explicit memory operations, validated lamp and mode changes, sleep, timers
+and alarms. Character motion
 comes from runtime behavior or explicit user controls. See the
 [voice architecture](voice-architecture.md) for capture, conversation and playback
 ordering.
@@ -155,8 +156,11 @@ with torque disabled. Microphone mute has its own saved setting.
 
 ## Automatic rest and waking
 
-Successful initial homing arms the inactivity timer. The default interval is
-30 minutes. Each voice session can reset the deadline once through an accepted
+Idle mode arms the inactivity timer after successful homing. The default interval
+is 30 minutes. Lamp mode keeps the same idle animations and disables automatic
+rest. Selecting idle mode starts a fresh inactivity interval. The selected mode
+survives service restarts and code deployments. Each voice session can reset the
+deadline once through an accepted
 Qwen wake confirmation. Candidates, rejected wakes and ordinary animation do
 not reset it.
 
@@ -177,11 +181,40 @@ returns home while retaining torque. Capture continues during both movements.
 After home completes, the runtime applies the latest listening or thinking state
 and checks any direction evidence before turning toward the speaker.
 
-Studio's **Go to rest** starts this sequence immediately. Explicit Stop,
+Studio's **Go to rest** starts this sequence immediately. The `go_to_sleep` agent
+tool queues rest behind its spoken acknowledgement and closes the voice session
+without a follow-up window. Explicit sleep works in either mode and keeps the
+selected mode for the next wake. Explicit Stop,
 `disable`, and maintenance startup disable automatic waking; an explicit character
 start rearms it. The lower-level `goto rest` command moves the body and requires
 a separate torque-release command after verified arrival. See
 [confirmed waking](voice-architecture.md#confirmed-waking) for reply ordering.
+
+## Timers and alarms
+
+The runtime owns one-time timers and clock alarms. Once created, they run without
+Studio, Codex or a network connection. Timers use elapsed time while the daemon
+runs; clock alarms use an explicit timestamp. On restart, the runtime reconstructs
+timer deadlines from saved wall-clock times, so an accurate Pi clock matters.
+
+A due alert interrupts scene audio and speech, then plays a repeating two-tone
+signal through the normal audio device. Short gaps in the signal help the
+microphone hear the wake phrase. An alert can ring at rest without enabling torque
+or moving home. Ringing defers automatic rest while Orion is awake.
+
+The listener checks alert status every 200 ms. While an alert rings, Rustpotter
+runs even if a conversation was playing. Saying “Hey Orion” dismisses the alert
+locally and ends that interaction; a later wake can start a conversation. This
+dismissal does not require Qwen confirmation. Muting the microphone prevents voice
+dismissal; Studio also provides **Stop sound**. The runtime stops playback after
+five minutes. Alerts that overlap share that limit rather than extending it.
+
+Mode, pending alerts and recent results are saved atomically in the
+[routines file](configuration.md#saved-files). A restart resumes a ringing alert
+only for its remaining time. Alerts missed by five minutes or more are marked
+missed. A shorter delay uses the remainder of the original five-minute window.
+Playback failures appear in routine status. The scheduler accepts at most 16
+active alerts and retains up to 32 recent entries.
 
 ## Light and rest status
 

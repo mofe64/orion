@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Info, Mic, Moon, MoveUpLeft, MoveUpRight, Play, Plus, Sparkles, Sun, SunDim } from "lucide-react";
-import { restOrion, setCharacterMode, setLamp, runScene, type GatewayConnection } from "../lib/gateway";
+import { restOrion, setUserMode, updateRoutines, setLamp, runScene, type GatewayConnection } from "../lib/gateway";
 import { hueName, lampChannels, lampPreview, type LampMood, type ManualLampSetting } from "../lib/homeLamp";
 import { acceptedRun, type TrackedRun } from "./RunFeedback";
 import type { GatewayStatus, ProjectCatalog } from "../types";
@@ -76,7 +76,10 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
       value => setLamp(value, lampChannels(setting)), () => setAppliedLamp(setting));
   };
   const disabled = !connection || pending !== null;
-  const foregroundBusy = !!(status?.scene.active || status?.speech.active || (status?.runtime.motion && !status.runtime.motion.name?.startsWith("idle_")));
+  const userMode = status?.routines?.mode ?? status?.rest?.mode ?? "idle";
+  const ringing = status?.routines?.ringing ?? false;
+  const activeAlerts = status?.routines?.alerts.filter(alert => ["pending", "ringing"].includes(alert.state)) ?? [];
+  const foregroundBusy = ringing || !!(status?.scene.active || status?.speech.active || (status?.runtime.motion && !status.runtime.motion.name?.startsWith("idle_")));
   const characterLabel = !connection ? "Disconnected" : !status ? "Awaiting status" : status.rest?.state === "resting"
     ? "Resting · torque off" : status.rest?.state === "going_to_rest" ? "Moving to rest"
     : status.rest?.state === "waking" ? "Waking · returning home"
@@ -96,7 +99,8 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
           </Suspense></div>
           <p className="oh-model-caption">Attentive pose · Model preview, not live position</p>
           <div className="oh-modes">
-            <button className="oh-mode" disabled={disabled || status?.character.enabled} aria-pressed={!!status?.character.enabled} onClick={() => void act("Character mode", value => setCharacterMode(value, true))}><Sparkles size={18} /><span><strong>Character mode</strong><small>A little personality</small></span></button>
+            <button className="oh-mode" disabled={disabled || ringing} aria-pressed={!!status?.character.enabled && userMode === "idle"} onClick={() => void act("Idle mode", value => setUserMode(value, "idle"))}><Sparkles size={18} /><span><strong>Idle mode</strong><small>Rest after 30 minutes</small></span></button>
+            <button className="oh-mode" disabled={disabled || ringing} aria-pressed={!!status?.character.enabled && userMode === "lamp"} onClick={() => void act("Lamp mode", value => setUserMode(value, "lamp"))}><Sun size={18} /><span><strong>Lamp mode</strong><small>Stay on with animations</small></span></button>
             <button className="oh-mode" disabled={disabled || resting || status?.runtime.motion?.name === "rest"} onClick={() => void act("Go to rest", restOrion)}><Moon size={18} /><span><strong>Go to rest</strong><small>Gently settle down</small></span></button>
           </div>
         </section>
@@ -116,6 +120,12 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         <p className="oh-note" id="lamp-command-help">{status?.rest ? "The switch shows runtime light power. Rest keeps the light off; your lamp setting is saved." : "The switch shows your last lamp command. Character and speech can temporarily take over the light."}</p>
       </section>
     </div>
+    {status?.routines && <section className="oh-alerts" aria-label="Timers and alarms">
+      <header className="oh-panel-heading"><h2>Timers and alarms</h2>{ringing && <button className="quiet-button" disabled={disabled} onClick={() => void act("Stop alarm", value => updateRoutines(value, { action: "stop" }))}>Stop sound</button>}</header>
+      {ringing && <p role="alert">Say “Hey Orion” to stop the sound. It stops automatically after five minutes.</p>}
+      {activeAlerts.length ? <ul>{activeAlerts.map(alert => <li key={alert.id}><span>{alert.label || (alert.kind === "timer" ? "Timer" : "Alarm")} · {alert.state === "ringing" ? "Ringing" : new Date(alert.due_unix * 1000).toLocaleString()}</span><button className="quiet-button" disabled={disabled} aria-label={`Cancel ${alert.label || `${alert.kind} ${alert.id}`}`} onClick={() => void act("Cancel alert", value => updateRoutines(value, { action: "cancel", id: alert.id }))}>Cancel</button></li>)}</ul> : <p>Ask Orion to set a timer or an alarm.</p>}
+      {status.routines.error && <p role="alert">{status.routines.error}</p>}
+    </section>}
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>Explore animations <Plus size={15} /></button></header>
       <div className="oh-expression-list">{[["acknowledge_left", "Acknowledge left"], ["acknowledge_right", "Acknowledge right"]].map(([name, label], index) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(label, value => runScene(value, name))}><span className="oh-expression-icon">{index === 0 ? <MoveUpLeft size={16} /> : <MoveUpRight size={16} />}</span>{label}<Play className="oh-arrow" size={14} /></button>)}</div>
     </section>

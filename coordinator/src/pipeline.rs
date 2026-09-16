@@ -196,7 +196,9 @@ enum Completed {
         transcript: Value,
         elapsed: f64,
     },
-    Response,
+    Response {
+        sleep: bool,
+    },
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -299,9 +301,10 @@ async fn connected(
                             pi.send(json!({"type":"session.processing", "sessionId":sid})).await?;
                             let agent = agent.clone(); let speech = speech.clone(); let gateway = gateway.clone();
                             let hub = hub.clone(); let pi = pi.clone(); let active = active.clone(); let request = *next_request;
-                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback).await.map(|_| Completed::Response) });
+                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback).await.map(|sleep| Completed::Response {sleep}) });
                         },
-                        Ok(Completed::Response) => {
+                        Ok(Completed::Response {sleep}) => {
+                            let window = window && !sleep;
                             let request = *next_request;
                             followup = window.then_some(sid.clone()); session = None;
                             let mut finish = json!({"type":"session.finish", "sessionId":sid});
@@ -357,6 +360,13 @@ async fn connected(
                                 Ok(Completed::Transcript { sid, purpose, transcript, elapsed:started.elapsed().as_secs_f64()*1000. })
                             });
                         },
+                        "session.interrupted" => {
+                            if session.as_ref().map(|session| session.id.as_str()) != Some(sid) && followup.as_deref() != Some(sid) { continue; }
+                            jobs.abort_all(); while jobs.join_next().await.is_some() {}
+                            gateway.cancel(&active).await;
+                            event(hub, sid, json!({"type":"session.interrupted","reason":"alarm"}));
+                            session = None; followup = None;
+                        },
                         "session.expired" => {
                             if session.as_ref().map(|session| session.id.as_str()) != Some(sid) { return Err("Stale Pi expiry".into()); }
                             jobs.abort_all(); while jobs.join_next().await.is_some() {}
@@ -393,12 +403,13 @@ async fn response(
     command: &str,
     active: ActiveRun,
     tool_feedback: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     event(
         hub,
         sid,
         json!({"type":"agent.started", "requestId":request}),
     );
+    let sleep_requested = std::sync::atomic::AtomicBool::new(false);
     let started = Instant::now();
     let voice = speech.voice();
     let (send, mut receive) = mpsc::channel(8);
@@ -442,6 +453,22 @@ async fn response(
                         pi.send(json!({"type":"session.processing","sessionId":sid}))
                             .await?;
                     }
+                }
+                orion_agent::AgentEvent::RobotOperation { parameters, reply } => {
+                    if reply.is_closed() {
+                        continue;
+                    }
+                    let sleep = parameters["operation"] == "sleep";
+                    let mode = parameters["request"]["action"] == "set_mode";
+                    let result = gateway.robot_operation(parameters, sid).await;
+                    if sleep && result.is_ok() {
+                        sleep_requested.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if mode && result.is_ok() {
+                        // A later mode selection supersedes a queued sleep.
+                        sleep_requested.store(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    let _ = reply.send(result);
                 }
                 orion_agent::AgentEvent::SetLighting { parameters, reply } => {
                     if reply.is_closed() {
@@ -488,7 +515,7 @@ async fn response(
         &voice,
     );
     tokio::try_join!(agent_turn, spoken)?;
-    Ok(())
+    Ok(sleep_requested.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 #[allow(clippy::too_many_arguments)]

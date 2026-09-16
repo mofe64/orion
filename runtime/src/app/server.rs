@@ -147,6 +147,22 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut core = RuntimeCore::new(driver, poses, motions)?;
     let mut lighting = crate::expression::rest::RestLighting::new(lighting);
     let mut rest = crate::expression::rest::RestCoordinator::new(options.rest_after_seconds);
+    let wall_time = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64()
+    };
+    let routines_path = options.routines_file.clone().or_else(|| {
+        (options.backend == Backend::Hardware)
+            .then(|| {
+                std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".config/orion/routines.json"))
+            })
+            .flatten()
+    });
+    let mut routines = crate::expression::routines::Routines::load(routines_path, wall_time(), 0.0)
+        .map_err(crate::Error::Runtime)?;
     lighting.clear()?;
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
@@ -174,6 +190,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             rest.started();
         }
     }
+    rest.set_mode(routines.mode(), 0.0);
     let mut next_sample = started_at;
     let mut speaking_light_intensity = 0.0;
     let mut manual_light: Option<crate::lamp::LampProgram> = None;
@@ -181,9 +198,32 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
+        match routines.due(wall_time(), now_seconds, audio.as_mut()) {
+            Ok(true) => {
+                if scenes.is_active() {
+                    scenes.cancel(now_seconds, &mut core, audio.as_mut())?;
+                }
+                if speech.is_active() {
+                    let _ = speech.cancel(audio.as_mut());
+                }
+                feedback.clear();
+                let _ = character.set_reaction("neutral", now_seconds, &mut core);
+                let _ = audio.stop();
+            }
+            Err(error) => {
+                if routines.error.as_ref() != Some(&error) {
+                    eprintln!("oriond: alert scheduling failed: {error}");
+                }
+                routines.error = Some(error);
+            }
+            _ => {}
+        }
+        if let Err(error) = routines.tick_audio(now_seconds, audio.as_mut()) {
+            eprintln!("oriond: {error}");
+        }
         lighting.update(rest.dark(), now_seconds)?;
         scenes.tick(now_seconds, &mut core, &mut lighting, audio.as_mut())?;
-        if !scenes.is_active() && !speech.is_active() {
+        if !routines.ringing() && !scenes.is_active() && !speech.is_active() {
             let _ = audio.update();
         }
         // Expire ownership before queued audio can start on this tick.
@@ -207,7 +247,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         });
         speech.tick_when_ready(
             audio.as_mut(),
-            rest.speech_ready(&character) && (!scoped_voice || feedback.confirmed_activity()),
+            !routines.ringing()
+                && rest.speech_ready(&character)
+                && (!scoped_voice || feedback.confirmed_activity()),
         );
         let current_playing = speech
             .active_status()
@@ -247,7 +289,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             &mut core,
             &mut character,
             &feedback,
-            scenes.is_active() || speech.is_active(),
+            routines.ringing() || scenes.is_active() || speech.is_active(),
         );
         lighting.update(rest.dark(), now_seconds)?;
         if character_just_stopped(character_was_enabled, character.status().enabled) {
@@ -295,6 +337,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
                 &mut manual_light,
                 &mut voice_speech_run,
                 &mut rest,
+                &mut routines,
             )
         })?;
         rest.light_on = lighting.is_on();

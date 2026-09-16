@@ -40,6 +40,8 @@ class SatelliteSession:
         self.direction = direction or DirectionEstimator(clock=clock)
         self.clock = clock
         self.endpoint_factory = endpoint_factory
+        self.alarm_active = False
+        self.alarm_guard_until = 0.0
         self.early_wake = early_wake
         self.reset()
 
@@ -67,6 +69,14 @@ class SatelliteSession:
         self.wake.reset()
         self.direction.reset()
 
+    def set_alarm(self, active):
+        if active == self.alarm_active: return None
+        interrupted = self.session_id
+        self.reset()
+        self.alarm_active = active
+        self.alarm_guard_until = 0.0 if active else self.clock() + ECHO_GUARD_SECONDS
+        return interrupted
+
     def message(self, kind, **fields):
         return {"type": kind, "sessionId": self.session_id, **fields}
 
@@ -76,6 +86,13 @@ class SatelliteSession:
         stereo = np.frombuffer(pcm, dtype="<i2").reshape(-1, 2)
         mono = stereo.astype(np.int32).sum(axis=1) // 2
         audio = mono.astype("<i2").tobytes()
+        if self.alarm_active:
+            # Alarm dismissal is local and never waits for ASR or the agent.
+            if self.wake.process(audio) is not None:
+                return [{"type": "alarm.dismiss"}]
+            return []
+        if self.clock() < self.alarm_guard_until:
+            return []
         if self.phase in {"echo_guard", "conversation"}:
             return self.accept_conversation(audio)
         if self.session_id and self.clock() >= self.expires_at:
@@ -341,6 +358,16 @@ async def serve(args):
         for message in messages:
             if isinstance(message, dict):
                 kind = message["type"]
+                if kind == "alarm.dismiss":
+                    try:
+                        result = await daemon_command('routines {"action":"stop"}', args.daemon_socket)
+                        if result.get("ok") is True:
+                            session.set_alarm(False)
+                            # Discard the speaker tail before normal wake detection resumes.
+                            session.wake.reset()
+                    except (OSError, ValueError, asyncio.TimeoutError):
+                        pass
+                    continue
                 if kind in {"wake.candidate", "utterance"}:
                     timing_history.append({"sessionId": message["sessionId"], "event": kind, "at": time.monotonic()})
                 if kind == "wake.candidate": expression("wake")
@@ -405,6 +432,21 @@ async def serve(args):
         finally:
             capture_ready.clear()
             capture.close()
+
+    async def alarms():
+        while True:
+            try:
+                result = await daemon_command("routines status", args.daemon_socket)
+                active = result.get("routines", {}).get("ringing")
+                if type(active) is bool and active != session.alarm_active:
+                    interrupted = session.session_id
+                    cancel_turn()
+                    session.set_alarm(active)
+                    if interrupted and outgoing is not None:
+                        await deliver([{"type":"session.interrupted", "sessionId":interrupted, "reason":"alarm"}])
+            except (OSError, ValueError, asyncio.TimeoutError):
+                pass
+            await asyncio.sleep(0.2)
 
     async def set_muted(value):
         nonlocal muted
@@ -528,7 +570,7 @@ async def serve(args):
                 await asyncio.gather(*tasks, return_exceptions=True)
                 await ws.close()
 
-    tasks = [asyncio.create_task(listen()), asyncio.create_task(character())]
+    tasks = [asyncio.create_task(listen()), asyncio.create_task(character()), asyncio.create_task(alarms())]
     try:
         async with websocket_serve(connection, args.host, args.port,
                                   max_size=4096, max_queue=16, compression=None, ping_interval=5, ping_timeout=5):

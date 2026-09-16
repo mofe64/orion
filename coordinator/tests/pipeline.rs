@@ -27,6 +27,7 @@ struct GatewayState {
     runs: u64,
     fail_playback: bool,
     lighting: Vec<Value>,
+    robot_operations: Vec<Value>,
     reject_lighting: bool,
 }
 struct Harness {
@@ -239,6 +240,9 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
         if value["operation"] == "lamp_effect" {
             state.lighting.push(value["settings"].clone());
             json!({"accepted":!state.reject_lighting,"result":{"ok":!state.reject_lighting}})
+        } else if value["operation"] == "sleep" || value["operation"] == "routines" {
+            state.robot_operations.push(value.clone());
+            json!({"accepted":true,"result":{"ok":true,"sleep_after_reply":value["operation"]=="sleep"}})
         } else {
             state.cancellations.push(value["run_id"].as_u64().unwrap());
             json!({"ok":true})
@@ -615,4 +619,37 @@ async fn lighting_translates_parameters_and_only_confirms_gateway_success() {
         drop(state);
         h.stop().await;
     }
+}
+
+#[tokio::test]
+async fn sleep_tool_uses_current_session_and_closes_after_acknowledgement() {
+    let mut h = Harness::new().await;
+    h.wake(r#"Hey Orion, tool:{"name":"go_to_sleep","arguments":{}}"#)
+        .await;
+    until(&mut h.pi, "session.playing").await;
+    let finish = until(&mut h.pi, "session.finish").await;
+    assert_ne!(finish["conversationWindow"], true);
+    assert_eq!(
+        h.gateway.lock().await.robot_operations[0],
+        json!({"operation":"sleep","session_id":SID})
+    );
+    h.stop().await;
+}
+#[tokio::test]
+async fn alarm_interrupt_retires_playback_and_accepts_a_later_wake() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, reply please").await;
+    until(&mut h.pi, "session.playing").await;
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":SID,"reason":"alarm"}),
+    )
+    .await;
+    until(&mut h.observer, "session.interrupted").await;
+    assert!(!h.gateway.lock().await.cancellations.is_empty());
+    h.gateway.lock().await.allow_complete = true;
+    h.wake("Hey Orion, hello again").await;
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
 }

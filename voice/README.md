@@ -93,8 +93,18 @@ updates use the release deployment path.
 
 The listener advertises `toolFeedback: true`. After search acknowledgement plays,
 `session.processing` restores thinking feedback in the same session. Wake detection
-and command dispatch stay suppressed while the agent works. Final `session.finish` starts the echo guard and
+and command dispatch stay suppressed while the agent works, except for alarm
+dismissal. Final `session.finish` starts the echo guard and
 follow-up invitation. See [agent conversation](../docs/voice-architecture.md#agent-conversation-and-memory).
+
+## Alarm dismissal
+
+The listener polls `routines status` over the runtime socket every 200 ms. A ringing
+alert interrupts an existing voice session and enables Rustpotter detection during
+playback. “Hey Orion” sends a local stop request and consumes that wake phrase.
+It works without a connected coordinator and does not send alarm audio to ASR.
+Microphone mute still closes capture. The runtime enforces the five-minute sound
+limit independently.
 
 ## Validation
 

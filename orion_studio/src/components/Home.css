@@ -43,7 +43,7 @@
 .home-dashboard .viewport-orbit-controls { position: absolute; inset: auto 0 -2.5rem; height: 2.5rem; display: flex; align-items: center; justify-content: center; gap: .75rem; color: var(--muted); font-size: .7rem; background: var(--surface-1); }
 .home-dashboard .viewport-orbit-controls button { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); background: transparent; }
 .home-dashboard .oh-model-caption { font-size: .7rem; text-align: center; margin: .45rem 0 1rem; }
-.home-dashboard .oh-modes { display: grid; grid-template-columns: 1.2fr 1fr; gap: .65rem; }
+.home-dashboard .oh-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
 .home-dashboard .oh-mode { display: flex; align-items: center; gap: .6rem; text-align: left; padding: .9rem .8rem; border: 1px solid transparent; border-radius: 1rem; background: var(--surface-2); }
 .home-dashboard .oh-mode[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-soft); opacity: 1; }
 .home-dashboard .oh-mode strong { display: block; font-weight: 550; font-size: .8rem; }
@@ -104,7 +104,7 @@
   .home-dashboard .oh-panel-heading { flex-wrap: wrap; }
   .home-dashboard .oh-model { height: 19rem; }
   .home-dashboard .oh-robot, .home-dashboard .oh-lamp { padding: 1rem; }
-  .home-dashboard .oh-modes { grid-template-columns: 1fr 1fr; }
+  .home-dashboard .oh-modes { grid-template-columns: 1fr; }
   .home-dashboard .oh-mode { padding: .85rem .5rem; gap: .4rem; }
   .home-dashboard .oh-mode svg { width: .95rem; }
   .home-shell .mode-tabs { order: 0; width: auto; margin-left: auto; }
@@ -120,3 +120,8 @@
   .home-dashboard input[type="range"] { min-height: 2.75rem; }
 
 }
+
+.oh-alerts { margin-top: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; }
+.oh-alerts ul { padding: 0; list-style: none; }
+.oh-alerts li { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; }
+.oh-alerts p { color: var(--muted); }

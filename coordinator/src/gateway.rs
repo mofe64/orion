@@ -64,6 +64,20 @@ impl Gateway {
         }
         Ok(json!({"applied":true,"settings":parameters}))
     }
+    pub async fn robot_operation(
+        &self,
+        mut parameters: Value,
+        session: &str,
+    ) -> Result<Value, String> {
+        if parameters["operation"] == "sleep" {
+            parameters["session_id"] = session.into();
+        }
+        let result = self.request("/api/v2/operations", Some(parameters)).await?;
+        if result["accepted"] != true || result["result"]["ok"] != true {
+            return Err("Pi did not accept the requested operation".into());
+        }
+        Ok(result["result"].clone())
+    }
     pub async fn cancel(&self, active: &ActiveRun) {
         if let Some(run) = active.lock().await.take() {
             let _ = self

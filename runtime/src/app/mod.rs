@@ -747,6 +747,7 @@ mod tests {
     }
 
     struct DispatchFixture {
+        routines: crate::expression::routines::Routines,
         now: f64,
         core: RuntimeCore<TestDriver>,
         character: CharacterCoordinator,
@@ -772,6 +773,7 @@ mod tests {
             let scenes = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
             let spool = tempfile::tempdir().unwrap();
             Self {
+                routines: crate::expression::routines::Routines::load(None, 0., 0.).unwrap(),
                 now: 0.0,
                 core: RuntimeCore::new(TestDriver, poses, motions).unwrap(),
                 character: CharacterCoordinator::new(42),
@@ -806,6 +808,7 @@ mod tests {
                 &mut self.manual,
                 &mut self.voice_run,
                 &mut self.rest,
+                &mut self.routines,
             ))
             .unwrap()
         }
