@@ -106,6 +106,67 @@ class ConfigurationTests(Fixture):
         with self.assertRaises(ValueError): self.plan()
 
 
+class RestRuntimeTests(unittest.TestCase):
+    def exercise(self, failures=None, torque_after=False):
+        system = installer.System()
+        self.calls = []
+        statuses = iter([True, torque_after])
+        failures = failures or {}
+
+        def run(*args, **kwargs):
+            if args[0] == 'systemctl':
+                return subprocess.CompletedProcess(args, 0, '42\n')
+            self.assertEqual(args[:3], ('/proc/42/exe', '--socket', '/tmp/custom.sock'))
+            command = args[3]
+            self.calls.append(command)
+            if command in failures:
+                code, output = failures[command]
+                raise subprocess.CalledProcessError(code, args, output=output)
+            if command == '--goto':
+                self.assertEqual(args[4:], ('rest', '--duration', '3.0', '--wait'))
+            output = json.dumps({'torque_enabled': next(statuses)}) if command == '--status' else ''
+            return subprocess.CompletedProcess(args, 0, output)
+
+        cmdline = b'oriond\0--serve\0--socket\0/tmp/custom.sock\0'
+        with patch.object(system, 'run', side_effect=run), \
+             patch.object(installer.Path, 'read_bytes', return_value=cmdline):
+            system.rest_runtime()
+
+    def test_active_and_already_inactive_playback_both_reach_confirmed_rest(self):
+        for scene in (False, True):
+            for speech in (False, True):
+                with self.subTest(scene_inactive=scene, speech_inactive=speech):
+                    failures = {}
+                    if scene: failures['--stop-scene'] = (3, '{"ok":false,"error":"No scene is active."}')
+                    if speech: failures['--stop-speech'] = (3, '{"ok":false,"error":"No speech run is active."}')
+                    self.exercise(failures)
+                    self.assertEqual(self.calls, ['--status', '--stop-scene', '--stop-speech', '--stop', '--goto', '--disable', '--status'])
+
+    def test_other_stop_failures_abort_before_moving_or_disabling(self):
+        for command in ('--stop-scene', '--stop-speech', '--stop'):
+            for code, output in [(3, '{"ok":false,"error":"Device failed"}'),
+                                 (1, '{"ok":false,"error":"No scene is active."}'),
+                                 (3, 'invalid JSON'), (3, ''), (3, 'null')]:
+                with self.subTest(command=command, code=code, output=output):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.exercise({command: (code, output)})
+                    self.assertNotIn('--goto', self.calls)
+                    self.assertNotIn('--disable', self.calls)
+
+    def test_failed_rest_never_disables_and_failed_disable_aborts(self):
+        for command in ('--goto', '--disable'):
+            with self.subTest(command=command):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.exercise({command: (4, 'failed')})
+                if command == '--goto': self.assertNotIn('--disable', self.calls)
+
+    def test_torque_must_be_explicitly_confirmed_off(self):
+        for value in (True, None):
+            with self.subTest(torque=value):
+                with self.assertRaisesRegex(RuntimeError, 'torque-off was not confirmed'):
+                    self.exercise(torque_after=value)
+
+
 class FakeSystem:
     """Model unit existence separately from enablement to catch dangling wants links."""
     def __init__(self, units, existing=True):
