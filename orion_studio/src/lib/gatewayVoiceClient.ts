@@ -9,8 +9,9 @@ export class GatewayVoiceClient implements VoiceWorkerTransport {
   private sequence = 0;
   private closed = false;
   private pending: { resolve: (ready: VoiceWorkerReadyEvent) => void; reject: (error: Error) => void } | null = null;
+  // WebKit requires native fetch to retain its Window receiver.
   constructor(private readonly url: string, private readonly token: string,
-    private readonly fetcher: typeof fetch = fetch, private readonly intervalMs = 250) {}
+    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis), private readonly intervalMs = 250) {}
   connect(): Promise<VoiceWorkerReadyEvent> {
     if (this.closed) return Promise.reject(new Error("Voice observer is closed."));
     return new Promise((resolve, reject) => {

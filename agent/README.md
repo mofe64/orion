@@ -84,7 +84,11 @@ is no direct hardware client inside this crate.
 Codex's native live search executes inside App Server. Orion's dynamic
 tools use the experimental `item/tool/call` protocol. The registered lighting
 schema publishes moods, colors, and effects from `src/tools/lighting.rs`:
-`ambient` combines warm white and amber, `cool` combines cool white and blue,
+`ambient`, `amber`, and `orange` use the same deep golden bulb-style color:
+RGBW `(255, 100, 0, 80)`. This mix includes the dedicated white LED and requires
+visual tuning on the physical lamp; it is not a calibrated color temperature.
+`ambient` selects one color so animated effects retain that golden hue.
+`cool` combines cool white and blue,
 `warm` uses warm white, and `warm_red` combines warm white and red. Brightness
 is absolute percent. Effect palettes default to warm white and a random accent;
 explicit palettes contain one or two named colors.

@@ -26,6 +26,8 @@ pub const COLORS: &[&str] = &[
     "pink",
 ];
 pub const MOODS: &[&str] = &["ambient", "warm", "cool", "warm_red"];
+// Shared golden bulb-style mix; tune against the physical LEDs and diffuser.
+const VINTAGE_GOLD: [u8; 4] = [255, 100, 0, 80];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -39,8 +41,7 @@ fn color(name: &str) -> Result<[u8; 4], String> {
         "warm_white" => [40, 20, 4, 210],
         "cool_white" => [150, 190, 255, 110],
         "red" => [255, 0, 0, 0],
-        "amber" => [255, 110, 0, 0],
-        "orange" => [255, 50, 0, 0],
+        "amber" | "orange" => VINTAGE_GOLD,
         "green" => [0, 220, 35, 0],
         "teal" => [0, 180, 150, 0],
         "blue" => [0, 45, 255, 0],
@@ -70,7 +71,7 @@ pub(crate) fn resolve(value: Value) -> Result<Value, String> {
     let mut colors = request.colors;
     if let Some(mood) = request.mood {
         let palette = match mood.as_str() {
-            "ambient" => vec!["warm_white", "amber"],
+            "ambient" => vec!["amber"],
             "warm" => vec!["warm_white"],
             "cool" => vec!["cool_white", "blue"],
             "warm_red" => vec!["warm_white", "red"],
@@ -106,14 +107,35 @@ pub(crate) fn resolve(value: Value) -> Result<Value, String> {
 pub(crate) fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"properties":{
         "brightness":{"type":"number","minimum":0,"maximum":100,"description":"Absolute brightness percent; alone preserves current colors and effect."},
-        "mood":{"type":"string","enum":MOODS,"description":"ambient=warm white+amber; warm=warm white; cool=cool white+blue; warm_red=warm white+red."},
+        "mood":{"type":"string","enum":MOODS,"description":"ambient=deep vintage golden bulb glow (same as amber and orange); warm=warm white; cool=cool white+blue; warm_red=warm white+red."},
         "effect":{"type":"string","enum":EFFECTS,"description":"Omit for a steady color. Animated effects default to warm white plus a random accent; do not ask for colors."},
-        "colors":{"type":"array","items":{"type":"string","enum":COLORS},"minItems":1,"maxItems":2,"description":"Optional explicit palette instead of mood."}
+        "colors":{"type":"array","items":{"type":"string","enum":COLORS},"minItems":1,"maxItems":2,"description":"Optional explicit palette instead of mood. Amber and orange both use the same deep vintage golden bulb glow."}
     }})
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn golden_names_match_for_steady_and_animated_lighting() {
+        for effect in ["solid", "warm_idle_breathe", "thinking_drift"] {
+            for mut request in [
+                json!({"mood":"ambient"}),
+                json!({"colors":["amber"]}),
+                json!({"colors":["orange"]}),
+            ] {
+                request["effect"] = json!(effect);
+                request["brightness"] = json!(35);
+                assert_eq!(
+                    resolve(request).unwrap(),
+                    json!({"brightness":0.35,"effect":effect,"colors":[[255,100,0,80]]})
+                );
+            }
+        }
+        assert_eq!(
+            resolve(json!({"mood":"ambient"})).unwrap()["effect"],
+            "solid"
+        );
+    }
     #[test]
     fn validates_catalog_and_preserves_brightness_only_changes() {
         assert_eq!(
