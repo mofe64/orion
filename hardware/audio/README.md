@@ -69,7 +69,7 @@ the TLV320AIC3104 at I2C address `0x18` to be bound to its kernel driver. When
 Orion's NeoPixel device is present, it confirms BCM12 remains assigned to
 PWM0.
 
-## Mixer commissioning
+## Mixer setup
 
 Orion keeps the confirmed JST-speaker mixer route as a repeatable command
 rather than depending on whatever mixer state happened to survive the last
@@ -80,8 +80,7 @@ hardware/audio/configure-playback.sh
 ```
 
 The script selects `DAC_R1`, sends it through the right line mixer, keeps both
-analogue stages at unity gain, and sets PCM to the commissioned
-physical-acceptance target of `0 dB`.
+analogue stages at unity gain, and sets PCM to the `0 dB` playback target.
 The right differential line output feeds the V2 HAT's mono amplifier and JST
 connector; the `HP` controls instead serve the 3.5 mm jack.
 
@@ -95,13 +94,14 @@ speaker-test \
 ```
 
 The runtime applies the same mixer contract when its physical WAV backend is
-opened, so source-run development does not depend on a system boot service or
+opened, so running from a checkout does not depend on a system boot service or
 a globally stored ALSA snapshot.
 
 On Pi desktop installations, WirePlumber can probe the same card after Orion
-starts and reset PCM to `-23.5 dB`. The Pi service installer installs
-`90-orion-respeaker.conf` under `/etc/wireplumber/wireplumber.conf.d/` to exclude
-the commissioned Pi 5 ReSpeaker device from WirePlumber 0.5. Orion's direct
+starts and reset PCM to `-23.5 dB`. Install the supplied
+`90-orion-respeaker.conf` under `/etc/wireplumber/wireplumber.conf.d/` during audio
+setup to exclude this ReSpeaker device from WirePlumber 0.5. The application
+release installer preserves that hardware configuration; it does not create it. Orion's direct
 ALSA playback and capture remain available; desktop applications no longer
 see this card. HDMI audio is unaffected.
 
@@ -118,7 +118,7 @@ hardware/audio/configure-playback.sh
 Check that `amixer -c seeed2micvoicec sget PCM` reports `0.00dB` on both
 channels and that `wpctl status -n` does not list the ReSpeaker device
 `alsa_card.platform-soc_107c000000_sound`. The device-name match is specific
-to the commissioned Pi 5 overlay; recheck it when changing boards or overlays.
+to the installed Pi 5 overlay; recheck it when changing boards or overlays.
 
 Orion also keeps the confirmed dual-microphone capture route as a repeatable
 command:
@@ -130,17 +130,16 @@ hardware/audio/configure-capture.sh
 The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
 routes, disables the codec's automatic gain control (AGC), and applies a fixed
 programmable-gain amplifier (PGA) capture gain. `ORION_CAPTURE_GAIN_DB` accepts
-0–50 dB and defaults to the legacy 50 dB setting; the Pi voice-stack service
-selects 25 dB. The listener configures routing before opening `arecord`, discards
+the range documented in [listener configuration](../../docs/configuration.md#pi-runtime-and-listener).
+The managed listener supplies its own gain override. The listener configures routing before opening `arecord`, discards
 300 ms, reapplies the gain after the ADC starts, then discards another 300 ms.
-This prevents ADC startup from undoing the selected mixer state. Direct
-recording tests can run the script explicitly. This prevents wake-word behavior from depending on whatever
-capture level a previous process left in the codec. Physical commissioning
-found that 50 dB recognized the wake
-phrase reliably, while the codec's 59.5 dB maximum degraded detection through
-excess noise or clipping. Codec AGC remains disabled.
+Reapplying gain prevents ADC startup from undoing the chosen setting. Direct
+recording tests can run the script explicitly. Earlier wake tests found reliable
+detection at 50 dB but degraded detection at the codec's 59.5 dB maximum through
+noise or clipping. The managed voice stack uses the lower configured gain after
+further speech trials. Codec AGC remains disabled.
 
-## Commissioning result
+## Hardware checks
 
 The assembled Pi 5 passed the persistent V2 verification with playback and
 capture registered as `seeed2micvoicec`, while BCM12 remained assigned to the
@@ -148,7 +147,7 @@ NeoPixel pulse-width modulation (PWM) output. The JST route produced the 440 Hz
 right-channel test tone,
 the direct cue command played Orion's local chime, and both expressive
 acknowledgement scenes exercised that ReSpeaker playback path successfully.
-The commissioned acceptance target is `0 dB`; final listening acceptance must
+The playback target is `0 dB`; listening checks must
 confirm that speech is clear without audible clipping at the assembled JST
 speaker.
 
@@ -157,4 +156,4 @@ speaker.
 The Pi Rustpotter listener requests synchronized stereo PCM16 at 16 kHz,
 retains stereo for coarse direction estimates, and downmixes to mono for wake
 and ASR. Stereo channel independence, orientation and direction accuracy still
-require physical commissioning; see [Pi voice setup](../../voice/README.md).
+require physical checks; see [Pi voice setup](../../voice/README.md).

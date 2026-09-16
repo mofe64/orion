@@ -1,8 +1,8 @@
 # Orion local audio cues
 
 Short, deterministic sounds played by Orion scenes live in this directory.
-Hardware routing and ReSpeaker commissioning remain under `hardware/audio/`;
-the cue files are portable scene resources.
+The [audio hardware guide](../hardware/audio/README.md) covers routing and
+ReSpeaker setup. Cue files are portable scene resources.
 
 Each cue is addressed by its filename stem. For example, a scene action with
 `cue: acknowledge_warm` resolves to `audio/cues/acknowledge_warm.wav`. Names
@@ -14,7 +14,7 @@ channel. Cue assets therefore contain identical left and right channels so
 they also preview naturally on normal stereo equipment.
 
 `generate_cues.py` creates Orion's warm tonal vocabulary using only Python's
-standard library. It is an authoring tool, not a dependency of `oriond`:
+standard library. Use it when authoring or retuning cues:
 
 ```bash
 python3 audio/generate_cues.py

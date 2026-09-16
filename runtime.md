@@ -4,19 +4,24 @@ Orion turns the sound and timing of its spoken response into a continuous sequen
 
 The central rule is **planning a gesture must not make the character remember that gesture as already reached**. A candidate plan describes the future. Speech-memory checkpoints allow the coordinator to adopt that future's history as the movement timeline progresses.
 
-Implementation checked: **14 September 2026**. Examples marked “illustrative” explain the algorithm; they are not recordings of a physical robot. The validation section records the checks run for this account.
+Examples marked “illustrative” explain the algorithm using synthetic timings and
+positions. The validation section links the corresponding tests.
 
 ## 1. Where this belongs in Orion
 
 ### The application boundary
 
-The broader voice system captures a user utterance on the Pi, processes it through Studio's speech and agent components, synthesizes a response, and sends response audio back to Orion. Speech animation happens alongside playback of **Orion's response**. These methods do not listen for the user, recognize words, generate an answer, or synthesize a voice.
+The Pi listener captures the command, and the onboard coordinator runs Qwen,
+Codex and Pocket to produce a response. The coordinator sends audio through the
+local gateway to `oriond`. Speech animation follows playback of that response.
+Capture, recognition and synthesis have separate owners described in the
+[voice architecture](docs/voice-architecture.md).
 
 The character coordinator receives audio measurements and decides how Orion should gesture. The runtime core owns movement execution. The driver sends joint commands and supplies feedback. Keeping these responsibilities separate allows animation to vary without bypassing motion ownership or calibrated joint limits.
 
 ```mermaid
 flowchart TD
-    A[Studio synthesizes response audio] --> B[SpeechCoordinator receives and plays audio]
+    A[Pocket on the Pi generates response audio] --> B[SpeechCoordinator receives and plays audio]
     B --> C[SpeechAnalysis: energy, peaks, pauses, duration]
     C --> D[CharacterCoordinator plans speech gestures]
     E[Authored motion shapes and anchor posture] --> D
@@ -27,7 +32,8 @@ flowchart TD
     I --> D
 ```
 
-The diagram separates responsibilities; the compiler is called by the core while preparing a movement. It is not another independently scheduled character service.
+The core calls the compiler while preparing a movement. The diagram shows that
+call sequence within the runtime process.
 
 Sources: [voice architecture](docs/voice-architecture.md), [daemon loop](runtime/src/app/server.rs), [runtime core](runtime/src/control/core.rs), and [motion architecture](docs/motion-and-animation-architecture.md).
 
@@ -360,7 +366,7 @@ This creates three distinct cases:
 | End marker arrives with more than 0.9 seconds remaining | Replan at a passed checkpoint even if audio duration did not grow. |
 | End marker arrives with at most 0.9 seconds remaining | Attempt a return-only replacement immediately, without requiring a new checkpoint. |
 
-The final row is an explicit exception to the usual gesture-boundary rule. A podcast should not say every replacement always waits for the current body follow. The late-end path exists to avoid inserting another minimum-length gesture near the end of playback.
+The late-end path returns toward the anchor immediately. This exception to the usual gesture-boundary rule avoids inserting another minimum-length gesture near the end of playback.
 
 `P - e` measures distance to a stored audio frontier. It is not the exact remaining duration of the compiled movement, which may have been retimed.
 
@@ -391,7 +397,7 @@ Updating the streaming flag after successful finalization prevents the same end 
 
 Logs distinguish `speech.motion_extended` and `speech.motion_finalized`. They report the movement ID, remaining audio time, and relevant progress information. Logs describe the chosen path; they do not themselves control motion.
 
-### Step 5: keep a genuinely active movement, discard stale tracking
+### Step 5: keep an active movement and clear stale tracking
 
 After considering an extension, inspect the runtime's active movement slot. If it still contains this run with a nonterminal phase, return and let it continue. This also preserves an active run in final measured settling.
 
@@ -794,7 +800,7 @@ The implementation has several deliberate boundaries:
 - It aims for continuous and well-paced movement. Buffering, compilation, retiming, and hardware response limit exact synchronization.
 - Library tests establish specific behavior; the daemon smoke tests establish selected application paths. Neither establishes physical acceptance of a deployed binary.
 
-## 16. What was verified
+## 16. Validation
 
 The runtime's all-target Rust suite and simulator daemon smoke tests cover the implementation and its application connections. Run these from the `orion/` repository root:
 
@@ -806,9 +812,9 @@ cargo test --manifest-path runtime/Cargo.toml --doc --locked
 python3 -m unittest discover -s runtime/tests -p 'test_*.py' -v
 ```
 
-Validation on 14 September 2026 passed **139 Rust tests** and **3 daemon smoke tests**, including native MuJoCo execution, default character startup, maintenance mode, and movement/scene waiting. These tests use temporary sockets and simulated devices; they do not operate the physical robot or establish speaker alignment on a deployed Pi.
-
-The tests below are useful evidence for a podcast explanation. Their exact fixtures and assertions matter more than an overly broad interpretation of their names.
+These suites exercise the runtime and application loop with temporary sockets and
+simulated devices. The tests below cover speech planning, streaming and movement
+handover. Physical speaker alignment and smoothness require a check on the Pi.
 
 | Behavior supported by tests | Test to inspect |
 | --- | --- |
@@ -829,42 +835,11 @@ The tests below are useful evidence for a podcast explanation. Their exact fixtu
 
 Character tests live in [character.rs](runtime/src/expression/character.rs), handover tests in [core.rs](runtime/src/control/core.rs), and audio-analysis/playback tests in [speech.rs](runtime/src/expression/speech.rs).
 
-## 17. Teaching sequence for a podcast
-
-Begin with the practical problem: Orion is speaking while more audio may still arrive, so its body needs a plan that can evolve without restarting gestures at each network chunk.
-
-Build the explanation in this order:
-
-1. Establish the application roles: audio coordinator measures and plays sound, character coordinator chooses gestures, runtime executes movement, driver supplies commands and feedback.
-2. Explain the anchor with a concrete joint-angle example. Distinguish reference posture, relative offset, commanded position, and measured position.
-3. Introduce a drawing as a gesture idea and keyframes as the stages used to perform it. Explain head lead, body follow, and the final return.
-4. Introduce `SpeechMemory` as the remembered choices needed to continue a performance coherently. Explain why random-generator state belongs beside clip history.
-5. Walk through `plan_speech()` as a temporary rehearsal: save history, imagine a future, collect checkpoints, restore history, return the proposal. State that no robot motion occurs during that rehearsal.
-6. Use A, B, and C to show why `advance_speech_memory()` waits until a body-follow stage and its hold have passed. Explain the strict less-than comparison without assuming every checkpoint is confirmed by hardware measurements.
-7. Connect the two through `tick_speaking()`: inspect progress, decide whether the received audio or end flag requires change, plan the remaining audio, and install a replacement only if the runtime accepts it.
-8. Open the composer: timing budget, nearby peaks, emphasis spacing, clip weights, head and body variation, quiet holds, staged keyframes, future memory, final return.
-9. Explain the selectors using tickets in a bag. Removing the last clip or direction and changing recent weights alters the remaining odds.
-10. Finish with the streaming example and the audio-stop return. Separate what simulation tests support from exact physical synchronization or physical deployment.
-
-The rehearsal analogy has a limit: memory restoration rewinds selection bookkeeping, not the robot. The trajectory replacement starts from the commanded movement at that moment, not from a remembered gesture target.
-
-Useful listener checks, with answers:
-
-- **Does building a ten-gesture plan mean ten gestures happened?** No. The candidate returns with future checkpoints; history advances only when matching execution passes eligible checkpoints.
-- **Why not restart on every audio chunk?** Chunks are transport boundaries, not gesture boundaries. The coordinator normally waits for progress and an approaching audio frontier, then replaces the future within the same movement run.
-- **Can ending the stream matter when no new audio arrived?** Yes. The change to final audio removes the assumption that another chunk is coming.
-- **Does a zero target mean all motors move to zero degrees?** No. In this relative-motion space, zero offset means the anchor posture.
-- **Does a loud peak mean the agent identified an important word?** No. It is an audio-energy landmark used by gesture-selection rules.
-- **Does `0.18` in head blending mean a 180-millisecond delay?** No. It is an 18% interpolation toward the next head target.
-- **Does every selected explanatory lean count as a strong body beat?** No. The lean can be an ordinary weighted clip choice; a body beat requires the separate emphasis, energy, spacing, and repetition checks.
-
-Keep numbers attached to their units and conditions. Say “authored travel duration,” “received audio duration,” or “gesture index” where that distinction changes the meaning. Describe the implementation as an explicit algorithm using authored shapes and seeded choices, rather than attributing unimplemented understanding or exact timing guarantees to it.
-
-## 18. Source map
+## 17. Source map
 
 | Source | What to consult it for |
 | --- | --- |
-| [character coordinator](runtime/src/expression/character.rs) | The requested methods, memory structures, gesture rules, outer state machine, and character tests. |
+| [character coordinator](runtime/src/expression/character.rs) | Speech planning methods, memory structures, gesture rules, state machine and tests. |
 | [speech coordinator and analyzer](runtime/src/expression/speech.rs) | Audio-analysis types, playback, streaming, and analysis in the runtime. |
 | [executable entry point](runtime/src/main.rs) | Thin entry point into the application module. |
 | [daemon loop](runtime/src/app/server.rs) | Startup, device wiring, and connections between core, scenes, speech, character, and lighting. |
@@ -879,4 +854,5 @@ Keep numbers attached to their units and conditions. Say “authored travel dura
 | [Motion and animation architecture](docs/motion-and-animation-architecture.md) | How authoring, character behavior, and motion execution fit together. |
 | [Trajectory and joint control reference](docs/trajectory-and-joint-control.md) | Broader movement terminology and control constraints. |
 
-Use symbol names to locate the implementation when comments move line numbers. If the code changes after the check date, recheck the affected formulas, selection rules, lifecycle transitions, and tests before presenting them as facts about the later version.
+Use symbol names to locate the implementation. Changes to gesture formulas or
+streaming behavior should update the corresponding examples and tests together.

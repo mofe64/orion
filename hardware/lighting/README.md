@@ -33,7 +33,7 @@ backend must therefore use BCM12, pulse-width modulation (PWM) channel 0,
 non-inverted output, 40 pixels,
 and an initial green-red-blue-white (GRBW)/800 kHz configuration.
 
-Physical commissioning on Orion confirmed a non-serpentine, row-major 8 by 5
+Physical checks on Orion confirmed a non-serpentine, row-major 8 by 5
 matrix. Every row runs left to right, starting at the top:
 
 ```text
@@ -49,7 +49,7 @@ Therefore a zero-based `(row, column)` coordinate maps directly to
 top-left, 7 at top-right, 8 at the second row's left edge, and 39 at
 bottom-right.
 
-Commissioning also confirmed that Orion's logical channel arguments display as
+Checks also confirmed that Orion's logical channel arguments display as
 red, green, blue, and warm white respectively. The backend's GRBW wire-order
 translation is therefore correct for the installed shield.
 
@@ -57,7 +57,7 @@ The complete 40-pixel frame was verified on the physical robot using the
 acknowledgement value `RGBW(8, 3, 0, 20)`, followed by a successful all-off
 frame. The persistent module, overlay, PWM channel, and BCM12 pin service were
 then verified after a full robot reboot with `verify-persistent.sh`. Physical
-lighting output and its boot configuration are commissioned.
+lighting output and its boot configuration passed those checks.
 
 The shield is powered from the Pi's 5 V header rather than an independent
 supply. The runtime does not impose a brightness ceiling: RGBW values are sent
@@ -122,8 +122,7 @@ The installer performs six persistent operations:
 4. Loads the module at boot through
    `/etc/modules-load.d/orion-neopixel.conf`.
 5. Installs a udev rule granting the Raspberry Pi `gpio` group read/write
-   access to `/dev/ws281x_pwm`, allowing source-run development without a root
-   daemon.
+   access to `/dev/ws281x_pwm`, so checkout tools can run without root privileges.
 6. Enables `orion-neopixel-pin.service`, which assigns BCM12 to RP1 function
    `a0` and verifies that `/dev/ws281x_pwm` exists.
 
@@ -168,6 +167,6 @@ runtime/target/release/oriond --lights-off
 encodes logical RGBW as the shield's GRBW wire order and writes the exact
 40-pixel RP1 PWM frame to `/dev/ws281x_pwm`. `--lighting-device PATH` can
 override that path for diagnostics. These direct commands do not require the
-servo daemon and provide the physical-light commissioning surface. When the
-source-run daemon is active, it owns the device exclusively and scenes become
+servo daemon and provide direct physical light checks. When the
+hardware daemon is active, it owns the device exclusively and scenes become
 the normal semantic lighting interface.

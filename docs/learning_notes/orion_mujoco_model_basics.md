@@ -18,7 +18,7 @@ MJCF = the robot and physics description used by MuJoCo
 MJCF can directly describe MuJoCo features such as actuators, contact shapes,
 joint friction, sensors, and simulation settings.
 
-## The Two XML Files
+## The two XML files
 
 Orion separates the robot from its surroundings:
 
@@ -36,7 +36,7 @@ simulation/mujoco/scene.xml  floor, light, camera settings, and physics step
 This means the robot model can be placed in another scene without copying its
 complete body definition.
 
-## Generated Geometry and Maintained Settings
+## Generated geometry and maintained settings
 
 Most body positions, mesh transforms, masses, and inertia values came from the
 CAD model through `onshape-to-robot`. These values describe the shape and mass
@@ -57,7 +57,7 @@ CAD-derived values       = where parts are and how mass is distributed
 simulation settings      = how MuJoCo should model motors, contact, and motion
 ```
 
-## Compiler Settings
+## Compiler settings
 
 At the top of `robot.xml`:
 
@@ -98,7 +98,7 @@ If a mesh file is renamed, its XML reference must also be renamed.
 When a joint or actuator has a range, MuJoCo automatically treats it as
 limited. We do not need to repeat `limited="true"` on every element.
 
-## Defaults and Classes
+## Defaults and classes
 
 MuJoCo defaults let several elements share the same settings.
 
@@ -123,7 +123,7 @@ consistent and avoids copying the same values many times.
 Defining a class does not create a joint or actuator. An element must use the
 class before the settings have any effect.
 
-## Bodies Form a Tree
+## Bodies form a tree
 
 A MuJoCo `<body>` is similar to a URDF link. Bodies are nested to form a tree:
 
@@ -163,7 +163,7 @@ Quaternions are another way to describe rotation. The generated values are
 hard to read by eye, but they avoid some problems that Euler-angle rotations
 can have.
 
-## The Free Root
+## The free root
 
 The root body contains:
 
@@ -183,7 +183,7 @@ actuator.
 If the free joint were removed, the root body would be fixed to the MuJoCo
 world. That would hide tipping and sliding instead of simulating them.
 
-## The Physical Base and Floor Contact
+## The physical base and floor contact
 
 The generated body tree begins at the upper assembly rather than the physical
 base. The physical base is lower in the tree. This unusual structure matters
@@ -203,7 +203,7 @@ The detailed meshes still provide the visible shape. The simple box provides a
 flat, stable contact surface and is cheaper for physics than a complicated
 triangle mesh.
 
-## Hinge Joints
+## Hinge joints
 
 Orion's five servo joints use `type="hinge"`. A hinge rotates around one axis,
 like a revolute joint in URDF.
@@ -239,7 +239,7 @@ head_pitch_joint
 Their physical locations and jobs are explained in
 [Orion's Joint Structure](orion_joints.md).
 
-## Mass and Inertia
+## Mass and inertia
 
 Each moving body has an inertial section similar to:
 
@@ -276,7 +276,7 @@ be guessed.
 Incorrect mass or inertia can make Orion fall, shake, or accelerate
 unrealistically even when the visible model looks correct.
 
-## Visual and Collision Geometry
+## Visual and collision geometry
 
 Many parts appear twice:
 
@@ -315,7 +315,7 @@ A geometry then refers to the registered mesh by name:
 Materials define colour with red, green, blue, and alpha values. An alpha value
 of `1` is fully opaque.
 
-## Position Actuators
+## Position actuators
 
 A position actuator behaves like a simulated servo motor. We give it a target
 angle, and it applies limited torque to move the joint toward that angle.
@@ -340,7 +340,7 @@ This means:
 An actuator does not teleport a joint. MuJoCo still calculates mass, gravity,
 friction, damping, contact, and motor limits.
 
-## Position Error
+## Position error
 
 Position error is the difference between the target and measured angle:
 
@@ -358,7 +358,7 @@ position error:  0.10 rad
 
 The actuator applies torque to reduce this error.
 
-## `kp`: Position Strength
+## `kp`: position strength
 
 Orion uses:
 
@@ -386,7 +386,7 @@ For a `0.10 rad` error:
 
 The actual torque is still restricted by `forcerange`.
 
-## `kv`: Speed-Based Slowing
+## `kv`: speed-based slowing
 
 Orion uses:
 
@@ -406,7 +406,7 @@ kv      = actuator resistance related to speed
 damping = joint resistance related to speed
 ```
 
-## `forcerange`: Maximum Motor Strength
+## `forcerange`: maximum motor strength
 
 Orion uses:
 
@@ -430,7 +430,7 @@ away.
 These values are simulation settings. They are not proof that the model
 exactly matches a physical STS3215 servo.
 
-## Passive Joint Behaviour
+## Passive joint behaviour
 
 Joint properties affect movement even when the target does not change.
 
@@ -490,7 +490,7 @@ This range is about `-0.5°` to `+0.5°`.
 None of Orion's joints use this class. The definition exists, but the model
 does not simulate backlash unless a joint explicitly references the class.
 
-## Sensors and Sites
+## Sensors and sites
 
 A site is a named position and orientation attached to a body. It is a
 measurement point, not a separate physical part, so it needs no mass.
@@ -510,7 +510,7 @@ therefore measure motion at the IMU's location.
 The model includes these MuJoCo IMU sensors, but `RuntimeDriver` does not expose
 them through Orion's native status interface.
 
-## Joint and Actuator Lookup
+## Joint and actuator lookup
 
 Each position actuator has the same semantic name as its joint. Native MuJoCo
 uses these names to connect commands to the correct joint.
@@ -546,7 +546,7 @@ for completion and stability checks.
 The shared movement path is explained in
 [Motion and animation architecture](../motion-and-animation-architecture.md).
 
-## Quick Reference
+## Quick reference
 
 ```text
 MJCF           = MuJoCo's native model format

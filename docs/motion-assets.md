@@ -57,10 +57,7 @@ poses:
       head_pitch_joint: -0.04
 ```
 
-
-
 ### Pose fields
-
 
 | Field              | Required | Contract                                                 |
 | ------------------ | -------- | -------------------------------------------------------- |
@@ -72,7 +69,6 @@ poses:
 | `idle_profile`     | No       | Semantic profile used by character idle selection        |
 | `default_lighting` | No       | Must name a built-in lighting effect                     |
 | `positions`        | Yes      | Exactly one finite radian value for every Orion joint    |
-
 
 A semantic name is non-empty and contains only ASCII letters, digits,
 underscore, or hyphen.
@@ -87,7 +83,7 @@ Tags communicate intended use:
 ambient state.
 - `authored_overshoot` documents intentional target overshoot.
 - `shutdown_only` and `mechanical` reserve `rest` for supported torque release.
-- `calibration_reference` reserves `zero_reference` for commissioning.
+- `calibration_reference` reserves `zero_reference` for calibration checks.
 
 Tags are descriptive except where character code explicitly checks
 `shutdown_only` or `mechanical`. Authors must not infer unimplemented policy
@@ -121,10 +117,7 @@ motion:
       marker: settled
 ```
 
-
-
 ### Motion fields
-
 
 | Field              | Required      | Contract                                                           |
 | ------------------ | ------------- | ------------------------------------------------------------------ |
@@ -137,11 +130,7 @@ motion:
 | `return_to_anchor` | Relative only | Must be `true` for relative motion; prohibited for absolute motion |
 | `keyframes`        | Yes           | Non-empty ordered list                                             |
 
-
-
-
 ### Keyframe fields
-
 
 | Field      | Required      | Contract                                                                  |
 | ---------- | ------------- | ------------------------------------------------------------------------- |
@@ -152,13 +141,10 @@ motion:
 | `hold`     | No            | Finite, non-negative seconds; greater than zero only with `settle`        |
 | `marker`   | No            | Unique semantic name reached at the compiled arrival time                 |
 
-
 The final keyframe must use `settle`. The final relative keyframe must have no
 non-zero offsets.
 
 ## Absolute and relative target resolution
-
-
 
 ### Absolute motion
 
@@ -187,8 +173,6 @@ it cannot establish another anchor.
 
 ## Arrival semantics
 
-
-
 ### `through`
 
 The compiler derives internal velocity and acceleration from the neighboring
@@ -207,8 +191,8 @@ retimed keyframe arrival so scene light and audio remain synchronized.
 
 ## Motion styles
 
-We defines styles as compiled constants. They are artistic policy and contain no calibration or motor limits.
-
+The runtime defines styles as compiled constants. They control artistic timing
+and amplitude; calibration and motor limits are applied separately.
 
 | Style               | Tempo | Tangent tension | Joint lag | Amplitude | Overshoot scale | Settle character | Intended use                                        |
 | ------------------- | ----- | --------------- | --------- | --------- | --------------- | ---------------- | --------------------------------------------------- |
@@ -221,7 +205,6 @@ We defines styles as compiled constants. They are artistic policy and contain no
 | `quick_reaction`    | 1.34  | 0.70            | 0.08      | 0.92      | 0.24            | 0.48             | Short decisive acknowledgement                      |
 | `return_home`       | 0.74  | 0.32            | 0.20      | 1.00      | 0.00            | 1.00             | Weighted final return                               |
 
-
 Interpretation:
 
 - A higher `tempo` shortens authored segment duration.
@@ -233,11 +216,7 @@ is not a separate scheduler delay.
 permission to leave the interval between authored segment endpoints.
 - `settle_character` changes the timing weight of settle segments.
 
-
-
 ## Built-in motion catalog
-
-
 
 ### Expressive
 
@@ -252,15 +231,11 @@ permission to leave the interval between authored segment endpoints.
 - `delight_lift`
 - `thinking_shift`
 
-
-
 ### Functional
 
 - `look_at_left`
 - `look_at_right`
 - `return_home`
-
-
 
 ### Idle
 
@@ -272,8 +247,6 @@ permission to leave the interval between authored segment endpoints.
 - `idle_soft_head_shake`
 - `idle_attentive_hold`
 - `idle_directional_hold`
-
-
 
 ### Speaking source drawings
 

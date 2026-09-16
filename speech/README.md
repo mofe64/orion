@@ -1,25 +1,9 @@
 # Orion speech worker
 
 Separate Python workers run Qwen3-ASR transcription and Pocket TTS on the Pi.
-The Apple Silicon adapter retains Qwen3-ASR and Chatterbox support.
-It has no agent client, Pi transport, wake confirmation, playback control, or
-listening-window state. The [Rust coordinator](../coordinator/README.md) owns
-those responsibilities.
-
-## Setup on Apple Silicon
-
-The workstation adapter requires Apple Silicon and Python 3.12.
-From this directory:
-
-```bash
-uv sync --python 3.12 --locked
-.venv/bin/orion-voice-models
-```
-
-Weights live in the Hugging Face cache, not this directory.
-After moving an existing checkout, run `uv sync` here to refresh editable-package
-paths and console scripts. This standalone adapter is for development; Studio
-uses the Pi service and does not launch workstation speech workers.
+The [Rust coordinator](../coordinator/README.md) submits inference jobs and owns
+the surrounding voice session, agent call and playback lifecycle. An optional
+Apple Silicon adapter supports standalone Qwen3-ASR and Chatterbox development.
 
 ## Setup on the Pi
 
@@ -38,13 +22,29 @@ Cosette, Eve, Fantine, Jane, Vera, and Alba. Conditioning is cached per voice.
 All preset assets are downloaded before activation; service inference uses the
 local cache with `HF_HUB_OFFLINE=1`.
 
+## Optional Apple Silicon development
+
+The workstation adapter requires Apple Silicon and Python 3.12.
+From this directory:
+
+```bash
+uv sync --python 3.12 --locked
+.venv/bin/orion-voice-models
+```
+
+This command downloads development model weights into the Hugging Face cache.
+After moving an existing checkout, run `uv sync` here to refresh editable-package
+paths and console scripts. Studio uses the Pi service; this adapter is an
+independent development option.
+
 ## Inference protocol
 
 The coordinator launches `python -m orion_speech_worker.worker` with private
 stdin/stdout pipes. Its first JSON line contains `protocol: 2`, `role` (`asr` or `tts`), `asr_model`, and
 `tts_model`. Each worker loads only its assigned model and returns `ready`.
 Protocol 1 remains available for legacy development clients.
-No credentials are needed or passed. Library output is redirected to stderr.
+These local inference jobs carry audio or text, model settings and job IDs.
+Library output is redirected to stderr so it cannot corrupt protocol framing.
 
 Each job has a positive integer `id` and a `method`:
 
@@ -72,6 +72,6 @@ PYTHONPATH=speech speech/.venv/bin/python -m unittest discover -s speech/tests -
 cargo test --manifest-path coordinator/Cargo.toml
 ```
 
-Python tests cover model-independent inference framing and TTS conversion.
+Python tests check inference framing and TTS conversion without loading models.
 Coordinator tests cover voice orchestration with fake inference and Pi peers.
 Neither establishes physical echo quality or actual inference latency.

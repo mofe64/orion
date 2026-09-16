@@ -1,15 +1,10 @@
 # Motion and animation architecture
 
-Orion separates **what the character intends to do** from **how the motors are
-commanded**. The character or scene layer selects a semantic action such as
+The character or scene layer selects a semantic action such as
 “acknowledge the person on the left.” The Rust runtime resolves that action
 into joint-space waypoints, compiles the whole action into one continuous
 trajectory, and samples it at 50 Hz. Only the hardware driver knows how radians
 map to STS3215 servo encoder values.
-
-That separation is the central architectural rule. Character code never writes
-servo registers, and the servo layer never decides which expression Orion
-should perform.
 
 ## The motion stack
 
@@ -122,7 +117,7 @@ and more heavily settled. The exact style table belongs to the
 ### 1. A semantic request enters `oriond`
 
 Studio communicates with the authenticated gateway, and the gateway sends a
-narrow command over the Pi-local Unix socket. Local tools use the same socket.
+supported command over the Pi's local Unix socket. Local tools use the same socket.
 Commands name capabilities such as a pose, motion, scene, or character state;
 they cannot contain raw register writes or arbitrary joint streams.
 
@@ -130,28 +125,26 @@ The command handler enforces ownership and priority before starting motion. A
 foreground scene cancels lower-priority speech and preempts an autonomous idle.
 Character shutdown cancels scene and speech work before returning home.
 
-### 2. The runtime resolves targets from measured state
+### 2. The runtime resolves targets and selects a start state
 
-`RuntimeCore` uses the most recent measured position and velocity as the start
-of a replacement trajectory. It does not assume that the preceding command
-reached an ideal pose.
+`RuntimeCore` starts ordinary replacement movements from the most recent
+measured position and velocity. Speech extensions and the transition from
+thinking into speech instead preserve the active commanded position and velocity.
+This keeps a continuous command path while feedback may lag under load. A fresh
+speech performance starts from measured state when the runtime is holding.
 
 For an absolute motion, keyframes already contain complete pose targets. For a
 character-owned relative motion, the coordinator resolves every offset from
 the immutable idle or speech anchor even when the interruption begins
-elsewhere. This gives
-two simultaneous guarantees:
-
-- the blend starts from physical reality; and
-- repeated relative animation cannot move its reference point or accumulate
-  drift.
+elsewhere. Keeping the reference fixed prevents relative offsets from
+accumulating across interruptions.
 
 Before compilation, the coordinator uniformly scales relative motion if its
 full offsets would exceed live calibrated ranges. Scaling the entire clip
 preserves its shape. The coordinator does not clip individual joints into a
 distorted pose.
 
-### 3. The compiler builds the complete action once
+### 3. The compiler builds the complete motion plan
 
 `MotionSequence` converts resolved keyframes to trajectory waypoints and calls
 the Rust `CompiledTrajectory`. The compiler sees the start state and all
@@ -218,9 +211,10 @@ Fluidity is the result of several layers working together:
 - Joint-specific derivative character prevents every axis from sharing an
   identical path shape.
 - Coordinated joint targets create visual arcs in the head and lamp body.
-- Interruption begins from measured position and velocity.
-- The compiler builds speech as one utterance-length performance rather than a
-  queue of independently settled gestures.
+- Ordinary interruption uses measured state; speech continuation preserves
+  commanded position and velocity.
+- Speech uses one motion run that can extend at gesture boundaries as audio
+  arrives, then finishes with an anchor settle.
 - Secondary joints follow the primary action instead of moving as an unrelated
   periodic oscillator.
 
@@ -271,15 +265,15 @@ The layers fail independently where product behavior requires it:
 
 Orion validates the system at multiple boundaries:
 
-- **Schema validation** proves that pose, motion, and scene intent is complete
+- **Schema validation** checks that pose, motion, and scene intent is complete
   and unambiguous.
-- **Compilation tests** prove derivative continuity, exact authored targets,
+- **Compilation tests** check derivative continuity, exact authored targets,
   speed retiming, calibration containment, and interruption behavior.
 - **Catalog tests** compile every built-in pose and motion against the tracked
   calibration.
 - **Native MuJoCo tests** run the real daemon state machine against the physics
   backend.
-- **Physical acceptance** proves qualities that joint-space tests cannot:
+- **Physical checks** establish qualities that joint-space tests cannot:
   silhouette, perceived prominence, cable clearance, sound level, lighting,
   and character appeal.
 

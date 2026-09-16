@@ -1,123 +1,49 @@
-# Orion Character Studio v2
+# Orion Studio
 
-Studio is a dark, accessible creative workspace for everyday Orion owners and
-motion builders. It authors pose, motion, and scene v2 assets while the Pi
-remains the only hardware authority.
+Studio is Orion's desktop app for controls, animation authoring, previews,
+settings and diagnostics. It connects to the Pi gateway over authenticated HTTP.
+The Pi runs the voice pipeline and owns hardware execution.
 
-```text
-Studio ── authenticated HTTP v2 ──> Pi gateway
-                                                   │ private Unix socket
-                                                   v
-                                                oriond
-                                   motion + character + light + sound
-```
-
-Editing is inert. A slider, keyframe, or timeline drag never moves Orion.
-Explicit Home controls, **Run on Orion**, and **Publish asset** actions cross
-the gateway.
-
-## Home and Create
-
-Home provides a listening switch, character status, curated expressions, and three
-routine controls:
-
-- **Go to rest** cancels active speech or scenes, turns character mode off, and
-  follows the runtime's calibrated three-second movement to the rest pose.
-  After measured arrival the runtime releases torque and keeps the light off.
-  A confirmed wake returns Orion home; microphone mute remains independent.
-- **Character mode** starts autonomous character behaviour and restores
-  expressive lighting.
-- The **Lamp power** switch turns manual light on or off through `oriond`.
-  Choose **Warm white** or **Custom color**, set brightness, then select
-  **Apply**. Custom color reveals one spectrum slider without numeric color
-  fields. Speech and scenes can temporarily take priority over the manual light.
-
-These controls require the updated gateway and runtime on the Pi. Editing a
-color or brightness alone does not send a command. With a rest-aware runtime and
-gateway, the switch shows effective light power and Home reports resting, waking,
-and transition errors. Older gateways show the last accepted lamp command in
-this Home session. See [light and rest status](../docs/system-architecture.md#light-and-rest-status).
-
-Home includes a rotatable 3D model with fixed zoom and no camera panning. The
-model shows the attentive pose and the last accepted lamp setting as a preview,
-not live robot telemetry. Rotating it never sends a robot command. Home starts
-in dark mode; its **Light mode** toggle does not change Create’s appearance.
-
-Create contains three levels of an expression:
-
-- **Pose:** one body position, defined by the five joint angles.
-- **Motion:** how Orion travels between positions, including timing, holds,
-  anticipation, and settling.
-- **Scene:** movement coordinated with lighting and sound. Events can use
-  elapsed time or a named motion marker.
-
-For example, a left-facing pose defines the destination; a left-looking motion
-adds the expressive journey; a scene adds a light response or sound. Keeping
-these separate lets expressions reuse the same poses and motions.
-
-Drafts save on this device per asset and restore when selected again, including
-following a restart. **Discard changes** restores the catalog version.
-**Publish asset** sends an asset to Orion; edited poses and motions must be
-published before running. Browser-storage errors remain visible and prevent
-switching away from an unsaved asset.
-
-Scene movements added in Studio automatically follow the preceding movement.
-Use **Move earlier** and **Move later** to arrange them without start timestamps;
-reordering makes the movement track a continuous sequence. Existing explicit gaps
-remain until reordering, and overlapping clips shift forward after compilation.
-Timing uses full compiler precision. Runs and publishing wait for the current
-sequence to finish compiling. Automatic placement is saved in Studio drafts;
-published v2 files contain resolved numeric starts. Marker-linked light and sound
-follow their movement; explicitly timed effects keep their authored timestamps.
-
-The preview distinguishes a static pose, compilation in progress, a failed
-compile, and a compiled preview. Compiled movement uses the Rust trajectory
-compiler and connected calibration; it does not establish physical clearance.
-Unresolved timeline events stay in **Calculating scene timing**. Each resolved event
-has a separate selectable row; zoom expands the time scale.
-
-Robot activity shows accepted run IDs, progress, terminal results, and a
-run-specific cancel action. Diagnostics contains runtime and calibration details;
-seeds and simulated reactions belong to developer tools. Both screens load the
-3D renderer on demand, render on changes, and release GPU resources on exit.
-Create retains its orbit, zoom, and pan controls independently of Home. Its
-floor grid is centered on the stationary base and aligned with the base’s
-edges; it is a visual reference, not a change to robot coordinates or calibration.
+Editing changes a local draft or preview. **Publish to Orion**, **Play on Orion**
+and the Home controls send explicit requests to the robot. Static previews show
+pose and light settings; measured joint telemetry is available in Debug.
 
 ## Development
 
-Use Node.js 20 or newer, pnpm, stable Rust, and the Tauri 2 prerequisites for
-your platform.
+Use Node.js 20.19 or later in the 20.x line, or Node.js 22.12 or later, pnpm,
+Rust and the Tauri 2 prerequisites for your platform. Run from the repository root:
 
 ```bash
-cd orion_studio
-pnpm install
-pnpm test
-pnpm build
-pnpm tauri dev
+pnpm --dir orion_studio install
+pnpm --dir orion_studio test
+pnpm --dir orion_studio build
+pnpm --dir orion_studio tauri dev
 ```
 
-Use the [Pi quickstart](../docs/quickstart.md#pi-local-voice-and-agent) to install
-Orion's voice stack. Desktop Studio observes and controls that service; closing
-Studio leaves voice running. A Mac background service and Mac speech downloads
-are not needed. An unavailable Pi returns an error without starting local inference.
+`pnpm --dir orion_studio dev` starts the browser frontend at
+`http://localhost:1420`. Desktop pairing persistence and native commands require
+Tauri. Build and sign desktop packages on their target operating systems.
 
-`pnpm dev` runs the UI-only frontend on `http://localhost:1420`. Voice worker
-startup and other native commands require Tauri. macOS, Windows, and Linux
-packages must be built and signed on their respective target platforms.
+The Pi installation is described in the [quickstart](../docs/quickstart.md).
+Studio uses the Pi's speech service, so opening the desktop app requires no local
+speech-model setup. Closing it leaves Orion's services running.
 
 ## Connect Studio to the Pi
 
-The Pi runs `oriond.service` and `orion-studio-gateway.service`. Create the
-private pairing token once:
+Install the [Pi services](../docs/quickstart.md#pi-local-voice-and-agent), then
+select **Pair Orion** in Studio. Enter the gateway address, normally
+`http://orion.local:7447`, and the token from `~/.config/orion/studio-token` on the
+Pi. **Pair and remember Orion** verifies the connection and saves the desktop
+credential.
 
-```bash
-python3 orion_studio/gateway.py create-token \
-  --token-file ~/.config/orion/studio-token
-```
+Studio reconnects after startup or network loss. **Disconnect** pauses retries
+for that session; **Forget Orion on this computer** removes the saved pairing.
+Browser development keeps the connection in memory for the current tab.
+See [saved pairing](../docs/configuration.md#saved-pairing) for storage and limits.
 
-For source development, start the gateway with the Pi calibration and installed
-trajectory compiler:
+For gateway source development on the Pi, stop its installed service before
+starting a second listener on the same port. Supply the existing catalog,
+calibration and the trajectory compiler built from the source under test:
 
 ```bash
 python3 orion_studio/gateway.py serve \
@@ -129,178 +55,120 @@ python3 orion_studio/gateway.py serve \
   --trajectory-compiler /home/mofe/dev/orion/runtime/target/release/orion-trajectory
 ```
 
-In desktop Studio, select **Pair Orion**, enter `http://orion.local:7447` and
-paste the token once. **Pair and remember Orion** verifies the robot and saves
-the address/token in the OS credential store. Studio reconnects on later
-launches and after network loss. **Disconnect** pauses retries for this session;
-**Forget Orion on this computer** removes the saved pairing. The browser-only
-development UI supports an in-memory connection for the current tab, without
-persisting its token. The API accepts semantic
-v2 operations only and never exposes arbitrary paths, registers, or joint
-streams.
+The gateway validates supported operations and forwards hardware commands through
+the private runtime socket. The [system architecture](../docs/system-architecture.md)
+describes its asset and voice-service connections.
 
-## Studio Voice playback
+## Home
 
-The onboard stack runs Rustpotter, Silero, Qwen3-ASR, Pocket TTS, the Rust
-coordinator, and Codex App Server on the Pi. Codex inference and search need
-internet access. Studio observes voice events through the authenticated gateway;
-it does not own recording, model processes, or playback.
+Home shows the listening switch, character status, curated expressions and lamp
+controls. **Go to rest** cancels foreground work and follows the calibrated descent.
+Measured arrival allows torque release and keeps the light off until confirmed
+waking. **Character mode** starts autonomous behavior. Microphone mute is controlled
+separately through **Listening**.
 
-The [`orion-agent` library](../agent/README.md) keeps the Codex conversation
-separately from the [`orion-coordinator`](../coordinator/README.md) speech pipeline.
-Idle speech model reloads preserve the conversation. Voice preset changes apply
-to the next response without restarting the agent or ASR.
+Lamp controls select warm white or a custom color and brightness. **Apply** sends
+the choice. Speech, scenes and rest can temporarily override visible output;
+Home uses the runtime's effective light power to show the switch state. The 3D
+model supports rotation at fixed zoom and displays a static pose and light preview.
 
-```text
-Pocket TTS PCM16
-  -> Rust coordinator buffers and uploads mono 24 kHz WAV chunks
-  -> authenticated Pi gateway speech stream
-  -> oriond/ReSpeaker playback
-  -> speaking motion + expressive light
-  -> terminal status and listener acknowledgement
-```
-
-The Rust coordinator polls the run through queued, playing, and terminal states
-and acknowledges completion to the Pi listener only after playback completes. Cancellation
-is run-scoped. The runtime deletes spool files after completion, cancellation,
-or failure. Use the [Pi setup](../docs/quickstart.md#pi-local-voice-and-agent) to run without
-Studio. See the
-[voice architecture](../docs/voice-architecture.md#streaming-replies-and-timing)
-for buffering and streaming behaviour.
-
-The agent receives confirmed text only. Agent-generated prose cannot issue raw
-robot commands. The Pi listener maps confirmed session events to allowlisted
-character reactions and optional commissioned attention. Follow
-[Pi voice setup](../voice/README.md) before enabling Voice.
-
-## Pi deployment
-
-`scripts/deploy_pi.sh` validates the Studio build, then prepares and activates a
-complete Pi release from the selected Git commit. It preserves Pi settings and
-the existing motion/user-asset catalog, and verifies that the gateway reaches the
-same ready voice service. The desktop needs no speech downloads or background
-backend. See [Pi deployment](../docs/quickstart.md#deploy-to-the-pi) for the service
-switch, hardware behavior, and rollback.
-
-See the [system architecture](../docs/system-architecture.md),
-[motion architecture](../docs/motion-and-animation-architecture.md),
-and [scene reference](../scenes/README.md).
+The light/dark theme is shared across Home, Animation, the editor and Settings and
+is saved on the desktop. Debug mode adds a Diagnostics shortcut on Home.
 
 ## Animation library and scene editor
 
-**Animation** opens a scene/pose library with separate **Orion collection** and
-**My scenes / My poses** groups. Selecting an item never sends a robot command.
-**Play preview / Preview pose** affects the model; **Play on Orion / Go to pose on
-Orion** explicitly requests hardware playback. **Full scene** previews movement,
-lighting colours/intensity/fades, and local audio cues; **Movement only** omits
-scene lighting/audio events. The runtime's normal finish/idle lighting policy
-still applies after hardware playback. The visual light is an approximation of
-runtime effects, not a photometric simulation.
+Animation separates the built-in Orion collection from user scenes and poses.
+Selecting an asset opens its preview. **Play preview** and **Preview pose** affect
+the model; **Play on Orion** and **Go to pose on Orion** request hardware execution.
+Movement preview compilation requires a connected runtime and its calibration.
+Static pose browsing works offline.
 
-**Return to home pose** plays the existing `return_home` scene on Orion only,
-and is disabled while disconnected, busy, or reporting `home_idle`. To view the
-home pose in the model, select **Home** under **Poses** and use **Preview pose**.
-Studio does not receive measured joint telemetry through this status API.
-Scene preview compilation requires a connected
-Orion, while static pose browsing works offline.
+A pose defines all five joint positions. A motion describes the journey between
+positions, including travel, holds and arrival behavior. A scene combines motion,
+lighting and sound. For example, a left-facing pose supplies the destination, a
+look motion adds anticipation and settling, and a scene adds a light or cue.
+See the [asset reference](../docs/motion-assets.md) and [scene format](../scenes/README.md).
 
-**Create scene** starts from a scene copy or pose, and opens the separate editor.
-System scenes remain intact. User drafts survive restarts and appear in the user
-collection. Pose-based scenes get an internal starting movement; publishing the
-scene first publishes any new movement dependencies. The editor retains event
-and timeline controls and supports saving a copied destination pose. The theme
-preference applies to every screen and persists locally. Diagnostics is a Home
-quick action. All views illuminate the diffuser with a light parented to its mesh,
-so the beam follows the lamp head.
+**Create scene** starts from a scene copy or pose and opens the editor. Drafts save
+locally and survive restarts. **Save** retains the draft; **Publish to Orion** sends
+its scene and owned dependencies to the Pi. Published custom content must be
+updated before changed poses can run on Orion. Storage errors remain visible and
+prevent leaving an unsaved draft.
 
-**Delete scene** follows **Edit scene** for user scenes and asks for confirmation.
-Deleting a local draft removes it from this device. Deleting a published scene
-requires a connected gateway advertising `scene_library.delete`; it removes the
-scene from Orion and its local draft, including scene-owned poses and movements.
-Standalone library poses and sounds remain intact. The gateway
-checks the scene revision before deletion and restores the file if catalog reload
-fails. System scenes cannot be deleted from Studio.
+The preview and timeline share the editor workspace. Motion, Light and Sound are
+collapsible tracks. Drag the playhead to scrub, or use its arrow-key controls.
+Movement clips follow the preceding movement by default. Reordering compiles a
+continuous sequence; existing explicit gaps remain until reordering. Playback
+and publication wait for compilation to finish.
 
+Light and sound can use elapsed time or a movement marker. The editor resolves
+these against compiled timing. **Delay** adds a hold after a pose or waiting time
+before light or sound. Choose the resulting delay component to change its duration.
+Sound durations come from WAV metadata, and sound clips queue within their track.
 
-The scene editor places its editable name, **Save**, and **Publish to Orion** at
-the top. A labelled status icon indicates local save state. Playback controls sit
-below the model in a separate layout row. On desktop, the preview and timeline
-share the available screen height; long timelines and selection panels scroll
-independently. Right-click a movement and choose **Split into components** to
-replace its clip with individual pose and nonzero delay clips within the Motion
-track. Collapsed, the track keeps all clips on one row. Expanding Motion reveals
-its grouped component rows.
-Select a component to edit it in the inspector; right-click to delete that component.
-Deleting a pose also removes its attached delay. Split state persists in the draft.
-Keyboard users can open the same menu with Shift+F10. Internally, components retain
-their shared movement compilation so smooth transitions and speed checks remain
-intact. Edits use a private movement copy. Component positions use compiled preview
-samples (at the preview sampling resolution); before compilation, rows remain
-selectable with timing pending. Split metadata is omitted from published scenes.
+Right-click a movement and choose **Split into components** to expose its poses and
+nonzero delays. Components retain their shared movement compilation and smooth
+transitions. Edit or delete them in the inspector; deleting a pose also removes
+its attached delay. Split metadata stays in the local draft and is omitted from
+published scenes. Shift+F10 opens the same menu for keyboard users.
 
+**Edit pose** opens calibrated joint controls for the preview. **Complete edit**
+stores a pose owned by that scene. These poses stay outside the standalone pose
+library. Relative components are converted to absolute poses from their compiled
+positions when edited. Renaming a scene updates its owned references.
 
-Motion, Light, and Sound each have a collapsible track. Drag the playhead to scrub;
-its grab cursor and keyboard arrow controls support precise positioning. Drag a
-clip to reposition it, with a 12-pixel snap threshold at the track start and nearby
-clip edges. Components reorder within their parent movement. Media items queue
-within their own track; sound durations come from WAV metadata. Movement cue links
-remain authored links, while publication uses their resolved, non-overlapping times.
-**Starts** explains scene-time, previous-item, and movement-cue timing. **Delay** adds
-waiting time to the selected item: a hold after a motion pose, or a wait before a
-light or sound. Select the resulting Delay component to change its duration.
+Lighting offers Orion presets and custom Constant, Pulse, Breathe and Fade effects.
+Each custom stage selects warm white or a hue and brightness. Choosing a preset
+clears custom stage overrides. The browser and runtime use the same stage curves;
+physical brightness and clearance still require checks on the robot.
 
-The lighting picker separates **Custom effects** (Constant, Pulse, Breathe, Fade)
-from **Orion presets**, which always lists all developer-prepared effects. Choosing
-a preset clears custom stage overrides. Brightness sliders show percentages.
-Each custom stage has Warm white or a
-single custom-color hue slider and brightness. Effect explanations expand in place.
-The browser and runtime use the same stage curves; existing character presets remain
-unchanged until the user selects another effect.
+**Delete scene** asks for confirmation. Deleting a draft removes its local copy.
+Deleting a published user scene checks its content revision and removes its owned
+poses and movements through the gateway. Standalone poses and sounds remain
+available. A rejected catalog reload restores the previous files. Built-in scenes
+remain read-only.
 
-Right-click a pose and choose **Edit pose**. The inspector shows calibrated joint
-controls and updates the model without sending hardware commands. **Complete edit**
-stores `<scene>_custom_pose_<n>` inside the scene draft. These poses do not appear in
-the pose library. Scene renaming updates the embedded pose and movement references;
-deleting the scene removes its embedded assets. Relative components are converted
-from their compiled positions into scene-owned absolute poses when edited.
+## Voice observation
 
-Custom pose previews require the updated gateway's optional trajectory `poses`
-document. It writes a temporary compiler input, leaving the Pi library unchanged.
-Publishing includes a `studio` bundle: the gateway stages its owned pose/movement
-files in `_scene_owned` directories and uses `asset reload`. Failed publication
-restores the previous files. Published custom scenes must be updated before their
-changed poses can play on Orion. Deploy the matching runtime and gateway before
-using custom effects or bundled assets on hardware; a frontend update alone is
-insufficient.
+The Pi coordinator runs Qwen, Codex and Pocket, uploads response audio to the local
+gateway and waits for `oriond` playback completion. Studio polls the gateway for
+voice status, transcripts, models and timing.
+
+A voice preset change applies to the next reply without restarting the agent or
+ASR. Other model changes restart the coordinator and speech workers. An idle
+restart can preserve the conversation; restarting the whole service starts fresh
+context. See [voice settings](../docs/configuration.md#voice-settings).
+
+The [voice architecture](../docs/voice-architecture.md) explains wake verification,
+continued command capture, response buffering and the follow-up window. A generated
+first chunk does not establish audible response time; the coordinator may buffer
+the full response when synthesis is slower than playback.
 
 ## Settings and Debug
 
-Settings follows Animation in navigation and shares Home’s light and dark themes.
-Studio preferences (appearance, preview sound, reduced interface motion, and debug
-mode) persist in local webview storage. Character mode and the listening switch
-control Orion through the existing runtime and listener interfaces.
+Settings stores appearance, preview sound, reduced UI motion and debug visibility
+locally. Voice models, voice presets, personality and memories save on the Pi.
+Codex model and effort choices come from the active runtime's advertised catalog.
+Pi model paths are displayed as read-only. Other model changes require listening
+to be muted. Saving while voice status reports an error first attempts to mute,
+then retries startup.
 
-Voice settings save on the Pi in `~/.config/orion/voice-settings.json`. Settings exposes the supported Codex models and
-efforts. Pocket offers FP32/INT8 precision and eight voice presets; changing only
-the preset works while listening. Other model changes require muting first.
-Pi model paths are read-only in Studio. API-key provider fields remain disabled.
+Debug shows the voice session, transcripts, model details and stage timings. It
+also displays joint position, velocity, current, voltage and temperature when
+reported by the runtime. `/api/v2/debug/logs` returns up to 200 journal entries
+from `oriond`, `orion-studio-gateway` and `orion-listener`. The gateway account
+needs journal access. For voice-host startup and model errors, inspect
+`journalctl -u orion-voice-stack` on the Pi.
 
-Enable debug mode to expose Debug navigation and Home’s Diagnostics shortcut.
-Debug shows local voice state, transcripts, model details, timing, and runtime joint
-position, velocity, current, voltage, and temperature when reported by Orion.
-`GET /api/v2/debug/logs` uses the existing gateway authentication and reads only the
-latest 200 journal entries for `oriond`, `orion-studio-gateway`, and `orion-listener`.
-Install the updated gateway on Orion to use logs; its service account needs journal
-read access. Missing journal support or access produces an unavailable message.
-The former Voice modal is removed; its controls live in Settings and Debug.
+Debug's **Turn torque off** requests `release_movement` and refreshes status.
+The UI blocks it during character mode or active motion; the gateway also rejects
+active motion or scenes. Releasing torque stops the joints holding position.
+Support Orion before using this control.
 
-Codex model and effort dropdowns use the coordinator’s advertised catalog; no
-manual or assumed options are offered. Speech model information is read-only:
-Hub snapshot folders identify their repository, while copied folders may only
-identify an architecture from `config.json`. The worker loads selected folders
-directly without requiring their original repository IDs.
+## Pi deployment
 
-Debug’s **Turn torque off** uses `release_movement`, refreshes robot status, and
-blocks release during character mode or active movement. The gateway independently
-rejects active motion or scenes. Releasing torque stops joints holding position;
-support Orion before using it.
+Use [Pi deployment](../docs/quickstart.md#deploy-to-the-pi) to build and activate the
+matching runtime, gateway, listener and voice host. The deployment preserves saved
+settings and the existing asset catalog and checks readiness before accepting the
+release. The [motion architecture](../docs/motion-and-animation-architecture.md)
+describes the runtime contracts used by previews and hardware execution.

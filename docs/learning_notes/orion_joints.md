@@ -29,7 +29,7 @@ reference configuration, not automatically Orion's home or rest pose.
 
 The approximate travel descriptions below explain the imported URDF geometry;
 they are not permission to command that entire range on the physical robot.
-The runtime's commissioned position bounds live in
+The runtime's calibrated position bounds live in
 the active Pi calibration,
 and the hardware driver derives its conversion from the accepted servo
 calibration.
@@ -111,7 +111,7 @@ to its supporting bracket.
 `lamp_head_link` contains both the diffuser and lamp-head geometry, so both
 visible parts move together when this joint turns.
 
-## How Combined Motion Works
+## How combined motion works
 
 Each joint angle is measured relative to its parent, but the final world pose
 of the lamp head depends on every joint before it.
@@ -123,7 +123,7 @@ frame then has a different world position and orientation.
 This is why Orion sends and records all five joint values together. Joint
 names and parent-child relationships must agree across the URDF, MJCF, runtime,
 and motion system. Their limits serve different purposes: the URDF explains the
-imported model, while commissioned calibration and motion configuration
+imported model, while hardware calibration and motion configuration
 constrain physical execution.
 
 The XML rules behind parent, child, origin, and axis are explained in

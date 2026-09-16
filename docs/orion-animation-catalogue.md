@@ -1,10 +1,9 @@
-# Orion Animation catalogue
+# Orion animation catalogue
 
-The Animation character catalog stages every action around one readable primary idea; light, sound, and secondary joints support rather than compete with it.  
-
+Orion stages each animation around one clear action. Light, sound, and
+supporting joint movement reinforce that action.
 
 ## Motion review
-
 
 | Animation                        | Primary action and silhouette                                                  | Anticipation / follow-through                                                                                              | Timing and secondary action                                                                                                                                                  |
 | -------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,15 +26,12 @@ The Animation character catalog stages every action around one readable primary 
 | `idle_soft_head_shake`           | Restrained asymmetric shake                                                    | Small first side, larger counter, diminished final echo                                                                    | Direction changes flow through spline points without stop plateaus                                                                                                           |
 | `idle_attentive_hold`            | Subtle upward energy within attentive anchors                                  | Shoulder/head rise then diagonal secondary detail                                                                          | Faster attentive character but low amplitude                                                                                                                                 |
 | `idle_directional_hold`          | Detail that preserves a left/right held silhouette                             | Pitch/shoulder lead; roll/elbow follow                                                                                     | Avoids yaw that would undermine the directional staging                                                                                                                      |
-| `speak_calm_sway`                | Readable conversational head-and-body sway                                     | Supplies a calm dominant drawing to the utterance-length spline                                                            | Weighted toward ordinary phrases; never settles independently                                                                                                                |
+| `speak_calm_sway`                | Readable conversational head-and-body sway                                     | Supplies a calm dominant drawing to the speech performance                                                            | Weighted toward ordinary phrases; quiet intervals can hold its phrase pose                                                                                                                |
 | `speak_emphasis_nod`             | Clear phrase-boundary nod                                                      | Fast head drawing redirects the continuing body path                                                                       | Selected near detected energy peaks without stopping the performance                                                                                                         |
 | `speak_explanatory_lean`         | Clear forward explanatory emphasis                                             | Shoulder/head drawing carries momentum into the next phrase                                                                | Phrase-scale staging inside the continuous performance                                                                                                                       |
-| `speak_reflective_tilt`          | Reflective diagonal thought shape                                              | A mirrored variant supplies asymmetry and counter-shape                                                                    | Calm timing without an isolated return or stop                                                                                                                               |
-| Generated `thinking_head`        | Readable diagonal thought around the conversational anchor                     | Opposing preparation, dominant head lead, delayed secondary body follow, asymmetric counter-tilt and diminished resolution | Existing thinking style; internal drawings flow through, final anchor return settles; amber/teal/lavender light breathes smoothly; physical readability awaits Pi acceptance |
-| Generated `speaking_performance` | One fluid, head-led action spanning the whole utterance                        | Every phrase stages a head lead, then a delayed body follow while the head anticipates its next arc                        | Seeded scale/direction variation avoids a fixed cycle; energy-gated body beats have a three-phrase minimum interval; only the final anchor return settles                    |
-
-
-
+| `speak_reflective_tilt`          | Reflective diagonal thought shape                                              | A mirrored variant supplies asymmetry and counter-shape                                                                    | Calm timing with a phrase hold when the audio pauses                                                                                                                               |
+| Generated `thinking_head`        | Readable diagonal thought around the conversational anchor                     | Opposing preparation, dominant head lead, delayed secondary body follow, asymmetric counter-tilt and diminished resolution | Existing thinking style; internal drawings flow through, final anchor return settles; amber/teal/lavender light breathes smoothly; repeated thinking requests preserve the active movement |
+| Generated `speaking_performance` | One fluid, head-led action spanning the whole utterance                        | Every phrase stages a head lead, then a delayed body follow while the head anticipates its next arc                        | Seeded scale/direction variation avoids a fixed cycle; energy-gated body beats have a three-phrase minimum interval; quiet pauses hold the phrase pose; the final return settles at the anchor                    |
 
 `attention_left` and `attention_right` use small base-led conversational arcs:
 small opposing anticipation, a committed lean, restrained authored overshoot,
@@ -68,15 +64,16 @@ exception: it intentionally has no motion and verifies the RGBW/audio devices.
 - Through keyframes preserve continuous position, velocity, and acceleration;
 a direction reversal may cross instantaneous zero velocity but never holds a
 zero-velocity plateau.
-- Authored overshoot poses are exact; the compiler clamps extra overshoot.
+- Authored overshoot poses remain exact. The compiler reduces bordering
+velocity and acceleration when a polynomial overshoots between those poses.
 - All relative idles and speech gestures use one uniform calibration-aware
 amplitude and end at zero offset from their immutable anchor.
-- Speech composes its relative drawings into one utterance-length spline. It
-has no internal `settle` keyframes and no scheduler-created motion gaps.
+- Speech composes relative drawings into one movement run and extends its
+trajectory as audio arrives. A quiet interval can include a `settle` and hold
+at the phrase pose. Only the final return settles at the anchor.
 - Every speech phrase contains a readable head drawing. Ordinary shoulder and
 elbow motion remains secondary; full body beats are energy-gated, never
 adjacent, and limited to at most roughly one in three phrase drawings.
 - Routine idle has no sound, timers are randomized, and immediate repetition
 is excluded.
 - Final `settle` is intentional and reaches zero velocity and acceleration.
-

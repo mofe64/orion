@@ -44,17 +44,23 @@ motion.
 
 ### Character-owned generated motion
 
-`RuntimeCore::play_generated_anchored_relative` accepts an in-memory
-`MotionDefinition`, but applies the same contract as a loaded relative clip:
+`RuntimeCore::play_generated_anchored_relative` accepts a generated
+`MotionDefinition` and applies the same contract as a loaded relative clip:
 
 - motion space must be `anchor_relative`;
 - `return_to_anchor` must be true;
 - the final keyframe must be one zero-offset `settle`;
 - every resolved target must pass driver validation; and
-- compilation uses measured start state, immutable anchor, uniform scale,
+- compilation preserves the immutable anchor, uniform amplitude scale,
   calibration, and the STS3215 speed ceiling.
 
-Speech uses this entry point; it does not bypass the normal compiler.
+A fresh movement starts from measured position and velocity while the runtime
+is holding. `extend_character_performance` replaces an executing character
+movement from its commanded position and velocity, keeping the same run ID.
+Speech uses this replacement path when taking over from thinking or idle,
+extending a stream, and returning to the anchor at playback end. Preserving
+the commanded state avoids restarting each continuation from delayed servo
+feedback. Both paths use the same trajectory compiler and limits.
 
 ## Input normalization
 
@@ -119,10 +125,13 @@ segments for one joint.
 
 ### Start point
 
-- position is the latest measured, calibration-clamped position;
-- velocity is the latest measured velocity, subject to calibrated interruption
-  protection; and
-- acceleration starts at zero.
+The caller supplies start position and velocity. Ordinary movements use the
+latest measured position, clamped to calibration, and measured velocity.
+Character performance replacements sample the executing trajectory's
+commanded position and velocity. The compiler applies calibrated interruption
+protection to either input and starts acceleration at zero. Position and
+velocity can therefore continue across a replacement, but acceleration
+continuity is guaranteed only between segments within a compiled trajectory.
 
 ### Final point and settle arrivals
 
@@ -191,12 +200,13 @@ which keeps light and audio synchronized with the stretched motion.
 
 ## Calibration-safe interruption
 
-Starting from measured velocity preserves physical continuity, but noisy or
-high telemetry near a joint boundary can make a polynomial leave calibration.
-`compile_calibrated` handles that case without discarding all velocity:
+The supplied start velocity shapes the transition into a movement. A high
+velocity near a joint boundary can make the polynomial leave calibration;
+noisy measured feedback can cause the same problem. `compile_calibrated`
+reduces only the affected joints' starting velocities:
 
-1. Validate that the measured start is inside every range.
-2. Bound any measured speed above the motor ceiling to 95% of that ceiling,
+1. Validate that the start position is inside every range.
+2. Bound any starting speed above the motor ceiling to 95% of that ceiling,
    preserving direction.
 3. Compile the full candidate.
 4. Sample it at the actual 50 Hz command rate.
@@ -254,7 +264,7 @@ servo:
 The driver applies and reads back return delay, operating mode, direction,
 PID coefficients, maximum acceleration, and runtime acceleration. Persistent
 register writes unlock and relock EEPROM. Elbow pitch and head pitch use their
-commissioned gravity-load proportional gains.
+calibrated proportional gains for gravity load.
 
 The servo acceleration registers shape the actuator's local response. They do
 not replace the host trajectory or define a second motion plan.
@@ -400,6 +410,6 @@ than reimplementing interpolation.
 | Shared MuJoCo execution | native MuJoCo runtime test |
 | Radians/raw and synchronized transport | driver and transport tests |
 
-Automated evidence is necessary but not sufficient for animation quality. Use
-the physical acceptance guide to evaluate silhouette, perceived timing,
-mechanical sound, cable behavior, and appeal.
+Automated checks establish the numerical and lifecycle contracts. Physical
+review must also assess silhouette, perceived timing, mechanical sound, cable
+behavior, and appeal using the [animation catalogue](orion-animation-catalogue.md).

@@ -1,44 +1,53 @@
 # Orion coordinator
 
-`orion-coordinator` owns the voice pipeline: Pi connections, wake confirmation,
-follow-up turns, ASR jobs, agent calls, TTS jobs, startup buffering, uploads,
-playback acknowledgement, tool-progress speech, lighting tool execution, and cancellation. It has no dependency on Tauri.
+`orion-coordinator` runs the voice pipeline inside the Pi's `orion-service`
+process. It owns listener connections, wake confirmation, ASR and TTS jobs, agent
+calls, response buffering, gateway uploads and playback acknowledgement.
 
-Studio includes this library through a Cargo path dependency. A launcher supplies
-`CoordinatorConfig` and an `orion_agent::AgentHandle` to `Coordinator::start`.
-Keep the owning `AgentService` alive independently so idle coordinator restarts
-preserve conversations. `connection()` returns the authenticated protocol-7
-observer endpoint; `set_microphone()` sends an explicit Pi control request.
-Dropping the coordinator cancels its owned speech run and stops both Python workers. `set_voice()` changes the next response’s preset;
-`events()` returns a bounded observer snapshot with a generation and sequence IDs.
+A host supplies `CoordinatorConfig` and an `orion_agent::AgentHandle` to
+`Coordinator::start`. Keeping the owning `AgentService` alive lets an idle
+coordinator restart preserve the agent conversation. The Python workers in
+[`speech/`](../speech/README.md) receive inference jobs over private pipes.
+The coordinator calls the agent through Rust channels.
+
+`connection()` returns the authenticated protocol-7 observer endpoint.
+`events()` returns a bounded snapshot with a generation and increasing event IDs.
+The Pi gateway exposes these snapshots to Studio. `set_microphone()` sends a
+listener control request; `set_voice()` changes the next response's preset.
+Dropping the coordinator cancels its speech run and stops both Python workers.
 
 Microphone status checks run once per second over temporary control WebSockets.
-Each successful request closes with a WebSocket handshake, allowing up to one
-second for cleanup after the ten-second request deadline. A missing close reply
-does not invalidate an acknowledged mute change. The Pi listener tolerates abrupt
-control-client disconnects without interrupting capture or logging a traceback.
-
-The Python workers live in [`speech/`](../speech/README.md) and receive only
-inference jobs over private pipes. The Rust agent handle is called directly;
-there is no Python agent client or agent TCP bridge. The shared
-[Orion service](../orion-service/README.md) launches the coordinator in the Pi service. Studio is a remote observer and controller.
+Each successful request closes the connection, allowing up to one second for
+cleanup after a ten-second request deadline. A missing close reply does not
+invalidate an acknowledged mute change. The listener tolerates abrupt control
+client disconnects while capture continues.
 
 ## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `service.rs` | Application lifecycle, observer listener, microphone control |
-| `pipeline.rs` | Pi session events, sequential stages, uploads and completion |
-| `speech.rs` | Python child lifecycle and bounded inference protocol |
-| `buffer.rs` | Conservative startup buffering policy |
+| `service.rs` | Coordinator lifecycle, observer listener and microphone controls |
+| `pipeline.rs` | Voice session events, concurrent work, uploads and playback completion |
+| `speech.rs` | Python worker lifecycle and inference framing |
+| `buffer.rs` | Startup audio reserve and buffering for complete responses |
 | `session.rs` | Wake phrase and utterance-state validation |
 | `gateway.rs` | Authenticated HTTP operations and WAV construction |
-| `hub.rs` | Bounded status replay and independent UI observers |
+| `hub.rs` | Bounded event replay and independent observers |
 
-The Pi retains microphone capture, wake detection, echo guard, and the five-second
-listening window. `oriond` retains hardware execution. See the
-[voice architecture](../docs/voice-architecture.md) for state and
-transport contracts.
+The listener owns capture, endpointing, the echo guard and follow-up window.
+`oriond` owns hardware execution. See the [voice architecture](../docs/voice-architecture.md)
+for session ordering and streaming behavior.
+
+## Tool feedback
+
+Search acknowledgement uses the current voice session and a separate speech run.
+After playback, `session.processing` returns the listener to processing and the
+runtime to thinking feedback. Final playback waits for that acknowledgement;
+only the final response opens the follow-up window. The listener advertises
+support through `toolFeedback`. Older peers receive final speech directly.
+
+Lighting calls use `lamp_effect` through the gateway. The execution result returns
+to the agent. Memory calls run silently inside the agent service.
 
 ## Validation
 
@@ -47,23 +56,8 @@ Run from the repository root:
 ```bash
 cargo test --manifest-path coordinator/Cargo.toml
 cargo clippy --manifest-path coordinator/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path orion_studio/src-tauri/Cargo.toml
 ```
 
-Integration tests require `python3` and local socket access. Fake Pi, gateway,
-speech, and Codex peers exercise the production coordinator without hardware,
-model downloads, or account usage. Inference uses CPU adapters on the Pi or MLX adapters on Apple Silicon;
-physical microphone, echo, and playback acceptance requires a real Pi.
-
-## Tool feedback compatibility
-
-The listener advertises `toolFeedback: true` when it accepts a transition from
-intermediate playback back to processing. Search acknowledgement uses the same
-voice session and a separate speech run; it does not finish the session or open
-a conversation window. Final playback waits for the acknowledgement. Upgrade
-the Pi listener and runtime together for breathing/animation after intermediate
-speech. Older listeners receive the final answer without the acknowledgement.
-
-Lighting calls use `lamp_effect` through the gateway and require the updated Pi
-gateway and runtime. Failed execution is returned to the agent. Memory calls
-execute silently in the agent service.
+Integration tests use `python3`, local sockets, and fake listener, gateway, speech
+and Codex peers. They cover orchestration without model downloads or account
+usage. Physical microphone, echo and playback checks require the Pi.

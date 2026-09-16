@@ -1,8 +1,8 @@
 # Orion scene v2
 
 Scenes coordinate named motion, RGBW effects, and local audio under one
-monotonic clock. They never contain raw servo commands. All commissioned and
-Studio-authored scenes use `format_version: 2`.
+monotonic clock. Built-in and Studio-authored scenes use `format_version: 2`.
+The runtime resolves named actions into calibrated hardware commands.
 
 ```yaml
 format_version: 2
@@ -48,11 +48,10 @@ runtime/target/release/oriond --run-scene acknowledge_left --wait
 runtime/target/release/oriond --scene-status
 ```
 
-`deployment_smoke` is the lighting/audio-only v2 diagnostic. The physical
-deployment pass also exercises both expressive look scenes. Mechanical `rest`
-is not a scene: shutdown moves directly to the calibrated `rest` pose and only
-then releases torque.
-
+`deployment_smoke` is a lighting and audio diagnostic that can be requested
+explicitly. The release deployment does not run expression scenes automatically.
+Mechanical rest uses the runtime rest coordinator, which tracks descent to the
+calibrated pose and releases torque after measured completion.
 
 ## Studio-authored light effects and scoped assets
 

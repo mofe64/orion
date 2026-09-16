@@ -1,16 +1,14 @@
 # Orion Rust runtime
 
-`runtime` is Orion's ROS-independent native Rust runtime. It implements the
-`oriond` command protocol, lifecycle, pose and motion loading, whole-action
-piecewise-quintic trajectory compilation, calibration contract, STS3215
-profile, 50 Hz state snapshots, the Pi 5 red-green-blue-white (RGBW) output
-backend, ReSpeaker V2 WAV playback, character coordination, and multimodal
-scenes.
+`oriond` owns Orion's movement, RGBW light and speaker playback. It loads poses
+and motions, compiles smooth joint trajectories, applies calibration, checks
+measured completion and coordinates character behavior, scenes and speech
+animation. The hardware and MuJoCo backends use the same 50 Hz runtime loop.
 
 See the [system architecture](../docs/system-architecture.md) for
 workstation/Pi boundaries and device ownership.
 
-For movement internals, use the canonical cross-system documents:
+For movement internals, use:
 
 - [Motion and animation architecture](../docs/motion-and-animation-architecture.md)
 - [Character animation design](../docs/character-animation.md)
@@ -27,8 +25,7 @@ encoder/velocity conversions.
 
 ## Build and test
 
-Use a toolchain that supports the crate's Rust 2024 syntax; validation uses
-Rust 1.98.0. Run from the repository root:
+Use a toolchain that supports the crate's Rust 2024 syntax. Run from the repository root:
 
 ```bash
 cargo build --manifest-path runtime/Cargo.toml
@@ -59,71 +56,24 @@ Set `ORION_TEST_BIN_DIR` to an absolute binary directory to test a release build
 
 ## Deploy an update to the Raspberry Pi
 
-During source-run development, Git is Orion's deployment package. Commit and
-push the intended `main` revision before deploying from the development
-workstation.
+Use the [Pi deployment procedure](../docs/quickstart.md#deploy-to-the-pi) from the
+workstation after committing and pushing the intended code. It prepares all four
+services in a separate release, then switches paths after confirmed mechanical
+rest. The [configuration reference](../docs/configuration.md#raspberry-pi-deployment)
+explains saved settings, overrides and the existing asset catalog.
 
-The workstation needs pnpm and Node.js 20.19 or later in the 20.x line,
-or Node.js 22.12 or later, for Studio's deployment preflight. Validation uses
-Node.js 24.19.0. Run from the repository root:
+For logs, readiness checks and rollback, follow
+[recovery](../docs/quickstart.md#logs-and-recovery). Normal character startup can
+move Orion home. The default inactivity interval is documented under
+[automatic rest](../docs/system-architecture.md#automatic-rest-and-waking).
 
-```bash
-scripts/deploy_pi.sh
-```
-
-The command connects to `mofe@orion.local` over SSH, uploads the deployment
-bootstrap to a temporary file and runs it in an SSH terminal. This leaves
-terminal input available for sudo authentication; the temporary file is
-removed when the remote command exits. Override the target when needed with `--host`, `--root`, or
-`--branch`. SSH host identity and key access must already be trusted normally;
-the script never disables host-key checking. Enter the Pi user's sudo password
-in the terminal when prompted. The account must be permitted to install
-packages and manage services; passwordless sudo is needed only for unattended
-runs. Deployment does not change sudoers or request the password through chat.
-
-The remote phase prepares the complete runtime, gateway, listener, and onboard
-voice/agent release from the selected commit. It leaves the Pi checkout and motion
-catalog intact. Builds and tests finish before the service switch; the runtime
-must confirm mechanical rest and torque-off before it is stopped. The installer
-preserves installed arguments and overrides, checks all four services and their
-readiness, and restores the previous installation on activation failure. See the
-[Pi quickstart](../docs/quickstart.md#deploy-to-the-pi) for prerequisites, settings
-preservation, and rollback.
-
-The simulator-only MuJoCo integration test remains a workstation pre-push gate.
-Deployment compiles a trajectory against the existing catalog without executing
-it. It does not run physical expression smoke tests. Normal runtime startup may
-move Orion home. Use `--character-on-start off` for maintenance that must remain
-torque-off; in that mode, an explicit movement request can prepare and enable the
-servos. Use **Release torque** only after mechanical rest is confirmed.
-
-Character startup arms [automatic rest and confirmed waking](../docs/system-architecture.md#automatic-rest-and-waking).
-`--rest-after-seconds` configures the inactivity deadline. Studio's **Go to rest**
-also follows measured rest completion, fades the light off, and releases torque.
-Character Stop and low-level `goto rest` retain their separate contracts.
-Native MuJoCo's captured-rest contact mismatch is covered by the
-[rest/wake integration tests](tests/test_rest.py); a failed rest run keeps torque enabled.
-
-Logs are owned by journald:
-
-```bash
-sudo systemctl status oriond.service orion-studio-gateway.service orion-listener.service
-journalctl -u oriond.service -u orion-studio-gateway.service -u orion-listener.service
-```
-
-Calibration and the Studio pairing token remain under `~/.config/orion/`.
-The full-stack installer merges installed service configuration; templates under
-`scripts/systemd/` supply defaults only for missing units. Runtime and gateway
-executables come from the release, while their working directory remains the
-existing catalog root so local poses and scenes survive updates.
-
-## MuJoCo-first daemon
+## MuJoCo daemon
 
 Run the daemon without opening a serial port:
 
 ```bash
 runtime/target/debug/oriond --serve --backend mujoco \
-  --start-pose attentive
+  --start-pose attentive --character-on-start off
 ```
 
 In another terminal, use the normal client commands:
@@ -146,10 +96,14 @@ accumulates the shared base translation, tilt, height, and contact policy in
 ## Physical hardware
 
 The Rust transport has been validated on Orion's Raspberry Pi and five-servo
-STS3215 bus. The installed systemd service still executes the release binary
-and assets directly from the source checkout; no second runtime copy exists.
-Stop `oriond.service` before opening the serial, RGBW, or audio devices with a
-manual commissioning process.
+STS3215 bus. Managed deployment selects binaries from a release directory while
+keeping the existing catalog root for poses, motions, scenes and cues. Inspect
+`systemctl cat oriond` to find the installed executable and arguments.
+
+The examples below use a runtime built in the development checkout. Stop the
+installed `oriond.service` before opening its serial, RGBW or audio devices with
+a direct diagnostic process. For a manual configure/enable sequence, start with
+`--character-on-start off` so automatic startup does not move the robot first.
 
 ### Read hardware state without enabling torque
 
@@ -175,6 +129,7 @@ runtime/target/release/oriond --serve \
   --backend hardware \
   --port /dev/ttyACM0 \
   --baud-rate 1000000 \
+  --character-on-start off \
   --calibration /home/mofe/.config/orion/servo_calibration.json
 ```
 
@@ -229,9 +184,8 @@ within tolerance for the full settle duration. The defaults are
 `0.05 rad`, `0.05 rad/s`, `0.25 s` settled, and a `2.0 s` settling timeout.
 
 Status JSON keeps only the active `motion` and the most recent terminal
-`last_motion`; there is no movement database or durable history. Planned agent
-integrations must submit semantic motion names, retain the returned `run_id`,
-and follow that ID through these fields. IDs reset when the daemon restarts.
+`last_motion`. Clients retain the returned `run_id` and follow that ID through
+these fields. IDs reset when the daemon restarts.
 
 `--wait` is a thin client over the same status contract. It exits `0` for
 `completed`, `4` for `timed_out`, and `5` for `cancelled`. Daemon command
@@ -307,14 +261,14 @@ runtime/target/release/oriond --lights-off
 Arguments are logical `RED GREEN BLUE WHITE` bytes from 0 through 255. The
 adapter performs the physical green-red-blue-white (GRBW) ordering and 800 kHz
 symbol encoding. This
-path has been commissioned on the physical robot, including all four channels,
+path has been tested on the physical robot, including all four channels,
 the full matrix, and all-off output.
 
 The physical audio adapter uses the stable Advanced Linux Sound Architecture
 (ALSA) pulse-code modulation (PCM) device
 `plughw:CARD=seeed2micvoicec,DEV=0`. It applies the confirmed ReSpeaker V2 JST
 mixer route whenever the hardware daemon starts. Named, local, stereo WAV
-cues live under `audio/cues/` and can be commissioned without starting the
+cues live under `audio/cues/` and can be checked without starting the
 servo daemon:
 
 ```bash
@@ -344,11 +298,11 @@ exit status.
 
 Hardware `--serve` opens `/dev/ws281x_pwm`, clears it to establish a known
 initial state, configures the ReSpeaker mixer, and owns both devices until the
-process exits. Direct lighting and cue commissioning commands therefore should
+process exits. Direct lighting and cue commands therefore should
 not run concurrently with the daemon. MuJoCo uses recording lighting and audio
 backends with the identical scene clock and lifecycle.
 
-Run the lighting-only scene without enabling torque:
+With the daemon running, test light and audio without enabling torque:
 
 ```bash
 runtime/target/release/oriond --run-scene deployment_smoke --wait
@@ -364,7 +318,7 @@ runtime/target/release/oriond --run-scene acknowledge_left --wait
 
 Every accepted scene receives a daemon-local `run_id`. `--scene-status` keeps
 only the active `scene` and most recent terminal `last_scene`; IDs and results
-reset when the source-run daemon restarts. Scene states are `executing`,
+reset when the daemon restarts. Scene states are `executing`,
 `completed`, `timed_out`, `cancelled`, and `failed`. `--stop-scene` cancels the
 scene and its active movement. `--wait` exits `0`, `4`, `5`, or `6` for
 completed, timed out, cancelled, or failed respectively.
@@ -376,7 +330,7 @@ reload, `oriond` validates every pose against the active driver limits and
 validates every motion keyframe reference and timing value.
 
 The private Unix protocol supports `joint limits` so the authenticated Studio
-gateway can report the running driver's commissioned radians without exposing
+gateway can report the running driver's calibrated ranges without exposing
 servo registers. It also supports `asset reload`, which reloads poses,
 motions, and scenes together and atomically replaces the validated runtime
 libraries while no movement or scene is active. `scene reload` remains the
@@ -394,7 +348,7 @@ Reload re-reads the daemon's configured scene directory, validates all pose,
 motion, and audio-cue references, and atomically replaces the in-memory catalog
 only when no scene is active. No command accepts an arbitrary asset path;
 inline preview is the sole non-persisted scene-body operation and the raw
-socket remains Pi-local.
+socket remains local to the Pi.
 
 Unix requests are UTF-8 lines terminated by a newline (or a client write-side
 EOF). The server retains partial reads and writes without blocking the motor
@@ -402,14 +356,13 @@ loop, bounds pending clients to 32, and retires incomplete connections after
 one second. Oversized commands are rejected before dispatch.
 
 For manual development, build and run `oriond` directly from this source tree
-only after stopping the installed service. Normal Pi operation uses the
-source-backed `oriond.service`.
+only after stopping the installed service. Normal Pi operation uses the executable
+selected by `oriond.service`.
 
 ## Speech playback
 
-Studio generates expressive speech with Chatterbox and uploads mono PCM16
-24 kHz WAV through the authenticated gateway. The Pi does not synthesize
-speech. `oriond` accepts a validated spool identifier through its private
+The Pi's Pocket worker generates response audio. The onboard coordinator buffers
+and uploads mono PCM16 24 kHz WAV through the local authenticated gateway. `oriond` accepts a validated spool identifier through its private
 `speech file` operation and owns ReSpeaker playback. Streaming uses `speech stream`,
 ordered `speech append` commands and an explicit `speech end`, all under one run
 ID and one player process. See [streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)
@@ -433,8 +386,8 @@ the daemon drives the `speaking_energy` light. See
 for the animation policy.
 
 The Pi listener captures stereo ReSpeaker audio and runs Rustpotter, then
-forwards endpointed mono utterances to Studio for Qwen confirmation and
-processing. See [Pi voice setup](../voice/README.md).
+uses Silero to find speech boundaries and sends complete mono utterances to the
+onboard coordinator for Qwen confirmation and transcription. See [Pi voice setup](../voice/README.md).
 
 ## Character startup and voice attention
 
@@ -445,7 +398,7 @@ Studio Stop lasts until an explicit character start or the next daemon startup
 with character mode enabled. A timed-out or cancelled home
 movement leaves character off; the terminal movement remains visible in status.
 
-The Pi listener sends `voice SESSION verify` before the short wake-prefix ASR
+The Pi listener sends `voice SESSION verify` before the short wake prefix ASR
 pass; recording continues while verification runs. It sends
 `voice SESSION confirmed` after ASR accepts the wake and
 waits for its acknowledgement. If direction is known with confidence at least

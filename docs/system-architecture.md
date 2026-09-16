@@ -1,100 +1,130 @@
 # Orion system architecture
 
+Orion's Raspberry Pi runs microphone capture, speech recognition, speech
+synthesis, the agent coordinator, and the hardware runtime. Studio connects to
+the Pi for editing, controls, settings, and observation. Codex App Server runs
+on the Pi, while Codex model inference and web search use online services.
+
 ## System boundary
 
-Orion’s onboard Pi owns movement, lighting, microphone capture, local speech models, and playback. The headless Rust host runs the voice coordinator and Codex App Server on the Pi; Codex model inference is online. Studio provides optional asset authoring, controls, settings, and observation.
-
-```text
-External Computer                                     Onboard Computer
-
-┌──────────────────────────────┐       HTTP v2       ┌─────────────────────┐
-│ Orion Studio                 │ ──────────────────▶ │ Studio gateway      │
-│                              │   bearer token      │                     │
-│ • author and preview assets  │                     │ • authenticate      │
-│ • submit semantic commands   │                     │ • validate API      │
-│ • choose voice presets       │                     │ • spool speech WAV  │
-└──────────────────────────────┘                     └──────────┬──────────┘
-                                                               │ private
-                                                               │ Unix socket
-                                                               ▼
-                                                    ┌─────────────────────┐
-                                                    │ oriond              │
-                                                    │                     │
-                                                    │ • lifecycle/safety  │
-                                                    │ • asset validation  │
-                                                    │ • Rust spline engine│
-                                                    │ • character priority│
-                                                    │ • device ownership  │
-                                                    └──────────┬──────────┘
-                                                               │
-                                        ┌──────────────────────┼───────────┐
-                                        ▼                      ▼           ▼
-                                     servos                  RGBW        audio
+```mermaid
+flowchart LR
+    studio[Studio desktop app]
+    cloud[Online Codex inference and search]
+    subgraph pi[Raspberry Pi]
+        listener[Listener: Rustpotter and Silero]
+        host[Orion service: coordinator and agent]
+        asr[Qwen ASR worker]
+        tts[Pocket TTS worker]
+        codex[Codex App Server]
+        gateway[Authenticated gateway]
+        runtime[oriond: movement, light and playback]
+        listener <-->|Local WebSocket| host
+        host <-->|Private pipes| asr
+        host <-->|Private pipes| tts
+        host <-->|Private pipes| codex
+        host -->|Local HTTP: speech and lamp requests| gateway
+        gateway <-->|Local service RPC| host
+        gateway <-->|Private Unix socket| runtime
+        listener -->|Voice session events| runtime
+    end
+    studio <-->|Authenticated HTTP| gateway
+    codex <--> cloud
 ```
 
-The hardware and MuJoCo backends use the same `oriond` movement lifecycle and
-trajectory compiler. Each backend supplies its own device feedback.
+The Pi uses four systemd services. Their processes have separate responsibilities
+so model execution and network waits stay outside the 50 Hz movement loop.
+
+| Service | Responsibility |
+| --- | --- |
+| `oriond` | Servos, movement completion, character animation, RGBW output and speaker playback |
+| `orion-listener` | Microphone capture, Rustpotter wake candidates, Silero speech boundaries and voice-session state |
+| `orion-voice-stack` | Runs `orion-service`, which owns the coordinator, agent, speech workers and saved voice settings |
+| `orion-studio-gateway` | Authenticates requests, manages asset publication, forwards service controls and spools response audio |
+
+The hardware and MuJoCo backends use the same movement lifecycle and trajectory
+compiler. Each backend supplies its own joint feedback. See the
+[motion architecture](motion-and-animation-architecture.md) for execution details.
 
 ## Authority boundaries
 
+### Hardware runtime
 
+`oriond` owns the servo bus, RGBW device and ReSpeaker playback. It applies
+calibration, compiles trajectories, checks measured movement completion, and
+coordinates scenes, speech animation, idle behavior and automatic rest. Clients
+submit named poses, motions, scenes or other supported operations. Every movement
+passes through the runtime's limits and ownership checks.
 
-### `oriond`
+### Listener and voice service
 
-`oriond` owns the servo bus, RGBW light output, and ReSpeaker playback. It applies
-calibration, compiles smooth trajectories, checks movement completion, and
-coordinates character behavior, scenes, speech, and automatic rest. Every motion
-request passes through its limits and ownership checks.
+The listener keeps microphone capture open unless the saved mute setting disables
+it. Rustpotter detects a possible wake phrase and immediately requests a local
+acknowledgement. The coordinator verifies a short recording with Qwen while the
+listener continues recording the command. Silero decides when speech has ended.
 
-### Studio gateway
+`orion-service` owns one agent executor and a restartable voice coordinator. The
+coordinator sends inference jobs to separate ASR and TTS workers, calls the agent
+through Rust channels, uploads reply audio, and waits for playback completion.
+Keeping the agent alive across an idle coordinator restart preserves the
+conversation. Restarting the service starts a fresh conversation and retains
+saved memory and personality.
 
-The gateway authenticates Studio requests and exposes versioned operations for
-assets, movement, lighting, speech, and status. It translates accepted requests
-into commands on the Pi's private `/tmp/oriond.sock`. The gateway uses a bearer
-token over HTTP; deployment currently assumes a trusted local network.
+A confirmed command reaches Codex as text. The available agent tools support web
+search, explicit memory operations and validated lamp changes. Character motion
+comes from runtime behavior or explicit user controls. See the
+[voice architecture](voice-architecture.md) for capture, conversation and playback
+ordering.
 
-### Orion Studio
+### Gateway
 
-Studio's UI owns asset browsing, editing, preview, and its gateway connection.
-The Pi `orion-service` host owns the agent, voice coordinator, pairing, and
-settings. Its Rust coordinator runs transcription and synthesis through separate Python
-speech workers and sends confirmed commands to the Rust agent. The agent can search
-the web, manage explicitly requested memories, and request validated lamp changes.
-Lighting requests pass through the coordinator, gateway, and `oriond`.
+The gateway exposes versioned operations for assets, movement, lighting, speech,
+settings and status. Hardware requests use `/tmp/oriond.sock`. Voice settings and
+observation use the service's private loopback RPC connection. The onboard
+coordinator also reaches the gateway over loopback to upload speech and apply
+lamp changes.
 
-On the Pi, `orion-voice-stack` runs `orion-service` under systemd.
-Studio routes settings and profile commands through the authenticated gateway
-and observes bounded status snapshots. The listener accepts processing ownership
-only from loopback, preventing a workstation from competing with the Pi owner.
-Studio returns an error when the Pi service is unavailable. It never starts
-workstation inference. See [service lifecycle](voice-architecture.md#orion-service-lifecycle)
-and [launch commands](quickstart.md#pi-local-voice-and-agent).
+Remote access uses a bearer token over HTTP and assumes a trusted local network.
+The listener restricts its processing connection to loopback; authenticated
+control clients can still inspect or change microphone mute. The service's
+private credentials stay on the Pi.
 
-Studio can request execution of built-in and user-authored motion through the
-gateway. The agent's available tools do not include motion control. The
-[voice architecture](voice-architecture.md) describes its conversation and
-playback lifecycle.
+### Studio
 
-### Onboard computer listener
+Studio owns asset browsing, editing, previews and its connection to the gateway.
+It stores desktop pairing credentials and local UI preferences. Voice settings,
+agent personality, memories and microphone mute are saved on the Pi. Studio polls
+bounded event snapshots for transcripts, model information and timing.
 
-The listener owns microphone capture, Rustpotter wake detection, and utterance
-Silero endpointing. It sends captured utterances to the onboard coordinator
-over an authenticated loopback WebSocket and forwards voice events to `oriond` on the local socket. Capture
-runs independently of the motor loop and remains available during mechanical
-rest unless the microphone is muted. The onboard Qwen worker confirms a wake through speech recognition.
+Editing a draft changes the preview. Publishing or choosing an explicit robot
+control sends a request to the Pi. The connected runtime compiles movement
+previews against its calibration. Static model previews do not show live joint
+telemetry.
 
-## Asset flow
+## Assets and installed releases
 
-Built-in poses, motions, and scenes are immutable source material. User assets
-live in dedicated directories:
+The deployment builds runtime, gateway, listener and voice-service code from one
+Git commit in a separate release directory. Python environments belong to that
+release. Shared model files and native inference tools live under
+`~/.local/share/orion/voice-stack/`.
 
-```text
-motion/user/poses/
-motion/motions/user/
-scenes/user/
-```
+The runtime and gateway keep the existing catalog root, normally
+`/home/mofe/dev/orion`. It contains the calibrated pose library, motion definitions,
+scenes, audio cues and user assets. Updating executable paths therefore preserves
+the robot's saved rest pose and authored content. Catalog changes require an
+explicit asset edit or publication; they are not applied by the code release
+switch.
 
+User poses, motions and scenes live in `motion/user/poses/`,
+`motion/motions/user/` and `scenes/user/`. The gateway stages published changes,
+asks `oriond` to validate and reload the catalog, and restores the previous files
+if reload fails. Built-in names cannot be shadowed. Standalone user poses and
+motions use a new name for changed content. Updating or deleting a user scene
+requires the content revision that Studio loaded.
 
+The [quickstart](quickstart.md#deploy-to-the-pi) describes preparation, activation,
+readiness checks and rollback. [Configuration](configuration.md) identifies saved
+settings and the paths that each release manages.
 
 ## Runtime state
 
@@ -106,86 +136,76 @@ executing -> settling -> completed
 executing/settling ----> cancelled
 ```
 
-Scenes coordinate movement, lighting, and audio under one monotonic clock.
-They finish after their dispatched work reaches a terminal result. Runtime
-status exposes the active movement and most recent terminal movement. Run IDs
-and retained results reset when the daemon restarts.
+Scenes coordinate movement, lighting and audio under one monotonic clock. They
+finish after their dispatched work reaches a terminal result. Runtime status
+keeps the active movement and most recent terminal movement. Run IDs and retained
+results reset when the daemon restarts.
 
-By default, daemon startup configures the servos, enables holding torque, and
-moves to `home`. Successful measured arrival establishes the character's anchor
-and starts idle behavior. Explicit foreground work takes priority over speech,
-reactions, and idle. Confirmed voice attention uses a small approved turn and
-holds a temporary conversational anchor.
+Daemon startup enables character mode by default: it configures the servos,
+enables holding torque and moves home. Measured arrival establishes an anchor
+for idle and speech animation. Foreground motion or scenes take priority over
+speech, listening or thinking reactions, and idle. Repeated thinking events keep
+the existing gesture running; a change from transcription to agent processing
+does not replay its opening tilt.
 
-Studio's **Stop character** cancels owned work, returns home, and leaves torque
-holding. Character behavior resumes after an explicit start or the next daemon
-startup with character mode enabled. `--character-on-start off` starts the daemon
-with torque disabled for maintenance. Voice capture has its own mute control.
+Studio's **Stop character** cancels owned work, returns home and leaves torque
+holding. Character behavior resumes after an explicit start or a daemon restart
+with character mode enabled. `--character-on-start off` starts maintenance mode
+with torque disabled. Microphone mute has its own saved setting.
 
 ## Automatic rest and waking
 
-Orion returns to mechanical rest after the configured inactivity interval without a wake confirmation
-accepted through speech recognition. Successful initial homing arms the timer. Each current wake
-session can reset it once; raw candidates, rejected wakes, repeated
-confirmations, and ordinary animation leave the deadline unchanged.
-[Configuration](configuration.md#pi-runtime-and-listener) describes
-the timeout option.
+Successful initial homing arms the inactivity timer. The default interval is
+30 minutes. Each voice session can reset the deadline once through an accepted
+Qwen wake confirmation. Candidates, rejected wakes and ordinary animation do
+not reset it.
 
-An active confirmed conversation, including its listening window and continuation
-turns, defers rest. Foreground motion, scenes, queued or playing speech, and the
-character's speech settling also defer it. Continuation speech preserves the
-deadline set by the last confirmed wake. Once the body is available, an expired deadline
-can start rest immediately. Background idle and unconfirmed thinking movements
-can yield to rest.
+An active confirmed conversation, including the follow-up listening window,
+defers rest. Foreground movement, scenes, queued or playing speech, and speech
+settling also defer it. Once that work finishes, an expired deadline can start
+rest immediately. Background idle and unconfirmed thinking can yield to rest.
 
-`RestCoordinator` tracks the rest movement by run ID. It releases torque only
-after that movement reports measured completion. A timeout, cancellation,
-missing completion result, or failed torque release enters `fault`. The runtime
-reports the error and awaits explicit recovery. A home movement that fails or
-is cancelled during waking also enters `fault` and blocks automatic waking and
-reply playback.
+The rest coordinator tracks the descent by movement run ID and releases torque
+only after measured completion. A timeout, cancellation, missing result or failed
+torque release enters `fault`. A failed home movement during waking also enters
+`fault`. Automatic waking and voice reply playback then await explicit recovery.
 
-A confirmed wake from `resting` enables torque and starts home movement. A wake
-confirmed during descent lets rest finish, then starts home while retaining
-torque. Cancelling that pending voice session allows the descent to finish in
-rest. After home completes, Orion applies the latest listening or thinking
-state and may turn toward fresh direction evidence. The
-[voice wake sequence](voice-architecture.md#confirmed-waking) describes capture
-and reply ordering during this movement.
+At mechanical rest, a wake candidate can play the acknowledgement chime while the
+body stays still and the light stays off. Qwen confirmation starts the return
+home. If confirmation arrives during descent, Orion finishes descending and then
+returns home while retaining torque. Capture continues during both movements.
+After home completes, the runtime applies the latest listening or thinking state
+and checks any direction evidence before turning toward the speaker.
 
-Studio's **Go to rest** cancels foreground work and starts the same rest and
-torque-release sequence immediately. Explicit Stop, `disable`, and maintenance
-startup disable automatic waking; an explicit character start rearms the policy.
-The lower-level `goto rest` command only moves the body and requires a separate
-torque-release command after verified arrival.
+Studio's **Go to rest** starts this sequence immediately. Explicit Stop,
+`disable`, and maintenance startup disable automatic waking; an explicit character
+start rearms it. The lower-level `goto rest` command moves the body and requires
+a separate torque-release command after verified arrival. See
+[confirmed waking](voice-architecture.md#confirmed-waking) for reply ordering.
 
 ## Light and rest status
 
-At the start of descent, the runtime freezes the visible light frame and fades
-it to black over one second. Its light-device wrapper suppresses subsequent
-output from character animation, scenes, voice feedback, and manual lamp
-commands while descending, resting, or in a rest lifecycle fault. Lamp
-preferences remain stored. Waking releases this output gate so expressive
-lighting can resume.
+Descent freezes the visible light frame and fades it to black over one second.
+The light-device wrapper then suppresses output while descending, resting or in
+a rest fault. Stored lamp preferences survive. Waking releases the output gate
+so expressive lighting can resume.
 
-The gateway includes runtime rest status in `/api/v2/status`. Its state is
-`disabled`, `awake`, `going_to_rest`, `resting`, `waking`, or `fault`. Status also
-reports the timeout, last accepted confirmation, remaining time, tracked rest
-movement, effective light power, and any transition error. Remaining time can
-be zero while active work defers rest. Studio displays resting, waking, and
-fault information and uses effective light power for the lamp switch.
+`/api/v2/status` reports rest as `disabled`, `awake`, `going_to_rest`, `resting`,
+`waking` or `fault`. It also includes the timeout, last accepted confirmation,
+remaining time, tracked movement, effective light power and any transition error.
+Remaining time can be zero while active work defers rest. Studio uses these fields
+to show rest progress and the lamp's effective power.
 
 ## Validation limits
 
-Component tests check timing, completion rules, and injected failures. Command
-tests check validation and session ownership. Daemon integration tests exercise
-the actual socket and server loop with a deterministic driver that follows
-commanded positions. See the [runtime test instructions](../runtime/README.md#build-and-test).
+Component and daemon tests cover timing, session ownership, measured completion
+and injected failures. The deterministic driver follows commanded positions to
+exercise software behavior. Native MuJoCo adds physics; its rest test includes a
+known arm/base contact failure that prevents the shoulder reaching rest and
+therefore keeps torque enabled.
 
-The native MuJoCo rest test exercises a known failure: arm/base contact leaves
-the shoulder about 0.218 radians short of the calibrated rest pose. The movement
-times out and torque stays enabled. Successful tests with the deterministic
-driver establish software coordination; physical acceptance still requires the
-assembled robot to reach supported rest, release torque, return home, and retain
-speech captured while waking. Direction, light fading, and cue/servo pickup by
-the microphone also require physical checks.
+Physical checks establish whether the assembled robot reaches supported rest,
+returns home smoothly, retains speech captured while waking, and plays clear
+audio. Microphone direction, echo and cable clearance also require the robot.
+See the [runtime tests](../runtime/README.md#build-and-test) and
+[hardware setup](../hardware/servo_setup/README.md).

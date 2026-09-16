@@ -3,34 +3,35 @@
 `orion-agent` owns Orion's Codex conversation, instructions, runtime discovery,
 and spoken-response handling. It has no Tauri, audio-model, gateway, or hardware
 dependencies. The [Orion service](../orion-service/README.md) keeps it alive
-independently of the voice coordinator in desktop and headless modes.
+independently of the voice coordinator on the Pi.
 
 `AgentService::start(AgentConfig)` starts an independent executor. Pass its
 cloneable `service.handle()` to the [coordinator](../coordinator/README.md).
 `AgentHandle::info()` reads status and `AgentHandle::respond(text)` returns
-spoken text. Calls use bounded in-process Rust channels, not a network socket.
+spoken text. Calls use bounded Rust channels within the host process.
 Dropping an active call cancels it; dropping the service shuts down Codex.
 
-The first call starts an installed `codex app-server` process, checks its account
+The first status or response request starts `codex app-server`, checks its account
 and model catalog, and creates an ephemeral conversation. Successful calls reuse
 it. Keep the service alive when restarting the coordinator or reloading speech
 models. See [conversation lifecycle](../docs/voice-architecture.md#agent-conversation-and-memory)
-and [runtime discovery](../docs/configuration.md#orion-studio).
+and [runtime configuration](../docs/configuration.md#pi-voice-profile).
 
 The crate groups code by responsibility:
 
 - `src/providers/`: Codex process lifecycle and App Server protocol.
 - `src/runtime/`: serialized requests, cancellation, and service ownership.
-- `src/prompt/`: base instructions and spoken-output normalization.
+- `src/prompt/`: base instructions, final-sentence streaming and spoken-output normalization.
 - `src/tools/`: tool schemas, validation, lighting catalog, and activity events.
 - `src/memory/`: delimited Markdown storage, user edits, and keyword retrieval.
 - `src/personality/`: curated traits, behavior choices, and generated `SOUL.md`.
 - `src/profile.rs`: profile reads and mutations shared with Studio.
 - `src/config.rs` and `src/types.rs`: configuration and public data types.
-- `src/lib.rs`: stable public exports for Studio and the coordinator.
+- `src/lib.rs`: public exports for the host and coordinator.
 
-An installed Codex executable and existing login are required. There is no
-Python SDK or Python agent client.
+An installed Codex executable and existing login are required. Follow the
+[Pi login procedure](../docs/quickstart.md#pi-local-voice-and-agent) before starting
+the host.
 
 ## Validation
 
@@ -43,7 +44,7 @@ cargo test --manifest-path agent/Cargo.toml
 Tests launch a fake App Server using `python3` and cover conversation reuse,
 matching final messages, failed turns, unexpected interactive requests, and
 cancellation. They do not invoke a model or use a real account. The executable
-fixture is tested on macOS; Windows execution requires adaptation.
+fixture uses Unix process behavior; Windows execution requires adaptation.
 
 An optional installed-runtime check reads account status and the model catalog
 and creates an ephemeral thread without submitting a model turn:
@@ -67,7 +68,7 @@ The user prefers temperatures in Celsius.
 The handler assigns UUIDs and UTC timestamps, rejects delimiter injection,
 locks writes, and atomically replaces the document. Entries are limited to
 2,000 bytes and the file to 1 MiB. Search ranks keyword matches and returns at
-most eight entries; it is not semantic retrieval. Personal memories stay outside
+most eight entries. Personal memories stay outside
 the repository. Retrieved memories are sent to Codex when used. Studio Settings supports viewing, adding, editing, deleting, and clearing memories.
 Edits compare the original entry before writing; clearing compares the complete
 list, so a stale screen cannot silently erase a newer append. Automatic memory

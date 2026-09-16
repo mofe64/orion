@@ -2,13 +2,14 @@
 
 `orion-service` hosts the Pi agent, voice coordinator, saved settings and profiles.
 The Pi's `orion-voice-stack` systemd unit runs the executable without a UI.
-Desktop Studio uses `Backend` only for pairing and requests to the paired gateway.
-It never starts local inference or a background desktop host.
+The same crate supplies Studio's `Backend`, a client that stores desktop pairing
+and forwards requests to the Pi gateway.
 
 Use the [Pi quickstart](../docs/quickstart.md#pi-local-voice-and-agent) for setup.
 `ORION_ONBOARD=1` starts saved settings against the loopback listener and gateway.
-The listener rejects remote processing owners. Studio observes events and changes
-settings through the gateway; closing it leaves Orion running.
+The listener grants processing ownership to the local coordinator. Studio
+observes events and changes settings through the gateway. The host continues
+running when the desktop disconnects.
 
 The executable accepts `serve`, `status`, and `check`. `serve --no-autostart` is
 available for isolated integration tests. `check` validates the source root,

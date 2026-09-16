@@ -1,7 +1,7 @@
-# Orion STS3215 Servo Setup
+# Orion STS3215 servo setup
 
 The Orion servo setup tool assigns one persistent bus ID to each STS3215 servo
-before runtime commissioning.
+before calibration and runtime use.
 
 It is an Orion-native equivalent of LeLamp's `lelamp.setup_motors` workflow.
 The implementation uses LeRobot's supported `FeetechMotorsBus` API rather than
@@ -32,7 +32,7 @@ Setup is not calibration and does not command movement:
 - **Runtime control** sends validated positions through Orion's native Rust
   daemon.
 
-## Authoritative ID map
+## Servo ID map
 
 | Orion joint | Joint reference name | Servo ID |
 | --- | --- | ---: |
@@ -65,7 +65,7 @@ persistent write.
 The 2026-08-28 bring-up record reports a separate nominal 6 V, 5 A servo
 supply, a base servo pocket fitted using heated air, and a servo lead extended
 with original cable soldered colour-to-colour. The final splice construction
-was not independently verified. Before further hardware commissioning, inspect
+was not independently verified. Before further hardware work, inspect
 the pocket for distortion or trapped connectors and the extension for individual
 insulation and strain relief. These are dated observations of the assembled
 prototype, not a wiring specification or a fresh inspection result.
@@ -158,7 +158,7 @@ uv run orion-verify-servos --port /dev/not-opened --dry-run
 Calibration, rest capture, and supported-rest acceptance share the read-only
 checks in `orion_servo_setup/preflight.py`. They verify the servo model,
 position mode, torque-off state, encoder range, supply voltage, temperature,
-and fault status before commissioning proceeds.
+and fault status before calibration or rest capture proceeds.
 
 The torque-off calibration command remains available as a setup utility:
 

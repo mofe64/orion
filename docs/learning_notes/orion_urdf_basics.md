@@ -20,7 +20,7 @@ Each part has its own visual and collision placement, but they all belong to the
 
 A normal URDF link does not specify its own overall position. Its position comes from the joint connecting it to its parent. The one link without a parent becomes the root.
 
-## Link Coordinate Frame
+## Link coordinate frame
 
 Every link has an invisible coordinate frame. This frame is the reference from which that link's following properties are measured:
 
@@ -31,7 +31,7 @@ Every link has an invisible coordinate frame. This frame is the reference from w
 
 The link frame is not necessarily at the centre of the mesh. It is often placed at a mechanically useful location.
 
-## Visual Geometry
+## Visual geometry
 
 Visual geometry defines the rendered appearance of a link. The `<geometry>` tag specifies its visible shape, while `<origin>` positions and rotates that shape relative to the link's coordinate frame. It can also contain an optional material to control its colour and texture.
 
@@ -58,7 +58,7 @@ The snippet above contains the visual geometry for one specific CAD part in a li
 
 URDF distances are normally in metres, so our XYZ values are approximately 62.5 mm, -17.8 mm, and 109.7 mm.
 
-It is important to note that `xyz` values do not position the entire link in the robot. They position this particular mesh relative to the link's frame.
+The `xyz` values position this mesh relative to the link's frame.
 
 `rpy` means:
 
@@ -68,7 +68,7 @@ It is important to note that `xyz` values do not position the entire link in the
 
 Its values are radians, not degrees.
 
-## Collision Geometry
+## Collision geometry
 
 Collision geometry defines the solid shape that a physics engine uses to detect contact between a link and other objects. Its geometry specifies the collision shape, while `<origin>` positions and rotates that shape relative to the link frame.
 
@@ -86,9 +86,9 @@ Collision geometry defines the solid shape that a physics engine uses to detect 
 
 A link can have multiple collision elements, one for each solid component in the link. All collision shapes inside the link remain rigidly attached and move together.
 
-It is important to note that collision geometry does not define the link's mass. That is handled separately by `<inertial>`.
+The `<inertial>` section defines the link's mass separately from its collision geometry.
 
-## Inertial Properties
+## Inertial properties
 
 Inertial properties describe how a link responds to forces and rotational motion in a physics simulation. The mass property specifies its total mass, the origin locates the centre of mass, and the inertia tensor describes how its mass is distributed around that centre.
 
@@ -111,7 +111,7 @@ Inertial properties describe how a link responds to forces and rotational motion
 
 A link normally has one inertial section containing three parts.
 
-### Inertial Origin
+### Inertial origin
 
 The inertial origin places the link's centre of mass relative to its link frame using the XYZ values. The RPY values give the orientation of the inertial frame.
 
@@ -119,7 +119,7 @@ The centre of mass is the effective balance point of the complete rigid link, no
 
 Our mass value is specified in kilograms and represents the combined mass of everything grouped into the link.
 
-### Inertia Tensor
+### Inertia tensor
 
 These values form a symmetric matrix:
 
@@ -148,12 +148,8 @@ The key distinction for links is:
 
 These three descriptions belong to the same rigid link but serve different purposes.
 
-It is important to note the following:
-
-- Link frame: the main reference frame for the entire link.
-- Inertial frame: the frame used for the link's centre of mass and inertia tensor.
-
-The link frame and inertial frame are conceptually separate coordinate frames. The inertial frame is defined relative to the link frame:
+The link frame locates the complete link. The inertial frame locates its centre
+of mass and orients the inertia tensor relative to that link frame:
 
 ```xml
 <inertial>
@@ -162,7 +158,7 @@ The link frame and inertial frame are conceptually separate coordinate frames. T
 </inertial>
 ```
 
-## Orion's Links
+## Orion's links
 
 Orion has eight links:
 
@@ -226,7 +222,7 @@ When `shoulder_pitch_joint` moves, its child, `upper_arm_link`, moves relative t
 
 The propagation rule is fundamental: moving a joint moves its child link and every descendant of that child. It does not move the parent or the parent's other branches.
 
-### Orion's Moving Joints
+### Orion's moving joints
 
 | Joint | What it moves |
 |---|---|
@@ -246,11 +242,11 @@ Before the door hinge (joint) can rotate, URDF must answer two questions:
 
 This is what the joint origin tells us.
 
-## Joint Origin
+## Joint origin
 
 The joint origin describes the joint's zero-position frame relative to the parent link.
 
-### XYZ: Where Is the Hinge?
+### XYZ: where is the hinge?
 
 For our `shoulder_pitch_joint` example, the joint is approximately:
 
@@ -262,7 +258,7 @@ z =  19.2 mm
 
 from the `shoulder_mount_link` frame. Those XYZ values take us to the joint's pivot point. These measurements are relative to the parent, not the world or the whole robot.
 
-### RPY: How Is the Hinge Oriented?
+### RPY: how is the hinge oriented?
 
 At the joint location, URDF rotates the joint's coordinate frame:
 
@@ -274,7 +270,7 @@ yaw   = -90.0° around Z
 
 These values point the joint's coordinate arrows in the correct physical direction. This is necessary because the hinge might be mounted sideways or diagonally. Its rotation axis might not line up with the parent link's original X, Y, or Z axes.
 
-## Joint Axis
+## Joint axis
 
 ```xml
 <axis xyz="0 0 1"/>
@@ -282,11 +278,11 @@ These values point the joint's coordinate arrows in the correct physical directi
 
 This means to rotate around the Z axis of the newly positioned and rotated joint frame. This is the only axis around which the joint is allowed to move.
 
-## Joint Angle Zero
+## Joint angle zero
 
 When the commanded joint angle is zero, the XYZ translation and RPY rotation are still applied.
 
-## Revolute Joints and Limits
+## Revolute joints and limits
 
 A revolute joint rotates around one axis and has lower and upper limits. A continuous joint also rotates around one axis but has no angular limit. Our Orion project uses bounded revolute joints for all five servos.
 
@@ -313,14 +309,14 @@ For a revolute joint:
 
 In a production URDF, these values should describe meaningful actuator limits.
 Orion's imported `effort="10"` and `velocity="10"` values are generic
-placeholders; they are not commissioned STS3215 limits and must not be used to
+placeholders; they are not calibrated STS3215 limits and must not be used to
 infer safe hardware commands. Physical position conversion comes from the
 accepted servo calibration, which is also the sole authority for safe position
 bounds. Motion compilation uses the 7.4 V STS3215 hardware profile's published
 52 RPM (about 5.45 rad/s) no-load speed as its capability ceiling. MuJoCo uses
 the tracked calibration copy and the same Rust-compiled trajectory.
 
-## Fixed Joints
+## Fixed joints
 
 Fixed joints allow no movement. In our Orion URDF, we use fixed joints for our ground-contact and IMU frames:
 

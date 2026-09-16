@@ -12,7 +12,6 @@ light, and sound support that action with hierarchy and overlap.
 The traditional 12 principles describe screen animation. Orion translates
 them into joint-space authoring and runtime rules.
 
-
 | Principle                             | Orion interpretation                                                      | Implementation                                                                                                               |
 | ------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Squash and stretch                    | Coordinated compression and extension;                                    | Shoulder and elbow close the silhouette before an opening or lift, and preserve safe joint geometry                          |
@@ -27,9 +26,6 @@ them into joint-space authoring and runtime rules.
 | Exaggeration                          | Important intent receives controlled contrast                             | Authored overshoot, phrase nods, and sparse explanatory body beats are stronger than ordinary movement but remain calibrated |
 | Solid drawing                         | Every held pose has a balanced, readable silhouette                       | Complete five-joint poses are inspected from useful viewpoints and under gravity in MuJoCo and on the physical robot         |
 | Appeal                                | Motion consistently expresses Orion's temperament                         | Asymmetry, warm multimodal cues, forward eyeline, and purposeful stillness replace generic robotic oscillation               |
-
-
-
 
 ## The character state machine
 
@@ -79,7 +75,19 @@ The priority order prevents competing performances:
 5. autonomous idle;
 6. background lighting.
 
+## Thinking and speech handover
 
+Verification, endpointing and agent processing can all request thinking during
+the same voice turn. Once the character is thinking, repeated notifications keep
+the current movement and its timing. They can refresh attention expiry without
+replaying the opening tilt. This prevents a processing-stage transition from
+causing a sudden movement restart.
+
+When speech takes over, the runtime starts from the commanded thinking position
+and velocity when available. Speech and its final settle retain priority over
+later listening, thinking or neutral notifications. These rules live in
+`CharacterCoordinator` and `RuntimeCore::extend_character_performance()`.
+Tests cover repeated thinking requests and the handover into speech.
 
 ## Immutable anchors
 
@@ -104,8 +112,6 @@ the held measured position after its run ends. Speech, reaction state, and idle
 never replace the anchor; failed or cancelled scenes do not either.
 
 ## Autonomous idle animation
-
-
 
 ### Scheduling
 
@@ -177,7 +183,7 @@ finalization installs only a settle rather than another expressive gesture.
 
 ### Audio ownership and analysis
 
-Studio streams synthesized audio as ordered RIFF/WAV chunks to the Pi;
+The onboard coordinator sends Pocket audio as ordered RIFF/WAV chunks to the local gateway;
 the complete-file endpoint also remains available. The gateway requires mono, 24 kHz, signed 16-bit pulse-code modulation
 (PCM16). It applies size and duration limits, writes an atomic random spool
 item, and asks the speech coordinator to start or append that identifier. The coordinator
@@ -270,7 +276,6 @@ elbow oscillator and no scheduler gap between gestures.
 
 These values are character policy, not hardware limits:
 
-
 | Policy                                      | Implemented value                                     |
 | ------------------------------------------- | ----------------------------------------------------- |
 | Motion end lead before audio duration       | `0.12 s`                                              |
@@ -292,7 +297,6 @@ These values are character policy, not hardware limits:
 | Next-head look-ahead during body follow     | `0.18`                                                |
 | Full body-beat energy gate                  | At least `0.72` of available waveform maximum                  |
 | Full body-beat spacing                      | Drawing-index difference of at least `3`              |
-
 
 Seeded variation selects the value inside each range. The final compiled
 motion may be uniformly reduced near calibration boundaries and may be retimed
@@ -316,7 +320,7 @@ fails, the speech run becomes `failed`, the coordinator removes its temporary
 file, and character motion returns to the anchor. Idle resumes only after the
 scheduler chooses another randomized delay.
 
-Studio's playback-complete acknowledgement may arrive while the physical
+The voice coordinator's playback-complete acknowledgement may arrive while the physical
 settle is still running. Listening, thinking, and neutral reactions preserve
 the speaking or settling state until that movement is cleaned up. The next
 speech waits only for a matching active movement; a run that has left the
@@ -339,6 +343,7 @@ Before adding an asset, answer these questions:
 
 Update the [animation catalogue](orion-animation-catalogue.md) as part of the
 same change.
+
 ## Voice attention
 
 Confirmed Pi voice sessions can request restrained absolute attention turns.

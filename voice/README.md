@@ -1,107 +1,109 @@
-# Orion voice
+# Orion voice listener
 
-Orion captures microphone audio and detects **“Hey Orion”** on the Pi with
-Rustpotter. Silero decides when speech has ended. The onboard coordinator sends
-complete audio to Qwen, confirms the wake phrase, invokes Codex, and synthesizes
-Pocket speech. `oriond` owns speaker playback and speech animation. Studio is
-an optional settings and observation client.
+The Pi listener captures microphone audio, detects “Hey Orion” with Rustpotter,
+and uses Silero to find the end of speech. It passes recordings to the onboard
+coordinator and forwards voice-session events to `oriond` for acknowledgement,
+waking and character feedback.
 
 ## Setup
 
-From the workstation repository root:
+Use [Pi installation and deployment](../docs/quickstart.md#pi-local-voice-and-agent)
+to prepare the listener with the complete voice stack. The Pi needs working
+[ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
+Deployment builds the native Rustpotter adapter and checks its wake reference.
 
-```bash
-./scripts/deploy_pi.sh
-```
+The listener runs as `orion-listener` with a Python 3.12 environment inside the
+active release. Its WebSocket endpoint uses port 7448 and the Pi's
+`~/.config/orion/studio-token`. The managed `--local-processor` setting reserves
+processing ownership for a loopback connection. Separate authenticated controls
+can inspect or change microphone mute.
 
-Deployment updates the Pi voice environment, builds the native Rustpotter
-adapter, verifies the wake model, and installs the services. It requires an
-existing calibrated Pi with the [ReSpeaker driver](../hardware/audio/README.md)
-and Rust toolchain. The service switch returns the robot to rest; normal runtime
-startup may move it home. Deployment does not run expression smoke tests.
+## Capture and sessions
 
-For the Pi speech and agent service, follow [Pi installation](../docs/quickstart.md#pi-local-voice-and-agent).
-Pi capture defaults on unless explicitly muted. Closing Studio leaves the Pi
-voice stack running. The agent still requires internet access.
+The listener opens synchronized stereo PCM16 capture at 16 kHz. It estimates
+coarse direction from stereo frames and downmixes to mono for Rustpotter and ASR.
+It keeps pre-roll and the current recording in memory; recordings are cleared on
+mute, cancellation or disconnect.
 
-## Runtime
+A wake candidate immediately requests local feedback. With a compatible
+coordinator, a short wake prefix reaches Qwen while full command capture continues.
+Prefix verification and transcription of the complete utterance run in order. Follow-up
+speech can remain buffered during confirmation. The coordinator rejects recordings
+that reach the capture limit before submitting a command to the agent.
 
-- Pi service: `orion-listener`, using `voice/.venv` with Python 3.12.
-- Audio: 16 kHz mono sent from stereo capture; three seconds of pre-roll in memory.
-- Wake model: `models/wake/hey_orion_reference.rpw`, threshold `0.400`.
-- Listener: port `7448`, authenticated with `~/.config/orion/studio-token`.
-- Onboard speech: Qwen3-ASR-0.6B GGUF and Pocket TTS, managed by `orion-voice-stack`.
+The listener reports when recording ends with `silence` or `max_duration`, including
+capture time. These log entries contain no audio or transcript. See
+[capture and session behavior](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle)
+for timing, limits and the Silero classifier.
 
-Onboard processing uses loopback connections. Remote Studio controls use the
-authenticated gateway over the trusted LAN.
-Capture opens with the listener service and survives processing disconnects.
-**Mute Orion microphone** closes capture, clears buffered audio and saves mute
-across restarts; Character Stop controls animation separately.
+Processing and playback suppress new wake detections. After the coordinator
+acknowledges successful playback, the listener establishes a quiet baseline and
+opens the teal follow-up invitation. Acoustic echo cancellation and interruption
+during playback are not implemented.
 
-[Automatic rest](../docs/system-architecture.md#automatic-rest-and-waking) leaves capture running.
-Deploy the listener and runtime together: every ASR-confirmed wake is forwarded
-to `oriond`, even without a usable microphone direction.
+## Settings and microphone startup
 
-Say “Hey Orion” followed by a request, or pause after the wake phrase and then
-speak. Qwen rejects unconfirmed wake candidates before they reach the agent.
-After a successful reply, wait for the soft teal pulse and continue without
-"Hey Orion". The invitation closes after five seconds without speech; the next
-request then needs the wake phrase. A silent echo guard precedes the pulse.
-See [conversation timing and limitations](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
+Microphone mute persists in `~/.config/orion/microphone.json`. The listener applies
+capture routing before opening ALSA, discards startup frames, reapplies gain after
+the ADC starts, and then reports readiness. Unmute can therefore take a short
+startup interval before capture is ready.
 
-The managed listener uses Silero with a fixed 2× gain in the VAD branch and
-1.2 seconds of trailing silence. Captured audio remains unchanged. See the [endpoint rules](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
-Allow a short quiet interval after enabling capture before the first wake.
-The listener logs `voice.endpoint` with capture time,
-and `silence` or `max_duration` reason; it does not log audio or transcripts.
-
-## Upgrade from legacy Pi voice
-
-If this checkout previously ran the Sherpa, Moonshine, or Piper workers, stop
-and retire those workers before updating their environment. On the Pi, from
-the repository root:
-
-```bash
-python3 scripts/retire_pi_voice.py "$PWD" \
-  --backup "$HOME/.local/share/orion/backups/legacy-voice-$(date +%Y%m%d-%H%M%S)"
-```
-
-The migration stops legacy workers belonging to this checkout and archives
-recognized legacy models. It preserves the Rustpotter reference. Then use the
-normal deployment or repair procedure. The listener installer does not run
-this one-time migration automatically.
+Set microphone overrides in `~/.config/orion/voice.env` and restart the listener.
+The [configuration reference](../docs/configuration.md#pi-runtime-and-listener)
+lists wake sensitivity, gain, VAD and direction settings. Direction estimation
+requires measured microphone spacing and channel orientation; its default settings
+disable attention turns.
 
 ## Troubleshooting
 
 On the Pi:
 
 ```bash
-systemctl is-active oriond orion-studio-gateway orion-listener
-journalctl -u orion-listener -u orion-studio-gateway -n 50 --no-pager
+systemctl status orion-listener orion-voice-stack
+journalctl -u orion-listener -u orion-voice-stack -n 60 --no-pager
 ```
 
-To repair onboard dependencies, use the [full Pi deployment](../docs/quickstart.md#deploy-to-the-pi).
-It prepares replacement environments before switching services and preserves
-saved settings. The standalone `install_pi_voice.sh` is only for older
-listener-only installations; it refuses to update an installed onboard stack.
-For playback problems, see [audio troubleshooting](../hardware/audio/README.md).
+For dependency repair, prepare and deploy a complete replacement release through
+the [Pi deployment procedure](../docs/quickstart.md#deploy-to-the-pi). It builds the
+Python environment before switching service paths. Playback routing and speaker
+checks are described in [audio setup](../hardware/audio/README.md).
 
-## Directional attention
+If wake detection succeeds but the body stays at rest, inspect Qwen confirmation
+and the runtime's rest status. The acknowledgement chime can precede confirmation;
+home movement depends on confirmation and a healthy rest lifecycle. If a recording
+ends early, inspect the VAD configuration, capture gain and endpoint reason before
+changing the ASR model.
 
-Left/right attention is disabled until microphone spacing and channel order
-have been measured. Settings live in `~/.config/orion/voice.env`:
-`ORION_MIC_SPACING` is the distance in metres and `ORION_CHANNEL_SIGN` is `1`
-or `-1`. Both default to zero. Restart the listener after changing them.
+## Upgrade from legacy Pi voice
 
-Review the [direction evidence and constraints](../docs/voice-architecture.md#direction-evidence)
-and [runtime attention behavior](../runtime/README.md#character-startup-and-voice-attention)
-before enabling directional motion.
+Older checkouts may contain Sherpa, Moonshine or Piper workers. The retirement
+helper stops matching legacy workers and archives recognized models while keeping
+the Rustpotter reference. Run it only when migrating one of those installations:
+
+```bash
+python3 scripts/retire_pi_voice.py "$PWD" \
+  --backup "$HOME/.local/share/orion/backups/legacy-voice-$(date +%Y%m%d-%H%M%S)"
+```
+
+The standalone `scripts/install_pi_voice.sh` supports older listener-only setups.
+It refuses to update an installed onboard voice stack. Ordinary full-stack
+updates use the release deployment path.
 
 ## Intermediate tool speech
 
-The listener advertises `toolFeedback: true`. After search acknowledgement
-playback, `session.processing` returns the same session to processing with
-capture suppressed. It asks `oriond` to restore thinking animation and breathing
-light without another cue. Only final `session.finish` starts the echo guard
-and follow-up invitation. Deploy this listener together with the matching
-runtime to support the `processing` voice-feedback event.
+The listener advertises `toolFeedback: true`. After search acknowledgement plays,
+`session.processing` restores thinking feedback in the same session. Wake detection
+and command dispatch stay suppressed while the agent works. Final `session.finish` starts the echo guard and
+follow-up invitation. See [agent conversation](../docs/voice-architecture.md#agent-conversation-and-memory).
+
+## Validation
+
+With a prepared listener environment, run from the repository root:
+
+```bash
+PYTHONPATH=voice voice/.venv/bin/python -m unittest discover -s voice/tests -v
+```
+
+Tests cover endpointing, retained command audio, mute, disconnects, session
+ordering and transport failures. Physical checks establish capture quality,
+speaker pickup and direction behavior on the assembled robot.
