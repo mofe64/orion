@@ -6,6 +6,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ORION_BUILD_REVISION");
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/index");
+    println!("cargo:rerun-if-changed=../audio/alarms/club_alarm.pcm");
+    println!("cargo:rerun-if-changed=../audio/alarms/funny_alarm.pcm");
 
     let revision = env::var("ORION_BUILD_REVISION")
         .ok()

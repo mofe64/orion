@@ -23,8 +23,14 @@ impl AlertSound {
     fn recording(self) -> Option<&'static [u8]> {
         match self {
             Self::TwoTone => None,
-            Self::ClubAlarm => Some(include_bytes!("../../../audio/alarms/club_alarm.pcm")),
-            Self::FunnyAlarm => Some(include_bytes!("../../../audio/alarms/funny_alarm.pcm")),
+            Self::ClubAlarm => Some(include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../audio/alarms/club_alarm.pcm"
+            ))),
+            Self::FunnyAlarm => Some(include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../audio/alarms/funny_alarm.pcm"
+            ))),
         }
     }
 
