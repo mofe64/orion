@@ -3,6 +3,10 @@ set -euo pipefail
 
 project_root="${1:?Pi project root is required}"
 voice_home="${2:-${HOME}}"
+if [[ -f "${voice_home}/.local/share/orion/voice-stack/installation.json" ]]; then
+  echo 'An onboard voice stack is installed. Use scripts/deploy_pi.sh for a complete update; this standalone listener installer cannot update it.' >&2
+  exit 1
+fi
 if [[ ! "${project_root}" =~ ^/[A-Za-z0-9._/-]+$ || "${project_root}" == *".."* ]]; then
   echo "Refusing unsafe Pi project path" >&2
   exit 2

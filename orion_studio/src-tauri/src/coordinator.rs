@@ -1,4 +1,4 @@
-use orion_studio_service::{Backend, Request, StartOptions};
+use orion_service::{Backend, Request, StartOptions};
 use tauri::State;
 
 // Retain the UI command name and observer protocol during the ownership move.

@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, oneshot};
 /// Request-scoped events: the coordinator owns speech and physical execution.
 pub enum AgentEvent {
     SearchStarted,
+    FinalSpeech(String),
     SetLighting {
         parameters: Value,
         reply: oneshot::Sender<Result<Value, String>>,

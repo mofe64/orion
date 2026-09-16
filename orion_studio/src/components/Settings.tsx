@@ -5,6 +5,7 @@ import type { StudioVoice } from "../hooks/useStudioVoice";
 import type { StudioPreferences } from "../lib/preferences";
 import type { GatewayStatus } from "../types";
 import "./Settings.css";
+import { VOICE_PRESETS } from "../lib/studioVoicePipeline";
 import { AgentProfileSettings } from "./AgentProfileSettings";
 interface Props {
   voice: StudioVoice; preferences: StudioPreferences; onPreferences: (value: StudioPreferences) => void;
@@ -27,11 +28,12 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
     void invoke<NonNullable<typeof locations>>("voice_model_locations",{settings:draft}).then(value => { if (active) setLocations(value); }).catch(() => { if (active) setLocationError("Could not read local model locations."); });
     return () => { active = false; };
   },[draft.asrModel,draft.ttsModel,draft.asrPath,draft.ttsPath,draft.cachePath]);
+  const onboard = voice.settings.ttsModel?.startsWith("pocket-") ?? false;
   const model = voice.models.find(value => value.model === draft.model);
   const efforts = model?.efforts ?? [];
   const canSave = voice.loaded && !voice.saving && (!connected || voice.snapshot.muted === true || voice.snapshot.phase === "error") && provider === "codex" && !!model && efforts.includes(draft.effort);
   return <section className="settings-page" aria-labelledby="settings-title"><header className="settings-heading"><p className="eyebrow">YOUR STUDIO</p><h1 id="settings-title">Settings</h1><p>Make Orion feel at home.</p></header>
-    <AgentProfileSettings />
+    <AgentProfileSettings onboard={onboard} key={String(onboard)} />
     <div className="settings-columns"><div className="settings-stack">
       <section className="settings-card"><header><SlidersHorizontal size={20} /><div><h2>Studio</h2><p>Appearance and preview preferences.</p></div></header>
         <label className="settings-row"><span>Appearance</span><select value={theme} onChange={event => onTheme(event.target.value as "light" | "dark")}><option value="dark">Dark</option><option value="light">Light</option></select></label>
@@ -52,16 +54,26 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
           <label>Reply model<select value={model ? draft.model : ""} disabled={!voice.models.length} onChange={event => { const next = voice.models.find(item => item.model === event.target.value); if (next) patch({model:next.model,effort:next.efforts.includes(draft.effort) ? draft.effort : next.efforts[0] ?? ""}); }}><option value="" disabled>{voice.models.length ? "Choose an available model" : "Model list unavailable"}</option>{voice.models.map(item => <option key={item.model} value={item.model}>{item.name}</option>)}</select></label>
           <label>Reasoning effort<select disabled={!efforts.length} value={efforts.includes(draft.effort) ? draft.effort : ""} onChange={event => patch({effort:event.target.value})}><option value="" disabled>Choose an available effort</option>{efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></label>
           {!voice.models.length && <p className="settings-help">The Codex model list becomes available when the voice worker connects. No model or effort options are assumed.</p>}
-          <p className="settings-help">Saving applies the model and effort to subsequent Orion voice-agent requests. Turn listening back on when the worker is ready.</p><p className="settings-help">Active agent: {voice.snapshot.agentModel ?? "Not loaded"} · {voice.snapshot.agentEffort ?? "—"}</p><p className="settings-help">Uses your local Codex sign-in. Confirmed command text and retrieved memories are sent to Codex. Web search uses online services; speech recognition and synthesis run locally. Model support is verified when Voice starts.</p>
+          <p className="settings-help">Saving applies the model and effort to subsequent Orion voice-agent requests. Turn listening back on when the worker is ready.</p><p className="settings-help">Active agent: {voice.snapshot.agentModel ?? "Not loaded"} · {voice.snapshot.agentEffort ?? "—"}</p><p className="settings-help">{onboard ? "Uses the Codex sign-in on your Pi." : "Uses your local Codex sign-in."} Confirmed command text and retrieved memories are sent to Codex. Web search uses online services; speech recognition and synthesis run locally. Model support is verified when Voice starts.</p>
         </>}
       </section>
-      <section className="settings-card"><header><AudioLines size={20} /><div><h2>Speech models</h2><p>Local models and their weight locations on this computer.</p></div></header>
+      <section className="settings-card"><header><AudioLines size={20} /><div><h2>Speech models</h2><p>{onboard ? "Speech recognition and voices run on Orion." : "Local models and their weight locations on this computer."}</p></div></header>
+        {onboard ? <>
+          <label>Orion’s voice<select value={voice.settings.ttsVoice ?? "alba"} disabled={voice.saving} onChange={event => void voice.save({ ...voice.settings, ttsVoice: event.target.value }).catch(error => setError(String(error)))}>{VOICE_PRESETS.map(name => <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)}</option>)}</select></label>
+          <p className="settings-help">Applies to the next reply. You can change voices while Orion is listening or speaking.</p>
+          <label>Voice precision<select value={draft.ttsModel} onChange={event => patch({ ttsModel: event.target.value })}><option value="pocket-fp32">FP32 · preferred sound</option><option value="pocket-int8">INT8 · lower latency</option></select></label>
+          <p className="settings-help">FP32 takes longer to generate speech. Orion buffers slower replies to keep playback smooth. Changing precision requires listening to be off.</p>
+          <p className="settings-model-identity">Qwen3 ASR · {draft.asrPath}</p>
+          <p className="settings-help">Wake phrase: Rustpotter. Speech boundaries: Silero VAD. Model files are managed on the Pi.</p>
+          <p className="settings-help">Voice credits: Kyutai Pocket TTS. Anna, Azelma, Eve, Fantine, Jane and Vera use VCTK voices (CC BY 4.0). Cosette uses Expresso (CC BY-NC 4.0, noncommercial). Alba uses CC BY 4.0 material.</p>
+        </> : <>
         <fieldset disabled={provider !== "codex"}><legend>Speech to text</legend><p className="settings-model-identity">{locations?.asrIdentity ?? (draft.asrPath ? "Original model ID unavailable. The selected folder will be loaded directly." : draft.asrModel)}</p><FolderSetting label="Speech-to-text weights" value={draft.asrPath ?? ""} detected={locations?.asrPath} onChange={asrPath => patch({asrPath})} onError={setError}/></fieldset>
         <fieldset disabled={provider !== "codex"}><legend>Text to speech</legend><p className="settings-model-identity">{locations?.ttsIdentity ?? (draft.ttsPath ? "Original model ID unavailable. The selected folder will be loaded directly." : draft.ttsModel)}</p><FolderSetting label="Text-to-speech weights" value={draft.ttsPath ?? ""} detected={locations?.ttsPath} onChange={ttsPath => patch({ttsPath})} onError={setError}/></fieldset>
         <FolderSetting label="Model download cache" value={draft.cachePath ?? ""} detected={locations?.cachePath} onChange={cachePath => patch({cachePath})} onError={setError}/>{locationError && <p role="status">{locationError}</p>}
         <p className="settings-help">Downloaded weights stay on this computer and are loaded into memory when Voice starts. A model ID may check for updates; cached files are reused. A selected folder takes priority over the model ID. Supported weights: Qwen3 ASR for speech recognition and Chatterbox for speech synthesis. A folder’s metadata may identify its architecture without identifying the original model repository. Changing the cache affects future loads; it does not move existing weights. These engines require Apple Silicon.</p>
+        </>}
         {connected && voice.snapshot.muted !== true && <p className="settings-help">{voice.snapshot.phase === "error" ? "Saving will first turn listening off, then retry with these model settings." : "Turn listening off before saving model changes."}</p>}
-        {error && <p role="alert" className="settings-error">{error}</p>}{saved && <p role="status">Saved on this computer.</p>}
+        {error && <p role="alert" className="settings-error">{error}</p>}{saved && <p role="status">{onboard ? "Saved on Orion." : "Saved on this computer."}</p>}
         <button className="primary-button" type="submit" disabled={!canSave}>{voice.saving ? "Saving…" : "Save voice settings"}</button>
       </section>
     </form></div>

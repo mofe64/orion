@@ -10,6 +10,7 @@ async fn check_control_close(request: Option<bool>, acknowledge_close: bool) {
         pi_token: "a".repeat(32),
         gateway_url: String::new(),
         speech: SpeechConfig {
+            tts_voice: "alba".into(),
             python: "python3".into(),
             root: ".".into(),
             asr_model: String::new(),

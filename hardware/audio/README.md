@@ -129,9 +129,12 @@ hardware/audio/configure-capture.sh
 
 The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
 routes, disables the codec's automatic gain control (AGC), and applies a fixed
-50 dB programmable-gain amplifier (PGA) capture gain. The Pi listener runs this
-script automatically before opening `arecord`; direct recording tests can run
-it explicitly. This prevents wake-word behavior from depending on whatever
+programmable-gain amplifier (PGA) capture gain. `ORION_CAPTURE_GAIN_DB` accepts
+0–50 dB and defaults to the legacy 50 dB setting; the Pi voice-stack service
+selects 25 dB. The listener configures routing before opening `arecord`, discards
+300 ms, reapplies the gain after the ADC starts, then discards another 300 ms.
+This prevents ADC startup from undoing the selected mixer state. Direct
+recording tests can run the script explicitly. This prevents wake-word behavior from depending on whatever
 capture level a previous process left in the codec. Physical commissioning
 found that 50 dB recognized the wake
 phrase reliably, while the codec's 59.5 dB maximum degraded detection through

@@ -9,7 +9,8 @@ Studio includes this library through a Cargo path dependency. A launcher supplie
 Keep the owning `AgentService` alive independently so idle coordinator restarts
 preserve conversations. `connection()` returns the authenticated protocol-7
 observer endpoint; `set_microphone()` sends an explicit Pi control request.
-Dropping the coordinator cancels its owned speech run and stops its Python child.
+Dropping the coordinator cancels its owned speech run and stops both Python workers. `set_voice()` changes the next response’s preset;
+`events()` returns a bounded observer snapshot with a generation and sequence IDs.
 
 Microphone status checks run once per second over temporary control WebSockets.
 Each successful request closes with a WebSocket handshake, allowing up to one
@@ -17,11 +18,10 @@ second for cleanup after the ten-second request deadline. A missing close reply
 does not invalidate an acknowledged mute change. The Pi listener tolerates abrupt
 control-client disconnects without interrupting capture or logging a traceback.
 
-The Python worker lives in [`speech/`](../speech/README.md) and receives only
+The Python workers live in [`speech/`](../speech/README.md) and receive only
 inference jobs over private pipes. The Rust agent handle is called directly;
 there is no Python agent client or agent TCP bridge. The shared
-[Studio service](../studio-service/README.md) launches the coordinator from the
-desktop app or standalone headless process.
+[Orion service](../orion-service/README.md) launches the coordinator in the Pi service. Studio is a remote observer and controller.
 
 ## Modules
 
@@ -52,7 +52,7 @@ cargo test --manifest-path orion_studio/src-tauri/Cargo.toml
 
 Integration tests require `python3` and local socket access. Fake Pi, gateway,
 speech, and Codex peers exercise the production coordinator without hardware,
-model downloads, or account usage. Python inference remains Apple-Silicon-only;
+model downloads, or account usage. Inference uses CPU adapters on the Pi or MLX adapters on Apple Silicon;
 physical microphone, echo, and playback acceptance requires a real Pi.
 
 ## Tool feedback compatibility

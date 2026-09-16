@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-orion-studio-service = { path = "../../studio-service" }
+orion-service = { path = "../../orion-service" }
 orion-agent = { path = "../../agent" }
 serde_json = "1"
 tauri = { version = "2", features = [] }

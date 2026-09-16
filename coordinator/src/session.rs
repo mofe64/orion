@@ -16,6 +16,7 @@ pub(crate) fn after_wake(text: &str) -> Option<String> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Phase {
     Wake,
+    VerifyingWake,
     Command,
     Transcribing,
     Responding,
@@ -24,6 +25,8 @@ pub(crate) enum Phase {
 pub(crate) struct Session {
     pub id: String,
     pub phase: Phase,
+    pub wake_verified: bool,
+    prefix_attempted: bool,
 }
 impl Session {
     pub fn new(id: &str, phase: Phase) -> Result<Self, String> {
@@ -33,10 +36,13 @@ impl Session {
         Ok(Self {
             id: id.into(),
             phase,
+            wake_verified: false,
+            prefix_attempted: false,
         })
     }
     pub fn accept(&mut self, id: &str, purpose: &str, size: u64) -> Result<(), String> {
         let expected = match purpose {
+            "wake_prefix" if !self.prefix_attempted && size <= 4 * 32000 => Phase::Wake,
             "wake_and_command" => Phase::Wake,
             "command" => Phase::Command,
             _ => return Err("Invalid utterance purpose".into()),
@@ -44,12 +50,17 @@ impl Session {
         if self.id != id
             || self.phase != expected
             || size == 0
-            || size > 18 * 32000
+            || size > 33 * 32000
             || !size.is_multiple_of(2)
         {
             return Err("Stale, overlapping, or invalid Pi utterance".into());
         }
-        self.phase = Phase::Transcribing;
+        if purpose == "wake_prefix" {
+            self.prefix_attempted = true;
+            self.phase = Phase::VerifyingWake;
+        } else {
+            self.phase = Phase::Transcribing;
+        }
         Ok(())
     }
 }
@@ -65,6 +76,19 @@ mod tests {
         }
     }
     #[test]
+    fn prefix_cannot_overlap_full_audio_or_be_repeated() {
+        let id = "a".repeat(32);
+        let mut session = Session::new(&id, Phase::Wake).unwrap();
+        assert!(session.accept(&id, "wake_prefix", 4 * 32000 + 2).is_err());
+        session.accept(&id, "wake_prefix", 64000).unwrap();
+        assert_eq!(session.phase, Phase::VerifyingWake);
+        assert!(session.accept(&id, "wake_and_command", 64000).is_err());
+        session.phase = Phase::Wake;
+        assert!(session.accept(&id, "wake_prefix", 64000).is_err());
+        session.accept(&id, "wake_and_command", 64000).unwrap();
+    }
+
+    #[test]
     fn rejects_stale_overlapping_and_oversized_audio() {
         let mut session = Session::new(&"a".repeat(32), Phase::Wake).unwrap();
         assert!(
@@ -75,7 +99,7 @@ mod tests {
         assert!(session.accept(&session.id.clone(), "command", 2).is_err());
         assert!(
             session
-                .accept(&session.id.clone(), "wake_and_command", 18 * 32000 + 2)
+                .accept(&session.id.clone(), "wake_and_command", 33 * 32000 + 2)
                 .is_err()
         );
         session

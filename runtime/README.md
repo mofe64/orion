@@ -81,30 +81,21 @@ in the terminal when prompted. The account must be permitted to install
 packages and manage services; passwordless sudo is needed only for unattended
 runs. Deployment does not change sudoers or request the password through chat.
 
-On the Pi, deployment requires the selected branch to already be checked out,
-then fetches and fast-forwards it. It never switches branches, stashes, resets,
-or runs a broad cleanup of the Pi checkout. The specific generated lockfile
-migration is described in [Pi voice setup](../voice/README.md). Deployment stops the gateway, returns the running
-Orion to `rest`, disables torque, runs gateway tests and the
-Pi-compatible Rust suite, and release-builds `oriond` while the old daemon
-remains safely torque-off. The simulator-only MuJoCo integration test remains a
-workstation pre-push gate.
+The remote phase prepares the complete runtime, gateway, listener, and onboard
+voice/agent release from the selected commit. It leaves the Pi checkout and motion
+catalog intact. Builds and tests finish before the service switch; the runtime
+must confirm mechanical rest and torque-off before it is stopped. The installer
+preserves installed arguments and overrides, checks all four services and their
+readiness, and restores the previous installation on activation failure. See the
+[Pi quickstart](../docs/quickstart.md#deploy-to-the-pi) for prerequisites, settings
+preservation, and rollback.
 
-The deployment installs the locked Pi Rustpotter environment, archives the
-checkout's retired voice stack, and installs/enables `oriond.service`,
-`orion-studio-gateway.service` and `orion-listener.service`. It starts the rebuilt runtime, verifies its
-embedded `build_revision`, configures and enables Orion, moves to
-`zero_reference`, and runs the no-motion `deployment_smoke` RGBW/audio scene.
-A successful trial returns to `rest`, fades lights off, disables torque, and
-starts the authenticated gateway on port 7447. Any post-start failure attempts
-the same resting shutdown.
-
-All three services start on reboot. `oriond` starts the powered character by default
-and moves home before scheduling idle. Studio can stop character mode for the
-current daemon session. Use `--character-on-start off` for maintenance that
-must remain torque-off; in that mode, an explicit movement request can prepare
-and enable the servos. Use **Release torque** only after mechanical rest is
-confirmed.
+The simulator-only MuJoCo integration test remains a workstation pre-push gate.
+Deployment compiles a trajectory against the existing catalog without executing
+it. It does not run physical expression smoke tests. Normal runtime startup may
+move Orion home. Use `--character-on-start off` for maintenance that must remain
+torque-off; in that mode, an explicit movement request can prepare and enable the
+servos. Use **Release torque** only after mechanical rest is confirmed.
 
 Character startup arms [automatic rest and confirmed waking](../docs/system-architecture.md#automatic-rest-and-waking).
 `--rest-after-seconds` configures the inactivity deadline. Studio's **Go to rest**
@@ -120,11 +111,11 @@ sudo systemctl status oriond.service orion-studio-gateway.service orion-listener
 journalctl -u oriond.service -u orion-studio-gateway.service -u orion-listener.service
 ```
 
-Calibration and the Studio pairing token remain under `~/.config/orion/` and
-are never replaced during ordinary updates. See [Pi voice setup](../voice/README.md)
-for installation, rollback and capture checks. The unit templates are under
-`scripts/systemd/`; `scripts/install_pi_services.sh` renders the configured Pi
-user, home, and source-checkout paths into `/etc/systemd/system/`.
+Calibration and the Studio pairing token remain under `~/.config/orion/`.
+The full-stack installer merges installed service configuration; templates under
+`scripts/systemd/` supply defaults only for missing units. Runtime and gateway
+executables come from the release, while their working directory remains the
+existing catalog root so local poses and scenes survive updates.
 
 ## MuJoCo-first daemon
 
@@ -454,7 +445,9 @@ Studio Stop lasts until an explicit character start or the next daemon startup
 with character mode enabled. A timed-out or cancelled home
 movement leaves character off; the terminal movement remains visible in status.
 
-The Pi listener sends `voice SESSION confirmed` after ASR accepts the wake and
+The Pi listener sends `voice SESSION verify` before the short wake-prefix ASR
+pass; recording continues while verification runs. It sends
+`voice SESSION confirmed` after ASR accepts the wake and
 waits for its acknowledgement. If direction is known with confidence at least
 0.75, it may then send `voice SESSION attend_left AGE_MS` or `attend_right AGE_MS`.
 The rest coordinator waits for home and checks that the observation is still

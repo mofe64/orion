@@ -11,6 +11,26 @@ fn service() -> AgentService {
     .unwrap()
 }
 #[tokio::test]
+async fn streams_only_explicit_final_sentences_from_the_matching_turn() {
+    let service = service();
+    let agent = service.handle();
+    let (send, mut receive) = tokio::sync::mpsc::channel(8);
+    let response = agent.respond_with_events("stream-fixture", Some(send));
+    let collect = async {
+        let mut pieces = Vec::new();
+        while let Some(event) = receive.recv().await {
+            if let orion_agent::AgentEvent::FinalSpeech(text) = event {
+                pieces.push(text);
+            }
+        }
+        pieces
+    };
+    let (response, pieces) = tokio::join!(response, collect);
+    assert_eq!(response.unwrap(), "Let us begin. Take a breath.");
+    assert_eq!(pieces, ["Let us begin."]);
+}
+
+#[tokio::test]
 async fn caller_reconnections_keep_conversation_and_only_speak_matching_final_turn() {
     let service = service();
     let first = service.handle();

@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import socket
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -34,6 +35,89 @@ class FakeCapture:
         return np.full((320,2),2000 if self.frames<25 else 0,dtype='<i2').tobytes()
 
 class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prefix_confirmation_is_ordered_while_capture_continues(self):
+        with tempfile.TemporaryDirectory() as directory:
+            token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+            args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+                wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+                daemon_socket=str(Path(directory) / 'no-robot.sock'))
+            expressions = []
+            async def daemon(command, path):
+                expressions.append(command)
+                return {'ok': True}
+            with patch('orion_voice.satellite.RustpotterWakeDetector', FakeWake), \
+                 patch('orion_voice.satellite.StereoCapture', FakeCapture), \
+                 patch('orion_voice.satellite.daemon_command', daemon):
+                task = asyncio.create_task(serve(args))
+                try:
+                    for _ in range(100):
+                        try:
+                            client = await connect(f'ws://127.0.0.1:{port}'); break
+                        except OSError: await asyncio.sleep(.01)
+                    else: self.fail('Listener did not start')
+                    async with client:
+                        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, wakePrefix=True)))
+                        self.assertTrue(json.loads(await client.recv())['wakePrefix'])
+                        candidate = json.loads(await client.recv()); sid = candidate['sessionId']
+                        prefix = json.loads(await client.recv()); await client.recv()
+                        self.assertEqual(prefix['purpose'], 'wake_prefix')
+                        capture = FakeCapture.instances[-1]; before = capture.frames
+                        await asyncio.sleep(.08)
+                        self.assertGreater(capture.frames, before)
+                        await client.send(json.dumps({'type':'wake.verified','sessionId':sid,'accepted':True}))
+                        full = json.loads(await asyncio.wait_for(client.recv(), 2)); await client.recv()
+                        self.assertEqual(full['purpose'], 'wake_and_command')
+                        for _ in range(50):
+                            if f'voice {sid} endpoint' in expressions: break
+                            await asyncio.sleep(.01)
+                        sequence = [f'voice {sid} {event}' for event in ['wake','verify','confirmed','endpoint']]
+                        indices = [expressions.index(event) for event in sequence]
+                        self.assertEqual(indices, sorted(indices))
+                finally:
+                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
+    async def test_unmute_waits_until_microphone_startup_finishes(self):
+        opening, finish = threading.Event(), threading.Event()
+        class SlowCapture(FakeCapture):
+            def open(self):
+                opening.set()
+                if not finish.wait(2): raise RuntimeError('Test did not release capture')
+                super().open()
+        with tempfile.TemporaryDirectory() as directory:
+            token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)
+            mute_file = Path(directory) / 'muted.json'; mute_file.write_text('{"muted":true}')
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+            args = SimpleNamespace(token_file=token_file, mute_file=mute_file, host='127.0.0.1', port=port,
+                wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+                daemon_socket=str(Path(directory) / 'no-robot.sock'))
+            with patch('orion_voice.satellite.RustpotterWakeDetector', FakeWake), patch('orion_voice.satellite.StereoCapture', SlowCapture):
+                task = asyncio.create_task(serve(args))
+                try:
+                    for _ in range(100):
+                        try:
+                            client = await connect(f'ws://127.0.0.1:{port}'); break
+                        except OSError: await asyncio.sleep(.01)
+                    else: self.fail('Listener did not start')
+                    async with client:
+                        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, role='control')))
+                        self.assertTrue(json.loads(await client.recv())['muted'])
+                        await client.send(json.dumps(dict(type='microphone.mute', muted=False)))
+                        reply = asyncio.create_task(client.recv())
+                        for _ in range(100):
+                            if opening.is_set(): break
+                            await asyncio.sleep(.01)
+                        self.assertTrue(opening.is_set())
+                        self.assertFalse(reply.done(), 'Unmute must not report ready before capture opens')
+                        finish.set()
+                        self.assertFalse(json.loads(await asyncio.wait_for(reply, 2))['muted'])
+                        self.assertTrue(SlowCapture.instances[-1].opened)
+                finally:
+                    finish.set(); task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
     async def test_confirmation_reaches_runtime_before_optional_fresh_attention(self):
         for side, age in [("unknown", 0), ("left", 0), ("right", 4)]:
             with self.subTest(side=side, age=age), tempfile.TemporaryDirectory() as directory:

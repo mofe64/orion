@@ -15,14 +15,15 @@ export function useStudioVoice(connection: GatewayConnection | null, onNotice: (
   const pipeline = useMemo(() => new StudioVoicePipeline({ connection: connection ?? undefined, settings, speaker: new OrionSpeechPlayer(() => connection,setPlayback) }),[connection,settings]);
   const [snapshot,setSnapshot] = useState<StudioVoiceSnapshot>(() => pipeline.current());
   const [models,setModels] = useState<NonNullable<StudioVoiceSnapshot["models"]>>([]);
-  useEffect(() => { let active = true; void invoke<VoiceSettings>("load_voice_settings").then(value => { if (active) { setSettings({ ...DEFAULT_VOICE_SETTINGS,...value }); setLoaded(true); } }).catch(error => { if (active) onNotice(`Voice settings could not load: ${String(error)}`); }); return () => { active = false; }; },[]);
+  useEffect(() => { let active = true; void invoke<VoiceSettings>("load_voice_settings").then(value => { if (active) { setSettings({ ...DEFAULT_VOICE_SETTINGS,...value }); setLoaded(true); } }).catch(error => { if (active) onNotice(`Voice settings could not load: ${String(error)}`); }); return () => { active = false; }; },[connection?.url,connection?.token]);
   useEffect(() => { setSnapshot(pipeline.current()); return pipeline.subscribe(setSnapshot); },[pipeline]);
   useEffect(() => { if (snapshot.models?.length) setModels(snapshot.models); },[snapshot.models]);
   useEffect(() => { if (connection && loaded) void pipeline.start(); return () => { void pipeline.stop(); }; },[pipeline,connection,loaded]);
   const save = async (value: VoiceSettings) => {
-    if (connection && snapshot.muted !== true && snapshot.phase !== "error") throw new Error("Turn listening off before changing voice models.");
+    const voiceOnly = JSON.stringify({ ...settings, ttsVoice: value.ttsVoice }) === JSON.stringify(value);
+    if (!voiceOnly && connection && snapshot.muted !== true && snapshot.phase !== "error") throw new Error("Turn listening off before changing voice models.");
     setSaving(true);
-    try { if (connection && snapshot.muted !== true) await pipeline.setMuted(true); const saved = await invoke<VoiceSettings>("save_voice_settings",{ settings: value }); setSettings({ ...DEFAULT_VOICE_SETTINGS,...saved }); onNotice("Voice settings saved."); }
+    try { if (!voiceOnly && connection && snapshot.muted !== true) await pipeline.setMuted(true); const saved = await invoke<VoiceSettings>("save_voice_settings",{ settings: value }); setSettings({ ...DEFAULT_VOICE_SETTINGS,...saved }); onNotice("Voice settings saved."); }
     finally { setSaving(false); }
   };
   const toggle = async () => {

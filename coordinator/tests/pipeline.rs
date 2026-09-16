@@ -122,7 +122,7 @@ impl Harness {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let agent = AgentService::start(AgentConfig {
             soul_path: None,
-        memory_path: None,
+            memory_path: None,
             model: "test-model".into(),
             effort: "high".into(),
             codex_bin: Some(root.join("../agent/tests/fixtures/codex.py")),
@@ -134,6 +134,7 @@ impl Harness {
                 pi_token: TOKEN.into(),
                 gateway_url,
                 speech: SpeechConfig {
+                    tts_voice: "alba".into(),
                     python: "python3".into(),
                     root: root.join("tests/fixtures"),
                     asr_model: "fixture".into(),
@@ -265,6 +266,123 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
     drop(state);
     let body = value.to_string();
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+}
+
+#[tokio::test]
+async fn prefix_wakes_early_but_only_complete_audio_reaches_agent() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    h.utterance(
+        SID,
+        "wake_prefix",
+        "Hey Orion, this truncated prefix must not run",
+    )
+    .await;
+    assert_eq!(until(&mut h.pi, "wake.verified").await["accepted"], true);
+    assert_eq!(
+        until(&mut h.observer, "wake.confirmed").await["early"],
+        true
+    );
+    assert!(h.gateway.lock().await.uploads.is_empty());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.observer.next())
+            .await
+            .is_err()
+    );
+    h.utterance(
+        SID,
+        "wake_and_command",
+        "Hey Orion, keep every command word",
+    )
+    .await;
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: keep every command word"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn uncertain_prefix_falls_back_to_full_wake_confirmation() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    h.utterance(SID, "wake_prefix", "Hey Ryan").await;
+    assert_eq!(until(&mut h.pi, "wake.verified").await["accepted"], false);
+    h.utterance(SID, "wake_and_command", "Hey Orion, complete request")
+        .await;
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: complete request"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn rejected_full_recording_never_executes_even_after_prefix_confirmation() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    h.utterance(SID, "wake_prefix", "Hey Orion").await;
+    until(&mut h.pi, "wake.verified").await;
+    h.utterance(SID, "wake_and_command", "background television")
+        .await;
+    until(&mut h.pi, "session.reject").await;
+    until(&mut h.observer, "wake.rejected").await;
+    assert!(h.gateway.lock().await.uploads.is_empty());
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn streamed_sentences_share_one_playback_run_without_duplicate_speech() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, stream-fixture").await;
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Let us begin. Take a breath."
+    );
+    let state = h.gateway.lock().await;
+    assert_eq!(state.runs, 1);
+    assert_eq!(state.uploads.len(), 4); // Two chunks per sentence, with no duplicate final synthesis.
+    drop(state);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn recording_limit_never_sends_an_incomplete_command_to_the_agent() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    let pcm = b"Hey Orion, incomplete request!".to_vec();
+    send(&mut h.pi, json!({"type":"utterance","sessionId":SID,"purpose":"wake_and_command","bytes":pcm.len(),"endReason":"max_duration"})).await;
+    h.pi.send(Message::Binary(pcm.into())).await.unwrap();
+    until(&mut h.pi, "session.cancel").await;
+    assert_eq!(next(&mut h.observer).await["type"], "wake.candidate");
+    assert_eq!(next(&mut h.observer).await["code"], "utterance_too_long");
+    assert!(h.gateway.lock().await.uploads.is_empty());
+    h.wake("Hey Orion, complete request").await;
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: complete request"
+    );
+    h.stop().await;
 }
 
 #[tokio::test]

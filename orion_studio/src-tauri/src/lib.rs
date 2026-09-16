@@ -6,7 +6,7 @@ mod settings;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(orion_studio_service::Backend::default())
+        .manage(orion_service::Backend)
         .invoke_handler(tauri::generate_handler![
             coordinator::start_voice_worker,
             agent::load_agent_profile,
@@ -22,10 +22,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Orion Studio")
-        .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                use tauri::Manager;
-                app.state::<orion_studio_service::Backend>().shutdown();
-            }
-        });
+        .run(|_, _| {});
 }

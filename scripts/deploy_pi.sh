@@ -5,17 +5,18 @@ usage() {
   cat <<'EOF'
 Usage: scripts/deploy_pi.sh [--host USER@HOST] [--root PATH] [--branch BRANCH] [--skip-studio-check]
 
-Deploy and physically smoke-test Orion through SSH. Defaults:
+Build, test and activate the complete Orion Pi stack through SSH. Defaults:
   host:   mofe@orion.local
   root:   /home/mofe/dev/orion
   branch: main
 
-The workstation must trust the Pi's SSH host key. SSH keys are recommended;
-password login is also supported through one shared SSH connection. The remote script installs and enables oriond,
-the Studio gateway and the Rustpotter listener during the supervised physical
-smoke test. Deployment opens an SSH terminal so sudo can request the Pi user's
-password. The account must be permitted to install packages and manage services.
-It installs Pi voice dependencies and builds Rustpotter. Qwen and Chatterbox stay on Studio.
+Commit and push the intended revision first. The Pi fetches it into an isolated
+release without merging, stashing, resetting or discarding its checkout edits.
+Runtime, gateway, Rustpotter/Silero listener, Qwen/Pocket workers and the agent
+service are prepared before anything is stopped. Activation preserves settings
+and confirms mechanical rest before switching the hardware runtime. Failure
+restores the immediately previous installation. No expression smoke motions
+are issued automatically. An SSH terminal remains available for sudo.
 
 The matching Studio v2 frontend is tested and production-built locally before
 SSH deployment. Use --skip-studio-check only if the exact revision was already

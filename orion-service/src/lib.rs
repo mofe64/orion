@@ -1,15 +1,13 @@
 pub mod agent;
 pub mod coordinator;
 pub mod pairing;
+mod remote;
 pub mod rpc;
 pub mod settings;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{path::PathBuf, sync::Mutex};
 
 pub fn project_root() -> Result<PathBuf, String> {
     let root = std::env::var_os("ORION_PROJECT_ROOT")
@@ -17,6 +15,10 @@ pub fn project_root() -> Result<PathBuf, String> {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
     root.canonicalize()
         .map_err(|e| format!("Could not locate Orion project: {e}"))
+}
+
+pub fn onboard() -> bool {
+    std::env::var("ORION_ONBOARD").as_deref() == Ok("1")
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -43,6 +45,8 @@ pub struct StartOptions {
 )]
 pub enum Request {
     Status,
+    Observe,
+    StartSaved,
     Start(StartOptions),
     Microphone { muted: bool },
     LoadPairing,
@@ -104,23 +108,27 @@ impl Host {
         }
     }
     async fn start_saved(&self) -> Result<Value, String> {
-        let pairing = pairing::load_pairing()
-            .await?
-            .ok_or("Pair Orion in Studio to enable voice")?;
-        let mut url = url::Url::parse(&pairing.url).map_err(|_| "Invalid saved gateway")?;
-        url.set_scheme("ws").map_err(|_| "Invalid voice URL")?;
-        url.set_port(Some(7448)).map_err(|_| "Invalid voice port")?;
-        self.start(StartOptions {
-            pi_url: url.to_string(),
-            gateway_url: pairing.url,
-            pi_token: pairing.token,
-            ..Default::default()
-        })
+        if onboard() {
+            let token_path = PathBuf::from(std::env::var_os("HOME").ok_or("Home is unavailable")?)
+                .join(".config/orion/studio-token");
+            return self.start(StartOptions {
+                pi_url: "ws://127.0.0.1:7448".into(),
+                gateway_url: "http://127.0.0.1:7447".into(),
+                pi_token: std::fs::read_to_string(token_path)
+                    .map_err(|e| e.to_string())?
+                    .trim()
+                    .into(),
+                ..Default::default()
+            });
+        }
+        Err("Automatic voice startup is only supported on the Pi (ORION_ONBOARD=1)".into())
     }
+
     pub async fn dispatch(&self, request: Request) -> Result<Value, String> {
         let _guard = if matches!(
             &request,
             Request::Start(_)
+                | Request::StartSaved
                 | Request::SavePairing(_)
                 | Request::ForgetPairing
                 | Request::SaveSettings(_)
@@ -131,11 +139,14 @@ impl Host {
         };
         match request {
             Request::Status => Ok(json!({"protocol": rpc::PROTOCOL, "pid": std::process::id(),
+                "onboard": onboard(),
                 "coordinator_running": self.coordinator.is_running(),
                 "error": *self.error.lock().map_err(|_| "Service unavailable")?,
                 "project_root": project_root()?,
                 "revision": std::env::var("ORION_RELEASE_REVISION").unwrap_or_else(|_| "development".into())})),
             Request::Start(options) => self.start(options),
+            Request::StartSaved => self.start_saved().await,
+            Request::Observe => Ok(self.coordinator.events()),
             Request::Microphone { muted } => {
                 coordinator::set_voice_microphone(&self.coordinator, muted)
             }
@@ -161,7 +172,14 @@ impl Host {
                 serde_json::to_value(settings::load_voice_settings()?).map_err(|e| e.to_string())
             }
             Request::SaveSettings(settings) => {
+                let mut previous = settings::load_voice_settings()?;
+                previous.tts_voice = settings.tts_voice.clone();
+                let voice_only = previous == settings;
                 let settings = settings::save_voice_settings(settings)?;
+                if voice_only {
+                    self.coordinator.set_voice(&settings.tts_voice);
+                    return serde_json::to_value(settings).map_err(|e| e.to_string());
+                }
                 self.coordinator.shutdown();
                 *self.desired.lock().unwrap() = None;
                 if let Err(error) = self.start_saved().await {
@@ -186,47 +204,24 @@ impl Drop for Host {
     }
 }
 
-/// Studio attaches to the installed owner; an uninstalled desktop may own its own host.
+/// Desktop Studio is a client of the paired Pi; it never owns local inference.
 #[derive(Default)]
-pub struct Backend {
-    local: Mutex<Option<Arc<Host>>>,
-    directory: Option<PathBuf>,
-}
+pub struct Backend;
 impl Backend {
-    /// Select an isolated owner directory for an embedding or integration harness.
-    pub fn at(directory: PathBuf) -> Self {
-        Self {
-            directory: Some(directory),
-            ..Default::default()
-        }
-    }
     pub async fn request(&self, request: Request) -> Result<Value, String> {
-        let directory = self
-            .directory
-            .clone()
-            .map(Ok)
-            .unwrap_or_else(rpc::service_home)?;
-        if directory.join("installed").exists() || directory.join("connection.json").exists() {
-            // Surface service errors to the UI; never create a second owner as a retry.
-            return tokio::task::spawn_blocking(move || rpc::call(&directory, &request))
-                .await
-                .map_err(|_| "Background service request failed")?;
-        }
-        let host = {
-            let mut local = self
-                .local
-                .lock()
-                .map_err(|_| "Studio service unavailable")?;
-            if local.is_none() {
-                *local = Some(Arc::new(Host::new(&directory)?));
+        match request {
+            Request::LoadPairing => {
+                serde_json::to_value(pairing::load_pairing().await?).map_err(|e| e.to_string())
             }
-            local.as_ref().unwrap().clone()
-        };
-        host.dispatch(request).await
-    }
-    pub fn shutdown(&self) {
-        if let Ok(mut host) = self.local.lock() {
-            *host = None;
+            Request::SavePairing(value) => {
+                pairing::save_pairing(value).await?;
+                Ok(Value::Null)
+            }
+            Request::ForgetPairing => {
+                pairing::forget_pairing().await?;
+                Ok(Value::Null)
+            }
+            request => remote::request(&request).await,
         }
     }
 }

@@ -3,6 +3,7 @@
 import json
 import sys
 import uuid
+import time
 
 thread_id = uuid.uuid4().hex
 turn = 0
@@ -60,6 +61,13 @@ for line in sys.stdin:
             emit({'method':'item/completed', 'params': {'threadId':tid, 'turnId':uid,
                   'item': {'type':'agentMessage', 'phase':phase, 'text':value}}})
         response = '' if text == 'empty' else f'  Reply {turn}:\n{text}  '
+        if text == 'stream-fixture':
+            for item, phase, tid, uid, value in [('comment', 'commentary', thread_id, turn_id, 'Never speak this. '), ('unknown', None, thread_id, turn_id, 'Unknown phase. '), ('stale', 'final_answer', thread_id, 'old', 'Wrong turn. '), ('final', 'final_answer', thread_id, turn_id, 'Let us begin. ')]:
+                emit({'method':'item/started','params':{'threadId':tid,'turnId':uid,'item':{'type':'agentMessage','id':item,'phase':phase,'text':''}}})
+                emit({'method':'item/agentMessage/delta','params':{'threadId':tid,'turnId':uid,'itemId':item,'delta':value}})
+            time.sleep(.15)
+            emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,'itemId':'final','delta':'Take a breath.'}})
+            response = 'Let us begin. Take a breath.'
         completed = {'method': 'turn/completed', 'params': {'threadId': thread_id,
                      'turn': {'id': turn_id, 'status': 'failed' if text == 'fail' else 'completed',
                               'error': {'message':'fixture failure'} if text == 'fail' else None,

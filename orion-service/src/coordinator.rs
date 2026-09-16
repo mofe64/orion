@@ -10,6 +10,21 @@ struct Running {
 #[derive(Default)]
 pub struct CoordinatorManager(Mutex<Option<Running>>);
 impl CoordinatorManager {
+    pub fn events(&self) -> serde_json::Value {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|r| r.coordinator.events()))
+            .unwrap_or_else(|| serde_json::json!({"generation":null,"events":[]}))
+    }
+    pub fn set_voice(&self, voice: &str) {
+        if let Ok(mut slot) = self.0.lock()
+            && let Some(running) = slot.as_mut()
+        {
+            running.coordinator.set_voice(voice);
+            running.config.speech.tts_voice = voice.into();
+        }
+    }
     pub fn is_running(&self) -> bool {
         self.0
             .lock()
@@ -83,6 +98,7 @@ pub fn start_voice_worker(
         pi_token,
         gateway_url,
         speech: SpeechConfig {
+            tts_voice: settings.tts_voice.clone(),
             python: std::env::var_os("ORION_STUDIO_VOICE_PYTHON")
                 .map(Into::into)
                 .unwrap_or_else(|| root.join(".venv/bin/python")),

@@ -1,9 +1,10 @@
 # Orion voice
 
-Orion captures microphone audio and detects **“Hey Orion”** on the Pi using
-Rustpotter. Studio runs Qwen ASR to confirm the wake phrase and transcribe the
-command, sends the command to Codex, and synthesizes the reply with Chatterbox.
-The Pi plays the reply through ReSpeaker while `oriond` runs speech animation.
+Orion captures microphone audio and detects **“Hey Orion”** on the Pi with
+Rustpotter. Silero decides when speech has ended. The onboard coordinator sends
+complete audio to Qwen, confirms the wake phrase, invokes Codex, and synthesizes
+Pocket speech. `oriond` owns speaker playback and speech animation. Studio is
+an optional settings and observation client.
 
 ## Setup
 
@@ -16,13 +17,12 @@ From the workstation repository root:
 Deployment updates the Pi voice environment, builds the native Rustpotter
 adapter, verifies the wake model, and installs the services. It requires an
 existing calibrated Pi with the [ReSpeaker driver](../hardware/audio/README.md)
-and Rust toolchain. The deployment includes physical movement tests.
+and Rust toolchain. The service switch returns the robot to rest; normal runtime
+startup may move it home. Deployment does not run expression smoke tests.
 
-Prepare the Mac worker using the [speech worker setup](../speech/README.md#setup-on-apple-silicon).
-Open Studio manually and pair it with Orion to run voice processing.
-Pi capture defaults on unless explicitly muted. If Studio is unavailable after
-capture ends, awake Orion plays its error cue and returns to listening. Resting
-Orion stays dark and silent until confirmation is available.
+For the Pi speech and agent service, follow [Pi installation](../docs/quickstart.md#pi-local-voice-and-agent).
+Pi capture defaults on unless explicitly muted. Closing Studio leaves the Pi
+voice stack running. The agent still requires internet access.
 
 ## Runtime
 
@@ -30,9 +30,10 @@ Orion stays dark and silent until confirmation is available.
 - Audio: 16 kHz mono sent from stereo capture; three seconds of pre-roll in memory.
 - Wake model: `models/wake/hey_orion_reference.rpw`, threshold `0.400`.
 - Listener: port `7448`, authenticated with `~/.config/orion/studio-token`.
-- Studio models: Qwen3-ASR-0.6B and Chatterbox Turbo; no ASR or TTS models are needed on the Pi.
+- Onboard speech: Qwen3-ASR-0.6B GGUF and Pocket TTS, managed by `orion-voice-stack`.
 
-Audio and authentication travel unencrypted over the LAN. Use a trusted network.
+Onboard processing uses loopback connections. Remote Studio controls use the
+authenticated gateway over the trusted LAN.
 Capture opens with the listener service and survives processing disconnects.
 **Mute Orion microphone** closes capture, clears buffered audio and saves mute
 across restarts; Character Stop controls animation separately.
@@ -48,10 +49,10 @@ After a successful reply, wait for the soft teal pulse and continue without
 request then needs the wake phrase. A silent echo guard precedes the pulse.
 See [conversation timing and limitations](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
 
-Endpoint decisions use background-relative, DC-corrected energy without
-altering captured audio. See the [endpoint rules](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
+The managed listener uses Silero with a fixed 2× gain in the VAD branch and
+1.2 seconds of trailing silence. Captured audio remains unchanged. See the [endpoint rules](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
 Allow a short quiet interval after enabling capture before the first wake.
-The listener logs `voice.endpoint` with the frozen threshold, capture time,
+The listener logs `voice.endpoint` with capture time,
 and `silence` or `max_duration` reason; it does not log audio or transcripts.
 
 ## Upgrade from legacy Pi voice
@@ -79,15 +80,10 @@ systemctl is-active oriond orion-studio-gateway orion-listener
 journalctl -u orion-listener -u orion-studio-gateway -n 50 --no-pager
 ```
 
-To repair dependencies from the Pi repository root:
-
-```bash
-./scripts/install_pi_voice.sh "$PWD"
-sudo systemctl restart orion-listener
-```
-
-The installer updates the locked environment in place. If installation fails,
-the listener stays stopped; resolve the reported error and rerun the installer.
+To repair onboard dependencies, use the [full Pi deployment](../docs/quickstart.md#deploy-to-the-pi).
+It prepares replacement environments before switching services and preserves
+saved settings. The standalone `install_pi_voice.sh` is only for older
+listener-only installations; it refuses to update an installed onboard stack.
 For playback problems, see [audio troubleshooting](../hardware/audio/README.md).
 
 ## Directional attention

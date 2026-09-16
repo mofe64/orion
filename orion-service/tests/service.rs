@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
-use orion_studio_service::{Request, StartOptions, rpc};
+use orion_service::{Request, StartOptions, rpc};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
@@ -34,7 +34,7 @@ impl Process {
             fixture.join("worker.py"),
         )
         .unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_orion-studio-headless"))
+        let child = Command::new(env!("CARGO_BIN_EXE_orion-service"))
             .args(["serve", "--no-autostart"])
             .env("ORION_STUDIO_SERVICE_HOME", &directory)
             .env("ORION_PROJECT_ROOT", root.path())
@@ -96,10 +96,7 @@ impl Drop for Process {
 #[tokio::test]
 async fn service_authentication_single_owner_and_clean_shutdown() {
     let mut process = Process::start().await;
-    let client = orion_studio_service::Backend::at(process.directory.clone());
-    let status = client.request(Request::Status).await.unwrap();
-    client.shutdown();
-    drop(client);
+    let status = process.call(Request::Status).await;
     assert_eq!(
         process.call(Request::Status).await["pid"],
         process.child.id()
@@ -107,7 +104,7 @@ async fn service_authentication_single_owner_and_clean_shutdown() {
     assert_eq!(status["pid"], process.child.id());
     assert_eq!(status["coordinator_running"], false);
     assert!(rpc::Owner::acquire(&process.directory).is_err());
-    let mut second = Command::new(env!("CARGO_BIN_EXE_orion-studio-headless"))
+    let mut second = Command::new(env!("CARGO_BIN_EXE_orion-service"))
         .args(["serve", "--no-autostart"])
         .env("ORION_STUDIO_SERVICE_HOME", &process.directory)
         .stderr(Stdio::null())
@@ -149,14 +146,9 @@ async fn service_authentication_single_owner_and_clean_shutdown() {
             0o700
         );
     }
-    // An installed but stopped owner must not silently start an embedded replacement.
-    std::fs::write(process.directory.join("installed"), "").unwrap();
     process.terminate().await;
-    let client = orion_studio_service::Backend::at(process.directory.clone());
     assert!(
-        client
-            .request(Request::Status)
-            .await
+        rpc::call(&process.directory, &Request::Status)
             .unwrap_err()
             .contains("stopped")
     );

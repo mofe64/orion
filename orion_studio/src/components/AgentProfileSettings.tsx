@@ -3,7 +3,7 @@ import { NotebookPen, Sparkles } from "lucide-react";
 import { changeAgentProfile, loadAgentProfile, samePersonality, toggleSelection, validMemory, type AgentProfile, type MemoryEntry, type Personality, type ProfileChange } from "../lib/agentProfile";
 import "./AgentProfileSettings.css";
 
-export function AgentProfileSettings() {
+export function AgentProfileSettings({ onboard = false }: { onboard?: boolean }) {
   const [profile,setProfile] = useState<AgentProfile|null>(null);
   const [personality,setPersonality] = useState<Personality>({traits:[],behaviors:[]});
   const [loading,setLoading] = useState(true);
@@ -63,7 +63,7 @@ export function AgentProfileSettings() {
         </>}
       </section>
       <section className="settings-card memory-settings"><header><NotebookPen size={20}/><div><h2>Memories</h2><p>Facts and preferences you’ve asked Orion to remember.</p></div></header>
-        <p className="settings-help">Stored on this computer. Relevant memories are sent to Codex when Orion uses them. Editing or deleting starts a fresh conversation; it does not erase information already sent to Codex.</p>
+        <p className="settings-help">{onboard ? "Stored on Orion." : "Stored on this computer."} Relevant memories are sent to Codex when Orion uses them. Editing or deleting starts a fresh conversation; it does not erase information already sent to Codex.</p>
         {profile && <>
           <div className="memory-toolbar"><button className="quiet-button" disabled={blocked || !!editor || !!deletion || !profile.memoryEnabled} onClick={() => beginEdit("new")}>Add memory</button><button className="quiet-button" disabled={blocked || !!editor || !!deletion || dirty} onClick={() => void refresh()}>Refresh</button><span>{profile.memories.length} {profile.memories.length === 1 ? "memory" : "memories"}</span></div>
           {!profile.memoryEnabled && <p className="settings-help">Memory storage is unavailable on this device.</p>}

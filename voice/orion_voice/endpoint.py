@@ -49,7 +49,7 @@ class EndpointConfig:
     min_capture_ms: int = 1_200
     trailing_silence_ms: int = 1_000
     speech_confirmation_ms: int = 60
-    max_utterance_ms: int = 15_000
+    max_utterance_ms: int = 30_000
 
 
 class EnergyEndpointDetector:
@@ -68,6 +68,9 @@ class EnergyEndpointDetector:
     def capture_ms(self) -> int:
         return self._total_ms
 
+    def is_speech(self, pcm: bytes) -> bool:
+        return pcm16_rms(pcm) >= self.config.speech_rms
+
     def accept(self, pcm: bytes) -> bool:
         if self.end_reason is not None:
             return True
@@ -79,7 +82,7 @@ class EnergyEndpointDetector:
             del self._pending[:frame_bytes]
             self._total_ms += frame_ms
             self._silence_ms += frame_ms
-            if pcm16_rms(frame) >= self.config.speech_rms:
+            if self.is_speech(frame):
                 self._speech_run_ms += frame_ms
                 if self._speech_run_ms >= self.config.speech_confirmation_ms:
                     self._speech_ms += (self._speech_run_ms

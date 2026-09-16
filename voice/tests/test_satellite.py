@@ -55,6 +55,53 @@ class SatelliteTests(unittest.TestCase):
         self.assertEqual(result[0]['purpose'], 'wake_and_command')
         self.assertEqual(np.frombuffer(result[1],dtype='<i2')[0],1234)
 
+    def prefix(self):
+        self.session.early_wake = True
+        sid = self.trigger()
+        for _ in range(10):
+            result = self.session.accept_stereo(frame(2100))
+        self.assertEqual(result[0]['purpose'], 'wake_prefix')
+        self.assertLessEqual(len(result[1]), int(2.2 * 32000))
+        return sid
+
+    def test_prefix_verification_preserves_continuous_command_recording(self):
+        sid = self.prefix()
+        for _ in range(30): self.assertEqual(self.session.accept_stereo(frame(3100)), [])
+        self.assertEqual(self.session.control({'type':'wake.verified','sessionId':sid,'accepted':True}), [])
+        self.assertEqual(self.session.phase, 'wake')
+        for _ in range(30): self.session.accept_stereo(frame(4100))
+        result = self.endpoint()
+        self.assertEqual(result[0]['purpose'], 'wake_and_command')
+        samples = np.frombuffer(result[1], dtype='<i2')
+        for value in [1234, 2100, 3100, 4100]: self.assertIn(value, samples)
+        self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})
+        self.assertEqual(self.session.phase, 'processing')
+
+    def test_endpoint_waits_for_prefix_and_retains_followup_during_both_asr_passes(self):
+        for accepted in [True, False]:
+            self.session.reset()
+            sid = self.prefix()
+            for _ in range(100): self.assertEqual(self.session.accept_stereo(frame(0)), [])
+            self.assertEqual(self.session.phase, 'confirming')
+            for _ in range(20): self.session.accept_stereo(frame(3200))
+            result = self.session.control({'type':'wake.verified','sessionId':sid,'accepted':accepted})
+            self.assertEqual(result[0]['purpose'], 'wake_and_command')
+            for _ in range(20): self.session.accept_stereo(frame(4200))
+            for _ in range(60): self.session.accept_stereo(frame(0))
+            result = self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':True})
+            samples = np.frombuffer(result[1], dtype='<i2')
+            self.assertIn(3200, samples)
+            self.assertIn(4200, samples)
+
+    def test_cancel_discards_pending_prefix_and_late_confirmation(self):
+        sid = self.prefix()
+        for _ in range(100): self.session.accept_stereo(frame(0))
+        self.session.control({'type':'session.cancel','sessionId':sid})
+        self.assertEqual(self.session.pending_utterance, [])
+        self.assertEqual(self.session.prefix, bytearray())
+        with self.assertRaises(ValueError):
+            self.session.control({'type':'wake.verified','sessionId':sid,'accepted':True})
+
     def test_followup_during_confirmation_is_preserved(self):
         sid = self.trigger()
         self.endpoint()

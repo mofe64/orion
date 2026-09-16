@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -1307,6 +1308,43 @@ class OrionGateway:
         return value
 
 
+def voice_service_directory() -> Path:
+    return Path(os.environ.get("ORION_STUDIO_SERVICE_HOME", "~/.local/share/orion/studio-service")).expanduser()
+
+
+def voice_service_request(request: dict[str, Any]) -> Any:
+    """Bridge allowlisted controls to the private headless owner, never to Codex directly."""
+    if not isinstance(request, dict) or request.get("method") not in {
+        "status", "observe", "start_saved", "load_settings", "save_settings", "model_locations", "profile", "microphone",
+    }:
+        raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_request", "Unsupported voice control.")
+    try:
+        connection = json.loads((voice_service_directory() / "connection.json").read_text())
+        host, port = connection["address"].rsplit(":", 1)
+        if connection["protocol"] != 1 or not ipaddress.ip_address(host).is_loopback:
+            raise ValueError("Invalid voice service address")
+        payload = json.dumps({"protocol": 1, "token": connection["token"], "request": request}).encode() + b"\n"
+        with socket.create_connection((host, int(port)), timeout=2) as client:
+            client.settimeout(135)
+            client.sendall(payload)
+            with client.makefile("rb") as reader:
+                data = reader.readline(MAX_RESPONSE_BYTES + 1)
+        if len(data) > MAX_RESPONSE_BYTES or not data.endswith(b"\n"):
+            raise ValueError("Invalid voice service response")
+        result = json.loads(data)
+        if result.get("ok") is not True:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "voice_request_failed", result.get("error", "Voice request failed."))
+        value = result["result"]
+        if request["method"] == "start_saved":
+            # The remote client uses the gateway's token, not a loopback-only credential.
+            value = {"url": "/api/v2/voice/events", "asrModel": value["asrModel"]}
+        return value
+    except GatewayError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "voice_unavailable", "Orion's onboard voice service is unavailable.") from error
+
+
 def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[str] | tuple[str, ...]):
     origin_allowlist = {allowed_origins} if isinstance(allowed_origins, str) else set(allowed_origins)
 
@@ -1340,6 +1378,11 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == "/api/v2/voice/status":
+                installed = (voice_service_directory() / "installed").exists()
+                return HTTPStatus.OK, {"onboard": installed}
+            if path == "/api/v2/voice/events":
+                return HTTPStatus.OK, voice_service_request({"method": "observe"})
             if path == "/api/v2/debug/logs":
                 return HTTPStatus.OK, gateway.runtime_logs()
             if path == "/api/v2/status":
@@ -1367,6 +1410,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == "/api/v2/voice/request":
+                return HTTPStatus.OK, voice_service_request(self._read_json())
             if path == "/api/v2/speech/stream":
                 return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True)
             match = re.fullmatch(r"/api/v2/speech/([1-9][0-9]*)/chunks/([1-9][0-9]*)", path)

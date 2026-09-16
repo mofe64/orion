@@ -8,7 +8,7 @@ use crate::{
     RuntimeCore, RuntimeDriver, RuntimeMode,
 };
 
-pub const DEFAULT_REST_AFTER_SECONDS: f64 = 600.0;
+pub const DEFAULT_REST_AFTER_SECONDS: f64 = 1800.0;
 const REST_FADE_SECONDS: f64 = 1.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -139,6 +139,10 @@ impl RestCoordinator {
 
     pub fn reactions_ready(&self) -> bool {
         matches!(self.state, RestState::Awake | RestState::Disabled)
+    }
+
+    pub fn wake_acknowledgment_ready(&self) -> bool {
+        self.reactions_ready() || self.state == RestState::Resting
     }
 
     pub fn speech_ready(&self, character: &CharacterCoordinator) -> bool {
@@ -490,13 +494,15 @@ mod tests {
     fn deadline_arms_after_home_and_triggers_at_exact_confirmed_timeout() {
         let mut f = Fixture::home();
         let mut rest = f.armed(DEFAULT_REST_AFTER_SECONDS);
-        assert_eq!(rest.status(2.0).remaining_seconds, Some(600.0));
+        assert_eq!(rest.status(2.0).remaining_seconds, Some(1800.0));
         assert_eq!(rest.status(2.0).last_confirmed_at, None);
         rest.confirmed("session", 10.0);
         assert_eq!(rest.status(10.0).last_confirmed_at, Some(10.0));
-        f.policy_tick(&mut rest, 609.999, false);
-        assert_eq!(rest.state, RestState::Awake);
         f.policy_tick(&mut rest, 610.0, false);
+        assert_eq!(rest.state, RestState::Awake);
+        f.policy_tick(&mut rest, 1809.999, false);
+        assert_eq!(rest.state, RestState::Awake);
+        f.policy_tick(&mut rest, 1810.0, false);
         assert_eq!(rest.state, RestState::GoingToRest);
         assert_eq!(f.releases.get(), 0);
         assert!(f.core.snapshot().torque_enabled);

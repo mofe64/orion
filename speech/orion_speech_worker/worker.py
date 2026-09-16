@@ -6,7 +6,7 @@ import sys
 import time
 
 MAX_LINE = 64 * 1024
-MAX_PCM = 18 * 32000
+MAX_PCM = 33 * 32000
 
 
 def read_json(reader):
@@ -29,25 +29,38 @@ def send(writer, message, pcm=None):
 
 
 def load_models(config):
-    from .providers import Qwen3AsrTranscriber
-    from .tts import ChatterboxSynthesizer
-    return Qwen3AsrTranscriber(config['asr_model']), ChatterboxSynthesizer(config['tts_model'])
+    role = config.get('role', 'both')
+    if os.environ.get('ORION_SPEECH_BACKEND') == 'pi':
+        from .pi import QwenGgufTranscriber, PocketSynthesizer
+        asr = QwenGgufTranscriber(config['asr_model']) if role in ('both', 'asr') else None
+        tts = PocketSynthesizer(config['tts_model']) if role in ('both', 'tts') else None
+    else:
+        from .providers import Qwen3AsrTranscriber
+        from .tts import ChatterboxSynthesizer
+        asr = Qwen3AsrTranscriber(config['asr_model']) if role in ('both', 'asr') else None
+        tts = ChatterboxSynthesizer(config['tts_model']) if role in ('both', 'tts') else None
+    return asr, tts
 
 
 def serve(reader, writer, loader=load_models):
     config = read_json(reader)
-    if config is None or config.get('protocol') != 1:
+    if config is None or config.get('protocol') not in (1, 2):
         raise ValueError('Unsupported speech protocol')
+    role = config.get('role', 'both')
+    if role not in ('both', 'asr', 'tts') or (config['protocol'] == 2 and role == 'both'):
+        raise ValueError('Invalid speech worker role')
     asr, tts = loader(config)
-    send(writer, dict(type='ready', protocol=1,
-                     asr=dict(provider=asr.provider, model=asr.model_name),
-                     tts=dict(provider=tts.provider, model=tts.model_name)))
+    send(writer, dict(type='ready', protocol=config['protocol'], role=role,
+                     asr=dict(provider=asr.provider, model=asr.model_name) if asr else None,
+                     tts=dict(provider=tts.provider, model=tts.model_name) if tts else None))
     while (job := read_json(reader)) is not None:
         request_id = job.get('id')
         if type(request_id) is not int or request_id <= 0:
             raise ValueError('Invalid speech job ID')
         try:
             if job.get('method') == 'transcribe':
+                if role == 'tts':
+                    raise ValueError('Transcription sent to TTS worker')
                 size = job.get('bytes')
                 if type(size) is not int or not 0 < size <= MAX_PCM or size % 2:
                     raise ValueError('Invalid PCM16 request')
@@ -57,11 +70,14 @@ def serve(reader, writer, loader=load_models):
                 result = asr.transcribe(pcm)
                 send(writer, dict(type='transcript', id=request_id, text=result.text, language=result.language))
             elif job.get('method') == 'synthesize':
+                if role == 'asr':
+                    raise ValueError('Synthesis sent to ASR worker')
                 text = job.get('text')
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError('Empty synthesis input')
                 started = time.monotonic()
-                stream = iter(tts.stream(text))
+                stream = iter(tts.stream(text, voice=job.get('voice', 'alba'))
+                              if tts.provider == 'pocket-tts' else tts.stream(text))
                 sequence = total = 0
                 try:
                     while True:

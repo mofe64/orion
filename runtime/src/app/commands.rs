@@ -493,7 +493,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 if rest.reactions_ready() {
                     let _ = character.set_reaction(reaction, now_seconds, core);
                 }
-                if rest.reactions_ready() && !speech.is_active() && !scenes.is_active() {
+                let cue_ready = rest.reactions_ready()
+                    || (cue == Some("voice_wake") && rest.wake_acknowledgment_ready());
+                if cue_ready && !speech.is_active() && !scenes.is_active() {
                     if let Some(cue) = cue {
                         if cue == "error_muted" {
                             let _ = audio.stop();

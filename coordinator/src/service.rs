@@ -47,6 +47,9 @@ struct Control {
     reply: std::sync::mpsc::Sender<Result<Value, String>>,
 }
 pub struct Coordinator {
+    generation: String,
+    speech: Arc<SpeechRuntime>,
+    hub: Hub,
     connection: CoordinatorConnection,
     control: mpsc::Sender<Control>,
     stop: Option<oneshot::Sender<()>>,
@@ -72,10 +75,14 @@ impl Coordinator {
         let (stop, mut stopped) = oneshot::channel();
         let (control, mut controls) = mpsc::channel::<Control>(8);
         let token = connection.token.clone();
+        let speech = Arc::new(SpeechRuntime::new(config.speech.clone()));
+        let owned_speech = speech.clone();
+        let hub = Hub::new();
+        let owned_hub = hub.clone();
         let thread = std::thread::Builder::new().name("orion-coordinator".into()).spawn(move || runtime.block_on(async move {
             let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
-            let hub = Hub::new();
-            let speech = Arc::new(SpeechRuntime::new(config.speech.clone()));
+            let hub = owned_hub;
+            let speech = owned_speech;
             let (shutdown, shutdown_rx) = watch::channel(false);
             let mut processing = tokio::spawn(pipeline::run(config.clone(), agent, speech.clone(), hub.clone(), shutdown_rx));
             let mut tasks = tokio::task::JoinSet::new();
@@ -119,6 +126,9 @@ impl Coordinator {
             speech.close().await;
         })).map_err(|e| e.to_string())?;
         Ok(Self {
+            generation: uuid::Uuid::new_v4().to_string(),
+            speech,
+            hub,
             connection,
             control,
             stop: Some(stop),
@@ -127,6 +137,12 @@ impl Coordinator {
     }
     pub fn connection(&self) -> CoordinatorConnection {
         self.connection.clone()
+    }
+    pub fn events(&self) -> Value {
+        serde_json::json!({"generation":self.generation,"events":self.hub.values()})
+    }
+    pub fn set_voice(&self, voice: &str) {
+        self.speech.set_voice(voice);
     }
     pub fn is_running(&self) -> bool {
         self.thread

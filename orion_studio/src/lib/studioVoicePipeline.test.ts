@@ -47,6 +47,30 @@ class FakeSpeaker implements SpeechPlayer {
 }
 
 describe("StudioVoicePipeline", () => {
+  it("keeps replayed playback state when attaching to an active Pi", async () => {
+    const transport = new FakeTransport();
+    transport.connect = async () => {
+      transport.emit(READY);
+      transport.emit({ type: "speech.started", requestId: 1 });
+      return READY;
+    };
+    const pipeline = new StudioVoicePipeline({ launcher: new FakeLauncher(), createTransport: () => transport, speaker: new FakeSpeaker() });
+    await pipeline.start();
+    expect(pipeline.current().phase).toBe("speaking");
+  });
+
+  it("keeps early speech progress when the final agent response arrives", async () => {
+    const transport = new FakeTransport();
+    const pipeline = new StudioVoicePipeline({ launcher: new FakeLauncher(), createTransport: () => transport, speaker: new FakeSpeaker() });
+    await pipeline.start();
+    transport.emit({ type: "synthesis.started", requestId: 1 });
+    transport.emit({ type: "agent.response", requestId: 1, text: "Hello.", durationMs: 100 });
+    expect(pipeline.current().phase).toBe("synthesizing");
+    transport.emit({ type: "speech.started", requestId: 1 });
+    transport.emit({ type: "agent.response", requestId: 1, text: "Hello again.", durationMs: 200 });
+    expect(pipeline.current().phase).toBe("speaking");
+  });
+
   it("shows the invitation and returns to wake listening when it expires", async () => {
     const transport = new FakeTransport();
     const pipeline = new StudioVoicePipeline({ launcher: new FakeLauncher(), createTransport: () => transport, speaker: new FakeSpeaker() });

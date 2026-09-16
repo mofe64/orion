@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from contextlib import suppress
 from pathlib import Path
+import os
+import select
 import subprocess
+import time
 
 
 WAKE_SAMPLE_RATE = 16_000
@@ -69,6 +72,28 @@ class AlsaPcmCapture:
             stdout=subprocess.DEVNULL,
         )
         self._process = subprocess.Popen(self.command(), stdout=subprocess.PIPE)
+        try:
+            # ADC startup can reset the codec's mixer state. Apply the selected
+            # gain after frames arrive, then discard the settling audio.
+            self._discard_startup(300)
+            subprocess.run(self.configure_command(), check=True, stdout=subprocess.DEVNULL)
+            self._discard_startup(300)
+        except BaseException:
+            self.close()
+            raise
+
+    def _discard_startup(self, milliseconds):
+        channels = int(self.command()[-1])
+        remaining = WAKE_SAMPLE_RATE * 2 * channels * milliseconds // 1000
+        fd = self._process.stdout.fileno()
+        deadline = time.monotonic() + 3
+        while remaining:
+            timeout = deadline - time.monotonic()
+            if timeout <= 0 or not select.select([fd], [], [], timeout)[0]:
+                raise RuntimeError("ALSA microphone did not produce startup frames")
+            chunk = os.read(fd, min(remaining, 8192))
+            if not chunk: raise RuntimeError("ALSA microphone stopped during startup")
+            remaining -= len(chunk)
 
     def read(self) -> bytes:
         if self._process is None or self._process.stdout is None:
@@ -92,5 +117,4 @@ class AlsaPcmCapture:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
-
 

@@ -8,6 +8,7 @@ import {
   type VoiceWorkerReadyEvent,
 } from "./voiceWorkerProtocol";
 import type { GatewayConnection } from "./gateway";
+import { GatewayVoiceClient } from "./gatewayVoiceClient";
 
 export type StudioVoicePhase =
   | "off"
@@ -66,8 +67,9 @@ export interface StudioVoiceSnapshot {
   latency?: Record<string, number>;
 }
 
-export interface VoiceSettings { model: string; effort: string; provider?: "codex"; asrModel?: string; ttsModel?: string; asrPath?: string; ttsPath?: string; cachePath?: string; }
-export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-5.6-sol", effort: "medium", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "mlx-community/chatterbox-turbo-8bit", asrPath: "", ttsPath: "", cachePath: "" };
+export interface VoiceSettings { model: string; effort: string; provider?: "codex"; asrModel?: string; ttsModel?: string; ttsVoice?: string; asrPath?: string; ttsPath?: string; cachePath?: string; }
+export const VOICE_PRESETS = ["anna", "azelma", "cosette", "eve", "fantine", "jane", "vera", "alba"] as const;
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-5.6-sol", effort: "medium", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "mlx-community/chatterbox-turbo-8bit", ttsVoice: "alba", asrPath: "", ttsPath: "", cachePath: "" };
 
 export interface StudioVoicePipelineOptions {
   settings?: VoiceSettings;
@@ -123,7 +125,7 @@ const INITIAL_SNAPSHOT: StudioVoiceSnapshot = {
   response: null,
 };
 
-/** Studio processes Pi-triggered utterances; it never opens a microphone. */
+/** Studio observes the active coordinator; it never opens a microphone. */
 export class StudioVoicePipeline {
   private snapshot: StudioVoiceSnapshot = { ...INITIAL_SNAPSHOT };
   private listeners = new Set<(snapshot: StudioVoiceSnapshot) => void>();
@@ -141,7 +143,7 @@ export class StudioVoicePipeline {
 
   constructor(options: StudioVoicePipelineOptions = {}) {
     this.launcher = options.launcher ?? new TauriVoiceWorkerLauncher(options.connection, options.settings);
-    this.createTransport = options.createTransport ?? ((connection) => new VoiceWorkerClient({
+    this.createTransport = options.createTransport ?? ((connection) => /^https?:/.test(connection.url) ? new GatewayVoiceClient(connection.url, connection.token) : new VoiceWorkerClient({
       url: connection.url,
       token: connection.token,
       connectTimeoutMs: 180_000,
@@ -188,7 +190,8 @@ export class StudioVoicePipeline {
         ttsProvider: ready.tts.provider,
         ttsModel: ready.tts.model,
       });
-      this.publish({ ...this.snapshot, phase: "ready", error: null,
+      const connectedPhase = this.current().phase;
+      this.publish({ ...this.snapshot, phase: connectedPhase === "starting" ? "ready" : connectedPhase,
         deviceLabel: "Orion ReSpeaker · Pi capture", sampleRate: 16_000 });
     } catch (error) {
       if (operation !== this.operation) return;
@@ -276,7 +279,7 @@ export class StudioVoicePipeline {
         if (typeof event.captureMs === "number") this.snapshot.latency = { ...this.snapshot.latency, ["capture_" + event.purpose]: event.captureMs };
         this.publish({
           ...this.snapshot,
-          phase: event.purpose === "wake_and_command" ? "confirming_wake" : "transcribing",
+          phase: event.purpose === "command" ? "transcribing" : "confirming_wake",
         });
         break;
       case "wake.confirmed":
@@ -286,6 +289,9 @@ export class StudioVoicePipeline {
         break;
       case "wake.rejected":
         this.publish({ ...this.snapshot, phase: "ready", error: null });
+        break;
+      case "wake.verification_deferred":
+        // Capture continues until the complete utterance can confirm the wake.
         break;
       case "conversation.window":
         this.publish({ ...this.snapshot, phase: event.active ? "conversation_listening" : "ready", error: null });
@@ -310,7 +316,7 @@ export class StudioVoicePipeline {
         break;
       case "agent.response":
         this.snapshot.latency = { ...this.snapshot.latency, agentMs: event.durationMs };
-        this.publish({ ...this.snapshot, phase: "thinking", activity: null, response: event.text, error: null });
+        this.publish({ ...this.snapshot, phase: ["synthesizing", "speaking"].includes(this.snapshot.phase) ? this.snapshot.phase : "thinking", activity: null, response: event.text, error: null });
         break;
       case "synthesis.started":
         this.publish({ ...this.snapshot, phase: "synthesizing", error: null });

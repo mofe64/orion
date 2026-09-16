@@ -1,12 +1,13 @@
 # Orion
 
-Orion is an expressive robotic lamp. It uses a Raspberry Pi as the onboard computer for running the safety-critical hardware runtime, while Orion Studio provides scene authoring, robot control,
-and acts as the external voice processing and agent runtime.
+Orion is an expressive robotic lamp. Its Raspberry Pi runs the hardware runtime,
+local speech recognition and synthesis, and the Codex agent coordinator. Studio
+provides scene authoring, robot controls, and voice settings. Speech works with
+Studio closed; Codex inference and web search still require the internet.
 
 ## Start here
 
-- [Quickstart](docs/quickstart.md) — run the UI or headless service, update Studio,
-  and deploy to the Pi.
+- [Quickstart](docs/quickstart.md) — open Studio and install or update the Pi services.
 - [Understand the system](docs/system-architecture.md) — component
   boundaries, data flow, and safety ownership.
 - [Understand motion and animation](docs/motion-and-animation-architecture.md)
@@ -18,64 +19,54 @@ and acts as the external voice processing and agent runtime.
   [run it in MuJoCo](runtime/README.md#mujoco-first-daemon).
 - [Run Orion Studio](orion_studio/README.md#development) — install the desktop
   dependencies and open the application.
-- [Set up Studio Voice](speech/README.md#setup-on-apple-silicon) — install the
+- [Set up Pi voice and agent](docs/quickstart.md#pi-local-voice-and-agent) — install the
   inference worker and models, then [connect Pi capture](voice/README.md#setup).
 - [Deploy to the Raspberry Pi](runtime/README.md#deploy-an-update-to-the-raspberry-pi)
-  — update the source-backed services and run the bounded hardware smoke test.
+  — update the full stack while preserving Pi settings and a recent rollback.
 - [Browse all documentation](docs/README.md) — architecture, reference material,
   component setup, and learning notes.
 
 ## System at a glance
 
-Orion Studio acts as the external processing station and enables its voice functionality, which combines automatic speech recognition (ASR), AI agent, and text-to-speech (TTS).
-Orion also posseses functional and expressive lighting via a led (adafruit neo pixel shield) with red, green, blue, and dedicated
-white channels.
+The Pi voice pipeline uses Rustpotter → Silero → Qwen3-ASR → Codex → Pocket TTS.
+The same hardware runtime owns motion, speech animation, and RGBW lighting.
 
 ```text
-External Computer                                Onboard Computer (Raspberry Pi)
-
-Orion Studio                                     authenticated HTTP gateway
-├── scene and motion editor     semantic API     ├── named assets and actions
-├── Pi audio processing       ────────────────▶  └── private Unix socket
-├── Qwen ASR + agent + TTS                            │
-└── validated WAV upload                               ▼
-                                                    oriond
-                                                    ├── lifecycle and safety
-                                                    ├── character + scenes
-                                                    ├── continuous motion
-                                                    ├── STS3215 servos
-                                                    ├── RGBW lighting
-                                                    └── ReSpeaker playback
+Studio (optional)  ── authenticated gateway ── Pi settings and robot controls
+                                               │
+Pi microphone → Rustpotter + Silero → Qwen → Codex App Server → Pocket TTS
+                                               │                   │
+                                       online model/search         ▼
+                                                   oriond streaming playback
+                                                   + motion and RGBW lighting
 ```
 
 `oriond` is the active runtime for Onboard computer. Studio submits
 semantic requests such as named poses, motions, scenes, and speech, but does not control
 hardware directly. AI agent integrations use the same semantic boundary.
 
-Studio Voice processes audio captured exclusively by the onboard Pi. The Pi
-runs Rustpotter and forwards bounded utterances over the local network; Studio confirms the
-wake with Qwen3-ASR, invokes the configured agent, and synthesizes replies with
-Chatterbox. Studio provides the compute for speech recognition, the agent, and
-expressive synthesis through the desktop app or background headless service; the Pi plays replies and owns character animation. See the
-[voice architecture](docs/voice-architecture.md) and
-[Pi setup](voice/README.md).
+The onboard coordinator confirms wake candidates with Qwen, calls the Rust
+agent, and synthesizes Pocket replies. `oriond` owns character animation and
+acknowledges actual playback. Studio observes the Pi and selects saved voice
+presets without taking over processing. See the [voice architecture](docs/voice-architecture.md)
+and [Pi setup](voice/README.md).
 
 ## Repository map
 
 | Path | Responsibility |
 | --- | --- |
 | `agent/` | Rust conversation runtime, memory/tools, and Codex integration |
-| `studio-service/` | Shared Studio ownership, settings, pairing, and standalone headless launcher |
+| `orion-service/` | Pi voice/agent host and Studio remote client |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
-| `speech/` | Python Qwen ASR and Chatterbox inference worker |
+| `speech/` | CPU Qwen/Pocket workers and legacy Apple Silicon adapters |
 | `orion_studio/` | Tauri/React desktop application and Pi gateway |
 | `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
 | `scenes/` | Versioned multimodal scene documents |
 | `description/` | Neutral Unified Robot Description Format (URDF) model and shared mesh assets |
 | `simulation/mujoco/` | MuJoCo model, playback tools, and simulator checks |
 | `hardware/` | Commissioning and operating instructions for servos, audio, and lighting |
-| `voice/` | Pi microphone capture, Rustpotter wake detection, and Studio transport |
+| `voice/` | Pi microphone capture, Rustpotter, Silero endpointing, and coordinator transport |
 | `audio/` | Named local audio cues |
 | `docs/` | Cross-system architecture, configuration, animation references, and learning notes |
 
@@ -85,7 +76,7 @@ expressive synthesis through the desktop app or background headless service; the
 Run these from the repository root unless a linked guide says otherwise:
 
 ```bash
-cargo test --manifest-path studio-service/Cargo.toml
+cargo test --manifest-path orion-service/Cargo.toml
 python3 -m unittest discover -s scripts/tests -v
 cargo test --manifest-path coordinator/Cargo.toml
 cargo test --manifest-path agent/Cargo.toml
@@ -101,10 +92,10 @@ pnpm build
 Some runtime integration tests expect the repository Python environment at
 `.venv/bin/python`. Model-independent voice-worker tests use the worker's own
 environment; see its [validation instructions](speech/README.md#validation).
-Orion-managed environments use Python 3.12, selected by `.python-version` and
-package metadata. The simulator environment (`.venv`) is for workstation development and is not
+Most Orion environments use Python 3.12; Pi speech uses Python 3.11 for its
+CPU dependencies. Versions are selected by package metadata and setup scripts. The simulator environment (`.venv`) is for workstation development and is not
 installed or required on the Pi. Keep separate environments for Pi
-capture (`voice/.venv`), Studio inference (`speech/.venv`), and
+capture (`voice/.venv`), speech inference (`speech/.venv`), and
 servo commissioning (`hardware/servo_setup/.venv`). Use `uv sync --locked` for
 packages with a lockfile. The Pi gateway and the `uv` bootstrap use system Python;
 they do not require changing the operating system interpreter.
@@ -112,9 +103,9 @@ they do not require changing the operating system interpreter.
 ## Implementation status
 
 Orion implements the runtime, simulator, Pi hardware path, scene system, Studio
-authoring and gateway, and Studio speech-response pipeline. Allowlisted agent
+authoring and gateway, and the Pi speech-response pipeline. Allowlisted agent
 lighting commands are implemented; broader agent motion capabilities are planned. Production network pairing,
-packaged voice models, and non-Apple-Silicon Studio inference remain partial.
+portable model packaging and broader offline agent support remain partial.
 Component READMEs describe setup, validation, and remaining platform constraints.
 
 ## Safety

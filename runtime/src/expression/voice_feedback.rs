@@ -14,6 +14,7 @@ pub struct VoiceFeedback {
     session: Option<String>,
     phase: String,
     confirmed: bool,
+    verifying_wake: bool,
     processing_cued: bool,
     since: f64,
     deadline: f64,
@@ -21,10 +22,13 @@ pub struct VoiceFeedback {
     history: VecDeque<(String, String, f64)>,
 }
 impl VoiceFeedback {
-    /// Confirmation is accepted once for the currently endpointed wake. Raw
-    /// candidates and continuation speech never extend the inactivity deadline.
+    /// Confirmation requires an explicit prefix verification or an endpointed
+    /// wake. A raw candidate alone cannot extend the inactivity deadline.
     pub fn confirm(&mut self, id: &str, now: f64) -> bool {
-        if !self.owns(id) || self.confirmed || self.phase != "thinking" {
+        if !self.owns(id)
+            || self.confirmed
+            || !(self.phase == "thinking" || (self.phase == "listening" && self.verifying_wake))
+        {
             return false;
         }
         self.confirmed = true;
@@ -69,6 +73,7 @@ impl VoiceFeedback {
     }
     pub fn clear(&mut self) {
         self.confirmed = false;
+        self.verifying_wake = false;
         if let Some(id) = self.session.take() {
             self.retired.push_back(id);
             if self.retired.len() > 128 {
@@ -119,6 +124,11 @@ impl VoiceFeedback {
             return Ok(None);
         }
         match event {
+            "verify" if self.phase == "listening" && !self.confirmed => {
+                self.verifying_wake = true;
+                self.record("wake_verification", now);
+                Ok(None)
+            }
             "processing" if matches!(self.phase.as_str(), "speaking" | "thinking") => {
                 self.phase = "thinking".into();
                 self.since = now;
@@ -179,7 +189,7 @@ impl VoiceFeedback {
                 self.record("unavailable", now);
                 Ok(Some(("neutral", Some("error_muted"))))
             }
-            "endpoint" | "followup" | "unavailable" | "guard" | "window" => Ok(None),
+            "endpoint" | "followup" | "unavailable" | "guard" | "window" | "verify" => Ok(None),
             _ => Err("Unknown voice event"),
         }
     }
@@ -248,6 +258,21 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn prefix_confirmation_requires_verification_and_keeps_listening() {
+        let mut feedback = VoiceFeedback::default();
+        feedback.event(ID, "wake", 1.0).unwrap();
+        assert!(!feedback.confirm(ID, 1.1));
+        feedback.event(ID, "verify", 1.2).unwrap();
+        assert!(feedback.confirm(ID, 2.0));
+        assert_eq!(feedback.reaction(), "listening");
+        assert!(!feedback.confirm(ID, 2.1));
+        feedback.event(ID, "endpoint", 5.0).unwrap();
+        assert_eq!(feedback.reaction(), "thinking");
+        feedback.event(ID, "cancel", 5.1).unwrap();
+        assert!(!feedback.confirm(ID, 5.2));
+    }
     #[test]
     fn intermediate_speech_returns_to_silent_processing_animation() {
         let mut f = VoiceFeedback::default();

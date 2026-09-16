@@ -10,8 +10,8 @@ def emit(value, pcm=b''):
     writer.flush()
 
 config = json.loads(reader.readline())
-assert set(config) == {'protocol', 'asr_model', 'tts_model'}
-emit(dict(type='ready',protocol=1,asr=dict(provider='qwen3-asr',model='fixture'),tts=dict(provider='chatterbox-turbo',model='fixture')))
+assert set(config) == {'protocol', 'role', 'asr_model', 'tts_model'}
+emit(dict(type='ready',protocol=2,role=config['role'],asr=dict(provider='qwen3-asr',model='fixture'),tts=dict(provider='chatterbox-turbo',model='fixture')))
 for raw in reader:
     request = json.loads(raw)
     rid = request['id']

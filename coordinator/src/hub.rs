@@ -19,6 +19,7 @@ pub(crate) struct Hub {
 }
 #[derive(Default)]
 struct State {
+    sequence: u64,
     ready: Option<Value>,
     replay: VecDeque<String>,
 }
@@ -29,8 +30,10 @@ impl Hub {
             events: broadcast::channel(64).0,
         }
     }
-    pub fn publish(&self, value: Value) {
+    pub fn publish(&self, mut value: Value) {
         let mut state = self.state.lock().unwrap();
+        state.sequence += 1;
+        value["eventId"] = state.sequence.into();
         if value["type"] == "ready" {
             state.ready = Some(value.clone());
             state.replay.clear();
@@ -57,6 +60,12 @@ impl Hub {
             .iter()
             .map(Value::to_string)
             .chain(state.replay.iter().cloned())
+            .collect()
+    }
+    pub fn values(&self) -> Vec<Value> {
+        self.snapshot()
+            .into_iter()
+            .filter_map(|raw| serde_json::from_str(&raw).ok())
             .collect()
     }
     pub async fn attach(

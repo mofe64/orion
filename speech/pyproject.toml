@@ -6,13 +6,24 @@ build-backend = "hatchling.build"
 name = "orion-speech-worker"
 version = "0.1.0"
 description = "Local speech inference worker for Orion"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "huggingface-hub>=0.36,<2",
   "numpy>=1.26,<3",
   "mlx-audio>=0.5.1,<0.6; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "mlx-qwen3-asr>=0.3.5,<0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+
+[project.optional-dependencies]
+pi = ["pocket-tts==3.1.0", "torch==2.14.0", "onnxruntime==1.30.0"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [project.scripts]
 orion-voice-models = "orion_speech_worker.models:main"

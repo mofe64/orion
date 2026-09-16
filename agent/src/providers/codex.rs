@@ -289,6 +289,8 @@ impl Codex {
         let mut final_text = String::new();
         let mut searched = false;
         let mut calls = std::collections::HashSet::new();
+        let mut final_item: Option<String> = None;
+        let mut sentences = crate::prompt::Sentences::default();
         loop {
             let message = match self.pending.pop_front() {
                 Some(message) => message,
@@ -296,6 +298,9 @@ impl Codex {
             };
             let params = &message["params"];
             if message["method"] == "item/tool/call" {
+                if !sentences.emitted.is_empty() {
+                    return Err("Unexpected tool call after final speech began".into());
+                }
                 if params["threadId"] != self.info.conversation_id
                     || params["turnId"] != turn_id
                     || !params["namespace"].is_null()
@@ -321,6 +326,37 @@ impl Codex {
             }
             if params["threadId"] != self.info.conversation_id {
                 continue;
+            }
+            if params["turnId"] == turn_id {
+                if message["method"] == "item/started"
+                    && params["item"]["type"] == "agentMessage"
+                    && params["item"]["phase"] == "final_answer"
+                {
+                    let id = params["item"]["id"]
+                        .as_str()
+                        .ok_or("Final answer has no item ID")?;
+                    if final_item.as_deref().is_some_and(|previous| previous != id) {
+                        return Err("Multiple streamed final answers".into());
+                    }
+                    final_item = Some(id.into());
+                }
+                if message["method"] == "item/agentMessage/delta"
+                    && final_item
+                        .as_deref()
+                        .is_some_and(|id| params["itemId"] == id)
+                {
+                    let delta = params["delta"]
+                        .as_str()
+                        .ok_or("Invalid final answer delta")?;
+                    if let Some(text) = sentences.push(delta)?
+                        && let Some(events) = events
+                    {
+                        events
+                            .send(crate::AgentEvent::FinalSpeech(text))
+                            .await
+                            .map_err(|_| "Coordinator stopped")?;
+                    }
+                }
             }
             if message["method"] == "item/started"
                 && params["turnId"] == turn_id
@@ -353,7 +389,11 @@ impl Codex {
                         final_text = text.into();
                     }
                 }
-                return spoken_response(&final_text);
+                let response = spoken_response(&final_text)?;
+                if !response.starts_with(&sentences.emitted) {
+                    return Err("Final answer changed previously streamed speech".into());
+                }
+                return Ok(response);
             }
         }
     }

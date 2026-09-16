@@ -1,4 +1,4 @@
-use orion_studio_service::{
+use orion_service::{
     Backend, Request,
     settings::{VoiceSettings, expand_path},
 };

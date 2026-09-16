@@ -7,7 +7,7 @@ export interface VoiceWorkerReadyEvent {
   asr: { provider: "qwen3-asr"; model: string };
   wake: { provider: "rustpotter"; model: string; threshold: number };
   agent: { provider: string; model: string; effort?: string; runtime?: string; models?: { model: string; name: string; efforts: string[] }[] };
-  tts: { provider: "chatterbox-turbo"; model: string };
+  tts: { provider: "chatterbox-turbo" | "pocket-tts"; model: string };
 }
 
 export interface WakeCandidateEvent {
@@ -20,6 +20,7 @@ export interface WakeConfirmedEvent {
   type: "wake.confirmed";
   text: string;
   hasCommand: boolean;
+  early?: boolean;
 }
 
 export interface WakeRejectedEvent {
@@ -34,7 +35,7 @@ export interface CommandStartedEvent {
 export interface TranscriptionStartedEvent {
   type: "transcription.started";
   captureMs?: number;
-  purpose: "wake_and_command" | "command";
+  purpose: "wake_prefix" | "wake_and_command" | "command";
 }
 
 export interface TranscriptFinalEvent {
@@ -96,6 +97,7 @@ export interface VoiceWorkerErrorEvent {
 }
 
 export type VoiceWorkerEvent =
+  | { type: "wake.verification_deferred" }
   | { type: "conversation.window"; active: boolean }
   | { type: "speech.started"; requestId: number }
   | { type: "microphone.status"; muted: boolean }
@@ -177,7 +179,7 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
         || typeof message.wake.threshold !== "number"
         || typeof message.agent.provider !== "string"
         || typeof message.agent.model !== "string"
-        || message.tts.provider !== "chatterbox-turbo"
+        || !["chatterbox-turbo", "pocket-tts"].includes(String(message.tts.provider))
         || typeof message.tts.model !== "string"
       ) break;
       return message as unknown as VoiceWorkerReadyEvent;
@@ -190,13 +192,15 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
     case "wake.rejected":
       if (typeof message.text !== "string") break;
       return message as unknown as WakeRejectedEvent;
+    case "wake.verification_deferred":
+      return { type: "wake.verification_deferred" };
     case "conversation.window":
       if (typeof message.active !== "boolean") break;
       return { type: "conversation.window", active: message.active };
     case "command.started":
       return { type: "command.started" };
     case "transcription.started":
-      if (message.purpose !== "wake_and_command" && message.purpose !== "command") break;
+      if (!["wake_prefix", "wake_and_command", "command"].includes(String(message.purpose))) break;
       return message as unknown as TranscriptionStartedEvent;
     case "transcript.final":
       if (

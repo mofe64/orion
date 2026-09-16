@@ -2,7 +2,7 @@
 
 ## System boundary
 
-Orion's oboard computer owns movement, lighting, and audio capture and playback. Orion Studio runs on an external computer and provides asset authoring, speech recognition, the agent, and speech synthesis. Control commands and reply audio follow this path:
+Orion’s onboard Pi owns movement, lighting, microphone capture, local speech models, and playback. The headless Rust host runs the voice coordinator and Codex App Server on the Pi; Codex model inference is online. Studio provides optional asset authoring, controls, settings, and observation.
 
 ```text
 External Computer                                     Onboard Computer
@@ -12,7 +12,7 @@ External Computer                                     Onboard Computer
 │                              │   bearer token      │                     │
 │ • author and preview assets  │                     │ • authenticate      │
 │ • submit semantic commands   │                     │ • validate API      │
-│ • synthesize voice responses │                     │ • spool speech WAV  │
+│ • choose voice presets       │                     │ • spool speech WAV  │
 └──────────────────────────────┘                     └──────────┬──────────┘
                                                                │ private
                                                                │ Unix socket
@@ -56,18 +56,19 @@ token over HTTP; deployment currently assumes a trusted local network.
 ### Orion Studio
 
 Studio's UI owns asset browsing, editing, preview, and its gateway connection.
-The shared `studio-service` crate owns the agent, voice coordinator, pairing, and
-settings. Its Rust coordinator runs transcription and synthesis through a Python
-speech worker and sends confirmed commands to the Rust agent. The agent can search
+The Pi `orion-service` host owns the agent, voice coordinator, pairing, and
+settings. Its Rust coordinator runs transcription and synthesis through separate Python
+speech workers and sends confirmed commands to the Rust agent. The agent can search
 the web, manage explicitly requested memories, and request validated lamp changes.
 Lighting requests pass through the coordinator, gateway, and `oriond`.
 
-The service runs inside the desktop app or in `orion-studio-headless`. An installed
-headless owner keeps processing when the UI exits. The UI sends service commands
-through an authenticated loopback connection and observes the same coordinator.
-An OS-held lock prevents two local owners; the Pi independently permits one voice
-processing connection. See [service lifecycle](voice-architecture.md#studio-service-lifecycle)
-and [launch commands](quickstart.md).
+On the Pi, `orion-voice-stack` runs `orion-service` under systemd.
+Studio routes settings and profile commands through the authenticated gateway
+and observes bounded status snapshots. The listener accepts processing ownership
+only from loopback, preventing a workstation from competing with the Pi owner.
+Studio returns an error when the Pi service is unavailable. It never starts
+workstation inference. See [service lifecycle](voice-architecture.md#orion-service-lifecycle)
+and [launch commands](quickstart.md#pi-local-voice-and-agent).
 
 Studio can request execution of built-in and user-authored motion through the
 gateway. The agent's available tools do not include motion control. The
@@ -77,11 +78,10 @@ playback lifecycle.
 ### Onboard computer listener
 
 The listener owns microphone capture, Rustpotter wake detection, and utterance
-endpointing. It sends captured utterances to Studio over an authenticated
-WebSocket and forwards voice events to `oriond` on the local socket. Capture
+Silero endpointing. It sends captured utterances to the onboard coordinator
+over an authenticated loopback WebSocket and forwards voice events to `oriond` on the local socket. Capture
 runs independently of the motor loop and remains available during mechanical
-rest unless the microphone is muted. Studio must be connected to confirm a wake
-through speech recognition.
+rest unless the microphone is muted. The onboard Qwen worker confirms a wake through speech recognition.
 
 ## Asset flow
 
@@ -124,7 +124,7 @@ with torque disabled for maintenance. Voice capture has its own mute control.
 
 ## Automatic rest and waking
 
-Orion returns to mechanical rest after ten minutes without a wake confirmation
+Orion returns to mechanical rest after the configured inactivity interval without a wake confirmation
 accepted through speech recognition. Successful initial homing arms the timer. Each current wake
 session can reset it once; raw candidates, rejected wakes, repeated
 confirmations, and ordinary animation leave the deadline unchanged.

@@ -55,16 +55,16 @@ class EndpointTests(unittest.TestCase):
             self.assertFalse(detector.accept(frame(3000 if i in (10, 20, 30) else 0)))
         self.assertTrue(detector.accept(frame()))
 
-    def test_continuous_speech_still_has_fifteen_second_limit(self):
+    def test_continuous_speech_still_has_thirty_second_limit(self):
         detector = EnergyEndpointDetector()
         detector.prime_detected_speech()
-        for _ in range(749): self.assertFalse(detector.accept(frame(2000)))
+        for _ in range(1499): self.assertFalse(detector.accept(frame(2000)))
         self.assertTrue(detector.accept(frame(2000)))
         self.assertEqual(detector.end_reason, 'max_duration')
 
     def test_followup_needs_speech_and_has_bounded_empty_wait(self):
         detector = EnergyEndpointDetector()
-        for _ in range(749): self.assertFalse(detector.accept(frame()))
+        for _ in range(1499): self.assertFalse(detector.accept(frame()))
         self.assertTrue(detector.accept(frame()))
         self.assertEqual(detector.end_reason, 'max_duration')
 

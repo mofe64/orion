@@ -1,4 +1,4 @@
-use orion_studio_service::{Backend, Request};
+use orion_service::{Backend, Request};
 
 #[tauri::command]
 pub async fn load_agent_profile(

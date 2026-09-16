@@ -69,14 +69,15 @@ async fn connect(
     control: bool,
 ) -> Result<(Pi, SplitStream<Socket>, Value), String> {
     let options = WebSocketConfig::default()
-        .max_message_size(Some(18 * 32000))
-        .max_frame_size(Some(18 * 32000));
+        .max_message_size(Some(33 * 32000))
+        .max_frame_size(Some(33 * 32000));
     let (socket, _) = connect_async_with_config(&config.pi_url, Some(options), false)
         .await
         .map_err(|e| e.to_string())?;
     let (output, mut input) = socket.split();
     let pi = Pi(Arc::new(Mutex::new(output)));
-    let mut hello = json!({"type":"hello", "protocol":1, "token":config.pi_token});
+    let mut hello =
+        json!({"type":"hello", "protocol":1, "token":config.pi_token, "wakePrefix":true});
     if control {
         hello["role"] = "control".into();
     }
@@ -250,9 +251,22 @@ async fn connected(
                             session = None; followup = None;
                         },
                         Ok(Completed::Transcript { sid: job_sid, purpose, transcript, elapsed }) => {
-                            if job_sid != sid || current.phase != Phase::Transcribing { return Err("Stale transcription result".into()); }
+                            let expected = if purpose == "wake_prefix" { Phase::VerifyingWake } else { Phase::Transcribing };
+                            if job_sid != sid || current.phase != expected { return Err("Stale transcription result".into()); }
                             timing(hub, &sid, &format!("transcription_{purpose}"), elapsed);
                             let raw = transcript["text"].as_str().ok_or("Invalid transcript text")?.trim();
+                            if purpose == "wake_prefix" {
+                                let accepted = after_wake(raw).is_some();
+                                current.wake_verified = accepted;
+                                current.phase = Phase::Wake;
+                                pi.send(json!({"type":"wake.verified", "sessionId":sid, "accepted":accepted})).await?;
+                                event(hub, &sid, if accepted {
+                                    json!({"type":"wake.confirmed", "text":raw, "hasCommand":false, "early":true})
+                                } else {
+                                    json!({"type":"wake.verification_deferred"})
+                                });
+                                continue;
+                            }
                             let command = if purpose == "wake_and_command" {
                                 match after_wake(raw) {
                                     None => {
@@ -264,7 +278,9 @@ async fn connected(
                                     Some(command) => {
                                         current.phase = if command.is_empty() { Phase::Command } else { Phase::Responding };
                                         pi.send(json!({"type":"wake.confirmed", "sessionId":sid, "followup":command.is_empty()})).await?;
-                                        event(hub, &sid, json!({"type":"wake.confirmed", "text":raw, "hasCommand":!command.is_empty()}));
+                                        if !current.wake_verified {
+                                            event(hub, &sid, json!({"type":"wake.confirmed", "text":raw, "hasCommand":!command.is_empty()}));
+                                        }
                                         if command.is_empty() {
                                             event(hub, &sid, json!({"type":"command.started"})); continue;
                                         }
@@ -326,6 +342,12 @@ async fn connected(
                             };
                             let Message::Binary(pcm) = audio else { return Err("Expected Pi PCM16 bytes".into()); };
                             if pcm.len() as u64 != size { return Err("Pi PCM16 length mismatch".into()); }
+                            if message["endReason"] == "max_duration" {
+                                pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
+                                event(hub, sid, error("utterance_too_long", "The recording limit was reached. Please repeat a shorter request.", true));
+                                session = None; followup = None;
+                                continue;
+                            }
                             *next_request += 1;
                             event(hub, sid, json!({"type":"transcription.started", "purpose":purpose, "captureMs":message["captureMs"]}));
                             let speech = speech.clone(); let sid = sid.to_owned();
@@ -378,10 +400,25 @@ async fn response(
         json!({"type":"agent.started", "requestId":request}),
     );
     let started = Instant::now();
+    let voice = speech.voice();
     let (send, mut receive) = mpsc::channel(8);
+    let (text_send, text_receive) = mpsc::channel(8);
+    let streamed_text = text_send.clone();
     let activity = async {
+        let text_send = streamed_text;
+        let mut prefix = String::new();
         while let Some(activity) = receive.recv().await {
             match activity {
+                orion_agent::AgentEvent::FinalSpeech(text) => {
+                    if !prefix.is_empty() {
+                        prefix.push(' ');
+                    }
+                    prefix.push_str(&text);
+                    text_send
+                        .send(text)
+                        .await
+                        .map_err(|_| "Speech renderer stopped")?;
+                }
                 orion_agent::AgentEvent::SearchStarted => {
                     event(
                         hub,
@@ -399,6 +436,7 @@ async fn response(
                             "I’ll search for that now.".into(),
                             active.clone(),
                             true,
+                            &voice,
                         )
                         .await?;
                         pi.send(json!({"type":"session.processing","sessionId":sid}))
@@ -414,15 +452,43 @@ async fn response(
                 }
             }
         }
+        Ok::<String, String>(prefix)
+    };
+    let agent_turn = async {
+        let (text, prefix) =
+            tokio::try_join!(agent.respond_with_events(command, Some(send)), activity)?;
+        let remaining = text
+            .strip_prefix(&prefix)
+            .ok_or("Final answer changed streamed speech")?
+            .trim();
+        if !remaining.is_empty() {
+            text_send
+                .send(remaining.into())
+                .await
+                .map_err(|_| "Speech renderer stopped")?;
+        }
+        drop(text_send);
+        event(
+            hub,
+            sid,
+            json!({"type":"agent.response", "requestId":request, "text":text, "durationMs":started.elapsed().as_secs_f64()*1000.}),
+        );
         Ok::<(), String>(())
     };
-    let (text, ()) = tokio::try_join!(agent.respond_with_events(command, Some(send)), activity)?;
-    event(
+    let spoken = speak_sequence(
+        speech,
+        gateway,
+        pi,
         hub,
         sid,
-        json!({"type":"agent.response", "requestId":request, "text":text, "durationMs":started.elapsed().as_secs_f64()*1000.}),
+        request,
+        text_receive,
+        active.clone(),
+        false,
+        &voice,
     );
-    speak(speech, gateway, pi, hub, sid, request, text, active, false).await
+    tokio::try_join!(agent_turn, spoken)?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -436,19 +502,79 @@ async fn speak(
     text: String,
     active: ActiveRun,
     intermediate: bool,
+    voice: &str,
 ) -> Result<(), String> {
-    if !intermediate {
-        event(
-            hub,
-            sid,
-            json!({"type":"synthesis.started", "requestId":request}),
-        );
-    }
+    let (send, receive) = mpsc::channel(1);
+    send.send(text)
+        .await
+        .map_err(|_| "Speech renderer stopped")?;
+    drop(send);
+    speak_sequence(
+        speech,
+        gateway,
+        pi,
+        hub,
+        sid,
+        request,
+        receive,
+        active,
+        intermediate,
+        voice,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn speak_sequence(
+    speech: &SpeechRuntime,
+    gateway: &Gateway,
+    pi: &Pi,
+    hub: &Hub,
+    sid: &str,
+    request: u64,
+    mut texts: mpsc::Receiver<String>,
+    active: ActiveRun,
+    intermediate: bool,
+    voice: &str,
+) -> Result<(), String> {
     let (run_send, mut run_receive) = watch::channel(None::<u64>);
     let (end_send, mut end_receive) = watch::channel(false);
     let synthesize = async {
         let (send, receive) = mpsc::channel(8);
-        let produce = speech.synthesize(text, send);
+        let produce = async {
+            let mut started = None;
+            while let Some(text) = texts.recv().await {
+                if started.is_none() {
+                    started = Some(Instant::now());
+                    if !intermediate {
+                        event(
+                            hub,
+                            sid,
+                            json!({"type":"synthesis.started", "requestId":request}),
+                        );
+                    }
+                }
+                let (chunk_send, mut chunk_receive) = mpsc::channel(8);
+                let job = speech.synthesize(text, voice.into(), chunk_send);
+                let forward = async {
+                    while let Some(Some(mut chunk)) = chunk_receive.recv().await {
+                        chunk.synthesis_ms = started.unwrap().elapsed().as_secs_f64() * 1000.;
+                        send.send(Some(chunk))
+                            .await
+                            .map_err(|_| "Speech upload stopped")?;
+                    }
+                    Ok::<(), String>(())
+                };
+                tokio::try_join!(job, forward)?;
+            }
+            let elapsed = started
+                .ok_or("No final speech was produced")?
+                .elapsed()
+                .as_secs_f64()
+                * 1000.;
+            send.send(None).await.map_err(|_| "Speech upload stopped")?;
+            Ok::<f64, String>(elapsed)
+        };
         let upload = upload_chunks(receive, gateway, &active, sid, request, hub, run_send);
         let (synthesis_ms, (run_id, sequence)) = tokio::try_join!(produce, upload)?;
         gateway
@@ -537,6 +663,7 @@ async fn upload_chunks(
     let mut released = false;
     let mut sequence = 0u64;
     let mut run = None;
+    let mut total_bytes = 0usize;
     loop {
         let item = receive
             .recv()
@@ -545,6 +672,11 @@ async fn upload_chunks(
         let ended = item.is_none();
         let mut ready = ended;
         if let Some(chunk) = item {
+            // The limit belongs to the complete reply, including every sentence.
+            total_bytes = total_bytes.saturating_add(chunk.pcm.len());
+            if total_bytes > 120 * 48_000 {
+                return Err("Synthesized reply exceeds 120 seconds".into());
+            }
             if !released {
                 ready = buffer.add(&chunk);
             }
@@ -592,4 +724,37 @@ async fn upload_chunks(
         }
     }
     Ok((run.ok_or("Synthesis returned no audio")?, sequence))
+}
+
+#[cfg(test)]
+mod reply_limit_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bounds_the_complete_reply_before_uploading_slow_audio() {
+        let (send, receive) = mpsc::channel(3);
+        for _ in 0..2 {
+            send.send(Some(Chunk {
+                pcm: vec![0; 61 * 48_000],
+                generation_ms: 180_000.,
+                synthesis_ms: 180_000.,
+            }))
+            .await
+            .unwrap();
+        }
+        let (run_send, _) = watch::channel(None);
+        let active = Arc::new(Mutex::new(None));
+        let result = upload_chunks(
+            receive,
+            &Gateway::new("http://127.0.0.1:1", "test").unwrap(),
+            &active,
+            "test",
+            1,
+            &Hub::new(),
+            run_send,
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "Synthesized reply exceeds 120 seconds");
+        assert!(active.lock().await.is_none());
+    }
 }

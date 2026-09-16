@@ -3,6 +3,11 @@
 set -euo pipefail
 
 card_name=${1:-seeed2micvoicec}
+capture_gain=${ORION_CAPTURE_GAIN_DB:-50}
+if [[ ! "$capture_gain" =~ ^[0-9]+$ ]] || (( capture_gain > 50 )); then
+    echo "ORION_CAPTURE_GAIN_DB must be an integer from 0 to 50." >&2
+    exit 1
+fi
 
 if ! command -v amixer >/dev/null 2>&1; then
     echo "amixer is required; install the alsa-utils package." >&2
@@ -23,7 +28,7 @@ amixer -q -c "${card_name}" -- sset 'Left Line1L Mux' 'single-ended'
 amixer -q -c "${card_name}" -- sset 'Right Line1R Mux' 'single-ended'
 amixer -q -c "${card_name}" -- sset 'Left PGA Mixer Line1L' on
 amixer -q -c "${card_name}" -- sset 'Right PGA Mixer Line1R' on
-amixer -q -c "${card_name}" -- sset 'PGA' 50dB unmute
+amixer -q -c "${card_name}" -- sset 'PGA' "${capture_gain}dB" unmute
 
 echo "Configured Orion ReSpeaker V2 microphone capture on ALSA card ${card_name}."
 amixer -c "${card_name}" sget 'PGA'

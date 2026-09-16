@@ -8,6 +8,25 @@ from daemon_support import DaemonTestCase, daemon, request
 
 
 class RestDaemonTests(DaemonTestCase):
+    def test_prefix_acknowledges_at_rest_and_wakes_before_command_endpoint(self):
+        with daemon(automatic_character=True, following=True) as path:
+            self.wait_for_rest(path, 'awake')
+            self.ok(path, 'character rest')
+            self.wait_for_rest(path, 'resting')
+            session = '9' * 32
+            self.voice(path, session, 'wake')
+            history = request(path, 'voice status')['voice']['history']
+            self.assertIn('acknowledgment_start', [event for sid, event, at in history if sid == session])
+            self.assertFalse(request(path, 'status')['torque_enabled'])
+            self.assertFalse(request(path, f'voice {session} confirmed')['ok'])
+            self.voice(path, session, 'verify', 'confirmed')
+            status = self.wait_for_rest(path, 'awake')
+            self.assertEqual(status['character']['state'], 'listening')
+            confirmed = status['rest']['last_confirmed_at']
+            self.voice(path, session, 'endpoint', 'confirmed')
+            self.assertEqual(request(path, 'character status')['rest']['last_confirmed_at'], confirmed)
+            self.assertEqual(request(path, 'character status')['character']['state'], 'thinking')
+
     def test_idle_rest_darkness_torque_release_and_confirmed_wake_on_real_daemon(self):
         with daemon(automatic_character=True, rest_after_seconds=2, following=True) as path:
             self.wait_for_rest(path, 'awake')

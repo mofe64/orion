@@ -5,7 +5,7 @@ motion builders. It authors pose, motion, and scene v2 assets while the Pi
 remains the only hardware authority.
 
 ```text
-Studio / Chatterbox ── authenticated HTTP v2 ──> Pi gateway
+Studio ── authenticated HTTP v2 ──> Pi gateway
                                                    │ private Unix socket
                                                    v
                                                 oriond
@@ -97,9 +97,10 @@ pnpm build
 pnpm tauri dev
 ```
 
-Use the [quickstart](../docs/quickstart.md) to install the background service.
-The desktop attaches to an installed headless owner; closing the UI leaves voice
-running. Without headless installed, quitting the app stops its embedded owner.
+Use the [Pi quickstart](../docs/quickstart.md#pi-local-voice-and-agent) to install
+Orion's voice stack. Desktop Studio observes and controls that service; closing
+Studio leaves voice running. A Mac background service and Mac speech downloads
+are not needed. An unavailable Pi returns an error without starting local inference.
 
 `pnpm dev` runs the UI-only frontend on `http://localhost:1420`. Voice worker
 startup and other native commands require Tauri. macOS, Windows, and Linux
@@ -140,56 +141,46 @@ streams.
 
 ## Studio Voice playback
 
-The Pi owns Rustpotter and microphone capture. Studio receives endpointed
-utterances over the local network, confirms them with Qwen, invokes the agent and synthesizes
-responses with Chatterbox. The top-level [`orion-agent` library](../agent/README.md)
-is owned by the shared [Studio service](../studio-service/README.md) and keeps the Codex conversation separately from the
-[`orion-coordinator`](../coordinator/README.md) pipeline. The coordinator calls
-the agent directly and owns the top-level Python speech worker. Idle voice-model
-reloads preserve the conversation.
-Playback is Pi-owned:
+The onboard stack runs Rustpotter, Silero, Qwen3-ASR, Pocket TTS, the Rust
+coordinator, and Codex App Server on the Pi. Codex inference and search need
+internet access. Studio observes voice events through the authenticated gateway;
+it does not own recording, model processes, or playback.
+
+The [`orion-agent` library](../agent/README.md) keeps the Codex conversation
+separately from the [`orion-coordinator`](../coordinator/README.md) speech pipeline.
+Idle speech model reloads preserve the conversation. Voice preset changes apply
+to the next response without restarting the agent or ASR.
 
 ```text
-Chatterbox signed 16-bit pulse-code modulation (PCM16)
-  -> Rust coordinator encodes mono 24 kHz RIFF/WAV chunks
-  -> authenticated /api/v2/speech/stream and run-scoped chunk/end requests
+Pocket TTS PCM16
+  -> Rust coordinator buffers and uploads mono 24 kHz WAV chunks
+  -> authenticated Pi gateway speech stream
   -> oriond/ReSpeaker playback
-  -> energy-driven speaking motion + warm red-green-blue-white (RGBW) light
-  -> terminal status
-  -> Rust coordinator acknowledges completion to the Pi listener
+  -> speaking motion + expressive light
+  -> terminal status and listener acknowledgement
 ```
 
 The Rust coordinator polls the run through queued, playing, and terminal states
 and acknowledges completion to the Pi listener only after playback completes. Cancellation
 is run-scoped. The runtime deletes spool files after completion, cancellation,
-or failure. Conversational speech requires the Studio processing station;
-there is no Pi-local Piper fallback. See the
+or failure. Use the [Pi setup](../docs/quickstart.md#pi-local-voice-and-agent) to run without
+Studio. See the
 [voice architecture](../docs/voice-architecture.md#streaming-replies-and-timing)
 for buffering and streaming behaviour.
-
-Prepare the optional Apple Silicon voice models separately:
-
-```bash
-cd speech
-uv sync --python 3.12
-.venv/bin/orion-voice-models
-```
 
 The agent receives confirmed text only. Agent-generated prose cannot issue raw
 robot commands. The Pi listener maps confirmed session events to allowlisted
 character reactions and optional commissioned attention. Follow
 [Pi voice setup](../voice/README.md) before enabling Voice.
 
-## Atomic deployment
+## Pi deployment
 
-`scripts/deploy_pi.sh` validates this Studio build before updating the Pi. The
-remote phase returns the running robot to mechanical rest, releases torque,
-fast-forwards the selected branch, validates the user asset catalog, builds
-runtime and trajectory binaries, installs the Pi Rustpotter environment,
-installs all three services, and runs light/audio
-plus left/right expressive physical smoke tests. It verifies native wake-model
-loading and listener authentication as part of the same command. All components therefore come
-from one Git revision.
+`scripts/deploy_pi.sh` validates the Studio build, then prepares and activates a
+complete Pi release from the selected Git commit. It preserves Pi settings and
+the existing motion/user-asset catalog, and verifies that the gateway reaches the
+same ready voice service. The desktop needs no speech downloads or background
+backend. See [Pi deployment](../docs/quickstart.md#deploy-to-the-pi) for the service
+switch, hardware behavior, and rollback.
 
 See the [system architecture](../docs/system-architecture.md),
 [motion architecture](../docs/motion-and-animation-architecture.md),
@@ -289,18 +280,10 @@ Studio preferences (appearance, preview sound, reduced interface motion, and deb
 mode) persist in local webview storage. Character mode and the listening switch
 control Orion through the existing runtime and listener interfaces.
 
-Codex model/effort, Qwen3 ASR and Chatterbox model IDs, optional local weight
-folders, and the model download cache save atomically to
-`~/.config/orion/voice-settings.json` on the Studio computer. Older reply settings
-migrate when loaded. Turn listening off before saving voice changes. The same native commands apply
-settings to an attached headless service. Speech settings display the detected local cache snapshots and provide native
-folder pickers for weights and the download cache. Cancel keeps the selection;
-Use default removes the override. Cached weights are reused, then loaded into
-memory when the worker starts; model IDs can check for updated revisions. Local folders
-must exist and take precedence over model IDs; weights must match the named engine.
-The cache sets `HF_HOME` and `HF_HUB_CACHE` for future worker starts and does not move
-existing downloads. Speech engines require Apple Silicon. API-key provider fields
-are placeholders: submitting, saving, and sending their contents is disabled.
+Voice settings save on the Pi in `~/.config/orion/voice-settings.json`. Settings exposes the supported Codex models and
+efforts. Pocket offers FP32/INT8 precision and eight voice presets; changing only
+the preset works while listening. Other model changes require muting first.
+Pi model paths are read-only in Studio. API-key provider fields remain disabled.
 
 Enable debug mode to expose Debug navigation and Home’s Diagnostics shortcut.
 Debug shows local voice state, transcripts, model details, timing, and runtime joint

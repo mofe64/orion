@@ -12,18 +12,25 @@ pub struct VoiceSettings {
     pub asr_path: String,
     pub tts_path: String,
     pub cache_path: String,
+    pub tts_voice: String,
 }
 impl Default for VoiceSettings {
     fn default() -> Self {
+        let onboard = crate::onboard();
         Self {
             provider: "codex".into(),
             model: orion_agent::DEFAULT_MODEL.into(),
             effort: orion_agent::DEFAULT_EFFORT.into(),
             asr_model: "Qwen/Qwen3-ASR-0.6B".into(),
-            tts_model: "mlx-community/chatterbox-turbo-8bit".into(),
-            asr_path: String::new(),
+            tts_model: "pocket-fp32".into(),
+            asr_path: if onboard {
+                std::env::var("ORION_ASR_MODEL_DIR").unwrap_or_default()
+            } else {
+                String::new()
+            },
             tts_path: String::new(),
             cache_path: String::new(),
+            tts_voice: "alba".into(),
         }
     }
 }
@@ -41,6 +48,13 @@ pub fn expand_path(value: &str) -> Result<PathBuf, String> {
 }
 impl VoiceSettings {
     pub fn validate(&self) -> Result<(), String> {
+        if ![
+            "alba", "anna", "azelma", "cosette", "eve", "fantine", "jane", "vera",
+        ]
+        .contains(&self.tts_voice.as_str())
+        {
+            return Err("Choose an Orion voice preset.".into());
+        }
         if self.provider != "codex" {
             return Err("API-key providers are not available yet.".into());
         }

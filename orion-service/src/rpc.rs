@@ -41,7 +41,8 @@ impl Owner {
             .truncate(false)
             .open(directory.join("owner.lock"))
             .map_err(|e| e.to_string())?;
-        file.try_lock().map_err(|_| "Another Studio process owns voice. Quit its embedded session before starting headless mode.")?;
+        file.try_lock()
+            .map_err(|_| "Another Orion service process owns voice.")?;
         // The OS releases the lock on exit, including crashes. Never unlink the lock file.
         let _ = std::fs::remove_file(directory.join("connection.json"));
         Ok(Self(file))
@@ -93,14 +94,14 @@ impl Drop for Publication {
 
 pub fn call(directory: &Path, request: &Request) -> Result<Value, String> {
     let bytes = std::fs::read(directory.join("connection.json"))
-        .map_err(|_| "Background Studio is stopped. Run scripts/studio-headless.sh start.")?;
+        .map_err(|_| "Orion voice service is stopped. Start orion-voice-stack on the Pi.")?;
     let connection: Connection =
-        serde_json::from_slice(&bytes).map_err(|_| "Invalid background Studio connection")?;
+        serde_json::from_slice(&bytes).map_err(|_| "Invalid Orion service connection")?;
     if connection.protocol != PROTOCOL || !connection.address.ip().is_loopback() {
-        return Err("Incompatible background Studio connection".into());
+        return Err("Incompatible Orion service connection".into());
     }
     let mut stream = TcpStream::connect_timeout(&connection.address, Duration::from_secs(2))
-        .map_err(|_| "Background Studio is unavailable. Run scripts/studio-headless.sh restart.")?;
+        .map_err(|_| "Orion voice service is unavailable. Check orion-voice-stack on the Pi.")?;
     stream
         .set_read_timeout(Some(Duration::from_secs(135)))
         .map_err(|e| e.to_string())?;
@@ -117,13 +118,13 @@ pub fn call(directory: &Path, request: &Request) -> Result<Value, String> {
     }
     stream
         .write_all(&bytes)
-        .map_err(|_| "Background Studio disconnected")?;
+        .map_err(|_| "Orion service disconnected")?;
     let mut result = String::new();
     std::io::BufReader::new(Read::take(stream, LIMIT))
         .read_line(&mut result)
-        .map_err(|_| "Background Studio response timed out")?;
+        .map_err(|_| "Orion service response timed out")?;
     let value: Value =
-        serde_json::from_str(&result).map_err(|_| "Invalid background Studio response")?;
+        serde_json::from_str(&result).map_err(|_| "Invalid Orion service response")?;
     if value["ok"] != true {
         return Err(value["error"]
             .as_str()

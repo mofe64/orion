@@ -30,6 +30,14 @@ const ready = JSON.stringify({
 });
 
 describe("VoiceWorkerClient", () => {
+  it("accepts early wake verification events without treating prefix text as a command", () => {
+    expect(parseVoiceWorkerEvent(JSON.stringify({ type: "transcription.started", purpose: "wake_prefix", captureMs: 2200 })))
+      .toMatchObject({ type: "transcription.started", purpose: "wake_prefix" });
+    expect(parseVoiceWorkerEvent(JSON.stringify({ type: "wake.confirmed", text: "Hey Orion", hasCommand: false, early: true })))
+      .toMatchObject({ type: "wake.confirmed", early: true });
+    expect(parseVoiceWorkerEvent(JSON.stringify({ type: "wake.verification_deferred" })))
+      .toEqual({ type: "wake.verification_deferred" });
+  });
   it("validates conversation window events", () => {
     expect(parseVoiceWorkerEvent(JSON.stringify({ type: "conversation.window", active: true }))).toEqual({ type: "conversation.window", active: true });
     expect(() => parseVoiceWorkerEvent(JSON.stringify({ type: "conversation.window", active: "true" }))).toThrow();

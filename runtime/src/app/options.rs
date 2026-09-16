@@ -157,7 +157,7 @@ pub(super) fn usage() -> &'static str {
   --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
   --character-on-start on|off  Start character automatically (default: on).\n\
-  --rest-after-seconds SECONDS  Confirmed-wake inactivity before rest (default: 600).\n\
+  --rest-after-seconds SECONDS  Confirmed-wake inactivity before rest (default: 1800).\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
   --help              Show this help.\n\n\
 Check never enables torque. Serve starts powered character mode unless --character-on-start off.\n"

@@ -21,7 +21,7 @@ class AlsaPcmCaptureTests(unittest.TestCase):
             [str(DEFAULT_CAPTURE_CONFIGURATOR), DEFAULT_CAPTURE_CARD],
         )
 
-    def test_configures_mixer_before_opening_arecord(self) -> None:
+    def test_reapplies_mixer_after_adc_startup_and_discards_settling_audio(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             configurator = Path(directory) / "configure-capture.sh"
             configurator.write_text("#!/bin/sh\n")
@@ -30,14 +30,16 @@ class AlsaPcmCaptureTests(unittest.TestCase):
             with (
                 patch("orion_voice.capture.subprocess.run") as configure,
                 patch("orion_voice.capture.subprocess.Popen") as popen,
+                patch.object(capture, "_discard_startup") as discard,
             ):
                 capture.open()
 
-            configure.assert_called_once_with(
+            configure.assert_called_with(
                 [str(configurator), DEFAULT_CAPTURE_CARD],
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
+            self.assertEqual(configure.call_count, 2)
+            self.assertEqual(discard.call_count, 2)
             popen.assert_called_once()
-
 

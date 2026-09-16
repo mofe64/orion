@@ -720,6 +720,14 @@ impl CharacterCoordinator {
                 "Character transition has priority over a reaction.".into(),
             ));
         }
+        // Processing stages can repeat the same state notification. Preserve
+        // the current spline instead of replaying its opening counter-tilt.
+        if reaction == "thinking" && self.status.state == CharacterState::Thinking {
+            if let Some(attention) = self.attention.as_mut() {
+                attention.expires_at = now + 120.0;
+            }
+            return Ok(self.status.clone());
+        }
         // Interrupt any idle or thinking movement and reset timers for idle movement.
         self.preempt_idle_or_thinking(now, core)?;
         self.reset_timers(now);
@@ -2884,6 +2892,45 @@ mod tests {
             assert!(character.thinking_run.is_none());
             assert_ne!(character.status.state, CharacterState::Thinking);
         }
+    }
+
+    #[test]
+    fn repeated_thinking_notification_preserves_run_and_commanded_motion() {
+        let trace = |repeat: bool| {
+            let mut core = following_core();
+            checked(core.handle_command("configure", 0.0)).unwrap();
+            checked(core.handle_command("enable", 0.0)).unwrap();
+            let anchor = core.poses().pose("home").unwrap().clone();
+            let mut character = CharacterCoordinator::new(42);
+            character.status.enabled = true;
+            character.status.active_anchor = Some(anchor);
+            character.set_reaction("thinking", 0.0, &mut core).unwrap();
+            character
+                .tick(0.0, &mut core, false, None, false, None, None)
+                .unwrap();
+            let run = character.thinking_run;
+            let mut positions = Vec::new();
+            for frame in 1..=150 {
+                let now = frame as f64 * 0.02;
+                core.tick(now).unwrap();
+                // The poem turn repeated processing 1.52 seconds after endpoint.
+                if repeat && matches!(frame, 76 | 95 | 120) {
+                    character.set_reaction("thinking", now, &mut core).unwrap();
+                }
+                character
+                    .tick(now, &mut core, false, None, false, None, None)
+                    .unwrap();
+                assert_eq!(character.thinking_run, run);
+                positions.push(core.driver().positions.clone());
+            }
+            character
+                .set_reaction("listening", 3.02, &mut core)
+                .unwrap();
+            assert_eq!(character.status.state, CharacterState::Listening);
+            assert!(character.thinking_run.is_none());
+            positions
+        };
+        assert_eq!(trace(false), trace(true));
     }
 
     #[test]

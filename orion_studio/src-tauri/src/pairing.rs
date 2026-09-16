@@ -1,4 +1,4 @@
-use orion_studio_service::{Backend, Request, pairing::Pairing};
+use orion_service::{Backend, Request, pairing::Pairing};
 
 #[tauri::command]
 pub async fn load_pairing(backend: tauri::State<'_, Backend>) -> Result<serde_json::Value, String> {

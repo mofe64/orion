@@ -51,7 +51,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(messages[-1]['id'],1)
 
     def test_rejects_oversized_odd_and_truncated_pcm(self):
-        for size,pcm in [(18*32000+2,b''),(1,b'\0'),(4,b'\0\0')]:
+        for size,pcm in [(33*32000+2,b''),(1,b'\0'),(4,b'\0\0')]:
             messages,asr=self.run_worker(control(dict(method='transcribe',id=1,bytes=size))+pcm)
             self.assertEqual(messages[-1]['type'],'error')
             self.assertEqual(asr.calls,[])

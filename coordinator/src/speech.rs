@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, process::Stdio, sync::RwLock, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -14,6 +14,11 @@ pub struct SpeechConfig {
     pub asr_model: String,
     pub tts_model: String,
     pub cache_path: String,
+    #[serde(default = "default_voice")]
+    pub tts_voice: String,
+}
+fn default_voice() -> String {
+    "alba".into()
 }
 
 #[derive(Debug)]
@@ -25,12 +30,14 @@ pub(crate) struct Chunk {
 
 pub(crate) struct SpeechRuntime {
     config: SpeechConfig,
-    process: Mutex<Option<Process>>,
+    asr: Mutex<Option<Process>>,
+    tts: Mutex<Option<Process>>,
+    voice: RwLock<String>,
 }
 enum Job {
     Info,
     Transcribe(Vec<u8>),
-    Synthesize(String, mpsc::Sender<Option<Chunk>>),
+    Synthesize(String, String, mpsc::Sender<Option<Chunk>>),
 }
 enum Reply {
     Info(Value),
@@ -41,18 +48,20 @@ enum Reply {
 impl SpeechRuntime {
     pub fn new(config: SpeechConfig) -> Self {
         Self {
+            voice: RwLock::new(config.tts_voice.clone()),
             config,
-            process: Mutex::new(None),
+            asr: Mutex::new(None),
+            tts: Mutex::new(None),
         }
     }
     pub async fn info(&self) -> Result<Value, String> {
-        match self.run(Job::Info).await? {
-            Reply::Info(info) => Ok(info),
+        match tokio::try_join!(self.run("asr", Job::Info), self.run("tts", Job::Info))? {
+            (Reply::Info(asr), Reply::Info(tts)) => Ok(json!({"asr":asr["asr"], "tts":tts["tts"]})),
             _ => unreachable!(),
         }
     }
     pub async fn transcribe(&self, pcm: Vec<u8>) -> Result<Value, String> {
-        match self.run(Job::Transcribe(pcm)).await? {
+        match self.run("asr", Job::Transcribe(pcm)).await? {
             Reply::Transcript(value) => Ok(value),
             _ => unreachable!(),
         }
@@ -60,25 +69,36 @@ impl SpeechRuntime {
     pub async fn synthesize(
         &self,
         text: String,
+        voice: String,
         send: mpsc::Sender<Option<Chunk>>,
     ) -> Result<f64, String> {
-        match self.run(Job::Synthesize(text, send)).await? {
+        match self.run("tts", Job::Synthesize(text, voice, send)).await? {
             Reply::End(ms) => Ok(ms),
             _ => unreachable!(),
         }
     }
-    async fn run(&self, job: Job) -> Result<Reply, String> {
-        tokio::time::timeout(Duration::from_secs(240), self.run_inner(job))
+    pub fn voice(&self) -> String {
+        self.voice.read().unwrap().clone()
+    }
+    pub fn set_voice(&self, voice: &str) {
+        *self.voice.write().unwrap() = voice.into();
+    }
+    async fn run(&self, role: &str, job: Job) -> Result<Reply, String> {
+        tokio::time::timeout(Duration::from_secs(240), self.run_inner(role, job))
             .await
             .map_err(|_| "Speech inference timed out; worker will restart")?
     }
-    async fn run_inner(&self, job: Job) -> Result<Reply, String> {
-        let mut slot = self.process.lock().await;
+    async fn run_inner(&self, role: &str, job: Job) -> Result<Reply, String> {
+        let mut slot = if role == "asr" {
+            self.asr.lock().await
+        } else {
+            self.tts.lock().await
+        };
         // Native inference cannot be safely interrupted in-place. An aborted
         // job owns and drops its process; a later job loads a fresh model worker.
         let mut process = match slot.take() {
             Some(process) => process,
-            None => Process::start(&self.config).await?,
+            None => Process::start(&self.config, role).await?,
         };
         let result = process.run(job).await;
         if result.is_ok() {
@@ -89,8 +109,10 @@ impl SpeechRuntime {
         result
     }
     pub async fn close(&self) {
-        if let Some(mut process) = self.process.lock().await.take() {
-            process.close().await;
+        for slot in [&self.asr, &self.tts] {
+            if let Some(mut process) = slot.lock().await.take() {
+                process.close().await;
+            }
         }
     }
 }
@@ -102,8 +124,9 @@ struct Process {
     info: Value,
     next_id: u64,
 }
+
 impl Process {
-    async fn start(config: &SpeechConfig) -> Result<Self, String> {
+    async fn start(config: &SpeechConfig, role: &str) -> Result<Self, String> {
         let mut command = Command::new(&config.python);
         command
             .args(["-m", "orion_speech_worker.worker"])
@@ -132,15 +155,22 @@ impl Process {
         };
         process
             .send(
-                json!({"protocol":1, "asr_model":config.asr_model, "tts_model":config.tts_model}),
+                json!({"protocol":2, "role":role, "asr_model":config.asr_model, "tts_model":config.tts_model}),
                 &[],
             )
             .await?;
         let ready = process.read().await?;
         if ready["type"] != "ready"
-            || ready["protocol"] != 1
-            || ready["asr"]["provider"] != "qwen3-asr"
-            || ready["tts"]["provider"] != "chatterbox-turbo"
+            || ready["protocol"] != 2
+            || ready["role"] != role
+            || (role == "asr" && ready["asr"]["provider"] != "qwen3-asr")
+            || (role == "tts"
+                && ready["tts"]["provider"]
+                    != if config.tts_model.starts_with("pocket-") {
+                        "pocket-tts"
+                    } else {
+                        "chatterbox-turbo"
+                    })
         {
             return Err("Unsupported speech worker handshake".into());
         }
@@ -183,7 +213,7 @@ impl Process {
         match job {
             Job::Info => Ok(Reply::Info(self.info.clone())),
             Job::Transcribe(pcm) => {
-                if pcm.is_empty() || pcm.len() > 18 * 32000 || !pcm.len().is_multiple_of(2) {
+                if pcm.is_empty() || pcm.len() > 33 * 32000 || !pcm.len().is_multiple_of(2) {
                     return Err("Invalid ASR PCM16".into());
                 }
                 self.send(
@@ -198,9 +228,12 @@ impl Process {
                 }
                 Ok(Reply::Transcript(value))
             }
-            Job::Synthesize(text, send) => {
-                self.send(json!({"method":"synthesize", "id":id, "text":text}), &[])
-                    .await?;
+            Job::Synthesize(text, voice, send) => {
+                self.send(
+                    json!({"method":"synthesize", "id":id, "text":text, "voice":voice}),
+                    &[],
+                )
+                .await?;
                 let mut sequence = 0;
                 let mut total = 0;
                 loop {
@@ -255,4 +288,46 @@ fn duration(value: &Value, key: &str) -> Result<f64, String> {
         .as_f64()
         .filter(|ms| ms.is_finite() && *ms >= 0.)
         .ok_or_else(|| format!("Invalid {key}"))
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancelled_tts_preserves_asr_process_and_voice_changes_preserve_both() {
+        let runtime = SpeechRuntime::new(SpeechConfig {
+            python: "python3".into(),
+            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+            asr_model: "fixture".into(),
+            tts_model: "fixture".into(),
+            cache_path: String::new(),
+            tts_voice: "alba".into(),
+        });
+        runtime.info().await.unwrap();
+        let asr = runtime.asr.lock().await.as_ref().unwrap().child.id();
+        let tts = runtime.tts.lock().await.as_ref().unwrap().child.id();
+        runtime.set_voice("anna");
+        runtime.info().await.unwrap();
+        assert_eq!(runtime.voice(), "anna");
+        assert_eq!(runtime.asr.lock().await.as_ref().unwrap().child.id(), asr);
+        assert_eq!(runtime.tts.lock().await.as_ref().unwrap().child.id(), tts);
+        let (send, _receive) = mpsc::channel(8);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                runtime.synthesize("hang-tts".into(), "anna".into(), send)
+            )
+            .await
+            .is_err()
+        );
+        assert!(runtime.tts.lock().await.is_none());
+        runtime
+            .transcribe(b"Still listening!".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(runtime.asr.lock().await.as_ref().unwrap().child.id(), asr);
+        runtime.info().await.unwrap();
+        assert_ne!(runtime.tts.lock().await.as_ref().unwrap().child.id(), tts);
+        runtime.close().await;
+    }
 }

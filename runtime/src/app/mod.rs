@@ -165,12 +165,12 @@ mod tests {
     }
 
     #[test]
-    fn rest_timeout_defaults_to_ten_minutes_and_rejects_invalid_values() {
+    fn rest_timeout_defaults_to_thirty_minutes_and_rejects_invalid_values() {
         assert_eq!(
             parse(&["--serve", "--backend", "mujoco"])
                 .unwrap()
                 .rest_after_seconds,
-            600.0
+            1800.0
         );
         assert_eq!(
             parse(&[

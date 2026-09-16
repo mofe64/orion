@@ -6,7 +6,9 @@ import asyncio
 from contextlib import suppress
 from collections import deque
 import hmac
+import ipaddress
 import json
+import os
 from pathlib import Path
 import time
 import uuid
@@ -20,20 +22,25 @@ from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
 
 PROTOCOL = 1
 FRAME_BYTES = 640  # 20 ms of mono signed little-endian PCM16 at 16 kHz
-MAX_UTTERANCE_BYTES = 18 * 32000
+MAX_UTTERANCE_BYTES = 33 * 32000
 CONVERSATION_WINDOW_SECONDS = 5.0
 ECHO_GUARD_SECONDS = 0.5
 ECHO_QUIET_MS = 300
 ECHO_GUARD_LIMIT_SECONDS = 2.0
 FOLLOWUP_ONSET_MS = 180
+WAKE_PREFIX_BYTES = 2 * 32000
+WAKE_PREFIX_TAIL_MS = 200
 
 
 class SatelliteSession:
     """One capture owner, one active turn. Audio is never retained on disk."""
-    def __init__(self, wake, direction=None, clock=time.monotonic):
+    def __init__(self, wake, direction=None, clock=time.monotonic, endpoint_factory=EnergyEndpointDetector,
+                 early_wake=False):
         self.wake = wake
         self.direction = direction or DirectionEstimator(clock=clock)
         self.clock = clock
+        self.endpoint_factory = endpoint_factory
+        self.early_wake = early_wake
         self.reset()
 
     def reset(self):
@@ -43,9 +50,14 @@ class SatelliteSession:
         self.utterance = bytearray()
         self.followup = bytearray()
         self.followup_done = False
+        self.prefix = bytearray()
+        self.prefix_pending = False
+        self.prefix_sent = False
+        self.pending_utterance = []
         self.noise = ListeningNoise()
-        self.endpoint = EnergyEndpointDetector()
-        self.followup_endpoint = EnergyEndpointDetector()
+        self.endpoint = self.endpoint_factory(EndpointConfig())
+        self.followup_endpoint = self.endpoint_factory(EndpointConfig())
+        self.activity = self.endpoint_factory(EndpointConfig())
         self.expires_at = float("inf")
         self.observation = {"side": "unknown", "confidence": 0.0}
         self.observed_at = float("-inf")
@@ -81,11 +93,14 @@ class SatelliteSession:
             self.session_id = uuid.uuid4().hex
             self.phase = "wake"
             config = EndpointConfig(speech_rms=self.noise.threshold())
-            self.endpoint = EnergyEndpointDetector(config)
-            self.followup_endpoint = EnergyEndpointDetector(config)
+            self.endpoint = self.endpoint_factory(config)
+            self.followup_endpoint = self.endpoint_factory(config)
             self.expires_at = self.clock() + 120
             self.update_direction()
             self.utterance = bytearray(self.pre_roll)
+            if self.early_wake:
+                self.prefix = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
+                self.prefix_pending = True
             self.pre_roll.clear()
             self.endpoint.prime_detected_speech()
             return [self.message("wake.candidate", name=detection.name, score=detection.score,
@@ -94,8 +109,18 @@ class SatelliteSession:
             if self.phase == "wake":
                 self.direction.accept(stereo)
             self.utterance.extend(audio)
+            messages = []
+            if self.phase == "wake" and self.prefix_pending and not self.prefix_sent:
+                self.prefix.extend(audio)
+                if self.endpoint.capture_ms + 20 >= WAKE_PREFIX_TAIL_MS:
+                    prefix = bytes(self.prefix)
+                    self.prefix.clear()
+                    self.prefix_sent = True
+                    messages = [self.message("utterance", purpose="wake_prefix", bytes=len(prefix),
+                                             captureMs=round(len(prefix) / 32)), prefix]
             if self.endpoint.accept(audio):
-                return self.finish_utterance()
+                messages.extend(self.finish_utterance())
+            return messages
         elif self.phase == "confirming" and not self.followup_done:
             # Preserve speech spoken while Qwen is confirming a bare wake phrase.
             self.followup.extend(audio)
@@ -107,7 +132,7 @@ class SatelliteSession:
         if self.phase == "echo_guard":
             # Discard playback tail and require a quiet baseline before accepting onset.
             if now - self.guard_started >= ECHO_GUARD_SECONDS:
-                self.quiet_ms = self.quiet_ms + 20 if pcm16_rms(audio) < self.endpoint.config.speech_rms else 0
+                self.quiet_ms = self.quiet_ms + 20 if not self.activity.is_speech(audio) else 0
                 if self.quiet_ms >= ECHO_QUIET_MS:
                     self.phase = "conversation"
                     self.expires_at = now + CONVERSATION_WINDOW_SECONDS
@@ -119,7 +144,7 @@ class SatelliteSession:
             return self.close_conversation("timeout")
         self.pre_roll.extend(audio)
         del self.pre_roll[:-int(0.3 * 32000)]
-        self.onset_ms = self.onset_ms + 20 if pcm16_rms(audio) >= self.endpoint.config.speech_rms else 0
+        self.onset_ms = self.onset_ms + 20 if self.activity.is_speech(audio) else 0
         if self.onset_ms < FOLLOWUP_ONSET_MS:
             return []
         previous = self.session_id
@@ -128,7 +153,7 @@ class SatelliteSession:
         self.expires_at = now + 120
         self.utterance = bytearray(self.pre_roll)
         self.pre_roll.clear()
-        self.endpoint = EnergyEndpointDetector(self.endpoint.config)
+        self.endpoint = self.endpoint_factory(self.endpoint.config)
         self.endpoint.prime_detected_speech()
         return [self.message("command.candidate", previousSessionId=previous)]
 
@@ -157,12 +182,27 @@ class SatelliteSession:
         audio = bytes(self.utterance)
         self.utterance.clear()
         self.phase = "confirming" if purpose == "wake_and_command" else "processing"
-        return [self.message("utterance", purpose=purpose, bytes=len(audio), captureMs=self.endpoint.capture_ms), audio]
+        messages = [self.message("utterance", purpose=purpose, bytes=len(audio), captureMs=self.endpoint.capture_ms,
+                                 endReason=self.endpoint.end_reason), audio]
+        if purpose == "wake_and_command" and self.prefix_pending:
+            # Keep capturing follow-up speech while the short ASR pass finishes.
+            # Only one ASR request can own this session at a time.
+            self.pending_utterance = messages
+            return []
+        return messages
 
     def control(self, message):
         if not self.session_id or message.get("sessionId") != self.session_id:
             raise ValueError("Stale or missing voice session ID")
         kind = message.get("type")
+        if kind == "wake.verified":
+            if (not self.prefix_pending or not self.prefix_sent
+                    or self.phase not in {"wake", "confirming"}
+                    or type(message.get("accepted")) is not bool):
+                raise ValueError("No wake prefix verification is pending")
+            self.prefix_pending = False
+            pending, self.pending_utterance = self.pending_utterance, []
+            return pending
         if kind == "session.finish" and self.phase != "playing":
             raise ValueError("Playback has not started")
         if kind == "session.reject" and self.phase != "confirming":
@@ -171,6 +211,7 @@ class SatelliteSession:
             self.phase = "echo_guard"
             self.guard_started = self.clock()
             self.quiet_ms = self.onset_ms = 0
+            self.activity = self.endpoint_factory(self.endpoint.config)
             self.pre_roll.clear()
             self.followup.clear()
             self.utterance.clear()
@@ -234,9 +275,15 @@ async def serve(args):
         raise ValueError("Voice token must contain at least 32 characters")
     wake = RustpotterWakeDetector(args.wake_model, args.threshold)
     capture = StereoCapture(args.device)
-    session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing, args.channel_sign))
+    endpoint_factory = EnergyEndpointDetector
+    if getattr(args, "vad_model", None):
+        from .vad import SileroModel
+        endpoint_factory = SileroModel(args.vad_model).endpoint
+    session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing, args.channel_sign),
+                               endpoint_factory=endpoint_factory)
     lock = asyncio.Lock()
     capture_gate = asyncio.Lock()
+    capture_ready = asyncio.Event()
     mute_file = getattr(args, "mute_file", args.token_file.with_name("microphone.json"))
     muted = json.loads(mute_file.read_text())["muted"] if mute_file.exists() else False
     if type(muted) is not bool:
@@ -302,7 +349,9 @@ async def serve(args):
                     expression("continue", message["sessionId"])
                 elif kind == "conversation.ready": expression("window", message["sessionId"])
                 elif kind == "conversation.closed": expression("finish", message["sessionId"])
-                elif kind == "utterance": expression("endpoint" if owner is not None else "unavailable")
+                elif kind == "utterance":
+                    expression(("verify" if message["purpose"] == "wake_prefix" else "endpoint")
+                               if owner is not None else "unavailable")
                 elif kind == "session.expired": expression("cancel", message["sessionId"])
             if outgoing is not None:
                 try:
@@ -339,11 +388,13 @@ async def serve(args):
                             capture.close()
                             raise
                         opened = True
+                        capture_ready.set()
                     if muted: continue
                 epoch = generation
                 try:
                     audio = await asyncio.to_thread(capture.read)
                 except Exception:
+                    capture_ready.clear()
                     capture.close()
                     opened = False
                     cancel_turn()
@@ -352,6 +403,7 @@ async def serve(args):
                 if epoch == generation and not muted:
                     await deliver(session.accept_stereo(audio))
         finally:
+            capture_ready.clear()
             capture.close()
 
     async def set_muted(value):
@@ -363,16 +415,21 @@ async def serve(args):
         temporary.write_text(json.dumps({"muted": value}))
         temporary.chmod(0o600)
         temporary.replace(mute_file)
-        if muted == value: return
+        if muted == value:
+            if not muted: await asyncio.wait_for(capture_ready.wait(), 10)
+            return
         interrupted = session.session_id
         muted = value
         cancel_turn()
         if muted:
             async with capture_gate:
                 capture.close()
+                capture_ready.clear()
         changed.set()
         if interrupted and outgoing is not None:
             outgoing.put_nowait({"type": "session.expired", "sessionId": interrupted})
+        if not muted:
+            await asyncio.wait_for(capture_ready.wait(), 10)
 
     async def connection(ws):
         nonlocal owner, outgoing
@@ -394,11 +451,15 @@ async def serve(args):
                     await set_muted(message.get("muted"))
                     await ws.send(json.dumps({"type": "microphone.status", "muted": muted, "timingHistory": list(timing_history)}))
             return
+        if getattr(args, "local_processor", False) and not ipaddress.ip_address(ws.remote_address[0]).is_loopback:
+            await ws.close(4003, "Orion uses its onboard coordinator")
+            return
         if lock.locked():
             await ws.close(4009, "Listener already owned")
             return
         async with lock:
             cancel_turn()
+            session.early_wake = hello.get("wakePrefix") is True
             owner = ws
             outgoing = asyncio.Queue(maxsize=32)
             queue = outgoing
@@ -424,13 +485,14 @@ async def serve(args):
                     result = session.control(message)
                     if message["type"] == "session.processing":
                         expression("processing", identity)
-                    elif message["type"] == "wake.confirmed":
+                    elif message["type"] == "wake.confirmed" or (
+                            message["type"] == "wake.verified" and message["accepted"]):
                         await confirm_activity(identity)
                         side, confidence = observation["side"], observation["confidence"]
                         direction_age = session.clock() - observed_at
                         if 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
                             expression(f"attend_{side} {direction_age * 1000:.3f}", identity)
-                        if message["followup"]: expression("followup", identity)
+                        if message.get("followup"): expression("followup", identity)
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
                         expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
                                    else message["type"].split(".")[1], identity)
@@ -438,13 +500,21 @@ async def serve(args):
 
             tasks = []
             try:
+                if not muted:
+                    await asyncio.wait_for(capture_ready.wait(), 10)
                 await ws.send(json.dumps({"type": "ready", "protocol": PROTOCOL,
                     "sampleRate": 16000, "channels": 1, "encoding": "pcm_s16le", "muted": muted,
                     "conversationWindow": True, "toolFeedback": True,
+                    "wakePrefix": session.early_wake,
+                    "maxUtteranceBytes": MAX_UTTERANCE_BYTES,
+                    "vad": "silero" if getattr(args, "vad_model", None) else "energy",
                     "wake": {"provider": wake.provider, "model": wake.model_name, "threshold": wake.threshold}}))
                 tasks = [asyncio.create_task(job()) for job in (send, controls)]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done: task.result()
+            except ConnectionClosed:
+                # Owner restarts are normal; the finally block resets its lease.
+                pass
             finally:
                 owner = None
                 outgoing = None
@@ -481,6 +551,8 @@ def main():
     parser.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
     parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_reference.rpw")
     parser.add_argument("--threshold", type=float, default=0.4)
+    parser.add_argument("--vad-model", type=Path, default=os.environ.get("ORION_VAD_MODEL"))
+    parser.add_argument("--local-processor", action="store_true", help="Reserve processing ownership for the onboard coordinator")
     parser.add_argument("--mic-spacing", type=float, default=0.0)
     parser.add_argument("--channel-sign", type=int, choices=[-1, 0, 1], default=0)
     parser.add_argument("--daemon-socket", default="/tmp/oriond.sock")

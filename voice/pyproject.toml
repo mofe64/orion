@@ -11,6 +11,7 @@ dependencies = [
   "numpy>=1.26,<3",
   "websockets>=14.2,<16",
   "orion-rustpotter",
+  "onnxruntime==1.30.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
 [project.scripts]

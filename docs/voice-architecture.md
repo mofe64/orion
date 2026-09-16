@@ -1,6 +1,10 @@
 # Orion voice architecture
 
-The Onboard computer captures Orion's microphone, detects wake candidates, and plays replies. Studio confirms the wake through automatic speech recognition (ASR), processes the command with its Rust agent, and synthesizes a response. Its Rust voice coordinator manages these stages through a Python Qwen3-ASR/Chatterbox worker.
+Orion’s Pi runs the complete speech pipeline and the Rust agent coordinator.
+Rustpotter detects wake candidates, Silero finds speech boundaries, Qwen3-ASR
+transcribes, and Pocket TTS generates replies. Codex App Server runs on the Pi
+with a subscription login; model inference and web search use online services.
+Studio is an optional settings, authoring, and observation client.
 
 ## Audio and control flow
 
@@ -9,11 +13,13 @@ Pi ReSpeaker stereo capture (16 kHz signed PCM16)
   -> local coarse direction observation before downmixing
   -> mono Rustpotter + three-second in-memory pre-roll
   -> wake candidate notification over token-authenticated WebSocket
-  -> Pi speech endpoint -> bounded complete utterance upload
+  -> short wake-prefix ASR alongside continued command capture
+  -> confirmed wake starts homing while the microphone keeps recording
+  -> Silero endpoint -> bounded complete utterance over loopback
   -> Rust coordinator sends an ASR job to the Python speech worker
   -> Rust confirms "Hey Orion" and extracts the command
   -> in-process AgentHandle -> Rust agent runtime -> Codex App Server
-  -> Rust sends a synthesis job to the Python speech worker
+  -> explicitly final answer sentences -> Pocket worker
   -> ordered WAV chunk uploads -> one oriond-owned streaming player
   -> speech animation -> terminal playback acknowledgement
   -> echo guard -> five-second conversation invitation -> command or wake rearm
@@ -25,7 +31,7 @@ second-stage false-positive check. Rejected wake candidates never reach the
 agent or trigger directional attention. Qwen confirmation is not a guarantee
 that every false positive is eliminated.
 
-After confirmation, the Pi can prepare the body while Studio processes the
+After confirmation, the Pi can prepare the body while the coordinator processes the
 command. The runtime owns [automatic rest and waking](system-architecture.md#automatic-rest-and-waking),
 including the activity deadline and torque checks. Microphone mute remains
 independent of that lifecycle.
@@ -41,26 +47,39 @@ mute. Muting closes capture, clears buffered audio and persists across restarts.
 
 Every interaction has a random session ID. The Pi captures continuously while
 enabled, keeps three seconds of pre-roll in memory and sends a candidate event
-immediately. Audio is uploaded as a complete endpointed utterance, not a
-continuous room-audio stream. An utterance is at most 18 seconds including
-pre-roll. Endpointing uses DC-corrected energy for its decisions; the audio
-sent to Rustpotter and Studio remains unchanged. While listening, it retains
-six seconds of frame energies. At wake detection it excludes the latest second,
-takes the lower quartile of the remaining window, and freezes a threshold of
-three times that energy, with a floor of 500 PCM units. With less than half a
-second of eligible history it uses the floor. Allow at least 1.5 seconds of
-quiet listening after enabling capture to establish a background estimate.
+immediately. Peers negotiate `wakePrefix: true` in the processing handshake.
+The listener then sends up to two seconds before detection plus 200 ms after
+detection as a `wake_prefix` ASR job, while continuing the same recording.
+Prefix text can confirm the wake but never supplies an agent command. An
+inconclusive prefix falls back to confirmation using the complete utterance.
+Older peers retain complete-utterance confirmation.
 
-The same frozen threshold applies to wake capture and a buffered follow-up.
-A sustained 60 ms above threshold resets the silence timer; isolated shorter
-spikes do not. Capture ends after one second of non-speech, subject to a
-1.2-second minimum and a 15-second maximum. Noise estimation resumes only
-when listening for a new wake, so response playback cannot raise the threshold.
-The post-response window also reuses this frozen threshold.
-These energy rules are a prototype based on Pi measurements; clipping,
-continuous background speech, and quiet commands still require physical evaluation.
+The full recording includes every command sample, including speech overlapping
+prefix verification. If endpointing wins the race, the listener holds the
+complete utterance until the prefix result arrives, and preserves any follow-up
+speech during both ASR passes. Only one ASR job owns a session at a time. Audio
+stays bounded and is cleared on mute, cancellation or disconnect.
+The capture limit is 30 seconds after wake detection and
+33 seconds including pre-roll. Hitting the limit produces `max_duration`;
+the coordinator rejects that audio without sending an incomplete command to
+the agent.
 
-If the first transcript is only the wake phrase, Studio requests a follow-up
+The managed Pi listener uses Silero ONNX with recurrent state per stream.
+Twenty-millisecond capture frames are accumulated into 512-sample Silero
+windows with 64 samples of context; no silence is inserted between frames.
+Unmute acknowledgement and processing readiness wait for microphone startup.
+Speech probability uses 0.5 onset and 0.35 release thresholds. A fixed 2× gain
+applies only to Silero’s input, with clipping protection; Rustpotter and Qwen
+receive unchanged PCM. Capture ends after 1.2 seconds without speech, subject
+to a 1.2-second minimum capture and the 30-second limit. This gain and hold time
+addressed early endings in the retained quiet ReSpeaker recordings.
+
+The same speech classifier handles the post-response quiet guard and follow-up
+onset, with fresh recurrent state at each boundary. Legacy development sessions
+without `--vad-model` retain the energy detector. The installed service always
+supplies the pinned Silero model.
+
+If the first transcript is only the wake phrase, the coordinator requests a follow-up
 command. The Pi buffers up to one endpointed follow-up while Qwen is working,
 so the transition does not discard speech spoken during confirmation. Empty
 commands fail without invoking the agent.
@@ -74,19 +93,19 @@ The Pi discards the first 0.5 seconds after acknowledgement, then requires
 300 ms of consecutive below-threshold audio before accepting another turn.
 If no quiet baseline appears within two seconds, it abandons the window.
 Once ready, Orion shows a silent, soft teal pulse on a 1.4-second cycle and accepts a command without
-"Hey Orion" for five seconds. Speech onset requires 180 ms of sustained energy;
+"Hey Orion" for five seconds. Speech onset requires 180 ms of sustained speech;
 a short onset that begins before the deadline may finish confirmation just
 after it. A 300 ms pre-roll preserves the beginning of the command. The guard
 audio is never included. Once onset is confirmed, the ordinary endpoint and
 120-second turn lease apply instead of the invitation deadline.
 
 Each accepted follow-up gets a fresh voice session ID linked to the preceding
-completed turn. Studio validates that link and transcribes it as a command,
+completed turn. The coordinator validates that link and transcribes it as a command,
 without a second wake-phrase check. Timeout, mute, disconnect, or cancellation
 clears the listening window. The listener advertises `conversationWindow` in
 its ready response; workers request it explicitly on `session.finish`, so older
 peers retain one-shot behavior. Deploy the Pi runtime/listener and restart the
-updated Studio worker together to enable the pulse and follow-up behavior.
+updated coordinator together to enable the pulse and follow-up behavior.
 
 Speak after the teal invitation appears. Acoustic echo cancellation and
 interruption during playback are not implemented. Sustained noise or delayed
@@ -98,22 +117,24 @@ Processing has a 120-second session lease; entering playback grants 180 seconds.
 
 ## Confirmed waking
 
-When Studio sends `wake.confirmed`, the Pi listener forwards
+When the coordinator accepts `wake.verified` or sends `wake.confirmed`, the Pi listener forwards
 `voice SESSION confirmed` to `oriond`. It uses the same ordered queue as wake
-candidate and endpoint events, then waits up to five seconds for the runtime
+candidate, prefix-verification and endpoint events, then waits up to five seconds for the runtime
 acknowledgement. Confirmation is required even when microphone direction is
 unknown. A rejected or undelivered confirmation fails the voice connection.
 The runtime accepts the current session's confirmation once, so duplicate
 delivery cannot keep extending the inactivity deadline.
 
 While Orion rests, the listener still detects and captures wake candidates.
-Unconfirmed candidates leave the body still and the light off. A confirmed wake
+Unconfirmed candidates play the wake chime while leaving the body still and the
+light off. The runtime requires `voice SESSION verify` or an
+endpoint before it accepts confirmation. A confirmed wake
 starts the return home. If confirmation arrives during descent, the runtime
 finishes that movement before returning home. Explicit Character Stop and
 maintenance mode require an explicit character start to enable automatic waking.
 
 Capture continues during homing. The listener retains a buffered follow-up
-command spoken while ASR confirms a bare wake phrase. Studio can also process a
+command spoken while ASR confirms a bare wake phrase. The coordinator can also process a
 command included in the original utterance while the body moves. Once home
 finishes, the runtime applies the latest listening or thinking state and checks
 whether optional direction evidence is still fresh enough for attention.
@@ -128,74 +149,52 @@ ended.
 
 ## Transport and deployment
 
-Studio saves the paired gateway address and token in the OS credential store.
-Gateway reconnect restores status/authoring connectivity without replaying robot
-operations. The desktop or headless owner starts the coordinator from the saved
-pairing and reuses its token for the listener. See [pairing configuration](configuration.md#saved-pairing).
+Studio saves the paired gateway address and token in the desktop credential
+store. The onboard coordinator uses the Pi’s token file and connects to the
+listener and gateway through loopback. `--local-processor` reserves the listener’s
+processing connection for a local process; authenticated remote control clients
+can still read microphone status or mute it.
 
-The Pi listener uses plain WebSockets on port 7448 and the Pi's existing
-Studio token for authentication. Studio derives `ws://GATEWAY_HOST:7448/`
-from the gateway connection; `ORION_PI_VOICE_URL` can override it with another
-`ws://` endpoint. No certificate setup is required. Tokens and audio travel
-unencrypted, so this development connection is intended for a trusted LAN.
-Token authentication controls access but does not protect against network
-interception.
+Studio discovers onboard ownership at `/api/v2/voice/status`. Settings, profile,
+and microphone commands pass through the gateway’s allowlisted
+`/api/v2/voice/request` route. `/api/v2/voice/events` returns at most 33 events
+with a coordinator generation and increasing event IDs. Studio polls these
+snapshots, discards duplicates, and resets its cursor after a coordinator restart.
+It does not receive PCM or acknowledge playback. The gateway never exposes the
+private service or observer tokens.
 
-The coordinator owns Pi credentials and connects directly to the Pi. The Python
-speech worker receives model configuration and inference jobs through private
-stdin/stdout pipes. It has no Pi connection or agent client.
+Private stdin/stdout pipes carry model jobs. The existing HTTP gateway and
+`oriond` streaming-player contract carry response WAV chunks and hardware control.
+Remote Studio traffic uses the existing token-authenticated trusted-LAN HTTP
+connection; the onboard audio path does not cross that LAN connection.
 
-The coordinator exposes status through an authenticated loopback WebSocket;
-the Pi permits only one processing owner. Version 7 of the observer protocol
-rejects workstation microphone frames and UI playback claims. Pi protocol
-version 1 uses JSON session messages and length-checked PCM16 utterances.
+Follow [Pi installation](quickstart.md#pi-local-voice-and-agent). The legacy
+Apple Silicon processing adapter remains available for development.
 
-The existing HTTP gateway still handles response WAV upload and robot control;
-both transports are unencrypted. Production pairing and encryption for voice
-and gateway transport remain separate work.
+## Orion service lifecycle
 
-Follow [Pi voice setup](../voice/README.md) and the
-[speech worker setup](../speech/README.md#setup-on-apple-silicon).
+The [orion-service](../orion-service/README.md) crate hosts the Pi agent and voice
+coordinator. Systemd starts `orion-voice-stack` at boot with `ORION_ONBOARD=1`.
+Studio's desktop backend only stores pairing and forwards requests to the paired
+Pi gateway. It cannot create an embedded owner or attach to a Mac background host.
+A missing or unavailable onboard service returns an error.
 
-## Studio service lifecycle
+The Pi service publishes a random loopback address and token in a private service
+directory. The gateway forwards bounded, authenticated JSON requests to it.
+Repeated starts with matching configuration reuse the coordinator. The service
+control protocol and coordinator observer protocol have separate credentials.
 
-The shared `[studio-service](../studio-service/README.md)` crate owns the agent,
-coordinator, saved settings, and pairing access. Desktop Studio starts an embedded
-owner when headless mode is uninstalled. Installing headless mode moves this
-ownership into `orion-studio-headless`; the UI then attaches as a client. Quitting
-the UI leaves headless processing active. Quit an embedded UI session before the
-first installation so it releases its owner lock.
-
-The headless process publishes a random loopback address and token in a private
-service directory. UI commands use bounded, authenticated JSON requests over TCP.
-The existing `start_voice_worker` command returns the coordinator's protocol-7
-observer connection. Repeated starts with matching configuration reuse that
-coordinator. The service control protocol and observer protocol have separate
-versions and credentials. Pi authoring and hardware commands still use the gateway.
-
-An OS file lock prevents simultaneous local owners and is released on process
-exit, including a crash. An installation marker tells the UI to report an
-unavailable background service when it is stopped. It cannot silently create a
-replacement embedded owner. Pairing and voice settings changes are serialized
-with coordinator startup; profile edits use the agent's existing request queue.
-
-On startup, headless reads saved pairing and settings. It retries a stopped
-coordinator every five seconds; the coordinator handles Pi network reconnection.
+An OS file lock prevents simultaneous Pi owners and is released on process exit.
+Settings changes are serialized with coordinator startup; profile edits use the
+agent's existing request queue. At startup the service reads the Pi token file
+and saved settings, then retries a stopped coordinator every five seconds.
 SIGTERM stops the coordinator, cancels its speech run, and shuts down the agent
-and speech child. Restarting the process starts a fresh agent conversation while
-preserving saved memory and personality.
-
-The macOS LaunchAgent starts after login and restarts a crashed process. Updates
-prepare and test a complete release before stopping the old owner, switching the
-active symlink, and starting through launchd. Startup failure restores the previous
-release and registration. A responsive control service confirms process startup;
-voice readiness also depends on pairing, models, Codex, and the Pi. See the
-[quickstart](quickstart.md) for commands and login constraints.
+and speech workers. Restarting starts a fresh conversation while preserving saved
+memory and personality. See the [quickstart](quickstart.md#pi-local-voice-and-agent).
 
 ## Agent and physical boundary
 
-Raw microphone audio travels between the Pi and Studio, where Qwen and
-Chatterbox run. The Codex provider receives confirmed command text. The agent
+Raw microphone audio stays on the Pi, where Qwen and Pocket run. The Codex provider receives confirmed command text. The agent
 produces spoken replies and can request lamp changes through `set_lighting`.
 The tool validates brightness, effect, and color choices and sends them through
 the coordinator and authenticated gateway to `oriond`. Motion control is outside
@@ -212,11 +211,11 @@ enabled in either state.
 Voice session IDs identify capture/playback turns, not agent conversations.
 The top-level `orion-agent` [crate](../agent/README.md) owns one ephemeral
 Codex thread and reuses it for confirmed commands, post-response follow-ups,
-and later wake-word requests. Studio compiles this library through a Cargo path
-dependency and owns its service separately from the coordinator and speech worker.
+and later wake-word requests. The headless host compiles this library through a Cargo path dependency and
+owns its service separately from the coordinator and speech workers.
 
 Pi reconnects and idle coordinator/model reloads preserve the agent thread.
-Quitting Studio, changing the agent model/effort or executable, and failed or
+Stopping the headless service, changing the agent model/effort or executable, and failed or
 cancelled active agent requests retire it. The next request starts a fresh
 thread. There is no idle-time rotation, explicit new-conversation command, or
 persisted thread-resume policy. The five-second listening deadline does not
@@ -226,7 +225,7 @@ The coordinator calls `AgentHandle::respond_with_events` through bounded Rust
 message channels. Each request has a separate reply channel; dropping an active
 call cancels its Codex turn and retires that uncertain conversation. There is no
 agent TCP server or Python agent client. The independent agent executor survives
-coordinator restarts while Studio retains `AgentService`.
+coordinator restarts while the host retains `AgentService`.
 
 The coordinator owns wake confirmation, follow-up state, voice request IDs,
 Pi reconnection, buffering, uploads, and playback acknowledgement. Python owns
@@ -283,19 +282,20 @@ from model commentary. Physical operations remain owned by `oriond`.
 
 ## Processing station and latency
 
-Studio is the voice processing station. Its compute supports Qwen speech
-recognition, the configured agent, and expressive Chatterbox synthesis. The Pi
-owns capture, Rustpotter, endpointing, playback, and character animation; it
-runs no speech-recognition or speech-synthesis model. Conversational voice
-requires the paired Studio app open on an awake Mac.
+Speech runs on the Pi. Keep the ASR and TTS workers resident; the managed
+profile assigns three inference threads to each and runs Silero on one thread.
+Wake processing is suppressed while an answer is being prepared or played.
 
-The pipeline waits for an endpointed utterance before transcription, then buffers
-Chatterbox audio locally before starting ordered uploads to the Pi. Response
-latency therefore includes endpointing, transport, ASR, agent response, TTS,
-WAV upload, and playback startup. The worker reports ASR, agent, and synthesis
-durations; these do not constitute a complete end-to-end latency measurement.
-Measure the stages on the deployed setup before changing model quality or
-buffering thresholds.
+End-to-end response time includes trailing silence, transcription, Codex network
+and model latency, synthesis buffering, and actual playback startup. A fast
+first TTS chunk does not guarantee a fast audible reply. Pocket FP32 can generate
+more slowly than playback; it therefore needs complete-reply buffering on this
+Pi. INT8 reduces synthesis time but changes the sound. Settings exposes both,
+with FP32 and Alba as the initial quality preference.
+
+The physical test harness measures from source playback completion to observed
+reply playback and records the stage timings separately. See the single speech
+evaluation report for measured results and limitations.
 
 ## Direction evidence
 
@@ -315,18 +315,23 @@ Evidence must still be younger than three seconds. Homing therefore consumes
 the same freshness budget as ASR and command delivery. Stale evidence or a
 refused attention turn leaves Orion facing home and allows the voice turn to
 continue. Microphone spacing and channel orientation require physical
-commissioning; their default values disable directional attention.
+calibration; their default values disable directional attention.
 
 ## Streaming replies and timing
 
-Chatterbox generates native audio chunks on Studio from sentence segments bounded
-to 160 characters, splitting long sentences at word boundaries. Each segment resets
-the decoder context; gain remains fixed across the reply. A producer generates
-audio independently of uploads through an eight-chunk Rust queue. Cancellation
-of an active native inference job terminates that Python process; the next job
-loads fresh models. Completed jobs keep the worker and models available. Speech
-jobs have a 240-second host deadline, but the Pi session lease still bounds a
-voice turn.
+The Codex adapter accepts streamed text only for a matching thread, turn, and
+item explicitly marked `final_answer`. Complete sentences feed TTS while Codex
+finishes. Unknown phases wait for final completion. Citation markup and model
+commentary never enter speech. The authoritative final text must preserve any
+already-emitted prefix; a mismatch cancels the turn.
+
+The coordinator renders successive sentences through one TTS worker and one
+runtime speech run. The selected voice is captured when the response starts,
+so a preset change applies to the next response. Queues are bounded to eight
+items. Cancelling native inference retires only the affected ASR or TTS worker;
+completed jobs keep both models resident. Speech jobs have a 240-second host
+deadline, but the listener’s session lease also bounds the voice turn.
+
 The Rust coordinator uploads ordered PCM16 mono 24 kHz WAV chunks directly to
 the authenticated gateway. UI observers receive status and timing events; they
 have no upload or completion responsibility. `POST /api/v2/speech/stream` creates one
@@ -334,7 +339,7 @@ runtime speech run, `/api/v2/speech/{run}/chunks/{sequence}` appends audio, and
 `/api/v2/speech/{run}/end` declares the final sequence. The existing complete-WAV
 endpoint remains available for other callers.
 
-Before the first upload, Studio collects at least six seconds of audio. Its startup
+Before the first upload, the coordinator collects at least six seconds of audio. Its startup
 reserve is the larger of six seconds or twice the longest measured generation step
 plus two seconds. After collecting six seconds, generation taking more than 75% of
 the audio duration, or a required reserve above twelve seconds, selects complete-reply
@@ -397,8 +402,10 @@ one quiet entry cue and a three-second
 breath through the same amber, teal and lavender palette. Its visible diagonal
 head tilt leads delayed shoulder/elbow support, with opposing preparation and
 an asymmetric counter-tilt. The existing thinking style and calibrated compiler
-preserve the conversational anchor and smooth speech handover. Buffered
-follow-up audio survives a bare-wake transition back to listening. Local
+preserve the conversational anchor and smooth speech handover.
+Repeated thinking notifications preserve the running gesture and its timing;
+moving from transcription to agent processing does not restart the opening tilt.
+Buffered follow-up audio survives a bare-wake transition back to listening. Local
 capture continues throughout cues; acoustic echo cancellation is not implemented.
 
 Session-scoped speech uploads bind the Pi speech run to the active voice turn.
@@ -407,7 +414,10 @@ position and velocity, the conversational anchor and speech variation. Cues
 cannot displace speech. Stop/rest and foreground work retain their priority.
 When Studio is unavailable after capture and the runtime permits feedback, it
 plays `error_muted` once and the listener returns to wake detection. During
-descent, rest, waking, or a rest lifecycle fault, the runtime suppresses voice
-cues and immediate reaction changes. Waking permits light output and restores
-the latest voice reaction after home completes. Physical cue loudness and
-microphone pickup remain unverified.
+descent, waking, or a rest lifecycle fault, the runtime suppresses voice
+cues and immediate reaction changes. At mechanical rest, only the candidate's
+wake chime is allowed; body reactions still wait for confirmation and homing.
+Waking permits light output and restores
+the latest voice reaction after home completes. Speaker-to-microphone tests
+occupy the same playback device as the wake chime, so chime playback is checked
+separately while the body remains at rest.

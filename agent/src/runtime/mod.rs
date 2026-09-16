@@ -1,4 +1,7 @@
-use crate::{AgentConfig, AgentInfo, providers::codex::Codex};
+use crate::{
+    AgentConfig, AgentInfo,
+    providers::{self, AgentBackend},
+};
 use std::{thread::JoinHandle, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
@@ -140,7 +143,7 @@ impl AgentService {
 
 async fn dispatch(
     config: &AgentConfig,
-    slot: &mut Option<Codex>,
+    slot: &mut Option<Box<dyn AgentBackend>>,
     text: Option<String>,
     events: Option<mpsc::Sender<crate::AgentEvent>>,
     profile: Option<Option<crate::profile::ProfileChange>>,
@@ -158,14 +161,14 @@ async fn dispatch(
     // Cancellation owns and drops an uncertain child before another turn starts.
     let mut client = match slot.take() {
         Some(client) => client,
-        None => Codex::connect(config).await?,
+        None => providers::connect(config).await?,
     };
     let result = match text {
         Some(text) => client
             .respond(&text, events.as_ref())
             .await
             .map(Reply::Text),
-        None => Ok(Reply::Info(client.info.clone())),
+        None => Ok(Reply::Info(client.info())),
     };
     if result.is_ok() {
         *slot = Some(client);

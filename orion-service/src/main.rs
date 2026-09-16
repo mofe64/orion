@@ -1,4 +1,4 @@
-use orion_studio_service::{Host, Request, rpc};
+use orion_service::{Host, Request, rpc};
 use std::{path::PathBuf, sync::Arc};
 
 fn main() {
@@ -6,11 +6,11 @@ fn main() {
         .worker_threads(2)
         .enable_all()
         .build()
-        .expect("Studio runtime");
+        .expect("Orion service runtime");
     let result = runtime.block_on(run());
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     if let Err(error) = result {
-        eprintln!("orion-studio-headless: {error}");
+        eprintln!("orion-service: {error}");
         std::process::exit(1);
     }
 }
@@ -19,7 +19,7 @@ async fn run() -> Result<(), String> {
     let command = arguments.first().map(String::as_str).unwrap_or("serve");
     if matches!(command, "--help" | "help") {
         println!(
-            "Usage: orion-studio-headless [serve [--no-autostart] | status | check]\nManaged startup: scripts/studio-headless.sh install\nUpdates: scripts/update-studio-headless.sh"
+            "Usage: orion-service [serve [--no-autostart] | status | check]\nPi installation: python3 scripts/install_pi_voice_stack.py"
         );
         return Ok(());
     }
@@ -34,7 +34,7 @@ async fn run() -> Result<(), String> {
         return Ok(());
     }
     if command == "check" {
-        let root = orion_studio_service::project_root()?;
+        let root = orion_service::project_root()?;
         let python = std::env::var_os("ORION_STUDIO_VOICE_PYTHON")
             .map(PathBuf::from)
             .unwrap_or_else(|| root.join("speech/.venv/bin/python"));
@@ -43,8 +43,8 @@ async fn run() -> Result<(), String> {
                 "Prepare the speech worker and its Python environment before starting".into(),
             );
         }
-        orion_studio_service::settings::load_voice_settings()?.validate()?;
-        println!("Studio service files and settings are ready");
+        orion_service::settings::load_voice_settings()?.validate()?;
+        println!("Orion service files and settings are ready");
         return Ok(());
     }
     if command != "serve" {
@@ -77,7 +77,7 @@ async fn run() -> Result<(), String> {
         let _ = tokio::signal::ctrl_c().await;
     };
     tokio::pin!(stop);
-    eprintln!("orion-studio: control service ready");
+    eprintln!("orion-service: control service ready");
     loop {
         tokio::select! {
             _ = &mut stop => break,
@@ -105,6 +105,6 @@ async fn run() -> Result<(), String> {
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     host.shutdown();
-    eprintln!("orion-studio: stopped");
+    eprintln!("orion-service: stopped");
     Ok(())
 }
