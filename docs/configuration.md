@@ -156,7 +156,7 @@ the Pi’s local time and explicit UTC offsets; verify its timezone and clock be
 relying on a clock alarm.
 
 The managed listener uses the Rustpotter reference
-`voice/models/wake/hey_orion_reference.rpw`, wake threshold `0.45` and 25 dB capture
+`voice/models/wake/hey_orion_reference.rpw`, wake threshold `0.35` and 25 dB capture
 gain. The standalone CLI defaults to threshold `0.400`; the capture-routing script
 defaults to 50 dB when no override is supplied. `ORION_CAPTURE_GAIN_DB` accepts
 0–50 dB. These separate defaults make the effective service configuration the

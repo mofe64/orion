@@ -109,7 +109,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                     if re.search(r'^ExecStart=.+', value, re.M):
                         value = re.sub(r'^(ExecStart=.+)$', r'\1 --local-processor', value, flags=re.M)
                         if '--threshold' not in start:
-                            value = re.sub(r'^(ExecStart=.+)$', r'\1 --threshold 0.45', value, flags=re.M)
+                            value = re.sub(r'^(ExecStart=.+)$', r'\1 --threshold 0.35', value, flags=re.M)
                         contents[i] = (p, value)
                         break
             additions = []
