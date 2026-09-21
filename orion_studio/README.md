@@ -38,8 +38,36 @@ credential.
 
 Studio reconnects after startup or network loss. **Disconnect** pauses retries
 for that session; **Forget Orion on this computer** removes the saved pairing.
+**Change address** reuses the saved token and verifies the new address before
+replacing the saved connection. A failed check keeps the previous pairing.
 Browser development keeps the connection in memory for the current tab.
 See [saved pairing](../docs/configuration.md#saved-pairing) for storage and limits.
+
+### Hostname discovery
+
+`orion.local` is discovered through mDNS (Bonjour on macOS, Avahi on the Pi).
+The gateway listener and hostname discovery are separate: a running gateway
+cannot help a client whose hostname lookup times out.
+
+If the Mac discovers Orion's IPv6 address but not its IPv4 address, lookup can
+stall beyond Studio's five-second request timeout. On the Pi, enable
+`publish-a-on-ipv6=yes` under `[publish]` in `/etc/avahi/avahi-daemon.conf`, then
+run `sudo systemctl restart avahi-daemon`. This publishes the Pi's IPv4 address
+over IPv6 mDNS as well; it does not pin an IP address. Keep `use-ipv4=yes` and
+`use-ipv6=yes` under `[server]`.
+
+Check from the Mac:
+
+```bash
+curl --noproxy '*' --max-time 5 -i http://orion.local:7447/api/v2/status
+```
+
+A `401` response without a token confirms
+hostname lookup and HTTP connectivity; Studio's pairing token is still required
+for authenticated status. The gateway must also support the returned address
+family, as configured below.
+
+### Gateway source development
 
 For gateway source development on the Pi, stop its installed service before
 starting a second listener on the same port. Supply the existing catalog,
@@ -47,13 +75,20 @@ calibration and the trajectory compiler built from the source under test:
 
 ```bash
 python3 orion_studio/gateway.py serve \
-  --bind 0.0.0.0 --port 7447 \
+  --bind :: --port 7447 \
   --socket /tmp/oriond.sock \
   --token-file ~/.config/orion/studio-token \
   --project-root /home/mofe/dev/orion \
   --calibration ~/.config/orion/servo_calibration.json \
   --trajectory-compiler /home/mofe/dev/orion/runtime/target/release/orion-trajectory
 ```
+
+`--bind ::` listens on IPv4 and IPv6 using a dual-stack socket, so either address
+returned for `orion.local` can connect. It requires OS IPv6 support. An explicit
+IPv4 bind remains IPv4-only; omitting `--bind` listens only on `127.0.0.1`.
+Existing Pi deployments preserve installed command arguments: change their
+gateway `ExecStart` bind argument to `::` after installing a gateway version
+that supports it, then reload systemd and restart the gateway.
 
 The gateway validates supported operations and forwards hardware commands through
 the private runtime socket. The [system architecture](../docs/system-architecture.md)

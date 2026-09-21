@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import socket
 import sys
 import tempfile
 import threading
@@ -10,11 +11,11 @@ import urllib.error
 import urllib.request
 import wave
 from http import HTTPStatus
-from http.server import ThreadingHTTPServer
+from http.client import HTTPConnection
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from gateway import GatewayError, OrionGateway, make_handler  # noqa: E402
+from gateway import GatewayError, GatewayHTTPServer, OrionGateway, make_handler  # noqa: E402
 
 JOINTS = (
     "base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint",
@@ -265,7 +266,7 @@ class HttpAuthenticationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fake = FakeOrionClient(); self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name); (root / "scenes").mkdir()
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(
+        self.server = GatewayHTTPServer(("127.0.0.1", 0), make_handler(
             OrionGateway(self.fake, root), "a" * 32, ["tauri://localhost"]))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_port}"
@@ -302,6 +303,42 @@ class HttpAuthenticationTests(unittest.TestCase):
         with urllib.request.urlopen(self.request("/api/v2/scenes", document=scene_document("http_scene"))) as response:
             published = json.load(response); self.assertEqual(response.status, HTTPStatus.CREATED)
         self.assertEqual(published["name"], "http_scene")
+
+
+@unittest.skipUnless(socket.has_dualstack_ipv6(), "OS requires dual-stack IPv6 support")
+class DualStackHttpTests(unittest.TestCase):
+    def test_both_families_share_status_authentication_and_cors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "scenes").mkdir()
+            server = GatewayHTTPServer(("::", 0), make_handler(
+                OrionGateway(FakeOrionClient(), root), "a" * 32, ["tauri://localhost"]))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                for host in ("127.0.0.1", "::1"):
+                    for authorized in (False, True):
+                        with self.subTest(host=host, authorized=authorized):
+                            connection = HTTPConnection(host, server.server_port, timeout=3)
+                            try:
+                                headers = {"Origin": "tauri://localhost"}
+                                if authorized:
+                                    headers["Authorization"] = f"Bearer {'a' * 32}"
+                                connection.request("GET", "/api/v2/status", headers=headers)
+                                response = connection.getresponse()
+                                body = json.loads(response.read())
+                                self.assertEqual(response.status, 200 if authorized else 401)
+                                self.assertEqual(body["api_version"], 2)
+                                if authorized:
+                                    self.assertEqual(body["character"]["state"], "off")
+                                    self.assertEqual(response.getheader("Access-Control-Allow-Origin"), "tauri://localhost")
+                            finally:
+                                connection.close()
+            finally:
+                server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_explicit_ipv6_loopback_stays_ipv6_only(self) -> None:
+        with GatewayHTTPServer(("::1", 0), make_handler(None, "a" * 32, [])) as server:
+            self.assertEqual(server.socket.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY), 1)
 
 
 class HomeOperationTests(unittest.TestCase):

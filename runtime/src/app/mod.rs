@@ -819,6 +819,39 @@ mod tests {
     }
 
     #[test]
+    fn wake_cues_wait_for_confirmation_and_rejected_candidates_do_not_stop_audio() {
+        let mut h = DispatchFixture::new(600.0);
+        let rejected = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for event in ["wake", "verify", "endpoint", "reject"] {
+            h.ok(&format!("voice {rejected} {event}"));
+            assert!(h.audio.commands().is_empty());
+        }
+        let accepted = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        for event in ["wake", "verify"] {
+            h.ok(&format!("voice {accepted} {event}"));
+        }
+        assert!(h.audio.commands().is_empty());
+        h.ok(&format!("voice {accepted} confirmed"));
+        let commands = h.audio.commands().to_vec();
+        assert!(!commands.is_empty());
+        let history = h.command("voice status");
+        assert_eq!(
+            history["voice"]["history"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e[1] == "acknowledgment_start")
+                .count(),
+            1
+        );
+        h.now = 0.1;
+        for event in ["confirmed", "endpoint", "followup"] {
+            h.ok(&format!("voice {accepted} {event}"));
+        }
+        assert_eq!(h.audio.commands(), commands.as_slice());
+    }
+
+    #[test]
     fn confirmation_requires_current_endpointed_wake_and_resets_deadline_once() {
         let mut h = DispatchFixture::new(600.0);
         h.rest.started();

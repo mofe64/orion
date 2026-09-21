@@ -227,7 +227,8 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             let _ = audio.update();
         }
         // Expire ownership before queued audio can start on this tick.
-        if feedback.expire(now_seconds) {
+        let had_confirmed_feedback = feedback.confirmed_activity();
+        if feedback.expire(now_seconds) && had_confirmed_feedback {
             let _ = character.set_reaction("neutral", now_seconds, &mut core);
         }
         if rest.failed()

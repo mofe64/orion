@@ -56,6 +56,39 @@ describe("pairing and reconnect", () => {
     expect(await controller.pair(target.url, target.token)).toBe(false);
     expect(controller.current()).toMatchObject({ phase: "error", paired: false, connection: null, error: "Keychain locked" });
   });
+  it("verifies and saves a changed address using the existing token", async () => {
+    const { controller, store, probe } = setup({ ...target, url: "http://orion.mynet:7447" });
+    await controller.start();
+    expect(await controller.changeAddress("orion.local")).toBe(true);
+    expect(probe.status).toHaveBeenLastCalledWith(target);
+    expect(probe.capabilities).toHaveBeenLastCalledWith(target);
+    expect(store.save).toHaveBeenCalledExactlyOnceWith(target);
+    expect(controller.current()).toMatchObject({ phase: "connected", address: target.url });
+  });
+  it.each(["network", "credential store"])("preserves the old pairing if an address change fails at the %s", async failure => {
+    const { controller, store, probe } = setup();
+    await controller.start();
+    if (failure === "network") probe.status.mockRejectedValueOnce(new TypeError("offline"));
+    else store.save.mockRejectedValueOnce(new Error("Keychain locked"));
+    expect(await controller.changeAddress("other-orion.local")).toBe(false);
+    expect(controller.current()).toMatchObject({ paired: true, address: target.url });
+    if (failure === "network") expect(store.save).not.toHaveBeenCalled();
+    await controller.reconnect();
+    expect(probe.status).toHaveBeenLastCalledWith(target);
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: target });
+  });
+  it("ignores a late address verification after forgetting the robot", async () => {
+    const { controller, store, probe } = setup();
+    await controller.start();
+    const pending = deferred<GatewayStatus>();
+    probe.status.mockReturnValueOnce(pending.promise);
+    const changing = controller.changeAddress("other-orion.local");
+    await controller.forget();
+    pending.resolve(status);
+    expect(await changing).toBe(false);
+    expect(store.save).not.toHaveBeenCalled();
+    expect(controller.current().phase).toBe("unpaired");
+  });
   it("clears stale status and retries a network outage with capped backoff", async () => {
     const { controller, probe } = setup();
     await controller.start();

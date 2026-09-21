@@ -11,7 +11,7 @@ provides settings and observation through the gateway.
 ```text
 ReSpeaker stereo capture
   -> direction observation and mono downmix
-  -> Rustpotter wake candidate -> immediate runtime acknowledgement
+  -> silent Rustpotter wake candidate
   -> short Qwen wake verification while command capture continues
   -> Silero endpoint -> Qwen transcription of the complete recording
   -> confirmed command -> Rust agent -> Codex App Server
@@ -37,7 +37,7 @@ control connections can read or change mute.
 Capture arrives as 20 ms stereo frames at 16 kHz. The listener estimates direction
 before downmixing to mono and retains three seconds of audio in memory. When
 Rustpotter detects a candidate, the listener assigns a random session ID and
-queues a local acknowledgement before notifying the coordinator.
+registers a silent runtime session before notifying the coordinator.
 
 With the negotiated `wakePrefix` capability, the listener sends up to two seconds
 before detection plus 200 ms afterward for Qwen verification. Capture continues
@@ -79,9 +79,9 @@ separate settings described in [configuration](configuration.md#pi-runtime-and-l
 
 ## Confirmed waking
 
-At mechanical rest, the wake candidate plays a chime while Orion remains still
-and dark. Qwen confirmation starts the return home. This lets the acknowledgement
-arrive promptly while keeping body movement dependent on a recognized wake.
+At mechanical rest, the wake candidate remains silent, still and dark. Qwen
+confirmation plays the existing wake chime and starts the return home. The
+rest lifecycle keeps the light off until home completes.
 
 The coordinator sends `wake.verified` after a successful prefix or
 `wake.confirmed` after confirming the complete utterance. The listener forwards
@@ -303,8 +303,12 @@ to investigate a failed turn.
 
 Wake, verification, endpoint and processing events carry the voice session ID.
 The runtime rejects stale transitions and bounds their lifetime. A candidate
-requests one quiet chime and, when the rest state permits it, a brief color pulse
-followed by listening light. Verification or endpointing enters thinking.
+stays silent and leaves the existing light and character reaction unchanged.
+Qwen confirmation requests the existing wake chime once and starts the unchanged
+amber, teal and purple acknowledgement pulses, each lasting 300 ms. The pulse
+clock starts at confirmation and survives an immediate endpoint or follow-up.
+Afterward, capture uses the dim listening light and endpointed commands use
+thinking feedback. An unconfirmed endpoint remains silent.
 
 Thinking uses one entry cue, breathing light and a restrained head tilt with
 supporting shoulder and elbow movement. Repeated thinking notifications preserve
@@ -312,10 +316,11 @@ the current gesture and timing. This prevents the transcription-to-agent
 transition from replaying the opening movement. Speech begins from the commanded
 thinking position and velocity when it takes over.
 
-If processing becomes unavailable, the listener requests `error_muted` once and
-returns to wake detection. During descent, waking or a rest fault, immediate
-voice reactions are suppressed. Mechanical rest permits only the candidate's
-wake chime. Home completion restores the latest eligible reaction. Capture stays
+If processing becomes unavailable after confirmation, the listener requests
+`error_muted` once and returns to wake detection. Unconfirmed rejection,
+cancellation and failure produce no feedback. During descent, waking or a rest
+fault, immediate voice reactions are suppressed. Mechanical rest permits only
+the confirmed wake's chime. Home completion restores the latest eligible reaction. Capture stays
 open through cues, so speaker pickup must be checked on the assembled robot.
 
 ## Alert interruption

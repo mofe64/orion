@@ -1547,6 +1547,22 @@ def create_token(path: Path) -> None:
     print(token)
 
 
+class GatewayHTTPServer(ThreadingHTTPServer):
+    """IPv4 for IPv4 binds; IPv6 with IPv4 support for the wildcard ``::``."""
+
+    def __init__(self, server_address, handler):
+        self.address_family = socket.AF_INET6 if ":" in server_address[0] else socket.AF_INET
+        super().__init__(server_address, handler)
+
+    def server_bind(self) -> None:
+        if self.address_family == socket.AF_INET6:
+            # Set this explicitly: the OS default differs between platforms.
+            # A specific IPv6 address remains IPv6-only; only :: accepts IPv4 too.
+            dual_stack = self.server_address[0] == "::"
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, int(not dual_stack))
+        super().server_bind()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1554,7 +1570,7 @@ def parse_args() -> argparse.Namespace:
     token.add_argument("--token-file", type=Path, required=True)
     serve = commands.add_parser("serve", help="Run the source-tree Studio gateway.")
     serve.add_argument("--socket", default=DEFAULT_SOCKET)
-    serve.add_argument("--bind", default="127.0.0.1")
+    serve.add_argument("--bind", default="127.0.0.1", help="Listen address; :: accepts IPv4 and IPv6 (default: IPv4 loopback).")
     serve.add_argument("--port", type=int, default=7447)
     serve.add_argument("--token-file", type=Path, required=True)
     serve.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION)
@@ -1590,10 +1606,11 @@ def main() -> None:
         calibration_file=args.calibration,
         trajectory_compiler=args.trajectory_compiler,
     )
-    server = ThreadingHTTPServer(
+    server = GatewayHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)
     )
-    print(f"orion-studio-gateway: serving http://{args.bind}:{args.port} -> {args.socket}")
+    host = f"[{args.bind}]" if ":" in args.bind else args.bind
+    print(f"orion-studio-gateway: serving http://{host}:{args.port} -> {args.socket}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

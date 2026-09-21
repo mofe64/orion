@@ -8,7 +8,7 @@ from daemon_support import DaemonTestCase, daemon, request
 
 
 class RestDaemonTests(DaemonTestCase):
-    def test_prefix_acknowledges_at_rest_and_wakes_before_command_endpoint(self):
+    def test_prefix_stays_silent_until_confirmed_at_rest_then_wakes_before_endpoint(self):
         with daemon(automatic_character=True, following=True) as path:
             self.wait_for_rest(path, 'awake')
             self.ok(path, 'character rest')
@@ -16,10 +16,12 @@ class RestDaemonTests(DaemonTestCase):
             session = '9' * 32
             self.voice(path, session, 'wake')
             history = request(path, 'voice status')['voice']['history']
-            self.assertIn('acknowledgment_start', [event for sid, event, at in history if sid == session])
+            self.assertNotIn('acknowledgment_start', [event for sid, event, at in history if sid == session])
             self.assertFalse(request(path, 'status')['torque_enabled'])
             self.assertFalse(request(path, f'voice {session} confirmed')['ok'])
             self.voice(path, session, 'verify', 'confirmed')
+            history = request(path, 'voice status')['voice']['history']
+            self.assertEqual([event for sid, event, at in history if sid == session].count('acknowledgment_start'), 1)
             status = self.wait_for_rest(path, 'awake')
             self.assertEqual(status['character']['state'], 'listening')
             confirmed = status['rest']['last_confirmed_at']

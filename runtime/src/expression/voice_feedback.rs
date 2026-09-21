@@ -16,6 +16,7 @@ pub struct VoiceFeedback {
     confirmed: bool,
     verifying_wake: bool,
     processing_cued: bool,
+    acknowledgment_since: Option<f64>,
     since: f64,
     deadline: f64,
     retired: VecDeque<String>,
@@ -32,6 +33,7 @@ impl VoiceFeedback {
             return false;
         }
         self.confirmed = true;
+        self.acknowledgment_since = Some(now);
         self.record("confirmed", now);
         true
     }
@@ -41,6 +43,9 @@ impl VoiceFeedback {
     }
 
     pub fn reaction(&self) -> &'static str {
+        if !self.confirmed {
+            return "neutral";
+        }
         match self.phase.as_str() {
             "listening" | "window" => "listening",
             "thinking" => "thinking",
@@ -74,6 +79,7 @@ impl VoiceFeedback {
     pub fn clear(&mut self) {
         self.confirmed = false;
         self.verifying_wake = false;
+        self.acknowledgment_since = None;
         if let Some(id) = self.session.take() {
             self.retired.push_back(id);
             if self.retired.len() > 128 {
@@ -110,15 +116,9 @@ impl VoiceFeedback {
             self.since = if event == "continue" { now - 1.0 } else { now };
             self.deadline = now + 120.0;
             self.processing_cued = false;
+            self.acknowledgment_since = None;
             self.record(event, now);
-            return Ok(Some((
-                "listening",
-                if event == "wake" {
-                    Some("voice_wake")
-                } else {
-                    None
-                },
-            )));
+            return Ok(self.confirmed.then_some(("listening", None)));
         }
         if self.session.as_deref() != Some(id) {
             return Ok(None);
@@ -153,8 +153,11 @@ impl VoiceFeedback {
                 self.phase = "thinking".into();
                 self.since = now;
                 self.record("endpoint", now);
+                if !self.confirmed {
+                    return Ok(None);
+                }
                 self.record("thinking_start", now);
-                let cue = if self.processing_cued {
+                let cue = if self.processing_cued || self.acknowledging(now) {
                     None
                 } else {
                     Some("voice_processing")
@@ -178,16 +181,17 @@ impl VoiceFeedback {
                 Ok(None)
             }
             "finish" | "cancel" | "reject" => {
+                let visible = self.confirmed;
                 self.record(event, now);
                 self.clear();
-                Ok(Some(("neutral", None)))
+                Ok(visible.then_some(("neutral", None)))
             }
             "unavailable" if self.phase != "unavailable" => {
                 self.phase = "unavailable".into();
                 self.since = now;
                 self.deadline = now + 0.8;
                 self.record("unavailable", now);
-                Ok(Some(("neutral", Some("error_muted"))))
+                Ok(self.confirmed.then_some(("neutral", Some("error_muted"))))
             }
             "endpoint" | "followup" | "unavailable" | "guard" | "window" | "verify" => Ok(None),
             _ => Err("Unknown voice event"),
@@ -200,52 +204,63 @@ impl VoiceFeedback {
             self.record("playback_start", now);
         }
     }
+    pub fn acknowledging(&self, now: f64) -> bool {
+        self.acknowledgment_since.is_some_and(|at| now - at < 0.9)
+    }
     pub fn light(&self, now: f64) -> Option<Rgbw8> {
+        if !self.confirmed {
+            return None;
+        }
         let elapsed = (now - self.since).max(0.0);
-        let (color, gain) = match self.phase.as_str() {
-            "window" => (
-                VOICE_PALETTE[1],
-                0.55 - 0.30 * (elapsed * std::f64::consts::TAU / 1.4).cos(),
-            ),
-            "listening" if elapsed < 0.9 => {
+        let (color, gain) =
+            if matches!(self.phase.as_str(), "listening" | "thinking") && self.acknowledging(now) {
+                // The acknowledgement owns its own clock, so endpoint/followup cannot
+                // replace or restart its original three-color pattern.
+                let elapsed = (now - self.acknowledgment_since.unwrap()).max(0.0);
                 let index = (elapsed / 0.3).floor() as usize;
                 (
                     VOICE_PALETTE[index.min(2)],
                     (std::f64::consts::PI * (elapsed % 0.3) / 0.3).sin().powi(2),
                 )
-            }
-            "listening" => (
-                Rgbw8 {
-                    red: 4,
-                    green: 3,
-                    blue: 0,
-                    white: 12,
-                },
-                1.0,
-            ),
-            "thinking" => {
-                let cycle = elapsed / THINKING_BREATH_SECONDS;
-                let index = cycle.floor() as usize % VOICE_PALETTE.len();
-                let progress = cycle.fract();
-                let fade = progress * progress * (3.0 - 2.0 * progress);
-                let color = VOICE_PALETTE[index]
-                    .interpolate(VOICE_PALETTE[(index + 1) % VOICE_PALETTE.len()], fade)
-                    .expect("bounded palette interpolation");
+            } else {
+                match self.phase.as_str() {
+                    "window" => (
+                        VOICE_PALETTE[1],
+                        0.55 - 0.30 * (elapsed * std::f64::consts::TAU / 1.4).cos(),
+                    ),
+                    "listening" => (
+                        Rgbw8 {
+                            red: 4,
+                            green: 3,
+                            blue: 0,
+                            white: 12,
+                        },
+                        1.0,
+                    ),
+                    "thinking" => {
+                        let cycle = elapsed / THINKING_BREATH_SECONDS;
+                        let index = cycle.floor() as usize % VOICE_PALETTE.len();
+                        let progress = cycle.fract();
+                        let fade = progress * progress * (3.0 - 2.0 * progress);
+                        let color = VOICE_PALETTE[index]
+                            .interpolate(VOICE_PALETTE[(index + 1) % VOICE_PALETTE.len()], fade)
+                            .expect("bounded palette interpolation");
 
-                let gain = 0.90 - 0.45 * (cycle * std::f64::consts::TAU).cos();
-                (color, gain)
-            }
-            "unavailable" => (
-                Rgbw8 {
-                    red: 35,
-                    green: 8,
-                    blue: 0,
-                    white: 3,
-                },
-                (1.0 - elapsed / 0.8).max(0.0),
-            ),
-            _ => return None,
-        };
+                        let gain = 0.90 - 0.45 * (cycle * std::f64::consts::TAU).cos();
+                        (color, gain)
+                    }
+                    "unavailable" => (
+                        Rgbw8 {
+                            red: 35,
+                            green: 8,
+                            blue: 0,
+                            white: 3,
+                        },
+                        (1.0 - elapsed / 0.8).max(0.0),
+                    ),
+                    _ => return None,
+                }
+            };
         Some(Rgbw8 {
             red: (color.red as f64 * gain) as u8,
             green: (color.green as f64 * gain) as u8,
@@ -258,6 +273,61 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn unconfirmed_candidates_never_produce_feedback_including_endpoint_and_failure() {
+        for ending in ["reject", "cancel", "unavailable"] {
+            let mut feedback = VoiceFeedback::default();
+            for (event, at) in [
+                ("wake", 0.0),
+                ("verify", 0.2),
+                ("endpoint", 2.0),
+                (ending, 3.0),
+            ] {
+                assert!(feedback.event(ID, event, at).unwrap().is_none(), "{event}");
+                assert!(feedback.light(at + 0.15).is_none(), "{event}");
+                assert_eq!(feedback.reaction(), "neutral");
+            }
+        }
+    }
+
+    #[test]
+    fn confirmation_replays_original_ack_pattern_once_despite_endpoint_and_followup() {
+        for verification in ["verify", "endpoint"] {
+            let mut f = VoiceFeedback::default();
+            f.event(ID, "wake", 0.0).unwrap();
+            f.event(ID, verification, 0.2).unwrap();
+            assert!(f.light(2.0).is_none());
+            assert!(f.confirm(ID, 10.0));
+            // The full-transcript path may already be thinking; neither transition
+            // is allowed to cut short the acknowledgement or play over its chime.
+            assert_eq!(
+                f.event(ID, "endpoint", 10.02)
+                    .unwrap()
+                    .and_then(|(_, cue)| cue),
+                None
+            );
+            f.event(ID, "followup", 10.04).unwrap();
+            assert!(!f.confirm(ID, 10.1));
+            for (offset, expected) in [
+                (0.15, VOICE_PALETTE[0]),
+                (0.45, VOICE_PALETTE[1]),
+                (0.75, VOICE_PALETTE[2]),
+            ] {
+                let actual = f.light(10.0 + offset).unwrap();
+                for (a, b) in [
+                    (actual.red, expected.red),
+                    (actual.green, expected.green),
+                    (actual.blue, expected.blue),
+                    (actual.white, expected.white),
+                ] {
+                    assert!(a.abs_diff(b) <= 1);
+                }
+            }
+            assert!(!f.acknowledging(10.91));
+            assert_eq!(f.light(10.91), Some(Rgbw8::new(4, 3, 0, 12)));
+        }
+    }
 
     #[test]
     fn prefix_confirmation_requires_verification_and_keeps_listening() {
@@ -277,6 +347,8 @@ mod tests {
     fn intermediate_speech_returns_to_silent_processing_animation() {
         let mut f = VoiceFeedback::default();
         f.event(ID, "wake", 0.0).unwrap();
+        f.event(ID, "verify", 0.05).unwrap();
+        assert!(f.confirm(ID, 0.1));
         f.event(ID, "endpoint", 1.0).unwrap();
         f.playback_started(2.0);
         assert_eq!(
@@ -292,6 +364,8 @@ mod tests {
     fn conversation_invitation_is_silent_teal_bounded_and_session_scoped() {
         let mut f = VoiceFeedback::default();
         f.event(ID, "wake", 0.0).unwrap();
+        f.event(ID, "verify", 0.05).unwrap();
+        assert!(f.confirm(ID, 0.1));
         f.playback_started(1.0);
         assert_eq!(f.event(ID, "guard", 2.0).unwrap(), Some(("neutral", None)));
         assert!(f.light(2.2).is_none());
@@ -319,6 +393,8 @@ mod tests {
     fn thinking_breathes_in_all_acknowledgment_colors_without_flashes() {
         let mut feedback = VoiceFeedback::default();
         feedback.event(ID, "wake", 0.0).unwrap();
+        feedback.event(ID, "verify", 0.05).unwrap();
+        assert!(feedback.confirm(ID, 0.1));
         feedback.event(ID, "endpoint", 1.0).unwrap();
         let amber = feedback.light(1.0).unwrap();
         let teal = feedback.light(4.0).unwrap();
@@ -357,6 +433,8 @@ mod tests {
     fn unavailable_plays_error_once_and_releases_feedback() {
         let mut feedback = VoiceFeedback::default();
         feedback.event(ID, "wake", 0.0).unwrap();
+        feedback.event(ID, "verify", 0.05).unwrap();
+        assert!(feedback.confirm(ID, 0.1));
         assert_eq!(
             feedback.event(ID, "unavailable", 2.0).unwrap(),
             Some(("neutral", Some("error_muted")))
@@ -369,7 +447,9 @@ mod tests {
     #[test]
     fn cues_once_and_stale_events_cannot_replace_a_turn() {
         let mut f = VoiceFeedback::default();
-        assert!(f.event(ID, "wake", 0.0).unwrap().is_some());
+        assert!(f.event(ID, "wake", 0.0).unwrap().is_none());
+        f.event(ID, "verify", 0.05).unwrap();
+        assert!(f.confirm(ID, 0.1));
         assert!(f.event(ID, "wake", 0.1).unwrap().is_none());
         assert!(f.event(ID, "endpoint", 1.0).unwrap().is_some());
         assert!(f.event(ID, "endpoint", 1.1).unwrap().is_none());

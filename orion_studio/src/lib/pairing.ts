@@ -115,6 +115,14 @@ export class PairingController {
       return false;
     }
   }
+  async changeAddress(address: string) {
+    if (!this.target) {
+      this.offline("error", "Pair with Orion before changing its address.");
+      return false;
+    }
+    // Keep the previous target and credential if verification or persistence fails.
+    return this.pair(address, this.target.token);
+  }
   private schedule(generation: number, delay: number) {
     if (generation === this.generation) this.timer = setTimeout(() => { void this.poll(generation); }, delay);
   }

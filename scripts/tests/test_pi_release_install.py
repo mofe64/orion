@@ -84,7 +84,7 @@ class ConfigurationTests(Fixture):
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --threshold 0.47\n')
         result = self.plan()[path]
         self.assertIn('--threshold 0.47 --local-processor', result)
-        self.assertNotIn('--threshold 0.35', result)
+        self.assertNotIn('--threshold 0.45', result)
 
     def test_saved_preferences_and_audio_calibration_are_outside_write_set(self):
         for name in ('voice-settings.json', 'microphone.json', 'servo_calibration.json', 'voice.env', 'studio-token'):

@@ -550,15 +550,18 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             return serde_json::json!({"ok": false, "error": "Unexpected voice arguments"})
                 .to_string();
         }
-        if parts[1] == "confirmed" {
+        let action = if parts[1] == "confirmed" {
             if feedback.confirm(parts[0], now_seconds) {
                 rest.confirmed(parts[0], now_seconds);
+                Ok(Some((feedback.reaction(), Some("voice_wake"))))
             } else if !feedback.owns(parts[0]) || !feedback.confirmed_activity() {
                 return serde_json::json!({"ok": false, "error": "No current wake awaits confirmation."}).to_string();
+            } else {
+                Ok(None)
             }
-            return serde_json::json!({"ok": true}).to_string();
-        }
-        let action = feedback.event(parts[0], parts[1], now_seconds);
+        } else {
+            feedback.event(parts[0], parts[1], now_seconds)
+        };
         match action {
             Ok(Some((reaction, cue))) => {
                 if cue == Some("error_muted")
@@ -583,7 +586,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                         if audio.play(cue).is_ok() {
                             feedback.cue_started(cue, now_seconds);
                         }
-                    } else {
+                    } else if !feedback.acknowledging(now_seconds) {
                         let _ = audio.stop();
                     }
                 }

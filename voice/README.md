@@ -25,7 +25,7 @@ coarse direction from stereo frames and downmixes to mono for Rustpotter and ASR
 It keeps pre-roll and the current recording in memory; recordings are cleared on
 mute, cancellation or disconnect.
 
-A wake candidate immediately requests local feedback. With a compatible
+A wake candidate registers a silent runtime session. With a compatible
 coordinator, a short wake prefix reaches Qwen while full command capture continues.
 Prefix verification and transcription of the complete utterance run in order. Follow-up
 speech can remain buffered during confirmation. The coordinator rejects recordings
@@ -69,8 +69,8 @@ Python environment before switching service paths. Playback routing and speaker
 checks are described in [audio setup](../hardware/audio/README.md).
 
 If wake detection succeeds but the body stays at rest, inspect Qwen confirmation
-and the runtime's rest status. The acknowledgement chime can precede confirmation;
-home movement depends on confirmation and a healthy rest lifecycle. If a recording
+and the runtime's rest status. The acknowledgement chime waits for confirmation;
+home movement also requires a healthy rest lifecycle. If a recording
 ends early, inspect the VAD configuration, capture gain and endpoint reason before
 changing the ASR model.
 
