@@ -153,6 +153,12 @@ class RestRuntimeTests(unittest.TestCase):
                     self.assertNotIn('--goto', self.calls)
                     self.assertNotIn('--disable', self.calls)
 
+    def test_already_stationary_motion_still_requires_rest_and_torque_off(self):
+        self.exercise({'--stop': (3, '{"ok":false,"command":"stop","error":"no movement is active"}')})
+        self.assertEqual(self.calls, ['--status', '--stop-scene', '--stop-speech', '--stop', '--goto', '--disable', '--status'])
+        with self.assertRaisesRegex(RuntimeError, 'torque-off was not confirmed'):
+            self.exercise({'--stop': (3, '{"ok":false,"command":"stop","error":"no movement is active"}')}, torque_after=True)
+
     def test_failed_rest_never_disables_and_failed_disable_aborts(self):
         for command in ('--goto', '--disable'):
             with self.subTest(command=command):

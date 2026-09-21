@@ -103,8 +103,11 @@ class System:
         client = [binary, '--socket', option(arguments, '--socket', '/tmp/oriond.sock')]
         status = json.loads(self.run(*client, '--status', capture_output=True, text=True).stdout)
         if status.get('torque_enabled'):
-            for command, inactive in (('--stop-scene', 'No scene is active.'),
-                                      ('--stop-speech', 'No speech run is active.')):
+            for command, inactive in (
+                ('--stop-scene', {'ok': False, 'error': 'No scene is active.'}),
+                ('--stop-speech', {'ok': False, 'error': 'No speech run is active.'}),
+                ('--stop', {'ok': False, 'command': 'stop', 'error': 'no movement is active'}),
+            ):
                 try:
                     self.run(*client, command, capture_output=True, text=True)
                 except subprocess.CalledProcessError as error:
@@ -113,9 +116,8 @@ class System:
                         response = json.loads(error.stdout or '')
                     except (ValueError, TypeError):
                         raise error
-                    if error.returncode != 3 or response != {'ok': False, 'error': inactive}:
+                    if error.returncode != 3 or response != inactive:
                         raise
-            self.run(*client, '--stop', capture_output=True)
             self.run(*client, '--goto', 'rest', '--duration', '3.0', '--wait', capture_output=True)
             self.run(*client, '--disable', capture_output=True)
         status = json.loads(self.run(*client, '--status', capture_output=True, text=True).stdout)
