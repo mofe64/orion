@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { Bug, SlidersHorizontal, BrainCircuit, AudioLines, Link2 } from "lucide-react";
 import type { StudioVoice } from "../hooks/useStudioVoice";
+import type { VoiceSettings } from "../lib/studioVoicePipeline";
 import type { StudioPreferences } from "../lib/preferences";
 import type { GatewayStatus } from "../types";
 import "./Settings.css";
@@ -12,6 +13,11 @@ interface Props {
   theme: "light" | "dark"; onTheme: (theme: "light" | "dark") => void; status: GatewayStatus | null;
   connected: boolean; onConnect: () => void; onCharacter: (enabled: boolean) => Promise<void>;
   onSound: (kind: "alarm" | "timer", sound: string) => Promise<void>;
+}
+export function canSaveVoiceSettings(voice: StudioVoice, draft: VoiceSettings, provider: string, connected: boolean): boolean {
+  const model = voice.models.find(value => value.model === draft.model);
+  const validAgent = voice.models.length ? !!model && model.efforts.includes(draft.effort) : !!draft.model.trim() && !!draft.effort.trim();
+  return connected && voice.loaded && !voice.saving && JSON.stringify(draft) !== JSON.stringify(voice.settings) && provider === "codex" && validAgent;
 }
 export function Settings({ voice, preferences, onPreferences, theme, onTheme, status, connected, onConnect, onCharacter, onSound }: Props) {
   const [locations,setLocations] = useState<{asrPath:string|null;ttsPath:string|null;cachePath:string;hubPath:string;asrIdentity:string|null;ttsIdentity:string|null}|null>(null);
@@ -32,31 +38,31 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
   const onboard = voice.settings.ttsModel?.startsWith("pocket-") ?? false;
   const model = voice.models.find(value => value.model === draft.model);
   const efforts = model?.efforts ?? [];
-  const canSave = voice.loaded && !voice.saving && (!connected || voice.snapshot.muted === true || voice.snapshot.phase === "error") && provider === "codex" && !!model && efforts.includes(draft.effort);
+  const canSave = canSaveVoiceSettings(voice, draft, provider, connected);
   return <section className="settings-page" aria-labelledby="settings-title"><header className="settings-heading"><p className="eyebrow">YOUR STUDIO</p><h1 id="settings-title">Settings</h1><p>Make Orion feel at home.</p></header>
-    <AgentProfileSettings onboard={onboard} key={String(onboard)} />
     <div className="settings-columns"><div className="settings-stack">
-      <section className="settings-card"><header><SlidersHorizontal size={20} /><div><h2>Studio</h2><p>Appearance and preview preferences.</p></div></header>
+      <section className="settings-card"><header><SlidersHorizontal size={20} /><div><h2>Studio</h2><p>Appearance and preview preferences save automatically.</p></div></header>
         <label className="settings-row"><span>Appearance</span><select value={theme} onChange={event => onTheme(event.target.value as "light" | "dark")}><option value="dark">Dark</option><option value="light">Light</option></select></label>
         <SettingToggle label="Preview sound" help="Play scene audio in Studio previews." checked={preferences.previewAudio} onChange={value => onPreferences({ ...preferences,previewAudio: value })} />
         <SettingToggle label="Reduce interface motion" help="Minimize interface animations; scene playback stays unchanged." checked={preferences.reduceMotion} onChange={value => onPreferences({ ...preferences,reduceMotion: value })} />
       </section>
-      <section className="settings-card"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Connected to your robot." : "Pair Orion to use robot controls."}</p></div></header>
+      <section className="settings-card"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Changes apply immediately on your robot." : "Pair Orion to use robot controls."}</p></div></header>
         <SettingToggle label="Listening" help={voice.label} checked={voice.listening} disabled={!connected || voice.snapshot.muted === undefined || voice.toggling} onChange={() => void voice.toggle()} />
         <SettingToggle label="Character mode" help="Let Orion use its idle expressions and movement." checked={!!status?.character.enabled} disabled={!connected || !status || characterBusy} onChange={async value => { setCharacterBusy(true); try { await onCharacter(value); } catch (error) { setError(String(error)); } finally { setCharacterBusy(false); } }} />
         <button className="quiet-button" onClick={onConnect}>Manage connection</button>
       </section>
       <SoundSettings voice={voice} connected={connected} routines={status?.routines} onSound={onSound} />
       <section className="settings-card"><header><Bug size={20} /><div><h2>Developer tools</h2><p>Useful details when something needs attention.</p></div></header><SettingToggle label="Enable debug mode" help="Adds Debug to navigation with voice metrics, joint readings, and runtime logs." checked={preferences.debugMode} onChange={value => onPreferences({ ...preferences,debugMode:value })} /></section>
+      <div className="settings-profile-section"><h2>Personality and memory</h2><AgentProfileSettings onboard={onboard} key={String(onboard)} /></div>
     </div>
     <form className="settings-stack" onSubmit={event => { event.preventDefault(); if (!canSave) return; void voice.save({ ...draft,provider:"codex" }).then(() => setSaved(true)).catch(error => setError(error instanceof Error ? error.message : String(error))); }}>
-      <section className="settings-card"><header><BrainCircuit size={20} /><div><h2>AI agent</h2><p>Choose how Orion prepares its replies.</p></div></header>
+      <section className="settings-card"><header><BrainCircuit size={20} /><div><h2>AI agent</h2><p>Choose how Orion prepares its replies, then save below.</p></div></header>
         <label>Provider<select value={provider} onChange={event => { setProvider(event.target.value as typeof provider); setSaved(false); }}><option value="codex">Codex</option><option value="api_key">API key · Coming soon</option></select></label>
         {provider === "api_key" ? <div className="settings-unavailable"><p>API-key providers are not implemented yet. These fields cannot be submitted or saved.</p><label>Provider name<input placeholder="Provider" autoComplete="off" /></label><label>API key<input type="password" placeholder="API key" autoComplete="off" /></label><button type="button" disabled>API-key setup unavailable</button></div> : <>
-          <label>Reply model<select value={model ? draft.model : ""} disabled={!voice.models.length} onChange={event => { const next = voice.models.find(item => item.model === event.target.value); if (next) patch({model:next.model,effort:next.efforts.includes(draft.effort) ? draft.effort : next.efforts[0] ?? ""}); }}><option value="" disabled>{voice.models.length ? "Choose an available model" : "Model list unavailable"}</option>{voice.models.map(item => <option key={item.model} value={item.model}>{item.name}</option>)}</select></label>
-          <label>Reasoning effort<select disabled={!efforts.length} value={efforts.includes(draft.effort) ? draft.effort : ""} onChange={event => patch({effort:event.target.value})}><option value="" disabled>Choose an available effort</option>{efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></label>
-          {!voice.models.length && <p className="settings-help">The Codex model list becomes available when the voice worker connects. No model or effort options are assumed.</p>}
-          <p className="settings-help">Saving applies the model and effort to subsequent Orion voice-agent requests. Turn listening back on when the worker is ready.</p><p className="settings-help">Active agent: {voice.snapshot.agentModel ?? "Not loaded"} · {voice.snapshot.agentEffort ?? "—"}</p><p className="settings-help">{onboard ? "Uses the Codex sign-in on your Pi." : "Uses your local Codex sign-in."} Confirmed command text and retrieved memories are sent to Codex. Web search uses online services; speech recognition and synthesis run locally. Model support is verified when Voice starts.</p>
+          <label>Reply model<select value={draft.model} disabled={!voice.models.length} onChange={event => { const next = voice.models.find(item => item.model === event.target.value); if (next) patch({model:next.model,effort:next.efforts.includes(draft.effort) ? draft.effort : next.efforts[0] ?? ""}); }}>{!model && <option value={draft.model}>{draft.model} · saved</option>}{voice.models.map(item => <option key={item.model} value={item.model}>{item.name}</option>)}</select></label>
+          <label>Reasoning effort<select disabled={!efforts.length} value={draft.effort} onChange={event => patch({effort:event.target.value})}>{!efforts.includes(draft.effort) && <option value={draft.effort}>{draft.effort} · saved</option>}{efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></label>
+          {!voice.models.length && <p className="settings-help">Orion’s model list is unavailable. Your saved model and effort remain selected; you can still save other voice changes.</p>}
+          <p className="settings-help">Changes to the reply model and speech model use Save voice settings below. Saving turns listening off while Orion reloads; turn it on when ready.</p><p className="settings-help">Active agent: {voice.snapshot.agentModel ?? "Not loaded"} · {voice.snapshot.agentEffort ?? "—"}</p><p className="settings-help">{onboard ? "Uses the Codex sign-in on your Pi." : "Uses your local Codex sign-in."} Confirmed command text and retrieved memories are sent to Codex.</p>
         </>}
       </section>
       <section className="settings-card"><header><AudioLines size={20} /><div><h2>Speech models</h2><p>{onboard ? "Speech recognition and voices run on Orion." : "Local models and their weight locations on this computer."}</p></div></header>
@@ -72,7 +78,8 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
         <FolderSetting label="Model download cache" value={draft.cachePath ?? ""} detected={locations?.cachePath} onChange={cachePath => patch({cachePath})} onError={setError}/>{locationError && <p role="status">{locationError}</p>}
         <p className="settings-help">Downloaded weights stay on this computer and are loaded into memory when Voice starts. A model ID may check for updates; cached files are reused. A selected folder takes priority over the model ID. Supported weights: Qwen3 ASR for speech recognition and Chatterbox for speech synthesis. A folder’s metadata may identify its architecture without identifying the original model repository. Changing the cache affects future loads; it does not move existing weights. These engines require Apple Silicon.</p>
         </>}
-        {connected && voice.snapshot.muted !== true && <p className="settings-help">{voice.snapshot.phase === "error" ? "Saving will first turn listening off, then retry with these model settings." : "Turn listening off before saving model changes."}</p>}
+        <p className="settings-help">Save voice settings applies changes in this AI agent and Speech models section. Studio appearance, listening, the default Pocket voice, and alert sounds save as soon as you change them.</p>
+        {!connected && <p className="settings-help">Connect Orion to save voice settings.</p>}
         {error && <p role="alert" className="settings-error">{error}</p>}{saved && <p role="status">{onboard ? "Saved on Orion." : "Saved on this computer."}</p>}
         <button className="primary-button" type="submit" disabled={!canSave}>{voice.saving ? "Saving…" : "Save voice settings"}</button>
       </section>

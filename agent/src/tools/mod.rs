@@ -9,6 +9,13 @@ use tokio::sync::{mpsc, oneshot};
 pub enum AgentEvent {
     SearchStarted,
     FinalSpeech(String),
+    ToolCall {
+        name: String,
+        arguments: Value,
+        result: Value,
+        success: bool,
+        duration_ms: f64,
+    },
     RobotOperation {
         parameters: Value,
         reply: oneshot::Sender<Result<Value, String>>,

@@ -1,4 +1,8 @@
-use crate::{CoordinatorConfig, pipeline::microphone};
+use crate::{
+    CoordinatorConfig,
+    history::{self, History},
+    pipeline::microphone,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::{
@@ -16,6 +20,7 @@ use tokio_tungstenite::{
 pub(crate) struct Hub {
     state: Arc<Mutex<State>>,
     events: broadcast::Sender<String>,
+    history: Arc<Mutex<Option<History>>>,
 }
 #[derive(Default)]
 struct State {
@@ -28,9 +33,15 @@ impl Hub {
         Self {
             state: Arc::new(Mutex::new(State::default())),
             events: broadcast::channel(64).0,
+            history: Arc::new(Mutex::new(history::directory().ok().map(History::new))),
         }
     }
     pub fn publish(&self, mut value: Value) {
+        if let Some(history) = self.history.lock().unwrap().as_mut()
+            && let Err(error) = history.record(&value)
+        {
+            eprintln!("Orion voice history could not be saved: {error}");
+        }
         let mut state = self.state.lock().unwrap();
         state.sequence += 1;
         value["eventId"] = state.sequence.into();

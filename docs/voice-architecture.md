@@ -210,6 +210,16 @@ conversation so later turns use the changed profile. See
 [agent storage and tools](../agent/README.md#memory-and-tools) for limits and file
 formats.
 
+The coordinator saves each voice turn on the Pi under
+`~/.local/share/orion/voice-stack/history/YYYY-MM-DD/`. Each private turn file
+contains dated events for the recognized command, agent reply, tool calls and
+results, errors, speech generation and playback timings. Audio is not saved.
+Studio reads this history through the paired gateway from **Debug → Voice → View
+conversation history**. Turns are shown newest first, with older turns available
+through **Load older**. A coordinator restart does not erase saved turns. The
+history begins when this version is installed; earlier event snapshots cannot be
+reconstructed from Studio.
+
 A search can produce one short acknowledgement while Codex continues working.
 The coordinator synthesizes and plays it in the same voice session, then sends
 `session.processing` to restore thinking feedback. Final speech waits for that
@@ -295,8 +305,8 @@ Coordinator logs include `speech.buffer_ready` and `speech.chunk`; runtime logs
 include `speech.chunk_received`, `speech.stream_end`, `speech.terminal` and motion
 finalization events. `buffered_ms` estimates received duration minus software
 playback elapsed. It can be negative and does not measure the ALSA hardware
-buffer. These timing logs contain IDs and durations, while Studio's event view
-also exposes transcripts. Use the [service logs](quickstart.md#logs-and-recovery)
+buffer. These timing logs contain IDs and durations, while Studio's conversation
+history also exposes transcripts and agent actions. Use the [service logs](quickstart.md#logs-and-recovery)
 to investigate a failed turn.
 
 ## Local interaction feedback

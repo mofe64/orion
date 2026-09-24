@@ -420,6 +420,20 @@ async fn response(
         let mut prefix = String::new();
         while let Some(activity) = receive.recv().await {
             match activity {
+                orion_agent::AgentEvent::ToolCall {
+                    name,
+                    arguments,
+                    result,
+                    success,
+                    duration_ms,
+                } => {
+                    event(
+                        hub,
+                        sid,
+                        json!({"type":"agent.tool", "requestId":request,
+                        "name":name, "arguments":arguments, "result":result, "success":success, "durationMs":duration_ms}),
+                    );
+                }
                 orion_agent::AgentEvent::FinalSpeech(text) => {
                     if !prefix.is_empty() {
                         prefix.push(' ');

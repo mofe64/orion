@@ -52,3 +52,8 @@
 .home-shell .settings-card fieldset { margin: 1.25rem 0; padding: 1rem 0 .25rem; }
 .settings-model-identity { color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; margin: .5rem 0 1rem; }
 .debug-torque { margin-top: 1.25rem; }
+.debug-history-button { margin-top: 1.25rem; width: 100%; justify-content: center; }
+.settings-profile-section { padding-top: .5rem; }
+.settings-profile-section > h2 { margin: 0 0 1rem; font-size: 1.15rem; letter-spacing: -.02em; }
+.settings-profile-section .settings-columns { grid-template-columns: 1fr; }
+.settings-profile-section .agent-profile { margin-bottom: 0; }

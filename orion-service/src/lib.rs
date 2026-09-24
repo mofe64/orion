@@ -46,9 +46,15 @@ pub struct StartOptions {
 pub enum Request {
     Status,
     Observe,
+    History {
+        session_id: Option<String>,
+        before: Option<String>,
+    },
     StartSaved,
     Start(StartOptions),
-    Microphone { muted: bool },
+    Microphone {
+        muted: bool,
+    },
     LoadPairing,
     SavePairing(pairing::Pairing),
     ForgetPairing,
@@ -147,6 +153,11 @@ impl Host {
             Request::Start(options) => self.start(options),
             Request::StartSaved => self.start_saved().await,
             Request::Observe => Ok(self.coordinator.events()),
+            Request::History { session_id, before } => orion_coordinator::history::read(
+                &orion_coordinator::history::directory()?,
+                session_id.as_deref(),
+                before.as_deref(),
+            ),
             Request::Microphone { muted } => {
                 coordinator::set_voice_microphone(&self.coordinator, muted)
             }

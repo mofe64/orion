@@ -137,7 +137,8 @@ journalctl -u oriond -u orion-studio-gateway -u orion-listener \
 ```
 
 An active service process does not establish speech readiness. Studio Debug shows
-loaded models, transcripts and timing events. Its gateway log view includes the
+loaded models. **View conversation history** in its Voice card reads saved turns,
+including transcript, agent actions and timings, from the Pi. Its gateway log view includes the
 runtime, gateway and listener; use `journalctl -u orion-voice-stack` for coordinator,
 speech-worker and agent startup diagnostics.
 

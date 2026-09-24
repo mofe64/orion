@@ -1,6 +1,7 @@
 //! Voice orchestration with no Tauri or native model dependency.
 mod buffer;
 mod gateway;
+pub mod history;
 mod hub;
 mod pipeline;
 mod service;

@@ -636,6 +636,24 @@ async fn sleep_tool_uses_current_session_and_closes_after_acknowledgement() {
     h.stop().await;
 }
 #[tokio::test]
+async fn timer_request_reaches_the_pi_and_is_visible_in_history_events() {
+    let mut h = Harness::new().await;
+    h.wake(r#"Hey Orion, tool:{"name":"set_timer","arguments":{"seconds":300,"label":"Tea"}}"#)
+        .await;
+    until(&mut h.pi, "session.finish").await;
+    let operation = h.gateway.lock().await.robot_operations[0].clone();
+    assert_eq!(operation["operation"], "routines");
+    assert_eq!(
+        operation["request"],
+        json!({"action":"timer","seconds":300.0,"label":"Tea"})
+    );
+    let tool = until(&mut h.observer, "agent.tool").await;
+    assert_eq!(tool["name"], "set_timer");
+    assert_eq!(tool["arguments"]["seconds"], 300);
+    assert_eq!(tool["success"], true);
+    h.stop().await;
+}
+#[tokio::test]
 async fn alarm_interrupt_retires_playback_and_accepts_a_later_wake() {
     let mut h = Harness::new().await;
     h.gateway.lock().await.allow_complete = false;

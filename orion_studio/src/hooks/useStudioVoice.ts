@@ -21,9 +21,8 @@ export function useStudioVoice(connection: GatewayConnection | null, onNotice: (
   useEffect(() => { if (connection && loaded) void pipeline.start(); return () => { void pipeline.stop(); }; },[pipeline,connection,loaded]);
   const save = async (value: VoiceSettings) => {
     const voiceOnly = JSON.stringify({ ...settings, ttsVoice: value.ttsVoice }) === JSON.stringify(value);
-    if (!voiceOnly && connection && snapshot.muted !== true && snapshot.phase !== "error") throw new Error("Turn listening off before changing voice models.");
     setSaving(true);
-    try { if (!voiceOnly && connection && snapshot.muted !== true) await pipeline.setMuted(true); const saved = await invoke<VoiceSettings>("save_voice_settings",{ settings: value }); setSettings({ ...DEFAULT_VOICE_SETTINGS,...saved }); onNotice("Voice settings saved."); }
+    try { if (!voiceOnly && connection && snapshot.muted === false) await pipeline.setMuted(true); const saved = await invoke<VoiceSettings>("save_voice_settings",{ settings: value }); setSettings({ ...DEFAULT_VOICE_SETTINGS,...saved }); onNotice(voiceOnly ? "Voice saved. It applies to the next reply." : "Voice settings saved. Turn listening on when Orion is ready."); }
     finally { setSaving(false); }
   };
   const toggle = async () => {

@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -312,15 +312,25 @@ impl Codex {
                 if calls.len() >= 16 || !calls.insert(call.to_owned()) {
                     return Err("Duplicate or excessive tool calls".into());
                 }
-                let result = crate::tools::execute(
-                    &self.config,
-                    params["tool"].as_str().unwrap_or_default(),
-                    params["arguments"].clone(),
-                    events,
-                )
-                .await;
+                let name = params["tool"].as_str().unwrap_or_default().to_owned();
+                let arguments = params["arguments"].clone();
+                let started = Instant::now();
+                let result =
+                    crate::tools::execute(&self.config, &name, arguments.clone(), events).await;
                 let success = result.is_ok();
                 let value = result.unwrap_or_else(|error| json!({"error":error}));
+                if let Some(events) = events {
+                    events
+                        .send(crate::AgentEvent::ToolCall {
+                            name,
+                            arguments,
+                            result: value.clone(),
+                            success,
+                            duration_ms: started.elapsed().as_secs_f64() * 1000.,
+                        })
+                        .await
+                        .map_err(|_| "Coordinator stopped")?;
+                }
                 self.send(json!({"id":message["id"],"result":{"success":success,"contentItems":[{"type":"inputText","text":value.to_string()}]}})).await?;
                 continue;
             }

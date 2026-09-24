@@ -7,6 +7,8 @@ The Pi runs the voice pipeline and owns hardware execution.
 Editing changes a local draft or preview. **Publish to Orion**, **Play on Orion**
 and the Home controls send explicit requests to the robot. Static previews show
 pose and light settings; measured joint telemetry is available in Debug.
+Debug's Voice card opens conversation history stored on the Pi. The history
+shows recognized requests, replies, tool actions and timing in date order.
 
 ## Development
 

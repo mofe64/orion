@@ -172,6 +172,21 @@ async fn search_progress_is_emitted_once_and_lighting_requires_coordinator_resul
     };
     let (result, ()) = tokio::join!(call, handle);
     assert!(result.unwrap().contains("Pi unavailable"));
+    let Some(orion_agent::AgentEvent::ToolCall {
+        name,
+        arguments,
+        result,
+        success,
+        duration_ms,
+    }) = receive.recv().await
+    else {
+        panic!("Expected the completed tool call for voice history")
+    };
+    assert_eq!(name, "set_lighting");
+    assert_eq!(arguments["brightness"], 35);
+    assert_eq!(result["error"], "Pi unavailable");
+    assert!(!success);
+    assert!(duration_ms >= 0.);
 }
 
 #[tokio::test]
