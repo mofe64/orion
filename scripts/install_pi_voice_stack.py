@@ -142,10 +142,12 @@ class System:
                 status = control(home, {'method': 'status'})
                 observation = control(home, {'method': 'observe'})
                 ready = next((e for e in observation.get('events', []) if e.get('type') == 'ready'), {})
+                expected_provider, expected_model = expected_tts(home)
                 if not (status.get('coordinator_running') and not status.get('error') and
                         status.get('project_root') == str(release) and status.get('revision') == metadata['revision'] and
                         ready.get('asr', {}).get('provider') == 'qwen3-asr' and
-                        ready.get('tts', {}).get('provider') == 'pocket-tts' and ready.get('agent')):
+                        ready.get('tts', {}).get('provider') == expected_provider and
+                        ready.get('tts', {}).get('model') == expected_model and ready.get('agent')):
                     raise RuntimeError('The requested release is not speech-ready')
                 runtime = json.loads(self.run(release / 'runtime/target/release/oriond', '--socket', runtime_socket, '--status', capture_output=True, text=True, timeout=5).stdout)
                 if runtime.get('build_revision') != metadata['revision']:
@@ -161,7 +163,27 @@ class System:
                 return
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                 time.sleep(.5)
-        raise RuntimeError('Pi release did not become ready: check runtime, Qwen, Pocket, Codex and gateway logs')
+        raise RuntimeError('Pi release did not become ready: check runtime, Qwen, TTS, Codex and gateway logs')
+
+
+def expected_tts(home):
+    saved = home / '.config/orion/voice-settings.json'
+    if saved.exists():
+        settings = json.loads(saved.read_text())
+        model = settings.get('ttsPath') or settings.get('ttsModel') or 'piper-alba-medium'
+        if model == '~' or model.startswith('~/'):
+            model = str(home / model.removeprefix('~/'))
+    else:
+        environment = home / '.config/orion/voice-stack.env'
+        values = read_env(environment.read_text()) if environment.exists() else {}
+        model = values.get('ORION_STUDIO_TTS_MODEL', 'piper-alba-medium')
+    if model == 'piper-alba-medium' or (Path(model) / 'en_GB-alba-medium.onnx').is_file():
+        provider = 'piper-tts'
+    elif model.startswith('pocket-'):
+        provider = 'pocket-tts'
+    else:
+        provider = 'chatterbox-turbo'
+    return provider, model
 
 
 def option(arguments, flag, default):

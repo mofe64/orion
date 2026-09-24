@@ -2,9 +2,10 @@
 
 Orion's Pi runs microphone capture, wake detection, speech recognition, speech
 synthesis and the agent coordinator. Rustpotter detects a possible wake phrase,
-Silero finds the end of speech, Qwen3-ASR transcribes, and Pocket TTS produces the
-reply. Codex App Server runs on the Pi and uses online model inference. Studio
-provides settings and observation through the gateway.
+Silero finds the end of speech, Qwen3-ASR transcribes, and the selected Piper
+Alba Medium or Pocket model produces the reply. Codex App Server runs on the Pi
+and uses online model inference. Studio provides settings and observation through
+the gateway.
 
 ## Audio and control flow
 
@@ -15,7 +16,7 @@ ReSpeaker stereo capture
   -> short Qwen wake verification while command capture continues
   -> Silero endpoint -> Qwen transcription of the complete recording
   -> confirmed command -> Rust agent -> Codex App Server
-  -> final answer sentences -> Pocket TTS -> coordinator audio buffer
+  -> final answer sentences -> Piper Alba or Pocket TTS -> coordinator audio buffer
   -> local gateway -> oriond playback and speech animation
   -> playback completion -> echo guard -> follow-up listening window
 ```
@@ -159,7 +160,7 @@ address and token in a private directory for the gateway to discover.
 The host reads saved settings, starts the coordinator and retries a stopped
 coordinator every five seconds. Repeated starts with matching configuration
 reuse the coordinator. Settings changes are serialized with startup. Changing
-only the voice preset affects the next response; other model settings restart
+only the Pocket voice preset affects the next response; other model settings restart
 the coordinator and speech workers. The agent executor can survive that restart
 when its configuration matches and no active request is cancelled.
 
@@ -230,16 +231,19 @@ without the intermediate acknowledgement.
 ## Response latency
 
 Response time includes trailing silence, transcription, online agent processing,
-synthesis buffering and speaker startup. Qwen and Pocket stay loaded between
-completed jobs. Cancelling native inference retires only the affected worker,
+synthesis buffering and speaker startup. Qwen and the selected TTS model stay
+loaded between completed jobs. Cancelling native inference retires only the
+affected worker,
 which reloads for its next job. CPU thread settings are listed in
 [configuration](configuration.md#pi-voice-profile).
 
-Pocket FP32 has been slower than playback in Pi trials. The coordinator can
-therefore wait for the whole response before uploading it. INT8 uses quantized
-weights and may reduce that wait, with an audible change in voice quality. The
-buffering decision follows measured generation speed for the current response;
-it is not selected solely by the FP32 or INT8 setting.
+Piper Alba generates 22,050 Hz speech. Its worker completes a sentence, resamples
+it to the 24,000 Hz playback protocol, then sends chunks of at most two seconds.
+Pocket streams native 24,000 Hz chunks. The coordinator buffers at least six
+seconds of audio, or the complete response when shorter, before uploading it.
+It can retain a slower reply until completion to prevent playback gaps. The
+buffering decision follows generation speed for the current response, rather
+than a fixed model choice.
 
 A first generated chunk, a first upload and audible speech are different points
 in the turn. Debug exposes separate stage durations. Stages overlap, so adding
@@ -262,9 +266,10 @@ calibration is required before enabling direction estimates.
 ## Streaming replies and timing
 
 The Codex adapter streams speech text only from a matching thread, turn and item
-explicitly marked `final_answer`. Complete sentences can reach Pocket while Codex
-finishes. Unknown phases wait for final completion. Model commentary and citation
-markers are removed from spoken output. The final text must preserve any prefix
+explicitly marked `final_answer`. Complete sentences can reach the selected TTS
+model while Codex finishes. Unknown phases wait for final completion. Model
+commentary and citation markers are removed from spoken output. The final text
+must preserve any prefix
 already emitted; a mismatch cancels the turn. Spoken output is capped at
 800 Unicode characters plus an ellipsis.
 

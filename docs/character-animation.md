@@ -183,7 +183,7 @@ finalization installs only a settle rather than another expressive gesture.
 
 ### Audio ownership and analysis
 
-The onboard coordinator sends Pocket audio as ordered RIFF/WAV chunks to the local gateway;
+The onboard coordinator sends the selected TTS model's audio as ordered RIFF/WAV chunks to the local gateway;
 the complete-file endpoint also remains available. The gateway requires mono, 24 kHz, signed 16-bit pulse-code modulation
 (PCM16). It applies size and duration limits, writes an atomic random spool
 item, and asks the speech coordinator to start or append that identifier. The coordinator

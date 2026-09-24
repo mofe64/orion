@@ -33,7 +33,11 @@ def load_models(config):
     if os.environ.get('ORION_SPEECH_BACKEND') == 'pi':
         from .pi import QwenGgufTranscriber, PocketSynthesizer
         asr = QwenGgufTranscriber(config['asr_model']) if role in ('both', 'asr') else None
-        tts = PocketSynthesizer(config['tts_model']) if role in ('both', 'tts') else None
+        tts = None
+        if role in ('both', 'tts'):
+            from .piper import PiperAlbaSynthesizer, is_piper_model
+            model = config['tts_model']
+            tts = PiperAlbaSynthesizer(model) if is_piper_model(model) else PocketSynthesizer(model)
     else:
         from .providers import Qwen3AsrTranscriber
         from .tts import ChatterboxSynthesizer

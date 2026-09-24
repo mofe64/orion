@@ -12,7 +12,7 @@ Build, test and activate the complete Orion Pi stack through SSH. Defaults:
 
 Commit and push the intended revision first. The Pi fetches it into an isolated
 release without merging, stashing, resetting or discarding its checkout edits.
-Runtime, gateway, Rustpotter/Silero listener, Qwen/Pocket workers and the agent
+Runtime, gateway, Rustpotter/Silero listener, Qwen/Piper/Pocket workers and the agent
 service are prepared before anything is stopped. Activation preserves settings
 and confirms mechanical rest before switching the hardware runtime. Failure
 restores the immediately previous installation. No expression smoke motions

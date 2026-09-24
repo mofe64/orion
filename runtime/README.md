@@ -361,8 +361,9 @@ selected by `oriond.service`.
 
 ## Speech playback
 
-The Pi's Pocket worker generates response audio. The onboard coordinator buffers
-and uploads mono PCM16 24 kHz WAV through the local authenticated gateway. `oriond` accepts a validated spool identifier through its private
+The Pi's selected Piper or Pocket worker generates response audio. The onboard
+coordinator buffers and uploads mono PCM16 24 kHz WAV through the local
+authenticated gateway. `oriond` accepts a validated spool identifier through its private
 `speech file` operation and owns ReSpeaker playback. Streaming uses `speech stream`,
 ordered `speech append` commands and an explicit `speech end`, all under one run
 ID and one player process. See [streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)

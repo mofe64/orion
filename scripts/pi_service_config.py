@@ -134,7 +134,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         'ORION_STUDIO_CODEX_BIN': str(root / 'codex-0.154.0/bin/codex'),
         'ORION_ASR_MODEL_DIR': str(root / 'models/qwen'), 'ORION_LLAMA_SERVER': str(root / 'llama-b10976/llama-server'),
         'ORION_ASR_THREADS': '3', 'ORION_TTS_THREADS': '3', 'HF_HOME': str(root / 'cache/hf'),
-        'HF_HUB_OFFLINE': '1', 'ORION_STUDIO_TTS_MODEL': 'pocket-fp32',
+        'HF_HUB_OFFLINE': '1', 'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
+        'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium'),
     }
     metadata = json.loads((release / 'release.json').read_text()) if (release / 'release.json').exists() else {}
     files[environment_path] = merge_env(text, defaults, {

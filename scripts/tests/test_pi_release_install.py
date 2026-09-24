@@ -55,6 +55,7 @@ class ConfigurationTests(Fixture):
         self.assertEqual(new['ORION_STUDIO_VOICE_PYTHON'], str(self.release / 'speech/.venv/bin/python'))
         self.assertEqual(new['ORION_PROJECT_ROOT'], str(self.release))
         self.assertEqual(new['ORION_RELEASE_REVISION'], 'new')
+        self.assertEqual(new['ORION_PIPER_MODEL_DIR'], str(self.root / 'models/piper-alba-medium'))
         self.assertIn('# operator tuning\n', result)
         self.assertIn('CUSTOM=value\n', result)
         self.assertEqual(self.env.read_text().splitlines()[-1], 'CUSTOM=value')
@@ -337,16 +338,20 @@ class TransactionTests(Fixture):
 
 class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
-        for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts', 'no-agent'):
+        for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
+                      'wrong-tts-provider', 'wrong-tts-model', 'no-agent'):
             with self.subTest(fault=fault):
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
-                event = dict(type='ready', asr=dict(provider='qwen3-asr'), tts=dict(provider='pocket-tts'), agent=dict(provider='codex'))
+                event = dict(type='ready', asr=dict(provider='qwen3-asr'),
+                             tts=dict(provider='piper-tts', model='piper-alba-medium'), agent=dict(provider='codex'))
                 revision, gateway_pid = 'new', 42
                 if fault == 'old-service': status['project_root'] = '/old/release'
                 if fault == 'old-runtime': revision = 'old'
                 if fault == 'wrong-gateway': gateway_pid = 77
                 for key in ('asr', 'tts', 'agent'):
                     if fault == 'no-'+key: event[key] = {}
+                if fault == 'wrong-tts-provider': event['tts']['provider'] = 'pocket-tts'
+                if fault == 'wrong-tts-model': event['tts']['model'] = 'pocket-int8'
                 system = installer.System()
                 self.write(self.home / '.config/orion/custom-token', 'fixture-token')
                 cmdline = '\0'.join(['python3', 'gateway.py', '--port', '7555', '--socket', '/tmp/custom.sock', '--token-file', str(self.home / '.config/orion/custom-token'), '']).encode()
@@ -370,6 +375,13 @@ class ReadinessTests(Fixture):
                             system.ready(self.release, self.home, timeout=1)
                     else:
                         system.ready(self.release, self.home, timeout=1)
+
+    def test_readiness_follows_saved_pocket_choice_for_rollback(self):
+        self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
+        self.env.write_text('ORION_STUDIO_TTS_MODEL=pocket-fp32\n')
+        self.assertEqual(installer.expected_tts(self.home), ('pocket-tts', 'pocket-fp32'))
+        self.write(self.env.parent / 'voice-settings.json', '{"ttsModel":"pocket-int8","ttsVoice":"jane"}')
+        self.assertEqual(installer.expected_tts(self.home), ('pocket-tts', 'pocket-int8'))
 
     def test_preflight_uses_saved_env_including_project_override_without_mutation(self):
         self.env.write_text('ORION_PROJECT_ROOT=/old/root\nORION_STUDIO_CODEX_BIN=/custom/codex\nORION_TTS_THREADS=2\n')

@@ -7,7 +7,7 @@ export interface VoiceWorkerReadyEvent {
   asr: { provider: "qwen3-asr"; model: string };
   wake: { provider: "rustpotter"; model: string; threshold: number };
   agent: { provider: string; model: string; effort?: string; runtime?: string; models?: { model: string; name: string; efforts: string[] }[] };
-  tts: { provider: "chatterbox-turbo" | "pocket-tts"; model: string };
+  tts: { provider: "chatterbox-turbo" | "pocket-tts" | "piper-tts"; model: string };
 }
 
 export interface WakeCandidateEvent {
@@ -179,7 +179,7 @@ export function parseVoiceWorkerEvent(data: unknown): VoiceWorkerControlEvent {
         || typeof message.wake.threshold !== "number"
         || typeof message.agent.provider !== "string"
         || typeof message.agent.model !== "string"
-        || !["chatterbox-turbo", "pocket-tts"].includes(String(message.tts.provider))
+        || !["chatterbox-turbo", "pocket-tts", "piper-tts"].includes(String(message.tts.provider))
         || typeof message.tts.model !== "string"
       ) break;
       return message as unknown as VoiceWorkerReadyEvent;

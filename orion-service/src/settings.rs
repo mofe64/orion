@@ -22,7 +22,12 @@ impl Default for VoiceSettings {
             model: orion_agent::DEFAULT_MODEL.into(),
             effort: orion_agent::DEFAULT_EFFORT.into(),
             asr_model: "Qwen/Qwen3-ASR-0.6B".into(),
-            tts_model: "pocket-fp32".into(),
+            tts_model: if onboard {
+                "piper-alba-medium"
+            } else {
+                "pocket-fp32"
+            }
+            .into(),
             asr_path: if onboard {
                 std::env::var("ORION_ASR_MODEL_DIR").unwrap_or_default()
             } else {

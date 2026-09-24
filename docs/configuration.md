@@ -29,14 +29,18 @@ See [assets and installed releases](system-architecture.md#assets-and-installed-
 
 ## Voice settings
 
-Studio Settings saves preferences through the Pi gateway. The defaults are
-`gpt-5.6-sol` with `medium` effort, `Qwen/Qwen3-ASR-0.6B`, `pocket-fp32` and
-`alba`. The Pi adapter loads Qwen GGUF files from the configured local folder.
-Pocket accepts the FP32 or INT8 model choice and a named preset.
+Studio Settings saves preferences through the Pi gateway. New Pi installations
+default to `gpt-5.6-sol` with `medium` effort, `Qwen/Qwen3-ASR-0.6B` and
+`piper-alba-medium`. Existing saved Pocket selections remain in place until
+changed. The Pi adapter loads Qwen GGUF files from the configured local folder.
+Piper Alba is a fixed voice; Pocket accepts the FP32 or INT8 model choice and a
+named preset for rollback.
 
-Presets are Alba, Anna, Azelma, Cosette, Eve, Fantine, Jane and Vera. Studio
-**Settings → Voice and sounds → Default Pocket voice** saves `ttsVoice` automatically
-on the Pi and applies it to the next response. Studio requires mute before other model
+Pocket presets are Alba, Anna, Azelma, Cosette, Eve, Fantine, Jane and Vera.
+Studio **Settings → Speech models → Voice model** selects Piper Alba Medium or a
+Pocket model. With Pocket selected, **Voice and sounds → Default Pocket voice**
+saves `ttsVoice` automatically on the Pi and applies it to the next response.
+Piper ignores the saved Pocket preset. Studio requires mute before model
 changes, which restart the coordinator and speech workers. An idle restart can
 preserve the agent conversation when its model, effort and executable still
 match. Restarting the whole service starts a fresh conversation.
@@ -63,7 +67,7 @@ configuration with `systemctl cat SERVICE` before editing it.
 | Variable | Meaning |
 | --- | --- |
 | `ORION_ONBOARD=1` | Use the Pi's local listener, gateway and token file |
-| `ORION_SPEECH_BACKEND=pi` | Select Qwen GGUF and Pocket CPU adapters |
+| `ORION_SPEECH_BACKEND=pi` | Select Qwen GGUF and Pi CPU speech adapters |
 | `ORION_PROJECT_ROOT` | Source directory for the voice service; managed installs select the active release |
 | `ORION_STUDIO_VOICE_PYTHON` | Speech Python executable; managed installs select the release's own environment |
 | `ORION_STUDIO_CODEX_BIN` | Explicit Codex executable; the installer selects its pinned native package |
@@ -71,6 +75,7 @@ configuration with `systemctl cat SERVICE` before editing it.
 | `ORION_LLAMA_SERVER` | Native Qwen server executable |
 | `ORION_ASR_CONTEXT` | Vocabulary hint supplied to Qwen; default `Orion` |
 | `ORION_ASR_THREADS`, `ORION_TTS_THREADS` | CPU inference threads, 1–4; managed default 3 |
+| `ORION_PIPER_MODEL_DIR` | Prepared Piper Alba Medium folder; managed default is `~/.local/share/orion/voice-stack/models/piper-alba-medium` |
 | `HF_HOME` | Speech model cache and initial saved-cache default |
 | `HF_HUB_OFFLINE=1` | Use prepared speech assets from the local cache |
 | `ORION_RELEASE_REVISION` | Release identifier reported by the voice host |

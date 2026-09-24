@@ -60,6 +60,34 @@ class PreparationTests(unittest.TestCase):
             self.assertEqual((root / 'llama-fixture/libggml.so').read_bytes(), b'fixture')
             self.assertEqual(list(root.glob('.extract-*')), [])
 
+    def test_piper_archive_is_verified_and_corrupt_reuse_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stream = io.BytesIO()
+            members = {
+                'vits-piper-en_GB-alba-medium/en_GB-alba-medium.onnx': b'weights',
+                'vits-piper-en_GB-alba-medium/tokens.txt': b'tokens',
+                'vits-piper-en_GB-alba-medium/espeak-ng-data/example': b'data',
+            }
+            with tarfile.open(fileobj=stream, mode='w:bz2') as archive:
+                for name, content in members.items():
+                    info = tarfile.TarInfo(name); info.size = len(content)
+                    archive.addfile(info, io.BytesIO(content))
+            payload = stream.getvalue()
+            with patch.object(prepare, 'PIPER_ALBA_SHA256', hashlib.sha256(payload).hexdigest()), \
+                 patch.object(prepare, 'PIPER_ALBA_WEIGHTS_SHA256', hashlib.sha256(b'weights').hexdigest()), \
+                 patch.object(prepare, 'PIPER_ALBA_TOKENS_SHA256', hashlib.sha256(b'tokens').hexdigest()), \
+                 patch.object(prepare.urllib.request, 'urlopen', return_value=io.BytesIO(payload)) as fetch:
+                prepare.prepare_piper_alba(root)
+                prepare.prepare_piper_alba(root)
+                fetch.assert_called_once()
+                target = root / 'models/piper-alba-medium'
+                self.assertEqual((target / 'en_GB-alba-medium.onnx').read_bytes(), b'weights')
+                self.assertEqual(list(root.glob('.extract-piper-*')), [])
+                (target / 'en_GB-alba-medium.onnx').write_bytes(b'changed')
+                with self.assertRaisesRegex(RuntimeError, 'checksum mismatch'):
+                    prepare.prepare_piper_alba(root)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -16,6 +16,10 @@ CODEX_VERSION = '0.154.0'
 CODEX_SHA256 = '97d93e11df72d3c26772db019e6ea8bb72c246500d46b98c760839f3240355e6'
 LLAMA_VERSION = 'b10976'
 LLAMA_SHA256 = 'ed41c5fd09ae86dbe13e525a57549f1d27d51e7efdc9a9aa4583d42016be7786'
+PIPER_ALBA_ARCHIVE = 'vits-piper-en_GB-alba-medium.tar.bz2'
+PIPER_ALBA_SHA256 = 'fcd45962906933eec4431d3688f7d74aaac8713c87c6717f91fd3b23463aa1a1'
+PIPER_ALBA_WEIGHTS_SHA256 = 'c904d007a8047ab13628b021351b983d0a2627c0d7a81c64a6fe9ad661adb1cf'
+PIPER_ALBA_TOKENS_SHA256 = '87c8ef66eae5473ed0cc0366b3964c736ca6c5f676c979522ea31234e47430b9'
 QWEN_BASE = 'https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/'
 MODEL_ASSETS = [
     (QWEN_BASE + 'Qwen3-ASR-0.6B-Q8_0.gguf', 'models/qwen/model.gguf',
@@ -81,6 +85,35 @@ def prepare_archive(root, name, url, digest, executable, nested=False):
         source.rename(target)
 
 
+def prepare_piper_alba(root):
+    """Publish the pinned Piper folder only after verifying its archive and weights."""
+    target = root / 'models/piper-alba-medium'
+    archive = download(root,
+        f'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/{PIPER_ALBA_ARCHIVE}',
+        f'downloads/{PIPER_ALBA_ARCHIVE}', PIPER_ALBA_SHA256)
+
+    def validate(folder):
+        weights, tokens, data = folder / 'en_GB-alba-medium.onnx', folder / 'tokens.txt', folder / 'espeak-ng-data'
+        if not weights.is_file() or not tokens.is_file() or not data.is_dir():
+            raise RuntimeError(f'Incomplete Piper Alba model at {folder}')
+        if sha256(weights) != PIPER_ALBA_WEIGHTS_SHA256 or sha256(tokens) != PIPER_ALBA_TOKENS_SHA256:
+            raise RuntimeError(f'Piper Alba model checksum mismatch at {folder}')
+
+    if target.is_symlink():
+        raise RuntimeError(f'Refusing symlinked Piper Alba model: {target}')
+    if target.exists():
+        validate(target)
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=root, prefix='.extract-piper-') as temporary:
+        staging = Path(temporary)
+        with tarfile.open(archive, 'r:bz2') as package:
+            package.extractall(staging, filter='data')
+        source = staging / 'vits-piper-en_GB-alba-medium'
+        validate(source)
+        source.rename(target)
+
+
 def prepare_assets(root):
     root.mkdir(parents=True, exist_ok=True)
     prepare_archive(root, f'codex-{CODEX_VERSION}',
@@ -91,6 +124,7 @@ def prepare_assets(root):
         LLAMA_SHA256, 'llama-server', nested=True)
     for url, relative, digest in MODEL_ASSETS:
         download(root, url, relative, digest)
+    prepare_piper_alba(root)
 
 
 def main():
@@ -122,6 +156,13 @@ def main():
         repo='kyutai/pocket-tts-without-voice-cloning', package='pocket-tts==3.1.0',
         model_revision='d29db7978e464fb90cb3359ee0c69a273b9142cc',
         preset_revision='e81d79e8194ad4c7ce879c87a4258ef20cbf2487'))
+    environment['ORION_PIPER_MODEL_DIR'] = str(root / 'models/piper-alba-medium')
+    environment['ORION_TTS_THREADS'] = '3'
+    subprocess.run([str(project / 'speech/.venv/bin/python'), '-c',
+        "from orion_speech_worker.piper import PiperAlbaSynthesizer; "
+        "audio=list(PiperAlbaSynthesizer('piper-alba-medium').stream('Orion is ready.')); "
+        "assert audio and all(chunk.sample_rate == 24000 for chunk in audio)"],
+        env=environment, check=True)
     entries = []
     for folder in [root / 'models', root / 'cache/hf']:
         for path in folder.rglob('*'):

@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{path::PathBuf, process::Stdio, sync::RwLock, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::RwLock,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -166,7 +171,13 @@ impl Process {
             || (role == "asr" && ready["asr"]["provider"] != "qwen3-asr")
             || (role == "tts"
                 && ready["tts"]["provider"]
-                    != if config.tts_model.starts_with("pocket-") {
+                    != if config.tts_model == "piper-alba-medium"
+                        || Path::new(&config.tts_model)
+                            .join("en_GB-alba-medium.onnx")
+                            .is_file()
+                    {
+                        "piper-tts"
+                    } else if config.tts_model.starts_with("pocket-") {
                         "pocket-tts"
                     } else {
                         "chatterbox-turbo"
@@ -293,6 +304,24 @@ fn duration(value: &Value, key: &str) -> Result<f64, String> {
 #[cfg(test)]
 mod isolation_tests {
     use super::*;
+    #[tokio::test]
+    async fn piper_and_pocket_handshakes_match_the_selected_model() {
+        for (model, provider) in [
+            ("piper-alba-medium", "piper-tts"),
+            ("pocket-int8", "pocket-tts"),
+        ] {
+            let runtime = SpeechRuntime::new(SpeechConfig {
+                python: "python3".into(),
+                root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+                asr_model: "fixture".into(),
+                tts_model: model.into(),
+                cache_path: String::new(),
+                tts_voice: "alba".into(),
+            });
+            assert_eq!(runtime.info().await.unwrap()["tts"]["provider"], provider);
+            runtime.close().await;
+        }
+    }
     #[tokio::test]
     async fn cancelled_tts_preserves_asr_process_and_voice_changes_preserve_both() {
         let runtime = SpeechRuntime::new(SpeechConfig {

@@ -15,7 +15,8 @@ export function SoundSettings({ voice, connected, routines, onSound }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const onboard = voice.settings.ttsModel?.startsWith("pocket-");
+  const pocket = voice.settings.ttsModel?.startsWith("pocket-");
+  const piper = voice.settings.ttsModel === "piper-alba-medium";
   const sounds = routines?.available_sounds ?? [];
   const available = connected && !!routines?.sounds && sounds.length > 0;
   const save = async (change: () => Promise<unknown>, message: string) => {
@@ -27,7 +28,8 @@ export function SoundSettings({ voice, connected, routines, onSound }: Props) {
 
   return <section className="settings-card" aria-labelledby="sound-settings-title">
     <header><AudioLines size={20} /><div><h2 id="sound-settings-title">Voice and sounds</h2><p>Choose how Orion speaks and gets your attention.</p></div></header>
-    {onboard && <>
+    {piper && <p className="settings-help">Orion speaks with Piper Alba Medium. This voice is selected in Speech models.</p>}
+    {pocket && <>
       <label>Default Pocket voice<select value={voice.settings.ttsVoice ?? "alba"} disabled={!connected || !voice.loaded || voice.saving || busy} onChange={event => void save(() => voice.save({ ...voice.settings, ttsVoice: event.target.value }), "Default voice saved on Orion.")}>
         {VOICE_PRESETS.map(name => <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)}</option>)}
       </select></label>

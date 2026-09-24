@@ -33,4 +33,11 @@ describe("Orion sound settings", () => {
     const loading = renderToStaticMarkup(<SoundSettings voice={{ ...voice, loaded: false }} connected routines={routines} onSound={vi.fn()} />);
     expect(loading).toMatch(/Default Pocket voice<select disabled=""/);
   });
+  it("shows Piper Alba as a fixed voice without Pocket presets", () => {
+    const piper = { ...voice, settings: { ttsModel: "piper-alba-medium", ttsVoice: "jane" } } as StudioVoice;
+    const html = renderToStaticMarkup(<SoundSettings voice={piper} connected routines={routines} onSound={vi.fn()} />);
+    expect(html).toContain("Piper Alba Medium");
+    expect(html).not.toContain("Default Pocket voice");
+    expect(html).not.toContain('value="jane"');
+  });
 });

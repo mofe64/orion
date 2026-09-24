@@ -35,7 +35,7 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
     void invoke<NonNullable<typeof locations>>("voice_model_locations",{settings:draft}).then(value => { if (active) setLocations(value); }).catch(() => { if (active) setLocationError("Could not read local model locations."); });
     return () => { active = false; };
   },[draft.asrModel,draft.ttsModel,draft.asrPath,draft.ttsPath,draft.cachePath]);
-  const onboard = voice.settings.ttsModel?.startsWith("pocket-") ?? false;
+  const onboard = voice.settings.ttsModel?.startsWith("pocket-") || voice.settings.ttsModel === "piper-alba-medium";
   const model = voice.models.find(value => value.model === draft.model);
   const efforts = model?.efforts ?? [];
   const canSave = canSaveVoiceSettings(voice, draft, provider, connected);
@@ -67,18 +67,18 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
       </section>
       <section className="settings-card"><header><AudioLines size={20} /><div><h2>Speech models</h2><p>{onboard ? "Speech recognition and voices run on Orion." : "Local models and their weight locations on this computer."}</p></div></header>
         {onboard ? <>
-          <label>Voice precision<select value={draft.ttsModel} onChange={event => patch({ ttsModel: event.target.value })}><option value="pocket-fp32">FP32 · preferred sound</option><option value="pocket-int8">INT8 · lower latency</option></select></label>
-          <p className="settings-help">FP32 takes longer to generate speech. Orion buffers slower replies to keep playback smooth. Changing precision requires listening to be off.</p>
+          <label>Voice model<select value={draft.ttsModel} onChange={event => patch({ ttsModel: event.target.value, ttsPath: "" })}><option value="piper-alba-medium">Piper Alba Medium · fast</option><option value="pocket-int8">Pocket INT8 · previous voice</option><option value="pocket-fp32">Pocket FP32 · slower</option></select></label>
+          <p className="settings-help">Piper Alba is a fixed British English voice. Pocket keeps its separate voice presets. Changing the model requires listening to be off.</p>
           <p className="settings-model-identity">Qwen3 ASR · {draft.asrPath}</p>
           <p className="settings-help">Wake phrase: Rustpotter. Speech boundaries: Silero VAD. Model files are managed on the Pi.</p>
-          <p className="settings-help">Voice credits: Kyutai Pocket TTS. Anna, Azelma, Eve, Fantine, Jane and Vera use VCTK voices (CC BY 4.0). Cosette uses Expresso (CC BY-NC 4.0, noncommercial). Alba uses CC BY 4.0 material.</p>
+          <p className="settings-help">Voice credits: Piper Alba uses CC BY 4.0 material. Kyutai Pocket TTS presets use VCTK (CC BY 4.0), Expresso for Cosette (CC BY-NC 4.0), and CC BY 4.0 material for Alba.</p>
         </> : <>
         <fieldset disabled={provider !== "codex"}><legend>Speech to text</legend><p className="settings-model-identity">{locations?.asrIdentity ?? (draft.asrPath ? "Original model ID unavailable. The selected folder will be loaded directly." : draft.asrModel)}</p><FolderSetting label="Speech-to-text weights" value={draft.asrPath ?? ""} detected={locations?.asrPath} onChange={asrPath => patch({asrPath})} onError={setError}/></fieldset>
         <fieldset disabled={provider !== "codex"}><legend>Text to speech</legend><p className="settings-model-identity">{locations?.ttsIdentity ?? (draft.ttsPath ? "Original model ID unavailable. The selected folder will be loaded directly." : draft.ttsModel)}</p><FolderSetting label="Text-to-speech weights" value={draft.ttsPath ?? ""} detected={locations?.ttsPath} onChange={ttsPath => patch({ttsPath})} onError={setError}/></fieldset>
         <FolderSetting label="Model download cache" value={draft.cachePath ?? ""} detected={locations?.cachePath} onChange={cachePath => patch({cachePath})} onError={setError}/>{locationError && <p role="status">{locationError}</p>}
         <p className="settings-help">Downloaded weights stay on this computer and are loaded into memory when Voice starts. A model ID may check for updates; cached files are reused. A selected folder takes priority over the model ID. Supported weights: Qwen3 ASR for speech recognition and Chatterbox for speech synthesis. A folder’s metadata may identify its architecture without identifying the original model repository. Changing the cache affects future loads; it does not move existing weights. These engines require Apple Silicon.</p>
         </>}
-        <p className="settings-help">Save voice settings applies changes in this AI agent and Speech models section. Studio appearance, listening, the default Pocket voice, and alert sounds save as soon as you change them.</p>
+        <p className="settings-help">Save voice settings applies changes in this AI agent and Speech models section. Studio appearance, listening, Pocket voice presets, and alert sounds save as soon as you change them.</p>
         {!connected && <p className="settings-help">Connect Orion to save voice settings.</p>}
         {error && <p role="alert" className="settings-error">{error}</p>}{saved && <p role="status">{onboard ? "Saved on Orion." : "Saved on this computer."}</p>}
         <button className="primary-button" type="submit" disabled={!canSave}>{voice.saving ? "Saving…" : "Save voice settings"}</button>
