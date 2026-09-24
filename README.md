@@ -17,8 +17,8 @@ Studio closed; Codex inference and web search still require the internet.
 
 The Pi listener uses Rustpotter for wake detection and Silero to find the end of
 speech. The onboard coordinator verifies and transcribes the recording with Qwen,
-passes the command to Codex, and synthesizes the reply with the selected Pi voice
-(Piper Alba Medium for new installations). Codex App Server runs on the Pi and
+passes the command to Codex, and synthesizes the reply with Piper Alba Medium.
+Codex App Server runs on the Pi and
 connects to online inference through the user's account.
 
 The coordinator sends reply audio through the local gateway to `oriond`, which
@@ -37,7 +37,7 @@ conversation and speech models alive independently of the desktop connection.
 | `orion-service/` | Pi voice/agent host and Studio remote client |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
-| `speech/` | CPU Qwen, Piper and Pocket workers plus optional Apple Silicon development adapters |
+| `speech/` | CPU Qwen and Piper workers plus optional Apple Silicon development adapters |
 | `orion_studio/` | Tauri/React desktop application and Pi gateway |
 | `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
 | `scenes/` | Versioned multimodal scene documents |

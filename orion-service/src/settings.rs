@@ -12,7 +12,6 @@ pub struct VoiceSettings {
     pub asr_path: String,
     pub tts_path: String,
     pub cache_path: String,
-    pub tts_voice: String,
 }
 impl Default for VoiceSettings {
     fn default() -> Self {
@@ -25,7 +24,7 @@ impl Default for VoiceSettings {
             tts_model: if onboard {
                 "piper-alba-medium"
             } else {
-                "pocket-fp32"
+                "mlx-community/chatterbox-turbo-8bit"
             }
             .into(),
             asr_path: if onboard {
@@ -35,7 +34,6 @@ impl Default for VoiceSettings {
             },
             tts_path: String::new(),
             cache_path: String::new(),
-            tts_voice: "alba".into(),
         }
     }
 }
@@ -53,12 +51,11 @@ pub fn expand_path(value: &str) -> Result<PathBuf, String> {
 }
 impl VoiceSettings {
     pub fn validate(&self) -> Result<(), String> {
-        if ![
-            "alba", "anna", "azelma", "cosette", "eve", "fantine", "jane", "vera",
-        ]
-        .contains(&self.tts_voice.as_str())
-        {
-            return Err("Choose an Orion voice preset.".into());
+        if self.tts_model.starts_with("pocket-") {
+            return Err("That voice model is no longer supported.".into());
+        }
+        if crate::onboard() && self.tts_model != "piper-alba-medium" {
+            return Err("Orion's Pi supports Piper Alba Medium for speech output.".into());
         }
         if self.provider != "codex" {
             return Err("API-key providers are not available yet.".into());
@@ -89,16 +86,18 @@ fn config_path() -> Result<PathBuf, String> {
 }
 fn read(path: &Path) -> Result<VoiceSettings, String> {
     if !path.exists() {
-        return Ok(VoiceSettings {
+        let mut settings = VoiceSettings {
             asr_model: std::env::var("ORION_STUDIO_ASR_MODEL")
                 .unwrap_or_else(|_| VoiceSettings::default().asr_model),
             tts_model: std::env::var("ORION_STUDIO_TTS_MODEL")
                 .unwrap_or_else(|_| VoiceSettings::default().tts_model),
             cache_path: std::env::var("HF_HOME").unwrap_or_default(),
             ..VoiceSettings::default()
-        });
+        };
+        migrate_legacy_tts(&mut settings);
+        return Ok(settings);
     }
-    let value: serde_json::Value =
+    let mut value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
     if value.get("agent_model").is_some() {
@@ -111,7 +110,19 @@ fn read(path: &Path) -> Result<VoiceSettings, String> {
             ..VoiceSettings::default()
         });
     }
-    serde_json::from_value(value).map_err(|e| e.to_string())
+    // A saved preset is harmless but no longer part of the settings protocol.
+    if let Some(object) = value.as_object_mut() {
+        object.remove("ttsVoice");
+    }
+    let mut settings: VoiceSettings = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    migrate_legacy_tts(&mut settings);
+    Ok(settings)
+}
+fn migrate_legacy_tts(settings: &mut VoiceSettings) {
+    if settings.tts_model.starts_with("pocket-") {
+        settings.tts_model = VoiceSettings::default().tts_model;
+        settings.tts_path.clear();
+    }
 }
 pub fn load_voice_settings() -> Result<VoiceSettings, String> {
     read(&config_path()?)
@@ -194,6 +205,12 @@ mod tests {
             .is_err()
         );
         assert!(VoiceSettings::default().validate().is_ok());
+        assert!(VoiceSettings {
+            tts_model: "pocket-int8".into(),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
     }
     #[test]
     fn model_paths_survive_reload() {
@@ -225,6 +242,18 @@ mod tests {
         assert_eq!(value.model, "chosen-model");
         assert_eq!(value.effort, "high");
         assert_eq!(value.asr_model, "Qwen/Qwen3-ASR-0.6B");
+    }
+    #[test]
+    fn saved_pocket_choice_migrates_without_losing_agent_or_asr() {
+        let path =
+            std::env::temp_dir().join(format!("orion-settings-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(&path, r#"{"model":"chosen-model","asrModel":"chosen-asr","ttsModel":"pocket-int8","ttsVoice":"jane","ttsPath":"/old/model"}"#).unwrap();
+        let value = read(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(value.model, "chosen-model");
+        assert_eq!(value.asr_model, "chosen-asr");
+        assert_eq!(value.tts_model, VoiceSettings::default().tts_model);
+        assert!(value.tts_path.is_empty());
     }
 }
 

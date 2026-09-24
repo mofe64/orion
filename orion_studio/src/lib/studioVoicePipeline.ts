@@ -67,9 +67,8 @@ export interface StudioVoiceSnapshot {
   latency?: Record<string, number>;
 }
 
-export interface VoiceSettings { model: string; effort: string; provider?: "codex"; asrModel?: string; ttsModel?: string; ttsVoice?: string; asrPath?: string; ttsPath?: string; cachePath?: string; }
-export const VOICE_PRESETS = ["anna", "azelma", "cosette", "eve", "fantine", "jane", "vera", "alba"] as const;
-export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-5.6-sol", effort: "medium", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "mlx-community/chatterbox-turbo-8bit", ttsVoice: "alba", asrPath: "", ttsPath: "", cachePath: "" };
+export interface VoiceSettings { model: string; effort: string; provider?: "codex"; asrModel?: string; ttsModel?: string; asrPath?: string; ttsPath?: string; cachePath?: string; }
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-5.6-sol", effort: "medium", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "mlx-community/chatterbox-turbo-8bit", asrPath: "", ttsPath: "", cachePath: "" };
 
 export interface StudioVoicePipelineOptions {
   settings?: VoiceSettings;

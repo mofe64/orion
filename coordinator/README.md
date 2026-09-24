@@ -13,7 +13,7 @@ The coordinator calls the agent through Rust channels.
 `connection()` returns the authenticated protocol-7 observer endpoint.
 `events()` returns a bounded snapshot with a generation and increasing event IDs.
 The Pi gateway exposes these snapshots to Studio. `set_microphone()` sends a
-listener control request; `set_voice()` changes the next response's preset.
+listener control request.
 Dropping the coordinator cancels its speech run and stops both Python workers.
 
 Microphone status checks run once per second over temporary control WebSockets.

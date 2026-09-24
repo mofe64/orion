@@ -135,7 +135,6 @@ impl Harness {
                 pi_token: TOKEN.into(),
                 gateway_url,
                 speech: SpeechConfig {
-                    tts_voice: "alba".into(),
                     python: "python3".into(),
                     root: root.join("tests/fixtures"),
                     asr_model: "fixture".into(),

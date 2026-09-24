@@ -12,7 +12,7 @@ positions. The validation section links the corresponding tests.
 ### The application boundary
 
 The Pi listener captures the command, and the onboard coordinator runs Qwen,
-Codex and Pocket to produce a response. The coordinator sends audio through the
+Codex and Piper Alba Medium to produce a response. The coordinator sends audio through the
 local gateway to `oriond`. Speech animation follows playback of that response.
 Capture, recognition and synthesis have separate owners described in the
 [voice architecture](docs/voice-architecture.md).
@@ -21,7 +21,7 @@ The character coordinator receives audio measurements and decides how Orion shou
 
 ```mermaid
 flowchart TD
-    A[Pocket on the Pi generates response audio] --> B[SpeechCoordinator receives and plays audio]
+    A[Piper Alba on the Pi generates response audio] --> B[SpeechCoordinator receives and plays audio]
     B --> C[SpeechAnalysis: energy, peaks, pauses, duration]
     C --> D[CharacterCoordinator plans speech gestures]
     E[Authored motion shapes and anchor posture] --> D

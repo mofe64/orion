@@ -11,6 +11,8 @@ Use [Pi installation and deployment](../docs/quickstart.md#pi-local-voice-and-ag
 to prepare the listener with the complete voice stack. The Pi needs working
 [ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
 Deployment builds the native Rustpotter adapter and checks its wake reference.
+See [wake-word training](../docs/wake-word-training.md) for the dataset and
+evaluation needed before replacing that reference.
 
 The listener runs as `orion-listener` with a Python 3.12 environment inside the
 active release. Its WebSocket endpoint uses port 7448 and the Pi's
@@ -76,7 +78,7 @@ changing the ASR model.
 
 ## Upgrade from legacy Pi voice
 
-Older checkouts may contain Sherpa, Moonshine or Piper workers. The retirement
+Older checkouts may contain Sherpa or Moonshine workers. The retirement
 helper stops matching legacy workers and archives recognized models while keeping
 the Rustpotter reference. Run it only when migrating one of those installations:
 

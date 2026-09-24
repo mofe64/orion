@@ -167,7 +167,7 @@ remain read-only.
 
 ## Voice observation
 
-The Pi coordinator runs Qwen, Codex and the selected Piper Alba or Pocket model,
+The Pi coordinator runs Qwen, Codex and Piper Alba Medium,
 uploads response audio to the local gateway and waits for `oriond` playback
 completion. Studio polls the gateway for
 voice status, transcripts, models and timing.
@@ -185,9 +185,8 @@ the full response when synthesis is slower than playback.
 ## Settings and Debug
 
 Settings stores appearance, preview sound, reduced UI motion and debug visibility
-locally. Voice models, Pocket voice presets, alarm and timer sound choices, personality
-and memories save on the Pi. **Voice and sounds** saves each selection automatically:
-the default Pocket voice applies to the next reply when Pocket is selected, and
+locally. Speech and agent settings, alarm and timer sound choices, personality
+and memories save on the Pi. **Alert sounds** saves each selection automatically:
 each alarm or timer sound
 applies when its next alert starts. An alert already ringing keeps its sound. Sound
 choices come from the connected runtime; an older runtime requires an update before

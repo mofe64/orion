@@ -11,8 +11,7 @@ def emit(value, pcm=b''):
 
 config = json.loads(reader.readline())
 assert set(config) == {'protocol', 'role', 'asr_model', 'tts_model'}
-tts_provider = ('piper-tts' if config['tts_model'] == 'piper-alba-medium' else
-                'pocket-tts' if config['tts_model'].startswith('pocket-') else 'chatterbox-turbo')
+tts_provider = 'piper-tts' if config['tts_model'] == 'piper-alba-medium' else 'chatterbox-turbo'
 emit(dict(type='ready',protocol=2,role=config['role'],asr=dict(provider='qwen3-asr',model='fixture'),tts=dict(provider=tts_provider,model=config['tts_model'])))
 for raw in reader:
     request = json.loads(raw)

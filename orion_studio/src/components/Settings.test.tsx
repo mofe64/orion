@@ -8,11 +8,11 @@ const voice = { settings: DEFAULT_VOICE_SETTINGS, models: [], loaded: true, savi
 
 describe("voice settings save availability", () => {
   it("allows a speech change while listening even before the model list loads", () => {
-    const draft = { ...DEFAULT_VOICE_SETTINGS, ttsModel: "pocket-int8" };
+    const draft = { ...DEFAULT_VOICE_SETTINGS, asrModel: "another-asr" };
     expect(canSaveVoiceSettings(voice, draft, "codex", true)).toBe(true);
   });
   it("requires a change and a connected Pi", () => {
     expect(canSaveVoiceSettings(voice, DEFAULT_VOICE_SETTINGS, "codex", true)).toBe(false);
-    expect(canSaveVoiceSettings(voice, { ...DEFAULT_VOICE_SETTINGS, ttsModel: "pocket-int8" }, "codex", false)).toBe(false);
+    expect(canSaveVoiceSettings(voice, { ...DEFAULT_VOICE_SETTINGS, asrModel: "another-asr" }, "codex", false)).toBe(false);
   });
 });

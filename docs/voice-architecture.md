@@ -2,8 +2,8 @@
 
 Orion's Pi runs microphone capture, wake detection, speech recognition, speech
 synthesis and the agent coordinator. Rustpotter detects a possible wake phrase,
-Silero finds the end of speech, Qwen3-ASR transcribes, and the selected Piper
-Alba Medium or Pocket model produces the reply. Codex App Server runs on the Pi
+Silero finds the end of speech, Qwen3-ASR transcribes, and Piper Alba Medium
+produces the reply. Codex App Server runs on the Pi
 and uses online model inference. Studio provides settings and observation through
 the gateway.
 
@@ -16,7 +16,7 @@ ReSpeaker stereo capture
   -> short Qwen wake verification while command capture continues
   -> Silero endpoint -> Qwen transcription of the complete recording
   -> confirmed command -> Rust agent -> Codex App Server
-  -> final answer sentences -> Piper Alba or Pocket TTS -> coordinator audio buffer
+  -> final answer sentences -> Piper Alba TTS -> coordinator audio buffer
   -> local gateway -> oriond playback and speech animation
   -> playback completion -> echo guard -> follow-up listening window
 ```
@@ -160,9 +160,9 @@ address and token in a private directory for the gateway to discover.
 The host reads saved settings, starts the coordinator and retries a stopped
 coordinator every five seconds. Repeated starts with matching configuration
 reuse the coordinator. Settings changes are serialized with startup. Changing
-only the Pocket voice preset affects the next response; other model settings restart
-the coordinator and speech workers. The agent executor can survive that restart
-when its configuration matches and no active request is cancelled.
+speech or agent model settings restarts the coordinator and speech workers. The
+agent executor can survive that restart when its configuration matches and no
+active request is cancelled.
 
 SIGTERM stops the coordinator, cancels its speech run and shuts down the agent
 and workers. A service restart creates a fresh conversation and retains saved
@@ -239,7 +239,7 @@ which reloads for its next job. CPU thread settings are listed in
 
 Piper Alba generates 22,050 Hz speech. Its worker completes a sentence, resamples
 it to the 24,000 Hz playback protocol, then sends chunks of at most two seconds.
-Pocket streams native 24,000 Hz chunks. The coordinator buffers at least six
+The coordinator buffers at least six
 seconds of audio, or the complete response when shorter, before uploading it.
 It can retain a slower reply until completion to prevent playback gaps. The
 buffering decision follows generation speed for the current response, rather

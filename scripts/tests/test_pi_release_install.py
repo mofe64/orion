@@ -50,11 +50,12 @@ class ConfigurationTests(Fixture):
             'ORION_PROJECT_ROOT=/old/root\nORION_RELEASE_REVISION=old\nCUSTOM=value')
         old = read_env(self.env.read_text()); result = self.plan()[self.env]; new = read_env(result)
         for key, value in old.items():
-            if key not in ('ORION_STUDIO_VOICE_PYTHON', 'ORION_PROJECT_ROOT', 'ORION_RELEASE_REVISION'):
+            if key not in ('ORION_STUDIO_VOICE_PYTHON', 'ORION_PROJECT_ROOT', 'ORION_RELEASE_REVISION', 'ORION_STUDIO_TTS_MODEL'):
                 self.assertEqual(new[key], value, key)
         self.assertEqual(new['ORION_STUDIO_VOICE_PYTHON'], str(self.release / 'speech/.venv/bin/python'))
         self.assertEqual(new['ORION_PROJECT_ROOT'], str(self.release))
         self.assertEqual(new['ORION_RELEASE_REVISION'], 'new')
+        self.assertEqual(new['ORION_STUDIO_TTS_MODEL'], 'piper-alba-medium')
         self.assertEqual(new['ORION_PIPER_MODEL_DIR'], str(self.root / 'models/piper-alba-medium'))
         self.assertIn('# operator tuning\n', result)
         self.assertIn('CUSTOM=value\n', result)
@@ -376,12 +377,15 @@ class ReadinessTests(Fixture):
                     else:
                         system.ready(self.release, self.home, timeout=1)
 
-    def test_readiness_follows_saved_pocket_choice_for_rollback(self):
+    def test_readiness_migrates_old_voice_choices(self):
         self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
         self.env.write_text('ORION_STUDIO_TTS_MODEL=pocket-fp32\n')
-        self.assertEqual(installer.expected_tts(self.home), ('pocket-tts', 'pocket-fp32'))
-        self.write(self.env.parent / 'voice-settings.json', '{"ttsModel":"pocket-int8","ttsVoice":"jane"}')
-        self.assertEqual(installer.expected_tts(self.home), ('pocket-tts', 'pocket-int8'))
+        self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
+        self.write(self.env.parent / 'voice-settings.json', '{"ttsModel":"pocket-int8","ttsVoice":"jane","ttsPath":"/old/model"}')
+        self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
+        self.write(self.env.parent / 'voice-settings.json', '{"ttsModel":"unsupported"}')
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported Pi speech model'):
+            installer.expected_tts(self.home)
 
     def test_preflight_uses_saved_env_including_project_override_without_mutation(self):
         self.env.write_text('ORION_PROJECT_ROOT=/old/root\nORION_STUDIO_CODEX_BIN=/custom/codex\nORION_TTS_THREADS=2\n')

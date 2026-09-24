@@ -63,12 +63,10 @@ and environment overrides, including sleep and microphone tuning. Existing
 service enablement is retained; missing services are enabled. Restarting the agent
 service begins a fresh conversation with its saved profile and memory available.
 
-An update preserves an existing saved Pocket choice. To switch it, open Studio
-**Settings → Speech models → Voice model**, choose **Piper Alba Medium**, and
-save while listening is off. Turn listening back on and complete a spoken turn
-to check the physical speaker. Pocket INT8 remains available in the same menu.
-Before rolling back to a release that predates Piper support, restore the saved
-Pocket choice; the release rollback preserves saved voice settings.
+An update converts older saved voice choices to Piper Alba Medium. Turn listening
+back on in Studio and complete a spoken turn to check the physical speaker.
+Release rollback preserves saved voice settings; an older release may require
+its own compatible settings.
 
 The Pi checkout is used to fetch Git objects and supply the asset catalog.
 Deployment neither merges the remote branch into that checkout nor publishes
@@ -105,7 +103,7 @@ python3 scripts/deploy_pi_release.py --source "$PWD" --revision HEAD --prepare-o
 The command prints the release path. The preparer downloads pinned Qwen GGUF,
 Piper Alba Medium, native llama-server, Codex and Silero assets and verifies
 their SHA-256 hashes. It synthesizes a short Piper check at 24 kHz before
-activation. Pocket's package pins its weights and preset revisions for rollback.
+activation.
 Matching assets are reused; a mismatched file stops preparation for inspection.
 The speech environment uses Python 3.11 and the listener uses Python 3.12.
 Their models and download inventories

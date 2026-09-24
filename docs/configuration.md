@@ -29,20 +29,15 @@ See [assets and installed releases](system-architecture.md#assets-and-installed-
 
 ## Voice settings
 
-Studio Settings saves preferences through the Pi gateway. New Pi installations
-default to `gpt-5.6-sol` with `medium` effort, `Qwen/Qwen3-ASR-0.6B` and
-`piper-alba-medium`. Existing saved Pocket selections remain in place until
-changed. The Pi adapter loads Qwen GGUF files from the configured local folder.
-Piper Alba is a fixed voice; Pocket accepts the FP32 or INT8 model choice and a
-named preset for rollback.
+Studio Settings saves preferences through the Pi gateway. The Pi defaults to
+`gpt-5.6-sol` with `medium` effort, `Qwen/Qwen3-ASR-0.6B` and
+`piper-alba-medium`. The Pi adapter loads Qwen GGUF files from the configured
+local folder. Piper Alba Medium is a fixed British English voice. Older saved
+voice selections are converted to Piper Alba when loaded.
 
-Pocket presets are Alba, Anna, Azelma, Cosette, Eve, Fantine, Jane and Vera.
-Studio **Settings → Speech models → Voice model** selects Piper Alba Medium or a
-Pocket model. With Pocket selected, **Voice and sounds → Default Pocket voice**
-saves `ttsVoice` automatically on the Pi and applies it to the next response.
-Piper ignores the saved Pocket preset. Studio requires mute before model
-changes, which restart the coordinator and speech workers. An idle restart can
-preserve the agent conversation when its model, effort and executable still
+Studio turns listening off before speech or agent model changes, which restart
+the coordinator and speech workers. An idle restart can preserve the agent
+conversation when its model, effort and executable still
 match. Restarting the whole service starts a fresh conversation.
 
 Saved model folders take precedence over model IDs. Paths accept an absolute

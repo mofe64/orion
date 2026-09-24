@@ -1,6 +1,6 @@
 # Orion speech worker
 
-Separate Python workers run Qwen3-ASR transcription and Piper Alba Medium or Pocket TTS on the Pi.
+Separate Python workers run Qwen3-ASR transcription and Piper Alba Medium TTS on the Pi.
 The [Rust coordinator](../coordinator/README.md) submits inference jobs and owns
 the surrounding voice session, agent call and playback lifecycle. An optional
 Apple Silicon adapter supports standalone Qwen3-ASR and Chatterbox development.
@@ -8,7 +8,7 @@ Apple Silicon adapter supports standalone Qwen3-ASR and Chatterbox development.
 ## Setup on the Pi
 
 Use 64-bit Linux on the Pi 5 with 8 GB RAM. The speech environment uses Python
-3.11, the pinned Sherpa ONNX/Piper model, Pocket TTS for rollback, and the native
+3.11, the pinned Sherpa ONNX/Piper model, and the native
 Qwen GGUF server. The listener uses a separate Python 3.12 environment with
 Silero ONNX and Rustpotter.
 See [Pi installation](../docs/quickstart.md#pi-local-voice-and-agent).
@@ -27,11 +27,7 @@ and divides it into chunks of at most two seconds.
 The [Piper Alba model card](https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_GB/alba/medium/MODEL_CARD)
 records the voice's training source and dataset license.
 
-Pocket remains selectable as `pocket-fp32` or `pocket-int8` during migration. Its
-presets are Anna, Azelma, Cosette, Eve, Fantine, Jane, Vera, and Alba; these are
-separate from Piper's Alba voice. Conditioning is cached per Pocket voice. Pocket
-assets remain prepared for rollback. Service inference uses the local cache with
-`HF_HUB_OFFLINE=1`.
+Service inference uses the prepared local assets with `HF_HUB_OFFLINE=1`.
 
 ## Optional Apple Silicon development
 
@@ -61,8 +57,8 @@ Each job has a positive integer `id` and a `method`:
 
 - `transcribe`: a `bytes` count followed immediately by that many PCM16 bytes
   at 16 kHz, mono. The reply is `transcript` with `text` and `language`.
-- `synthesize`: a `text` string and a `voice` preset used by Pocket; Piper uses its
-  fixed Alba voice. Replies are `chunk` JSON metadata followed by
+- `synthesize`: a `text` string. Piper uses its fixed Alba voice. Replies are
+  `chunk` JSON metadata followed by
   mono 24 kHz PCM16, then an explicit `end` with the next sequence number.
 
 Metadata lines are bounded to 64 KiB. Input audio is bounded to 33 seconds;
@@ -72,8 +68,8 @@ lengths, sequences, and completion before accepting results.
 
 Jobs run serially within each worker. The coordinator can submit final-answer
 sentences as they arrive. Cancelling ASR or TTS retires only that worker; the
-next job reloads its model. Completed jobs reuse loaded models. Changing the
-Pocket voice preset does not restart either worker. Changing the TTS model does.
+next job reloads its model. Completed jobs reuse loaded models. Changing speech
+settings restarts the coordinator and workers.
 
 ## Validation
 

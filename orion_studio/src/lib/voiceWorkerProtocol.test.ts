@@ -35,6 +35,11 @@ describe("VoiceWorkerClient", () => {
     message.tts = { provider: "piper-tts", model: "piper-alba-medium" };
     expect(parseVoiceWorkerEvent(JSON.stringify(message))).toMatchObject({ tts: message.tts });
   });
+  it("rejects readiness from the removed voice worker", () => {
+    const message = JSON.parse(ready);
+    message.tts = { provider: "pocket-tts", model: "pocket-int8" };
+    expect(() => parseVoiceWorkerEvent(JSON.stringify(message))).toThrow();
+  });
   it("accepts early wake verification events without treating prefix text as a command", () => {
     expect(parseVoiceWorkerEvent(JSON.stringify({ type: "transcription.started", purpose: "wake_prefix", captureMs: 2200 })))
       .toMatchObject({ type: "transcription.started", purpose: "wake_prefix" });

@@ -170,20 +170,19 @@ def expected_tts(home):
     saved = home / '.config/orion/voice-settings.json'
     if saved.exists():
         settings = json.loads(saved.read_text())
-        model = settings.get('ttsPath') or settings.get('ttsModel') or 'piper-alba-medium'
+        model = ('piper-alba-medium' if str(settings.get('ttsModel', '')).startswith('pocket-')
+                 else settings.get('ttsPath') or settings.get('ttsModel') or 'piper-alba-medium')
         if model == '~' or model.startswith('~/'):
             model = str(home / model.removeprefix('~/'))
     else:
         environment = home / '.config/orion/voice-stack.env'
         values = read_env(environment.read_text()) if environment.exists() else {}
         model = values.get('ORION_STUDIO_TTS_MODEL', 'piper-alba-medium')
-    if model == 'piper-alba-medium' or (Path(model) / 'en_GB-alba-medium.onnx').is_file():
-        provider = 'piper-tts'
-    elif model.startswith('pocket-'):
-        provider = 'pocket-tts'
-    else:
-        provider = 'chatterbox-turbo'
-    return provider, model
+    if model.startswith('pocket-'):
+        model = 'piper-alba-medium'
+    if model != 'piper-alba-medium' and not (Path(model) / 'en_GB-alba-medium.onnx').is_file():
+        raise RuntimeError(f'Unsupported Pi speech model: {model}')
+    return 'piper-tts', model
 
 
 def option(arguments, flag, default):

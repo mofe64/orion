@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Retire this checkout's legacy voice workers and archive known downloaded models."""
 import argparse
-import json
 import os
 from pathlib import Path
 import shlex
@@ -32,16 +31,6 @@ def is_legacy_command(arguments, root):
 def archive_models(root, backup):
     models = root / "voice/models"
     candidates = [models / name for name in MODEL_PATHS]
-    # Only identify Piper downloads by their own model configuration.
-    for config in models.glob("*.onnx.json"):
-        if config.is_symlink():
-            continue
-        try:
-            value = json.loads(config.read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(value, dict) and "phoneme_id_map" in value and "audio" in value:
-            candidates.extend([config, config.with_suffix("")])
     moved = []
     for source in candidates:
         if not source.exists() or source.is_symlink():

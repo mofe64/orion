@@ -142,22 +142,9 @@ def main():
         with (root / f'{component}-packages.txt').open('w') as output:
             subprocess.run([uv, 'pip', 'freeze', '--python', str(project / component / '.venv/bin/python')],
                            check=True, stdout=output)
-    # Pocket 3.1.0 pins both its weights and preset embeddings to upstream revisions.
-    # Preparing named presets uses safetensors conditioning, not reference recordings.
     environment = dict(os.environ, HF_HOME=str(root / 'cache/hf'), HF_HUB_OFFLINE='0',
-                       ORION_SPEECH_BACKEND='pi', PYTHONPATH=str(project / 'speech'), ORION_TTS_THREADS='2')
-    subprocess.run([str(project / 'speech/.venv/bin/python'), '-c',
-        "from orion_speech_worker.pi import PocketSynthesizer,VOICES; "
-        "m=PocketSynthesizer('pocket-fp32'); "
-        "[(m.model.get_state_for_audio_prompt(v),print('Prepared '+v,flush=True)) for v in VOICES]"],
-        env=environment, check=True)
-    record_download(root, dict(
-        path=str(root / 'cache/hf/hub/models--kyutai--pocket-tts-without-voice-cloning'),
-        repo='kyutai/pocket-tts-without-voice-cloning', package='pocket-tts==3.1.0',
-        model_revision='d29db7978e464fb90cb3359ee0c69a273b9142cc',
-        preset_revision='e81d79e8194ad4c7ce879c87a4258ef20cbf2487'))
+                       ORION_SPEECH_BACKEND='pi', PYTHONPATH=str(project / 'speech'), ORION_TTS_THREADS='3')
     environment['ORION_PIPER_MODEL_DIR'] = str(root / 'models/piper-alba-medium')
-    environment['ORION_TTS_THREADS'] = '3'
     subprocess.run([str(project / 'speech/.venv/bin/python'), '-c',
         "from orion_speech_worker.piper import PiperAlbaSynthesizer; "
         "audio=list(PiperAlbaSynthesizer('piper-alba-medium').stream('Orion is ready.')); "

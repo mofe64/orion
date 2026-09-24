@@ -37,7 +37,7 @@ def read_env(text):
 
 
 def merge_env(text, defaults, managed):
-    """Only release-owned paths change. Existing tuning and comments survive verbatim."""
+    """Only managed keys change. Existing tuning and comments survive verbatim."""
     existing = read_env(text)
     lines = []
     for line in text.splitlines(keepends=True):
@@ -141,6 +141,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
     files[environment_path] = merge_env(text, defaults, {
         'ORION_STUDIO_VOICE_PYTHON': str(release / 'speech/.venv/bin/python'),
         'ORION_RELEASE_REVISION': metadata.get('revision', release.name),
+        'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
         # This override may already be present in a customized EnvironmentFile.
         **({'ORION_PROJECT_ROOT': str(release)} if 'ORION_PROJECT_ROOT' in read_env(text) else {}),
     })

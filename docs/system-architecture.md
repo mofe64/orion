@@ -15,7 +15,7 @@ flowchart LR
         listener[Listener: Rustpotter and Silero]
         host[Orion service: coordinator and agent]
         asr[Qwen ASR worker]
-        tts[Selected Piper or Pocket TTS worker]
+        tts[Piper Alba TTS worker]
         codex[Codex App Server]
         gateway[Authenticated gateway]
         runtime[oriond: movement, light and playback]

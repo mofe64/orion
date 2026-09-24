@@ -16,12 +16,7 @@ import urllib.request
 import wave
 import uuid
 
-import numpy as np
-
 from .providers import Transcript
-from .tts import SpeechAudio
-
-VOICES = ("alba", "anna", "azelma", "cosette", "eve", "fantine", "jane", "vera")
 
 
 class QwenGgufTranscriber:
@@ -105,38 +100,3 @@ class QwenGgufTranscriber:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait()
-
-
-class PocketSynthesizer:
-    provider = "pocket-tts"
-
-    def __init__(self, model):
-        import torch
-        from pocket_tts import TTSModel
-
-        if model not in ("pocket-fp32", "pocket-int8"):
-            raise ValueError("Pocket model must be pocket-fp32 or pocket-int8")
-        threads = int(os.environ.get("ORION_TTS_THREADS", "3"))
-        if not 1 <= threads <= 4:
-            raise ValueError("TTS threads must be between one and four")
-        torch.set_num_threads(threads)
-        torch.set_num_interop_threads(1)
-        self.model_name = model
-        self.model = TTSModel.load_model(quantize=model == "pocket-int8")
-        self.states = {}
-
-    def stream(self, text, voice="alba"):
-        if voice not in VOICES:
-            raise ValueError("Unknown Orion voice preset")
-        if voice not in self.states:
-            self.states[voice] = self.model.get_state_for_audio_prompt(voice)
-        if self.model.sample_rate != 24000:
-            raise ValueError("Pocket model must produce 24 kHz audio")
-        for chunk in self.model.generate_audio_stream(self.states[voice], text):
-            audio = chunk.detach().cpu().numpy().astype(np.float32).reshape(-1)
-            if not audio.size or not np.isfinite(audio).all():
-                raise ValueError("Pocket produced invalid audio")
-            # Fixed gain preserves dynamics and avoids pumping between chunks.
-            pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
-            for offset in range(0, len(pcm), 96000):
-                yield SpeechAudio(pcm[offset:offset+96000], 24000)

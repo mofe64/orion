@@ -411,7 +411,6 @@ async fn response(
     );
     let sleep_requested = std::sync::atomic::AtomicBool::new(false);
     let started = Instant::now();
-    let voice = speech.voice();
     let (send, mut receive) = mpsc::channel(8);
     let (text_send, text_receive) = mpsc::channel(8);
     let streamed_text = text_send.clone();
@@ -461,7 +460,6 @@ async fn response(
                             "I’ll search for that now.".into(),
                             active.clone(),
                             true,
-                            &voice,
                         )
                         .await?;
                         pi.send(json!({"type":"session.processing","sessionId":sid}))
@@ -526,7 +524,6 @@ async fn response(
         text_receive,
         active.clone(),
         false,
-        &voice,
     );
     tokio::try_join!(agent_turn, spoken)?;
     Ok(sleep_requested.load(std::sync::atomic::Ordering::Relaxed))
@@ -543,7 +540,6 @@ async fn speak(
     text: String,
     active: ActiveRun,
     intermediate: bool,
-    voice: &str,
 ) -> Result<(), String> {
     let (send, receive) = mpsc::channel(1);
     send.send(text)
@@ -560,7 +556,6 @@ async fn speak(
         receive,
         active,
         intermediate,
-        voice,
     )
     .await
 }
@@ -576,7 +571,6 @@ async fn speak_sequence(
     mut texts: mpsc::Receiver<String>,
     active: ActiveRun,
     intermediate: bool,
-    voice: &str,
 ) -> Result<(), String> {
     let (run_send, mut run_receive) = watch::channel(None::<u64>);
     let (end_send, mut end_receive) = watch::channel(false);
@@ -596,7 +590,7 @@ async fn speak_sequence(
                     }
                 }
                 let (chunk_send, mut chunk_receive) = mpsc::channel(8);
-                let job = speech.synthesize(text, voice.into(), chunk_send);
+                let job = speech.synthesize(text, chunk_send);
                 let forward = async {
                     while let Some(Some(mut chunk)) = chunk_receive.recv().await {
                         chunk.synthesis_ms = started.unwrap().elapsed().as_secs_f64() * 1000.;
