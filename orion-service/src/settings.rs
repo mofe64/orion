@@ -104,7 +104,7 @@ fn read(path: &Path) -> Result<VoiceSettings, String> {
         return Ok(VoiceSettings {
             model: value["agent_model"]
                 .as_str()
-                .unwrap_or("gpt-5.6-sol")
+                .unwrap_or(orion_agent::DEFAULT_MODEL)
                 .into(),
             effort: value["agent_effort"].as_str().unwrap_or("medium").into(),
             ..VoiceSettings::default()
@@ -205,12 +205,14 @@ mod tests {
             .is_err()
         );
         assert!(VoiceSettings::default().validate().is_ok());
-        assert!(VoiceSettings {
-            tts_model: "pocket-int8".into(),
-            ..Default::default()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            VoiceSettings {
+                tts_model: "pocket-int8".into(),
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
     #[test]
     fn model_paths_survive_reload() {

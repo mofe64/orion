@@ -30,7 +30,7 @@ See [assets and installed releases](system-architecture.md#assets-and-installed-
 ## Voice settings
 
 Studio Settings saves preferences through the Pi gateway. The Pi defaults to
-`gpt-5.6-sol` with `medium` effort, `Qwen/Qwen3-ASR-0.6B` and
+`gpt-6-luna` with `medium` effort, `Qwen/Qwen3-ASR-0.6B` and
 `piper-alba-medium`. The Pi adapter loads Qwen GGUF files from the configured
 local folder. Piper Alba Medium is a fixed British English voice. Older saved
 voice selections are converted to Piper Alba when loaded.
@@ -155,9 +155,11 @@ loss can lose a recent change. Clock alarms use
 the Pi’s local time and explicit UTC offsets; verify its timezone and clock before
 relying on a clock alarm.
 
-The managed listener uses the Rustpotter reference
-`voice/models/wake/hey_orion_reference.rpw`, wake threshold `0.35` and 25 dB capture
-gain. The standalone CLI defaults to threshold `0.400`; the capture-routing script
+The managed listener uses the trained Rustpotter model
+`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80` and 25 dB
+capture gain. The reference `voice/models/wake/hey_orion_reference.rpw` at
+threshold `0.35` remains packaged for a source-controlled rollback. The
+standalone listener defaults to the trained model and `0.80`; the capture-routing script
 defaults to 50 dB when no override is supplied. `ORION_CAPTURE_GAIN_DB` accepts
 0–50 dB. These separate defaults make the effective service configuration the
 relevant setting for a running Pi.

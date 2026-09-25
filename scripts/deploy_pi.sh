@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy_pi.sh [--host USER@HOST] [--root PATH] [--branch BRANCH] [--skip-studio-check]
+Usage: scripts/deploy_pi.sh [--host USER@HOST] [--root PATH] [--branch BRANCH] [--prepare-only] [--skip-studio-check]
 
 Build, test and activate the complete Orion Pi stack through SSH. Defaults:
   host:   mofe@orion.local
@@ -13,7 +13,8 @@ Build, test and activate the complete Orion Pi stack through SSH. Defaults:
 Commit and push the intended revision first. The Pi fetches it into an isolated
 release without merging, stashing, resetting or discarding its checkout edits.
 Runtime, gateway, Rustpotter/Silero listener, Qwen/Piper workers and the agent
-service are prepared before anything is stopped. Activation preserves settings
+service are prepared before anything is stopped. --prepare-only prints the
+prepared release path without switching services. Activation preserves settings
 and confirms mechanical rest before switching the hardware runtime. Failure
 restores the immediately previous installation. No expression smoke motions
 are issued automatically. An SSH terminal remains available for sudo.
@@ -28,12 +29,14 @@ pi_host="${ORION_PI_HOST:-mofe@orion.local}"
 project_root="${ORION_PI_ROOT:-/home/mofe/dev/orion}"
 branch="${ORION_PI_BRANCH:-main}"
 studio_check=true
+prepare_only=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host) pi_host="${2:?--host requires USER@HOST}"; shift 2 ;;
     --root) project_root="${2:?--root requires PATH}"; shift 2 ;;
     --branch) branch="${2:?--branch requires BRANCH}"; shift 2 ;;
+    --prepare-only) prepare_only=true; shift ;;
     --skip-studio-check) studio_check=false; shift ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
@@ -93,5 +96,5 @@ if [[ ! "${remote_script}" =~ ^/tmp/orion-deploy\.[A-Za-z0-9]+$ ]]; then
 fi
 scp "${ssh_options[@]}" "${script_directory}/pi_deploy_remote.sh" "${pi_host}:${remote_script}"
 ssh "${ssh_options[@]}" -t "${pi_host}" "trap 'rm -f -- ${remote_script}' EXIT
-bash '${remote_script}' '${project_root}' '${branch}'"
+bash '${remote_script}' '${project_root}' '${branch}' '${prepare_only}'"
 remote_script=""

@@ -12,7 +12,7 @@ the gateway.
 ```text
 ReSpeaker stereo capture
   -> direction observation and mono downmix
-  -> silent Rustpotter wake candidate
+  -> Rustpotter wake candidate -> chime and three-color light pulse
   -> short Qwen wake verification while command capture continues
   -> Silero endpoint -> Qwen transcription of the complete recording
   -> confirmed command -> Rust agent -> Codex App Server
@@ -80,9 +80,10 @@ separate settings described in [configuration](configuration.md#pi-runtime-and-l
 
 ## Confirmed waking
 
-At mechanical rest, the wake candidate remains silent, still and dark. Qwen
-confirmation plays the existing wake chime and starts the return home. The
-rest lifecycle keeps the light off until home completes.
+At mechanical rest, a Rustpotter candidate plays the wake chime and the
+three-color light pulse while the body remains still. Qwen confirmation starts
+the return home. A rejected candidate ends its light feedback without waking
+the body or dispatching a command. Other lighting remains suppressed at rest.
 
 The coordinator sends `wake.verified` after a successful prefix or
 `wake.confirmed` after confirming the complete utterance. The listener forwards
@@ -318,10 +319,10 @@ to investigate a failed turn.
 
 Wake, verification, endpoint and processing events carry the voice session ID.
 The runtime rejects stale transitions and bounds their lifetime. A candidate
-stays silent and leaves the existing light and character reaction unchanged.
-Qwen confirmation requests the existing wake chime once and starts the unchanged
-amber, teal and purple acknowledgement pulses, each lasting 300 ms. The pulse
-clock starts at confirmation and survives an immediate endpoint or follow-up.
+plays the existing wake chime once and starts amber, teal and purple
+acknowledgement pulses, each lasting 300 ms. The body reaction remains unchanged
+until Qwen confirmation. The pulse clock starts at the candidate; Qwen does not
+replay it after a slow verification or fallback.
 Afterward, capture uses the dim listening light and endpointed commands use
 thinking feedback. An unconfirmed endpoint remains silent.
 
@@ -333,9 +334,10 @@ thinking position and velocity when it takes over.
 
 If processing becomes unavailable after confirmation, the listener requests
 `error_muted` once and returns to wake detection. Unconfirmed rejection,
-cancellation and failure produce no feedback. During descent, waking or a rest
-fault, immediate voice reactions are suppressed. Mechanical rest permits only
-the confirmed wake's chime. Home completion restores the latest eligible reaction. Capture stays
+cancellation and failure clear the candidate light without additional feedback.
+During descent, waking or a rest fault, immediate voice reactions are suppressed.
+Mechanical rest permits only the candidate's chime and brief light pulse. Home
+completion restores the latest eligible reaction. Capture stays
 open through cues, so speaker pickup must be checked on the assembled robot.
 
 ## Alert interruption

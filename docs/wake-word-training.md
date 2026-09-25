@@ -1,17 +1,17 @@
 # Train and evaluate “Hey Orion”
 
-Orion uses a Rustpotter **reference** at
-`voice/models/wake/hey_orion_reference.rpw`. A reference compares incoming audio
-with a few example recordings. Rustpotter can also load a **trained model** from
-an `.rpw` file, so the listener's audio path can stay the same. A trained model
-needs labelled wake and non-wake recordings before it can be judged against the
-reference. The current reference remains the active model until that comparison
-passes.
+Orion's managed listener uses the trained Rustpotter model
+`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80`. The earlier
+six-example **reference**, `voice/models/wake/hey_orion_reference.rpw` at
+threshold `0.35`, stays in the release for rollback. The trained model was
+selected for a live trial after a paired offline comparison; its final
+false-activation rate and live latency remain unverified. Rustpotter can load
+either `.rpw` without changing the listener's audio path.
 
 ## Record the baseline
 
-Measure the active reference on the Pi with its normal ReSpeaker capture, 25 dB
-capture gain, Rustpotter threshold `0.35`, and Qwen wake confirmation. Log each
+Measure the active trained model on the Pi with its normal ReSpeaker capture,
+25 dB capture gain, Rustpotter threshold `0.80`, and Qwen wake confirmation. Log each
 intended wake attempt, whether Rustpotter proposed it, whether Qwen confirmed it,
 the time until confirmation, and the speaker's distance and room conditions.
 Also count Rustpotter candidates and confirmed false wakes per hour of ordinary
@@ -62,15 +62,20 @@ material regression in the other measures. Keep the reference for rollback.
 
 ## Deploy and clean up
 
-The listener accepts `--wake-model PATH`; a tested trained `.rpw` can be placed
-in a release and selected through that option. First verify it on the Pi in a
-controlled session, then run longer ordinary-use observation before changing the
-managed default. Record the model hash and threshold with the release.
+The listener accepts `--wake-model PATH` and `--threshold VALUE`. Both the
+trained model and reference are present in every managed release. Select the
+reference and `0.35` together in `ACTIVE_WAKE_MODEL` and
+`ACTIVE_WAKE_THRESHOLD` in `scripts/pi_service_config.py` and in the listener
+service template, then
+commit, push, and run the [Pi deployment procedure](quickstart.md#deploy-to-the-pi)
+to switch back. Record model hash and threshold with each release. A candidate
+chime and light pulse can happen before Qwen verifies the phrase; Qwen still
+gates commands and body waking.
 
 The experiment manifest should list all recordings, temporary WAVs, candidate
 models, logs and capture tools. Delete rejected models and raw recordings at the
 agreed retention date, and confirm the remaining files against that manifest.
-Keep only the approved model, its reproducibility metadata and non-audio
+Keep the selected model and reference fallback, their reproducibility metadata and non-audio
 evaluation summary in the project.
 
 Rustpotter's [library overview](https://github.com/GiviMAD/rustpotter#overview)

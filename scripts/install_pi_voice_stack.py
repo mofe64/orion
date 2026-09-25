@@ -143,11 +143,27 @@ class System:
                 observation = control(home, {'method': 'observe'})
                 ready = next((e for e in observation.get('events', []) if e.get('type') == 'ready'), {})
                 expected_provider, expected_model = expected_tts(home)
+                saved_settings = home / '.config/orion/voice-settings.json'
+                settings = json.loads(saved_settings.read_text()) if saved_settings.exists() else {}
+                expected_agent = settings.get('model', settings.get('agent_model', 'gpt-6-luna'))
+                expected_effort = settings.get('effort', settings.get('agent_effort', 'medium'))
+                listener_pid = self.run('systemctl', 'show', 'orion-listener', '--property=MainPID', '--value',
+                                        capture_output=True, text=True).stdout.strip()
+                if not listener_pid.isdigit() or int(listener_pid) == 0:
+                    raise RuntimeError('Listener has no running process')
+                listener_args = Path(f'/proc/{listener_pid}/cmdline').read_bytes().decode().split('\0')
+                expected_wake_model = Path(option(listener_args, '--wake-model',
+                    str(release / 'voice/models/wake/hey_orion_trained_080.rpw'))).name
+                expected_wake_threshold = float(option(listener_args, '--threshold', '0.80'))
                 if not (status.get('coordinator_running') and not status.get('error') and
                         status.get('project_root') == str(release) and status.get('revision') == metadata['revision'] and
                         ready.get('asr', {}).get('provider') == 'qwen3-asr' and
                         ready.get('tts', {}).get('provider') == expected_provider and
-                        ready.get('tts', {}).get('model') == expected_model and ready.get('agent')):
+                        ready.get('tts', {}).get('model') == expected_model and
+                        ready.get('agent', {}).get('model') == expected_agent and
+                        ready.get('agent', {}).get('effort') == expected_effort and
+                        ready.get('wake', {}).get('model') == expected_wake_model and
+                        ready.get('wake', {}).get('threshold') == expected_wake_threshold):
                     raise RuntimeError('The requested release is not speech-ready')
                 runtime = json.loads(self.run(release / 'runtime/target/release/oriond', '--socket', runtime_socket, '--status', capture_output=True, text=True, timeout=5).stdout)
                 if runtime.get('build_revision') != metadata['revision']:

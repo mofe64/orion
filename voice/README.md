@@ -10,9 +10,9 @@ waking and character feedback.
 Use [Pi installation and deployment](../docs/quickstart.md#pi-local-voice-and-agent)
 to prepare the listener with the complete voice stack. The Pi needs working
 [ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
-Deployment builds the native Rustpotter adapter and checks its wake reference.
-See [wake-word training](../docs/wake-word-training.md) for the dataset and
-evaluation needed before replacing that reference.
+Deployment builds the native Rustpotter adapter and checks both the active
+trained model and retained reference. See [wake-word training](../docs/wake-word-training.md)
+for the evidence and rollback policy.
 
 The listener runs as `orion-listener` with a Python 3.12 environment inside the
 active release. Its WebSocket endpoint uses port 7448 and the Pi's
@@ -27,7 +27,8 @@ coarse direction from stereo frames and downmixes to mono for Rustpotter and ASR
 It keeps pre-roll and the current recording in memory; recordings are cleared on
 mute, cancellation or disconnect.
 
-A wake candidate registers a silent runtime session. With a compatible
+A wake candidate registers a runtime session and starts the chime and brief
+light pulse. With a compatible
 coordinator, a short wake prefix reaches Qwen while full command capture continues.
 Prefix verification and transcription of the complete utterance run in order. Follow-up
 speech can remain buffered during confirmation. The coordinator rejects recordings
@@ -71,8 +72,9 @@ Python environment before switching service paths. Playback routing and speaker
 checks are described in [audio setup](../hardware/audio/README.md).
 
 If wake detection succeeds but the body stays at rest, inspect Qwen confirmation
-and the runtime's rest status. The acknowledgement chime waits for confirmation;
-home movement also requires a healthy rest lifecycle. If a recording
+and the runtime's rest status. The candidate chime can play even when Qwen
+rejects the phrase; home movement still requires confirmation and a healthy
+rest lifecycle. If a recording
 ends early, inspect the VAD configuration, capture gain and endpoint reason before
 changing the ASR model.
 

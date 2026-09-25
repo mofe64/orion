@@ -32,6 +32,10 @@ Use your Pi account, checkout path and branch if they differ. SSH must already
 trust the host. The script keeps terminal input available for sudo authentication.
 Unattended deployment requires the Pi account's existing sudo policy to allow
 service control without prompting.
+Use `--prepare-only` to build and test the immutable release while the installed
+services continue running. The script prints the release path; activate it later
+with that release's `scripts/install_pi_voice_stack.py --release PATH` after the
+area around Orion is clear.
 
 The workstation tests and builds Studio. The Pi fetches the chosen commit into
 a separate release directory, prepares locked Python environments, runs tests,
@@ -112,8 +116,8 @@ live under `~/.local/share/orion/voice-stack/`.
 Sign in as the Pi user over SSH:
 
 ```bash
-~/.local/share/orion/voice-stack/codex-0.154.0/bin/codex login --device-auth
-~/.local/share/orion/voice-stack/codex-0.154.0/bin/codex login status
+~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login --device-auth
+~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login status
 ```
 
 Complete the displayed device code in your browser. The account credentials belong

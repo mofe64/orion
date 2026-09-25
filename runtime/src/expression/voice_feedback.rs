@@ -24,7 +24,7 @@ pub struct VoiceFeedback {
 }
 impl VoiceFeedback {
     /// Confirmation requires an explicit prefix verification or an endpointed
-    /// wake. A raw candidate alone cannot extend the inactivity deadline.
+    /// wake. The candidate cue never extends the inactivity deadline.
     pub fn confirm(&mut self, id: &str, now: f64) -> bool {
         if !self.owns(id)
             || self.confirmed
@@ -33,7 +33,6 @@ impl VoiceFeedback {
             return false;
         }
         self.confirmed = true;
-        self.acknowledgment_since = Some(now);
         self.record("confirmed", now);
         true
     }
@@ -116,9 +115,13 @@ impl VoiceFeedback {
             self.since = if event == "continue" { now - 1.0 } else { now };
             self.deadline = now + 120.0;
             self.processing_cued = false;
-            self.acknowledgment_since = None;
+            self.acknowledgment_since = (event == "wake").then_some(now);
             self.record(event, now);
-            return Ok(self.confirmed.then_some(("listening", None)));
+            return Ok(if event == "wake" {
+                Some(("neutral", Some("voice_wake")))
+            } else {
+                Some(("listening", None))
+            });
         }
         if self.session.as_deref() != Some(id) {
             return Ok(None);
@@ -207,8 +210,14 @@ impl VoiceFeedback {
     pub fn acknowledging(&self, now: f64) -> bool {
         self.acknowledgment_since.is_some_and(|at| now - at < 0.9)
     }
+    pub fn candidate_pulse(&self, now: f64) -> Option<Rgbw8> {
+        self.acknowledging(now).then(|| self.light(now)).flatten()
+    }
     pub fn light(&self, now: f64) -> Option<Rgbw8> {
-        if !self.confirmed {
+        if !self.confirmed
+            && (!self.acknowledging(now)
+                || !matches!(self.phase.as_str(), "listening" | "thinking"))
+        {
             return None;
         }
         let elapsed = (now - self.since).max(0.0);
@@ -275,46 +284,36 @@ mod tests {
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     #[test]
-    fn unconfirmed_candidates_never_produce_feedback_including_endpoint_and_failure() {
+    fn candidate_pulses_once_then_rejection_clears_feedback_without_confirmation() {
         for ending in ["reject", "cancel", "unavailable"] {
             let mut feedback = VoiceFeedback::default();
-            for (event, at) in [
-                ("wake", 0.0),
-                ("verify", 0.2),
-                ("endpoint", 2.0),
-                (ending, 3.0),
-            ] {
-                assert!(feedback.event(ID, event, at).unwrap().is_none(), "{event}");
-                assert!(feedback.light(at + 0.15).is_none(), "{event}");
-                assert_eq!(feedback.reaction(), "neutral");
-            }
+            assert_eq!(
+                feedback.event(ID, "wake", 0.0).unwrap(),
+                Some(("neutral", Some("voice_wake")))
+            );
+            assert!(feedback.light(0.15).is_some());
+            assert!(feedback.event(ID, "verify", 0.2).unwrap().is_none());
+            assert!(feedback.light(0.45).is_some());
+            assert!(feedback.light(0.91).is_none());
+            assert!(feedback.event(ID, "endpoint", 2.0).unwrap().is_none());
+            assert!(feedback.event(ID, ending, 3.0).unwrap().is_none());
+            assert!(feedback.light(3.15).is_none());
+            assert_eq!(feedback.reaction(), "neutral");
         }
     }
 
     #[test]
-    fn confirmation_replays_original_ack_pattern_once_despite_endpoint_and_followup() {
+    fn confirmation_does_not_replay_candidate_pulse_despite_endpoint_and_followup() {
         for verification in ["verify", "endpoint"] {
             let mut f = VoiceFeedback::default();
             f.event(ID, "wake", 0.0).unwrap();
             f.event(ID, verification, 0.2).unwrap();
-            assert!(f.light(2.0).is_none());
-            assert!(f.confirm(ID, 10.0));
-            // The full-transcript path may already be thinking; neither transition
-            // is allowed to cut short the acknowledgement or play over its chime.
-            assert_eq!(
-                f.event(ID, "endpoint", 10.02)
-                    .unwrap()
-                    .and_then(|(_, cue)| cue),
-                None
-            );
-            f.event(ID, "followup", 10.04).unwrap();
-            assert!(!f.confirm(ID, 10.1));
             for (offset, expected) in [
                 (0.15, VOICE_PALETTE[0]),
                 (0.45, VOICE_PALETTE[1]),
                 (0.75, VOICE_PALETTE[2]),
             ] {
-                let actual = f.light(10.0 + offset).unwrap();
+                let actual = f.light(offset).unwrap();
                 for (a, b) in [
                     (actual.red, expected.red),
                     (actual.green, expected.green),
@@ -324,6 +323,13 @@ mod tests {
                     assert!(a.abs_diff(b) <= 1);
                 }
             }
+            assert!(f.light(2.0).is_none());
+            assert!(f.confirm(ID, 10.0));
+            // A slow Qwen fallback must not replay the candidate acknowledgement.
+            assert!(f.candidate_pulse(10.0).is_none());
+            f.event(ID, "endpoint", 10.02).unwrap();
+            f.event(ID, "followup", 10.04).unwrap();
+            assert!(!f.confirm(ID, 10.1));
             assert!(!f.acknowledging(10.91));
             assert_eq!(f.light(10.91), Some(Rgbw8::new(4, 3, 0, 12)));
         }
@@ -447,7 +453,10 @@ mod tests {
     #[test]
     fn cues_once_and_stale_events_cannot_replace_a_turn() {
         let mut f = VoiceFeedback::default();
-        assert!(f.event(ID, "wake", 0.0).unwrap().is_none());
+        assert_eq!(
+            f.event(ID, "wake", 0.0).unwrap(),
+            Some(("neutral", Some("voice_wake")))
+        );
         f.event(ID, "verify", 0.05).unwrap();
         assert!(f.confirm(ID, 0.1));
         assert!(f.event(ID, "wake", 0.1).unwrap().is_none());

@@ -6,10 +6,16 @@ import shlex
 
 SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack')
 STOP_ORDER = tuple(reversed(SERVICES))
+TRAINED_WAKE_MODEL = 'hey_orion_trained_080.rpw'
+ACTIVE_WAKE_MODEL = TRAINED_WAKE_MODEL
+ACTIVE_WAKE_THRESHOLD = '0.80'
+REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',
     'voice/.venv/bin/orion-listener', 'orion_studio/gateway.py',
+    'voice/models/wake/hey_orion_trained_080.rpw',
+    'voice/models/wake/hey_orion_reference.rpw',
     'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh',
 )
 
@@ -77,6 +83,36 @@ def effective_start(contents):
     return result
 
 
+def listener_start(start, release):
+    """Update only known managed wake profiles; keep independent operator tuning."""
+    model_flag = re.search(r'(?<!\S)--wake-model(?:\s+|=)(\S+)', start)
+    threshold_flag = re.search(r'(?<!\S)--threshold(?:\s+|=)(\S+)', start)
+    model = Path(model_flag[1]).name if model_flag else None
+    try:
+        threshold = float(threshold_flag[1]) if threshold_flag else None
+    except ValueError:
+        threshold = None
+    managed = ((model is None and (threshold == 0.35 or threshold_flag is None)) or
+               (model == REFERENCE_WAKE_MODEL and threshold == 0.35) or
+               (model == TRAINED_WAKE_MODEL and threshold == 0.80))
+    if managed:
+        wanted_model = f'{release}/voice/models/wake/{ACTIVE_WAKE_MODEL}'
+        if threshold_flag:
+            start = start[:threshold_flag.start()] + f'--threshold {ACTIVE_WAKE_THRESHOLD}' + start[threshold_flag.end():]
+        else:
+            start += f' --threshold {ACTIVE_WAKE_THRESHOLD}'
+        model_flag = re.search(r'(?<!\S)--wake-model(?:\s+|=)(\S+)', start)
+        if model_flag:
+            start = start[:model_flag.start()] + f'--wake-model {wanted_model}' + start[model_flag.end():]
+        else:
+            start += f' --wake-model {wanted_model}'
+    elif model is None:
+        start += f' --wake-model {release}/voice/models/wake/{REFERENCE_WAKE_MODEL}'
+    if '--local-processor' not in start:
+        start += ' --local-processor'
+    return start
+
+
 def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/systemd/system')):
     for path in [release, root, runtime_project, home]:
         if not re.fullmatch(r'/[A-Za-z0-9._/-]+', str(path)) or '..' in path.parts:
@@ -102,15 +138,15 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         # A first onboard installation adds only missing defaults. Existing override values win.
         if name == 'orion-listener':
             start = effective_start(contents)
-            if '--local-processor' not in start:
-                # Append to the effective (last) ExecStart, preserving custom flags.
+            desired = listener_start(start, release)
+            if desired != start:
+                # Change only the effective ExecStart; preserve the other overrides.
                 for i in range(len(contents) - 1, -1, -1):
                     p, value = contents[i]
                     if re.search(r'^ExecStart=.+', value, re.M):
-                        value = re.sub(r'^(ExecStart=.+)$', r'\1 --local-processor', value, flags=re.M)
-                        if '--threshold' not in start:
-                            value = re.sub(r'^(ExecStart=.+)$', r'\1 --threshold 0.35', value, flags=re.M)
-                        contents[i] = (p, value)
+                        contents[i] = (p, re.sub(r'^ExecStart=.+$',
+                            lambda match: 'ExecStart=' + desired if match.group()[10:] == start else match.group(),
+                            value, flags=re.M))
                         break
             additions = []
             if 'ORION_VAD_MODEL=' not in combined:
@@ -131,19 +167,33 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
     environment_path = home / '.config/orion/voice-stack.env'
     text = environment_path.read_text() if environment_path.exists() else ''
     defaults = {
-        'ORION_STUDIO_CODEX_BIN': str(root / 'codex-0.154.0/bin/codex'),
+        'ORION_STUDIO_CODEX_BIN': str(root / 'codex-0.157.0/bin/codex'),
         'ORION_ASR_MODEL_DIR': str(root / 'models/qwen'), 'ORION_LLAMA_SERVER': str(root / 'llama-b10976/llama-server'),
         'ORION_ASR_THREADS': '3', 'ORION_TTS_THREADS': '3', 'HF_HOME': str(root / 'cache/hf'),
         'HF_HUB_OFFLINE': '1', 'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
         'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium'),
     }
     metadata = json.loads((release / 'release.json').read_text()) if (release / 'release.json').exists() else {}
+    previous_env = read_env(text)
     files[environment_path] = merge_env(text, defaults, {
         'ORION_STUDIO_VOICE_PYTHON': str(release / 'speech/.venv/bin/python'),
         'ORION_RELEASE_REVISION': metadata.get('revision', release.name),
         'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
+        **({'ORION_STUDIO_CODEX_BIN': defaults['ORION_STUDIO_CODEX_BIN']}
+           if previous_env.get('ORION_STUDIO_CODEX_BIN') == str(root / 'codex-0.154.0/bin/codex') else {}),
         # This override may already be present in a customized EnvironmentFile.
-        **({'ORION_PROJECT_ROOT': str(release)} if 'ORION_PROJECT_ROOT' in read_env(text) else {}),
+        **({'ORION_PROJECT_ROOT': str(release)} if 'ORION_PROJECT_ROOT' in previous_env else {}),
     })
+    settings_path = home / '.config/orion/voice-settings.json'
+    if settings_path.is_symlink():
+        raise ValueError(f'Inspect symlinked voice settings before deployment: {settings_path}')
+    if settings_path.exists():
+        settings = json.loads(settings_path.read_text())
+        if not isinstance(settings, dict):
+            raise ValueError('Voice settings must be a JSON object')
+        field = 'model' if 'model' in settings else 'agent_model'
+        if settings.get(field) == 'gpt-5.6-sol':
+            settings[field] = 'gpt-6-luna'
+            files[settings_path] = json.dumps(settings, indent=2) + '\n'
     files[home / '.local/share/orion/studio-service/installed'] = str(release) + '\n'
     return files

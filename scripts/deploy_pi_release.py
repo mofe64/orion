@@ -57,6 +57,7 @@ def build_release(release, root):
     run('python3', '-m', 'unittest', 'discover', '-s', release / 'orion_studio/tests', '-q', cwd=release)
     run(release / 'voice/.venv/bin/python', '-c',
         'from pathlib import Path; from orion_voice.rustpotter import RustpotterWakeDetector; '
+        'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_trained_080.rpw"), .80).process(bytes(640)); '
         'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_reference.rpw"), .35).process(bytes(640))', cwd=release)
 
 

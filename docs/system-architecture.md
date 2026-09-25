@@ -59,7 +59,8 @@ passes through the runtime's limits and ownership checks.
 ### Listener and voice service
 
 The listener keeps microphone capture open unless the saved mute setting disables
-it. Rustpotter detects a possible wake phrase and registers a silent session. The coordinator verifies a short recording with Qwen while the
+it. Rustpotter detects a possible wake phrase, registers a session, and plays the
+candidate chime and light pulse. The coordinator verifies a short recording with Qwen while the
 listener continues recording the command. Silero decides when speech has ended.
 
 `orion-service` owns one agent executor and a restartable voice coordinator. The
@@ -173,9 +174,9 @@ only after measured completion. A timeout, cancellation, missing result or faile
 torque release enters `fault`. A failed home movement during waking also enters
 `fault`. Automatic waking and voice reply playback then await explicit recovery.
 
-At mechanical rest, a wake candidate stays silent while the body remains still
-and the light stays off. Qwen confirmation plays the acknowledgement chime and
-starts the return home. If confirmation arrives during descent, Orion finishes descending and then
+At mechanical rest, a wake candidate plays the acknowledgement chime and a
+brief light pulse while the body remains still. Qwen confirmation starts the
+return home. If confirmation arrives during descent, Orion finishes descending and then
 returns home while retaining torque. Capture continues during both movements.
 After home completes, the runtime applies the latest listening or thinking state
 and checks any direction evidence before turning toward the speaker.
