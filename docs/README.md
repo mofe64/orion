@@ -4,6 +4,7 @@
 
 - [System architecture](system-architecture.md)
 - [Voice architecture](voice-architecture.md)
+- [Echo cancellation and barge-in design (proposed)](echo-cancellation-and-barge-in.md)
 - [Train and evaluate “Hey Orion”](wake-word-training.md)
 - [Motion and animation architecture](motion-and-animation-architecture.md)
 - [Character animation design](character-animation.md)
