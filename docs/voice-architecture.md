@@ -128,7 +128,8 @@ coordinator reconnects automatically. Protocol capabilities allow older peers to
 confirm the complete utterance or receive a single response without a follow-up
 window.
 
-Acoustic echo cancellation and interruption during playback are not implemented.
+Acoustic echo cancellation and interruption during playback are not implemented;
+the [proposed design](echo-cancellation-and-barge-in.md) covers both.
 Speak after the teal invitation appears. Sustained noise or delayed echo can
 still trigger an unwanted follow-up, so microphone and speaker behavior require
 physical checks.
