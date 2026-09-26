@@ -333,6 +333,7 @@ pub struct RestLighting {
     device: Box<dyn LightingDevice>,
     frame: Vec<Rgbw8>,
     fade: Option<(f64, Vec<Rgbw8>)>,
+    wake_pulse: Option<Rgbw8>,
     now: f64,
 }
 
@@ -343,8 +344,16 @@ impl RestLighting {
             device,
             frame,
             fade: None,
+            wake_pulse: None,
             now: 0.0,
         }
+    }
+
+    /// Show only the candidate acknowledgement over mechanical-rest darkness.
+    /// Ordinary scene, manual and voice-state writes still pass through the
+    /// rest mask and cannot keep the lamp on after the pulse ends.
+    pub fn set_wake_pulse(&mut self, color: Option<Rgbw8>) {
+        self.wake_pulse = color;
     }
 
     pub fn update(&mut self, dark: bool, now: f64) -> Result<()> {
@@ -362,7 +371,8 @@ impl RestLighting {
     }
 
     pub fn is_on(&self) -> bool {
-        self.frame.iter().any(|color| *color != Rgbw8::OFF)
+        self.wake_pulse.is_some_and(|color| color != Rgbw8::OFF)
+            || self.frame.iter().any(|color| *color != Rgbw8::OFF)
     }
 }
 
@@ -379,7 +389,11 @@ impl LightingDevice for RestLighting {
         } else {
             pixels.to_vec()
         };
-        self.device.render(&frame)?;
+        if let (Some(color), Some(_)) = (self.wake_pulse, &self.fade) {
+            self.device.render_uniform(color)?;
+        } else {
+            self.device.render(&frame)?;
+        }
         self.frame = frame;
         Ok(())
     }
@@ -389,7 +403,21 @@ impl LightingDevice for RestLighting {
 mod tests {
     use super::*;
     use crate::*;
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+
+    struct ObservedLight(Rc<RefCell<Vec<Rgbw8>>>);
+    impl LightingDevice for ObservedLight {
+        fn pixel_count(&self) -> usize {
+            1
+        }
+        fn render(&mut self, pixels: &[Rgbw8]) -> Result<()> {
+            *self.0.borrow_mut() = pixels.to_vec();
+            Ok(())
+        }
+    }
 
     struct FollowingDriver {
         positions: JointPositions,
@@ -667,5 +695,24 @@ mod tests {
         light.update(false, 12.0).unwrap();
         light.render_uniform(Rgbw8::new(1, 2, 3, 4)).unwrap();
         assert!(light.is_on());
+    }
+
+    #[test]
+    fn candidate_pulse_is_only_visible_exception_to_rest_darkness() {
+        let observed = Rc::new(RefCell::new(vec![Rgbw8::OFF]));
+        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone())));
+        light.update(true, 1.0).unwrap();
+        let pulse = Rgbw8::new(40, 20, 5, 4);
+        light.set_wake_pulse(Some(pulse));
+        light.update(true, 1.1).unwrap();
+        assert_eq!(*observed.borrow(), vec![pulse]);
+        light
+            .render_uniform(Rgbw8::new(255, 255, 255, 255))
+            .unwrap();
+        assert_eq!(*observed.borrow(), vec![pulse]);
+        light.set_wake_pulse(None);
+        light.update(true, 1.2).unwrap();
+        assert_eq!(*observed.borrow(), vec![Rgbw8::OFF]);
+        assert!(!light.is_on());
     }
 }

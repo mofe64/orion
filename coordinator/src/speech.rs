@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{path::PathBuf, process::Stdio, sync::RwLock, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -14,11 +18,6 @@ pub struct SpeechConfig {
     pub asr_model: String,
     pub tts_model: String,
     pub cache_path: String,
-    #[serde(default = "default_voice")]
-    pub tts_voice: String,
-}
-fn default_voice() -> String {
-    "alba".into()
 }
 
 #[derive(Debug)]
@@ -32,12 +31,11 @@ pub(crate) struct SpeechRuntime {
     config: SpeechConfig,
     asr: Mutex<Option<Process>>,
     tts: Mutex<Option<Process>>,
-    voice: RwLock<String>,
 }
 enum Job {
     Info,
     Transcribe(Vec<u8>),
-    Synthesize(String, String, mpsc::Sender<Option<Chunk>>),
+    Synthesize(String, mpsc::Sender<Option<Chunk>>),
 }
 enum Reply {
     Info(Value),
@@ -48,7 +46,6 @@ enum Reply {
 impl SpeechRuntime {
     pub fn new(config: SpeechConfig) -> Self {
         Self {
-            voice: RwLock::new(config.tts_voice.clone()),
             config,
             asr: Mutex::new(None),
             tts: Mutex::new(None),
@@ -69,19 +66,12 @@ impl SpeechRuntime {
     pub async fn synthesize(
         &self,
         text: String,
-        voice: String,
         send: mpsc::Sender<Option<Chunk>>,
     ) -> Result<f64, String> {
-        match self.run("tts", Job::Synthesize(text, voice, send)).await? {
+        match self.run("tts", Job::Synthesize(text, send)).await? {
             Reply::End(ms) => Ok(ms),
             _ => unreachable!(),
         }
-    }
-    pub fn voice(&self) -> String {
-        self.voice.read().unwrap().clone()
-    }
-    pub fn set_voice(&self, voice: &str) {
-        *self.voice.write().unwrap() = voice.into();
     }
     async fn run(&self, role: &str, job: Job) -> Result<Reply, String> {
         tokio::time::timeout(Duration::from_secs(240), self.run_inner(role, job))
@@ -166,8 +156,12 @@ impl Process {
             || (role == "asr" && ready["asr"]["provider"] != "qwen3-asr")
             || (role == "tts"
                 && ready["tts"]["provider"]
-                    != if config.tts_model.starts_with("pocket-") {
-                        "pocket-tts"
+                    != if config.tts_model == "piper-alba-medium"
+                        || Path::new(&config.tts_model)
+                            .join("en_GB-alba-medium.onnx")
+                            .is_file()
+                    {
+                        "piper-tts"
                     } else {
                         "chatterbox-turbo"
                     })
@@ -228,12 +222,9 @@ impl Process {
                 }
                 Ok(Reply::Transcript(value))
             }
-            Job::Synthesize(text, voice, send) => {
-                self.send(
-                    json!({"method":"synthesize", "id":id, "text":text, "voice":voice}),
-                    &[],
-                )
-                .await?;
+            Job::Synthesize(text, send) => {
+                self.send(json!({"method":"synthesize", "id":id, "text":text}), &[])
+                    .await?;
                 let mut sequence = 0;
                 let mut total = 0;
                 loop {
@@ -294,28 +285,37 @@ fn duration(value: &Value, key: &str) -> Result<f64, String> {
 mod isolation_tests {
     use super::*;
     #[tokio::test]
-    async fn cancelled_tts_preserves_asr_process_and_voice_changes_preserve_both() {
+    async fn piper_handshake_matches_the_selected_model() {
+        let runtime = SpeechRuntime::new(SpeechConfig {
+            python: "python3".into(),
+            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+            asr_model: "fixture".into(),
+            tts_model: "piper-alba-medium".into(),
+            cache_path: String::new(),
+        });
+        assert_eq!(
+            runtime.info().await.unwrap()["tts"]["provider"],
+            "piper-tts"
+        );
+        runtime.close().await;
+    }
+    #[tokio::test]
+    async fn cancelled_tts_preserves_asr_process() {
         let runtime = SpeechRuntime::new(SpeechConfig {
             python: "python3".into(),
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
             asr_model: "fixture".into(),
             tts_model: "fixture".into(),
             cache_path: String::new(),
-            tts_voice: "alba".into(),
         });
         runtime.info().await.unwrap();
         let asr = runtime.asr.lock().await.as_ref().unwrap().child.id();
         let tts = runtime.tts.lock().await.as_ref().unwrap().child.id();
-        runtime.set_voice("anna");
-        runtime.info().await.unwrap();
-        assert_eq!(runtime.voice(), "anna");
-        assert_eq!(runtime.asr.lock().await.as_ref().unwrap().child.id(), asr);
-        assert_eq!(runtime.tts.lock().await.as_ref().unwrap().child.id(), tts);
         let (send, _receive) = mpsc::channel(8);
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(200),
-                runtime.synthesize("hang-tts".into(), "anna".into(), send)
+                runtime.synthesize("hang-tts".into(), send)
             )
             .await
             .is_err()

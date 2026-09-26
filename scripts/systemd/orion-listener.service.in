@@ -14,7 +14,7 @@ Environment=ORION_MIC_SPACING=0
 Environment=ORION_CHANNEL_SIGN=0
 EnvironmentFile=-@USER_HOME@/.config/orion/voice.env
 UMask=0077
-ExecStart=@PROJECT_ROOT@/voice/.venv/bin/orion-listener --host 0.0.0.0 --port 7448 --token-file @USER_HOME@/.config/orion/studio-token --mic-spacing ${ORION_MIC_SPACING} --channel-sign ${ORION_CHANNEL_SIGN}
+ExecStart=@PROJECT_ROOT@/voice/.venv/bin/orion-listener --wake-model @PROJECT_ROOT@/voice/models/wake/hey_orion_trained_080.rpw --threshold 0.80 --host 0.0.0.0 --port 7448 --token-file @USER_HOME@/.config/orion/studio-token --mic-spacing ${ORION_MIC_SPACING} --channel-sign ${ORION_CHANNEL_SIGN}
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=10

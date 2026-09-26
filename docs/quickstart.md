@@ -32,6 +32,10 @@ Use your Pi account, checkout path and branch if they differ. SSH must already
 trust the host. The script keeps terminal input available for sudo authentication.
 Unattended deployment requires the Pi account's existing sudo policy to allow
 service control without prompting.
+Use `--prepare-only` to build and test the immutable release while the installed
+services continue running. The script prints the release path; activate it later
+with that release's `scripts/install_pi_voice_stack.py --release PATH` after the
+area around Orion is clear.
 
 The workstation tests and builds Studio. The Pi fetches the chosen commit into
 a separate release directory, prepares locked Python environments, runs tests,
@@ -47,7 +51,8 @@ and starts all four services. Normal character startup may move Orion home; keep
 the robot clear during the switch.
 
 Readiness requires the expected runtime revision, a running coordinator with
-Qwen, Pocket and Codex ready, and a gateway connected to that same voice service.
+Qwen, the selected TTS model and Codex ready, and a gateway connected to that
+same voice service.
 A failed activation restores the immediately previous configuration and service
 state. A failed mechanical rest leaves the runtime running. The deployment does
 not perform expression playback tests; complete a spoken turn afterward to check
@@ -61,6 +66,11 @@ catalog. It changes release paths while retaining installed command arguments
 and environment overrides, including sleep and microphone tuning. Existing
 service enablement is retained; missing services are enabled. Restarting the agent
 service begins a fresh conversation with its saved profile and memory available.
+
+An update converts older saved voice choices to Piper Alba Medium. Turn listening
+back on in Studio and complete a spoken turn to check the physical speaker.
+Release rollback preserves saved voice settings; an older release may require
+its own compatible settings.
 
 The Pi checkout is used to fetch Git objects and supply the asset catalog.
 Deployment neither merges the remote branch into that checkout nor publishes
@@ -95,17 +105,19 @@ python3 scripts/deploy_pi_release.py --source "$PWD" --revision HEAD --prepare-o
 ```
 
 The command prints the release path. The preparer downloads pinned Qwen GGUF,
-native llama-server, Codex and Silero assets and verifies their SHA-256 hashes.
-Pocket's package pins its weights and preset revisions. Matching assets are reused;
-a mismatched file stops preparation for inspection. The speech environment uses
-Python 3.11 and the listener uses Python 3.12. Their models and download inventories
+Piper Alba Medium, native llama-server, Codex and Silero assets and verifies
+their SHA-256 hashes. It synthesizes a short Piper check at 24 kHz before
+activation.
+Matching assets are reused; a mismatched file stops preparation for inspection.
+The speech environment uses Python 3.11 and the listener uses Python 3.12.
+Their models and download inventories
 live under `~/.local/share/orion/voice-stack/`.
 
 Sign in as the Pi user over SSH:
 
 ```bash
-~/.local/share/orion/voice-stack/codex-0.154.0/bin/codex login --device-auth
-~/.local/share/orion/voice-stack/codex-0.154.0/bin/codex login status
+~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login --device-auth
+~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login status
 ```
 
 Complete the displayed device code in your browser. The account credentials belong

@@ -31,9 +31,12 @@ def send(writer, message, pcm=None):
 def load_models(config):
     role = config.get('role', 'both')
     if os.environ.get('ORION_SPEECH_BACKEND') == 'pi':
-        from .pi import QwenGgufTranscriber, PocketSynthesizer
+        from .pi import QwenGgufTranscriber
         asr = QwenGgufTranscriber(config['asr_model']) if role in ('both', 'asr') else None
-        tts = PocketSynthesizer(config['tts_model']) if role in ('both', 'tts') else None
+        tts = None
+        if role in ('both', 'tts'):
+            from .piper import PiperAlbaSynthesizer
+            tts = PiperAlbaSynthesizer(config['tts_model'])
     else:
         from .providers import Qwen3AsrTranscriber
         from .tts import ChatterboxSynthesizer
@@ -76,8 +79,7 @@ def serve(reader, writer, loader=load_models):
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError('Empty synthesis input')
                 started = time.monotonic()
-                stream = iter(tts.stream(text, voice=job.get('voice', 'alba'))
-                              if tts.provider == 'pocket-tts' else tts.stream(text))
+                stream = iter(tts.stream(text))
                 sequence = total = 0
                 try:
                     while True:

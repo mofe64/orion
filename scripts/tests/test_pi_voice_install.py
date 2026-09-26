@@ -133,12 +133,10 @@ class RetirementTests(unittest.TestCase):
             models = root / 'voice/models'; models.mkdir(parents=True)
             for relative in retire.MODEL_PATHS:
                 source = models / relative; source.parent.mkdir(parents=True, exist_ok=True); source.write_text('legacy')
-            (models / 'en_US-ryan-medium.onnx.json').write_text(json.dumps(dict(audio={}, phoneme_id_map={})))
-            (models / 'en_US-ryan-medium.onnx').write_text('piper')
             reference = models / 'wake/hey_orion_reference.rpw'; reference.write_text('rustpotter')
             custom = models / 'custom.onnx'; custom.write_text('custom')
             moved = retire.archive_models(root, root / 'backup')
-            self.assertEqual(len(moved), 5)
+            self.assertEqual(len(moved), len(retire.MODEL_PATHS))
             self.assertEqual(reference.read_text(), 'rustpotter')
             self.assertEqual(custom.read_text(), 'custom')
             self.assertEqual(retire.archive_models(root, root / 'second'), [])

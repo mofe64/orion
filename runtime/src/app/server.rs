@@ -221,6 +221,11 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         if let Err(error) = routines.tick_audio(now_seconds, audio.as_mut()) {
             eprintln!("oriond: {error}");
         }
+        lighting.set_wake_pulse(if rest.dark() && rest.wake_acknowledgment_ready() {
+            feedback.candidate_pulse(now_seconds)
+        } else {
+            None
+        });
         lighting.update(rest.dark(), now_seconds)?;
         scenes.tick(now_seconds, &mut core, &mut lighting, audio.as_mut())?;
         if !routines.ringing() && !scenes.is_active() && !speech.is_active() {
@@ -292,6 +297,11 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             &feedback,
             routines.ringing() || scenes.is_active() || speech.is_active(),
         );
+        lighting.set_wake_pulse(if rest.dark() && rest.wake_acknowledgment_ready() {
+            feedback.candidate_pulse(now_seconds)
+        } else {
+            None
+        });
         lighting.update(rest.dark(), now_seconds)?;
         if character_just_stopped(character_was_enabled, character.status().enabled) {
             lighting.clear()?;

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub const DEFAULT_MODEL: &str = "gpt-5.6-sol";
+pub const DEFAULT_MODEL: &str = "gpt-6-luna";
 pub const DEFAULT_EFFORT: &str = "medium";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentConfig {

@@ -183,14 +183,7 @@ impl Host {
                 serde_json::to_value(settings::load_voice_settings()?).map_err(|e| e.to_string())
             }
             Request::SaveSettings(settings) => {
-                let mut previous = settings::load_voice_settings()?;
-                previous.tts_voice = settings.tts_voice.clone();
-                let voice_only = previous == settings;
                 let settings = settings::save_voice_settings(settings)?;
-                if voice_only {
-                    self.coordinator.set_voice(&settings.tts_voice);
-                    return serde_json::to_value(settings).map_err(|e| e.to_string());
-                }
                 self.coordinator.shutdown();
                 *self.desired.lock().unwrap() = None;
                 if let Err(error) = self.start_saved().await {

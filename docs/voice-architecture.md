@@ -2,20 +2,21 @@
 
 Orion's Pi runs microphone capture, wake detection, speech recognition, speech
 synthesis and the agent coordinator. Rustpotter detects a possible wake phrase,
-Silero finds the end of speech, Qwen3-ASR transcribes, and Pocket TTS produces the
-reply. Codex App Server runs on the Pi and uses online model inference. Studio
-provides settings and observation through the gateway.
+Silero finds the end of speech, Qwen3-ASR transcribes, and Piper Alba Medium
+produces the reply. Codex App Server runs on the Pi
+and uses online model inference. Studio provides settings and observation through
+the gateway.
 
 ## Audio and control flow
 
 ```text
 ReSpeaker stereo capture
   -> direction observation and mono downmix
-  -> silent Rustpotter wake candidate
+  -> Rustpotter wake candidate -> chime and three-color light pulse
   -> short Qwen wake verification while command capture continues
   -> Silero endpoint -> Qwen transcription of the complete recording
   -> confirmed command -> Rust agent -> Codex App Server
-  -> final answer sentences -> Pocket TTS -> coordinator audio buffer
+  -> final answer sentences -> Piper Alba TTS -> coordinator audio buffer
   -> local gateway -> oriond playback and speech animation
   -> playback completion -> echo guard -> follow-up listening window
 ```
@@ -79,9 +80,10 @@ separate settings described in [configuration](configuration.md#pi-runtime-and-l
 
 ## Confirmed waking
 
-At mechanical rest, the wake candidate remains silent, still and dark. Qwen
-confirmation plays the existing wake chime and starts the return home. The
-rest lifecycle keeps the light off until home completes.
+At mechanical rest, a Rustpotter candidate plays the wake chime and the
+three-color light pulse while the body remains still. Qwen confirmation starts
+the return home. A rejected candidate ends its light feedback without waking
+the body or dispatching a command. Other lighting remains suppressed at rest.
 
 The coordinator sends `wake.verified` after a successful prefix or
 `wake.confirmed` after confirming the complete utterance. The listener forwards
@@ -159,9 +161,9 @@ address and token in a private directory for the gateway to discover.
 The host reads saved settings, starts the coordinator and retries a stopped
 coordinator every five seconds. Repeated starts with matching configuration
 reuse the coordinator. Settings changes are serialized with startup. Changing
-only the voice preset affects the next response; other model settings restart
-the coordinator and speech workers. The agent executor can survive that restart
-when its configuration matches and no active request is cancelled.
+speech or agent model settings restarts the coordinator and speech workers. The
+agent executor can survive that restart when its configuration matches and no
+active request is cancelled.
 
 SIGTERM stops the coordinator, cancels its speech run and shuts down the agent
 and workers. A service restart creates a fresh conversation and retains saved
@@ -230,16 +232,19 @@ without the intermediate acknowledgement.
 ## Response latency
 
 Response time includes trailing silence, transcription, online agent processing,
-synthesis buffering and speaker startup. Qwen and Pocket stay loaded between
-completed jobs. Cancelling native inference retires only the affected worker,
+synthesis buffering and speaker startup. Qwen and the selected TTS model stay
+loaded between completed jobs. Cancelling native inference retires only the
+affected worker,
 which reloads for its next job. CPU thread settings are listed in
 [configuration](configuration.md#pi-voice-profile).
 
-Pocket FP32 has been slower than playback in Pi trials. The coordinator can
-therefore wait for the whole response before uploading it. INT8 uses quantized
-weights and may reduce that wait, with an audible change in voice quality. The
-buffering decision follows measured generation speed for the current response;
-it is not selected solely by the FP32 or INT8 setting.
+Piper Alba generates 22,050 Hz speech. Its worker completes a sentence, resamples
+it to the 24,000 Hz playback protocol, then sends chunks of at most two seconds.
+The coordinator buffers at least six
+seconds of audio, or the complete response when shorter, before uploading it.
+It can retain a slower reply until completion to prevent playback gaps. The
+buffering decision follows generation speed for the current response, rather
+than a fixed model choice.
 
 A first generated chunk, a first upload and audible speech are different points
 in the turn. Debug exposes separate stage durations. Stages overlap, so adding
@@ -262,9 +267,10 @@ calibration is required before enabling direction estimates.
 ## Streaming replies and timing
 
 The Codex adapter streams speech text only from a matching thread, turn and item
-explicitly marked `final_answer`. Complete sentences can reach Pocket while Codex
-finishes. Unknown phases wait for final completion. Model commentary and citation
-markers are removed from spoken output. The final text must preserve any prefix
+explicitly marked `final_answer`. Complete sentences can reach the selected TTS
+model while Codex finishes. Unknown phases wait for final completion. Model
+commentary and citation markers are removed from spoken output. The final text
+must preserve any prefix
 already emitted; a mismatch cancels the turn. Spoken output is capped at
 800 Unicode characters plus an ellipsis.
 
@@ -313,10 +319,10 @@ to investigate a failed turn.
 
 Wake, verification, endpoint and processing events carry the voice session ID.
 The runtime rejects stale transitions and bounds their lifetime. A candidate
-stays silent and leaves the existing light and character reaction unchanged.
-Qwen confirmation requests the existing wake chime once and starts the unchanged
-amber, teal and purple acknowledgement pulses, each lasting 300 ms. The pulse
-clock starts at confirmation and survives an immediate endpoint or follow-up.
+plays the existing wake chime once and starts amber, teal and purple
+acknowledgement pulses, each lasting 300 ms. The body reaction remains unchanged
+until Qwen confirmation. The pulse clock starts at the candidate; Qwen does not
+replay it after a slow verification or fallback.
 Afterward, capture uses the dim listening light and endpointed commands use
 thinking feedback. An unconfirmed endpoint remains silent.
 
@@ -328,9 +334,10 @@ thinking position and velocity when it takes over.
 
 If processing becomes unavailable after confirmation, the listener requests
 `error_muted` once and returns to wake detection. Unconfirmed rejection,
-cancellation and failure produce no feedback. During descent, waking or a rest
-fault, immediate voice reactions are suppressed. Mechanical rest permits only
-the confirmed wake's chime. Home completion restores the latest eligible reaction. Capture stays
+cancellation and failure clear the candidate light without additional feedback.
+During descent, waking or a rest fault, immediate voice reactions are suppressed.
+Mechanical rest permits only the candidate's chime and brief light pulse. Home
+completion restores the latest eligible reaction. Capture stays
 open through cues, so speaker pickup must be checked on the assembled robot.
 
 ## Alert interruption

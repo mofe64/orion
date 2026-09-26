@@ -48,7 +48,6 @@ struct Control {
 }
 pub struct Coordinator {
     generation: String,
-    speech: Arc<SpeechRuntime>,
     hub: Hub,
     connection: CoordinatorConnection,
     control: mpsc::Sender<Control>,
@@ -75,8 +74,7 @@ impl Coordinator {
         let (stop, mut stopped) = oneshot::channel();
         let (control, mut controls) = mpsc::channel::<Control>(8);
         let token = connection.token.clone();
-        let speech = Arc::new(SpeechRuntime::new(config.speech.clone()));
-        let owned_speech = speech.clone();
+        let owned_speech = Arc::new(SpeechRuntime::new(config.speech.clone()));
         let hub = Hub::new();
         let owned_hub = hub.clone();
         let thread = std::thread::Builder::new().name("orion-coordinator".into()).spawn(move || runtime.block_on(async move {
@@ -127,7 +125,6 @@ impl Coordinator {
         })).map_err(|e| e.to_string())?;
         Ok(Self {
             generation: uuid::Uuid::new_v4().to_string(),
-            speech,
             hub,
             connection,
             control,
@@ -140,9 +137,6 @@ impl Coordinator {
     }
     pub fn events(&self) -> Value {
         serde_json::json!({"generation":self.generation,"events":self.hub.values()})
-    }
-    pub fn set_voice(&self, voice: &str) {
-        self.speech.set_voice(voice);
     }
     pub fn is_running(&self) -> bool {
         self.thread

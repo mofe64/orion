@@ -42,11 +42,12 @@ def build_release(release, root):
     run('python3', '-m', 'unittest', 'discover', '-s', release / 'scripts/tests', '-q', cwd=release)
     run('python3', release / 'scripts/prepare_pi_voice_stack.py', '--root', root, env=env)
     for component in ('runtime', 'orion-service'):
-        args = ['cargo', 'test', '--locked', '--manifest-path', str(release / component / 'Cargo.toml'), '--all-targets', '-j', '2']
+        # Build beside the live voice services on an 8 GB Pi; limit peak memory.
+        args = ['cargo', 'test', '--locked', '--manifest-path', str(release / component / 'Cargo.toml'), '--all-targets', '-j', '1']
         if component == 'runtime':
             args += ['--', '--skip', 'devices::mujoco::tests::rust_runtime_executes_and_settles_in_native_mujoco']
         run(*args, cwd=release, env=env)
-        run('cargo', 'build', '--release', '--locked', '--manifest-path', release / component / 'Cargo.toml', '-j', '2', cwd=release, env=env)
+        run('cargo', 'build', '--release', '--locked', '--manifest-path', release / component / 'Cargo.toml', '-j', '1', cwd=release, env=env)
     for component, binaries in [('runtime', ['oriond', 'orion-trajectory']), ('orion-service', ['orion-service'])]:
         target = release / component / 'target/release'; target.mkdir(parents=True)
         for binary in binaries:
@@ -56,6 +57,7 @@ def build_release(release, root):
     run('python3', '-m', 'unittest', 'discover', '-s', release / 'orion_studio/tests', '-q', cwd=release)
     run(release / 'voice/.venv/bin/python', '-c',
         'from pathlib import Path; from orion_voice.rustpotter import RustpotterWakeDetector; '
+        'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_trained_080.rpw"), .80).process(bytes(640)); '
         'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_reference.rpw"), .35).process(bytes(640))', cwd=release)
 
 

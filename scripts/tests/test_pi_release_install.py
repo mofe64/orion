@@ -13,6 +13,7 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import install_pi_voice_stack as installer
+import pi_service_config
 from pi_service_config import SERVICES, effective_start, read_env, render_plan
 
 
@@ -50,11 +51,13 @@ class ConfigurationTests(Fixture):
             'ORION_PROJECT_ROOT=/old/root\nORION_RELEASE_REVISION=old\nCUSTOM=value')
         old = read_env(self.env.read_text()); result = self.plan()[self.env]; new = read_env(result)
         for key, value in old.items():
-            if key not in ('ORION_STUDIO_VOICE_PYTHON', 'ORION_PROJECT_ROOT', 'ORION_RELEASE_REVISION'):
+            if key not in ('ORION_STUDIO_VOICE_PYTHON', 'ORION_PROJECT_ROOT', 'ORION_RELEASE_REVISION', 'ORION_STUDIO_TTS_MODEL'):
                 self.assertEqual(new[key], value, key)
         self.assertEqual(new['ORION_STUDIO_VOICE_PYTHON'], str(self.release / 'speech/.venv/bin/python'))
         self.assertEqual(new['ORION_PROJECT_ROOT'], str(self.release))
         self.assertEqual(new['ORION_RELEASE_REVISION'], 'new')
+        self.assertEqual(new['ORION_STUDIO_TTS_MODEL'], 'piper-alba-medium')
+        self.assertEqual(new['ORION_PIPER_MODEL_DIR'], str(self.root / 'models/piper-alba-medium'))
         self.assertIn('# operator tuning\n', result)
         self.assertIn('CUSTOM=value\n', result)
         self.assertEqual(self.env.read_text().splitlines()[-1], 'CUSTOM=value')
@@ -83,17 +86,57 @@ class ConfigurationTests(Fixture):
         path = self.units / 'orion-listener.service.d/99-local.conf'
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --threshold 0.47\n')
         result = self.plan()[path]
-        self.assertIn('--threshold 0.47 --local-processor', result)
+        self.assertIn('--threshold 0.47', result)
+        self.assertIn('--local-processor', result)
         self.assertNotIn('--threshold 0.35', result)
+        self.assertIn('hey_orion_reference.rpw', result)
+
+    def test_managed_listener_reference_migrates_but_retains_rollback_model(self):
+        self.installed_units()
+        path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
+        self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --local-processor --threshold 0.35 --host 0.0.0.0\n')
+        result = self.plan()[path]
+        self.assertIn('--threshold 0.80', result)
+        self.assertIn(str(self.release / 'voice/models/wake/hey_orion_trained_080.rpw'), result)
+        self.assertNotIn('--threshold 0.35', result)
+
+    def test_managed_listener_can_switch_back_to_packaged_reference(self):
+        self.installed_units()
+        path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
+        self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --wake-model /old/release/voice/models/wake/hey_orion_trained_080.rpw --threshold 0.80 --host 0.0.0.0\n')
+        with patch.object(pi_service_config, 'ACTIVE_WAKE_MODEL', 'hey_orion_reference.rpw'), \
+             patch.object(pi_service_config, 'ACTIVE_WAKE_THRESHOLD', '0.35'):
+            result = self.plan()[path]
+        self.assertIn('--threshold 0.35', result)
+        self.assertIn(str(self.release / 'voice/models/wake/hey_orion_reference.rpw'), result)
+        self.assertNotIn('hey_orion_trained_080.rpw', result)
+
+    def test_non_numeric_operator_threshold_is_preserved(self):
+        self.installed_units()
+        path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
+        self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --threshold ${ORION_THRESHOLD}\n')
+        result = self.plan()[path]
+        self.assertIn('--threshold ${ORION_THRESHOLD}', result)
+        self.assertIn('hey_orion_reference.rpw', result)
+
+    def test_saved_default_agent_and_codex_runtime_migrate_transactionally(self):
+        self.env.write_text(f'ORION_STUDIO_CODEX_BIN="{self.root}/codex-0.154.0/bin/codex"\n')
+        settings = self.env.parent / 'voice-settings.json'
+        self.write(settings, '{"model":"gpt-5.6-sol","effort":"medium","ttsModel":"piper-alba-medium"}')
+        plan = self.plan()
+        self.assertEqual(json.loads(plan[settings])['model'], 'gpt-6-luna')
+        self.assertEqual(json.loads(plan[settings])['effort'], 'medium')
+        self.assertEqual(read_env(plan[self.env])['ORION_STUDIO_CODEX_BIN'], str(self.root / 'codex-0.157.0/bin/codex'))
+        self.assertEqual(json.loads(settings.read_text())['model'], 'gpt-5.6-sol')
 
     def test_saved_preferences_and_audio_calibration_are_outside_write_set(self):
         for name in ('voice-settings.json', 'microphone.json', 'servo_calibration.json', 'voice.env', 'studio-token'):
-            self.write(self.env.parent / name, 'operator settings')
+            self.write(self.env.parent / name, '{"model":"custom-model"}' if name == 'voice-settings.json' else 'operator settings')
         plan = self.plan()
         for name in ('voice-settings.json', 'microphone.json', 'servo_calibration.json', 'voice.env', 'studio-token'):
             path = self.env.parent / name
             self.assertNotIn(path, plan)
-            self.assertEqual(path.read_text(), 'operator settings')
+            self.assertEqual(path.read_text(), '{"model":"custom-model"}' if name == 'voice-settings.json' else 'operator settings')
         self.assertNotIn(self.home / '.local/share/orion/SOUL.md', plan)
         self.assertNotIn(self.home / '.local/share/orion/MEMORY.md', plan)
 
@@ -337,16 +380,26 @@ class TransactionTests(Fixture):
 
 class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
-        for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts', 'no-agent'):
+        for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
+                      'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
+                      'wrong-wake-model', 'wrong-wake-threshold'):
             with self.subTest(fault=fault):
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
-                event = dict(type='ready', asr=dict(provider='qwen3-asr'), tts=dict(provider='pocket-tts'), agent=dict(provider='codex'))
+                event = dict(type='ready', asr=dict(provider='qwen3-asr'),
+                             tts=dict(provider='piper-tts', model='piper-alba-medium'),
+                             agent=dict(provider='codex', model='gpt-6-luna', effort='medium'),
+                             wake=dict(provider='rustpotter', model='hey_orion_trained_080.rpw', threshold=0.80))
                 revision, gateway_pid = 'new', 42
                 if fault == 'old-service': status['project_root'] = '/old/release'
                 if fault == 'old-runtime': revision = 'old'
                 if fault == 'wrong-gateway': gateway_pid = 77
                 for key in ('asr', 'tts', 'agent'):
                     if fault == 'no-'+key: event[key] = {}
+                if fault == 'wrong-tts-provider': event['tts']['provider'] = 'pocket-tts'
+                if fault == 'wrong-tts-model': event['tts']['model'] = 'pocket-int8'
+                if fault == 'wrong-agent-model': event['agent']['model'] = 'gpt-5.6-sol'
+                if fault == 'wrong-wake-model': event['wake']['model'] = 'hey_orion_reference.rpw'
+                if fault == 'wrong-wake-threshold': event['wake']['threshold'] = 0.35
                 system = installer.System()
                 self.write(self.home / '.config/orion/custom-token', 'fixture-token')
                 cmdline = '\0'.join(['python3', 'gateway.py', '--port', '7555', '--socket', '/tmp/custom.sock', '--token-file', str(self.home / '.config/orion/custom-token'), '']).encode()
@@ -370,6 +423,16 @@ class ReadinessTests(Fixture):
                             system.ready(self.release, self.home, timeout=1)
                     else:
                         system.ready(self.release, self.home, timeout=1)
+
+    def test_readiness_migrates_old_voice_choices(self):
+        self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
+        self.env.write_text('ORION_STUDIO_TTS_MODEL=pocket-fp32\n')
+        self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
+        self.write(self.env.parent / 'voice-settings.json', '{"ttsModel":"pocket-int8","ttsVoice":"jane","ttsPath":"/old/model"}')
+        self.assertEqual(installer.expected_tts(self.home), ('piper-tts', 'piper-alba-medium'))
+        self.write(self.env.parent / 'voice-settings.json', '{"ttsModel":"unsupported"}')
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported Pi speech model'):
+            installer.expected_tts(self.home)
 
     def test_preflight_uses_saved_env_including_project_override_without_mutation(self):
         self.env.write_text('ORION_PROJECT_ROOT=/old/root\nORION_STUDIO_CODEX_BIN=/custom/codex\nORION_TTS_THREADS=2\n')

@@ -15,15 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-pi = ["pocket-tts==3.1.0", "torch==2.14.0", "onnxruntime==1.30.0"]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+pi = [
+  "sherpa-onnx==1.13.8",
+  "sherpa-onnx-core==1.13.8; sys_platform == 'linux'",
+  "scipy>=1.17,<2",
+]
 
 [project.scripts]
 orion-voice-models = "orion_speech_worker.models:main"

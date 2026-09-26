@@ -819,28 +819,35 @@ mod tests {
     }
 
     #[test]
-    fn wake_cues_wait_for_confirmation_and_rejected_candidates_do_not_stop_audio() {
+    fn wake_candidate_cues_once_and_confirmation_does_not_repeat_it() {
         let mut h = DispatchFixture::new(600.0);
         let rejected = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        for event in ["wake", "verify", "endpoint", "reject"] {
+        h.ok(&format!("voice {rejected} wake"));
+        assert_eq!(
+            h.audio.commands(),
+            &[crate::AudioCommand::Play("voice_wake".into())]
+        );
+        for event in ["verify", "endpoint", "reject"] {
             h.ok(&format!("voice {rejected} {event}"));
-            assert!(h.audio.commands().is_empty());
         }
+        let initial = h.audio.commands().to_vec();
+        h.audio.finish();
         let accepted = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         for event in ["wake", "verify"] {
             h.ok(&format!("voice {accepted} {event}"));
         }
-        assert!(h.audio.commands().is_empty());
+        assert_eq!(h.audio.commands().iter().filter(|command| matches!(command, crate::AudioCommand::Play(cue) if cue == "voice_wake")).count(), 2);
         h.ok(&format!("voice {accepted} confirmed"));
         let commands = h.audio.commands().to_vec();
-        assert!(!commands.is_empty());
+        assert_eq!(commands.iter().filter(|command| matches!(command, crate::AudioCommand::Play(cue) if cue == "voice_wake")).count(), 2);
+        assert!(!initial.is_empty());
         let history = h.command("voice status");
         assert_eq!(
             history["voice"]["history"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|e| e[1] == "acknowledgment_start")
+                .filter(|e| e[0] == accepted && e[1] == "acknowledgment_start")
                 .count(),
             1
         );
