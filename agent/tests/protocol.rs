@@ -110,6 +110,17 @@ async fn invalid_input_does_not_reset_conversation() {
     assert_eq!(agent.info().await.unwrap().conversation_id, before);
 }
 #[tokio::test]
+async fn direct_sleep_without_a_robot_coordinator_fails_closed() {
+    let service = service();
+    let agent = service.handle();
+    let before = agent.info().await.unwrap().conversation_id;
+    assert_eq!(
+        agent.respond("Go to sleep.").await.unwrap_err(),
+        "No robot coordinator is attached"
+    );
+    assert_eq!(agent.info().await.unwrap().conversation_id, before);
+}
+#[tokio::test]
 async fn incompatible_model_is_not_substituted() {
     let service = AgentService::start(AgentConfig {
         soul_path: None,

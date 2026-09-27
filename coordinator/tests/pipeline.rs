@@ -768,6 +768,44 @@ async fn sleep_tool_uses_current_session_and_closes_after_acknowledgement() {
     h.stop().await;
 }
 #[tokio::test]
+async fn explicit_sleep_calls_tool_before_promising_rest() {
+    let mut h = Harness::new().await;
+    // Qwen rendered the user's "go to sleep" as "go through sleep" on the Pi.
+    h.wake("Hey Orion, go through sleep.").await;
+    let tool = until(&mut h.observer, "agent.tool").await;
+    assert_eq!(tool["name"], "go_to_sleep");
+    assert_eq!(tool["success"], true);
+    let answer = until(&mut h.observer, "agent.response").await;
+    assert!(answer["text"].as_str().unwrap().contains("go to sleep"));
+    let finish = until(&mut h.pi, "session.finish").await;
+    assert_ne!(finish["conversationWindow"], true);
+    assert_eq!(
+        h.gateway.lock().await.robot_operations,
+        [json!({"operation":"sleep","session_id":SID})]
+    );
+    h.stop().await;
+}
+#[tokio::test]
+async fn rejected_explicit_sleep_does_not_claim_rest() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.reject_robot =
+        Some("Sleep requires the current confirmed voice session".into());
+    h.wake("Hey Orion, go to sleep.").await;
+    let tool = until(&mut h.observer, "agent.tool").await;
+    assert_eq!(tool["name"], "go_to_sleep");
+    assert_eq!(tool["success"], false);
+    let answer = until(&mut h.observer, "agent.response").await;
+    assert!(
+        answer["text"]
+            .as_str()
+            .unwrap()
+            .contains("couldn't go to sleep")
+    );
+    let finish = until(&mut h.pi, "session.finish").await;
+    assert_eq!(finish["conversationWindow"], true);
+    h.stop().await;
+}
+#[tokio::test]
 async fn timer_request_reaches_the_pi_and_is_visible_in_history_events() {
     let mut h = Harness::new().await;
     h.wake(r#"Hey Orion, tool:{"name":"set_timer","arguments":{"seconds":300,"label":"Tea"}}"#)

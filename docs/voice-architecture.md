@@ -225,6 +225,9 @@ speech, scene and voice-feedback lighting. Rest darkness suppresses the output
 while preserving the preference. An execution error is returned to the agent.
 Mode and alert calls use the gateway's `routines` operation. Sleep requests attach
 the current confirmed voice session; rest waits until its acknowledgement ends.
+For a clear, immediate sleep phrase, the agent service invokes `go_to_sleep`
+before returning any spoken promise. If the runtime rejects it, Orion says the
+sleep request failed. Longer or conditional requests remain with Codex.
 The agent cannot specify joint targets or bypass the rest lifecycle.
 
 Tool requests must match the active Codex thread and turn. At most 16 distinct

@@ -13,7 +13,7 @@ edits explicitly unlock at completion so a descriptor inherited during a concurr
 subprocess launch cannot retain a finished write lock.
 Dropping an active call cancels it; dropping the service shuts down Codex.
 
-The first status or response request starts `codex app-server`, checks its account
+The first status or model-handled response request starts `codex app-server`, checks its account
 and model catalog, and creates an ephemeral conversation. Calls reuse it after a matching terminal
 turn event, including a completed turn with tool errors or empty speech. Protocol
 uncertainty (interruption, unreadable events, stale calls, inconsistent final
@@ -81,6 +81,10 @@ collection is not enabled.
 `respond_with_events(text, Some(sender))` reports `SearchStarted` and routes
 `SetLighting` and `RobotOperation` requests to a coordinator with a one-shot
 result channel.
+Clear immediate sleep phrases use the same validated `go_to_sleep` tool from the
+agent executor before returning spoken acknowledgement. The model cannot merely
+promise rest for these phrases. A rejected sleep request gets an honest failure
+reply; longer or conditional requests still go to the model.
 `respond(text)` still works for text and memory/search tools; lighting fails
 explicitly if no coordinator is attached, as do mode, sleep and alert tools. There
 is no direct hardware client inside this crate.

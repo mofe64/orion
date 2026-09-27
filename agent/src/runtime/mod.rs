@@ -2,6 +2,7 @@ use crate::{
     AgentConfig, AgentInfo,
     providers::{self, AgentBackend},
 };
+use serde_json::json;
 use std::{thread::JoinHandle, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
@@ -22,12 +23,14 @@ impl AgentHandle {
         &self,
         text: Option<String>,
         events: Option<mpsc::Sender<crate::AgentEvent>>,
+        direct_sleep: bool,
     ) -> Result<Reply, String> {
         let (reply, receive) = oneshot::channel();
         self.0
             .send(Request {
                 text,
                 events,
+                direct_sleep,
                 profile: None,
                 reply,
             })
@@ -45,6 +48,7 @@ impl AgentHandle {
             .send(Request {
                 text: None,
                 events: None,
+                direct_sleep: false,
                 profile: Some(change),
                 reply,
             })
@@ -57,7 +61,7 @@ impl AgentHandle {
     }
 
     pub async fn info(&self) -> Result<AgentInfo, String> {
-        match self.request(None, None).await? {
+        match self.request(None, None, false).await? {
             Reply::Info(info) => Ok(info),
             _ => Err("Invalid agent status response".into()),
         }
@@ -81,6 +85,7 @@ impl AgentHandle {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
             return Err("Agent input is empty or too large".into());
         }
+        let direct_sleep = is_direct_sleep_request(text);
         let notice = self.1.lock().unwrap().take();
         let input = match notice {
             Some(reason) => format!(
@@ -89,7 +94,7 @@ impl AgentHandle {
             ),
             None => text.trim().into(),
         };
-        match self.request(Some(input), events).await? {
+        match self.request(Some(input), events, direct_sleep).await? {
             Reply::Text(text) => Ok(text),
             _ => Err("Invalid agent text response".into()),
         }
@@ -99,6 +104,7 @@ impl AgentHandle {
 struct Request {
     text: Option<String>,
     events: Option<mpsc::Sender<crate::AgentEvent>>,
+    direct_sleep: bool,
     profile: Option<Option<crate::profile::ProfileChange>>,
     reply: oneshot::Sender<Result<Reply, String>>,
 }
@@ -134,13 +140,13 @@ impl AgentService {
                     _ = &mut stopped => break,
                     request = receive.recv() => match request { Some(request) => request, None => break },
                 };
-                let Request { text, events, profile, mut reply } = request;
+                let Request { text, events, direct_sleep, profile, mut reply } = request;
                 if reply.is_closed() { continue; }
                 let result = tokio::select! {
                     biased;
                     _ = &mut stopped => break,
                     _ = reply.closed() => continue,
-                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text, events, profile)) =>
+                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text, events, direct_sleep, profile)) =>
                         result.unwrap_or_else(|_| Err("Agent request timed out; conversation reset".into())),
                 };
                 let _ = reply.send(result);
@@ -163,6 +169,7 @@ async fn dispatch(
     slot: &mut Option<Box<dyn AgentBackend>>,
     text: Option<String>,
     events: Option<mpsc::Sender<crate::AgentEvent>>,
+    direct_sleep: bool,
     profile: Option<Option<crate::profile::ProfileChange>>,
 ) -> Result<Reply, String> {
     if let Some(change) = profile {
@@ -174,6 +181,36 @@ async fn dispatch(
             }
         }
         return crate::profile::load(config).map(Reply::Profile);
+    }
+    if direct_sleep {
+        // A clear sleep request is a physical action. Complete its validated
+        // tool call before supplying any words that claim Orion will rest.
+        if events.is_none() {
+            return Err("No robot coordinator is attached".into());
+        }
+        let started = std::time::Instant::now();
+        let result = crate::tools::execute(config, "go_to_sleep", json!({}), events.as_ref()).await;
+        let success = result.is_ok();
+        if let Some(events) = &events {
+            events
+                .send(crate::AgentEvent::ToolCall {
+                    name: "go_to_sleep".into(),
+                    arguments: json!({}),
+                    result: result.unwrap_or_else(|error| json!({"error":error})),
+                    success,
+                    duration_ms: started.elapsed().as_secs_f64() * 1000.,
+                })
+                .await
+                .map_err(|_| "Coordinator stopped")?;
+        }
+        return Ok(Reply::Text(
+            if success {
+                "Good night. I'll go to sleep now."
+            } else {
+                "I couldn't go to sleep. Please try again."
+            }
+            .into(),
+        ));
     }
     // Cancellation owns and drops an uncertain child before another turn starts.
     let mut client = match slot.take() {
@@ -193,6 +230,52 @@ async fn dispatch(
         client.close().await;
     }
     result
+}
+
+fn is_direct_sleep_request(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let mut words: Vec<_> = lower
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|word| !word.is_empty())
+        .collect();
+    if words.first() == Some(&"please") {
+        words.remove(0);
+    }
+    if words
+        .last()
+        .is_some_and(|word| matches!(*word, "please" | "now" | "orion"))
+    {
+        words.pop();
+    }
+    matches!(
+        words.as_slice(),
+        ["go", "to", "sleep"] | ["go", "through", "sleep"]
+    )
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::is_direct_sleep_request;
+
+    #[test]
+    fn routes_only_clear_sleep_requests() {
+        for text in [
+            "Go to sleep.",
+            "Please, go to sleep now!",
+            "Go through sleep.",
+            "Go to sleep, Orion.",
+        ] {
+            assert!(is_direct_sleep_request(text), "{text}");
+        }
+        for text in [
+            "Don't go to sleep",
+            "How do I go to sleep?",
+            "Go to sleep in five minutes",
+            "I said go to sleep",
+        ] {
+            assert!(!is_direct_sleep_request(text), "{text}");
+        }
+    }
 }
 
 impl Drop for AgentService {
