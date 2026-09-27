@@ -44,6 +44,10 @@ remain available during preparation. The installer then checks calibration,
 pairing, Codex login, saved settings and a compiled motion against the existing
 catalog.
 
+Pi runtime checks skip native MuJoCo integration tests, which require the
+workstation's root simulation environment. All other runtime tests run during
+release preparation.
+
 For activation, the installer stops the voice companions, cancels active scene
 and speech playback (already-inactive playback is accepted), returns Orion to rest
 and confirms torque is off before stopping the runtime. It switches service paths
