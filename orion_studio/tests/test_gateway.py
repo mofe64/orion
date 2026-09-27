@@ -88,6 +88,7 @@ class FakeOrionClient:
         self.commands.append(command)
         if command == "character rest" or command.startswith(("lamp ", "lamp-effect ", "routines ", "sleep ")):
             return {"ok": True, "run_id": 99}
+        if command == "lamp-status": return {"ok":True,"lamp":{"brightness":35,"effect":"solid","colors":[[255,0,0,0]]}}
         if command == "status":
             return {"schema_version": 3, "robot": "orion", "build_revision": "test-revision",
                     "mode": self.mode, "torque_enabled": self.torque_enabled,
@@ -235,6 +236,13 @@ class GatewayContractTests(unittest.TestCase):
                 gateway.upload_speech(pcm_wav(), "voice:invalid session")
             self.assertEqual(list(spool.iterdir()), before)
 
+    def test_speech_status_preserves_software_buffer_progress_for_the_watchdog(self):
+        self.client.speech = {'run_id':9,'state':'playing','first_playback_ms':25,
+                              'elapsed_ms':200_000,'buffered_ms':60_000}
+        self.assertEqual(self.gateway.speech_run_status(9)['buffered_ms'], 60_000)
+        self.client.speech['buffered_ms'] = -1000
+        self.assertEqual(self.gateway.speech_run_status(9)['buffered_ms'], -1000)
+
     def test_speech_spooling_validation_status_and_rejection_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             spool = Path(directory); gateway = OrionGateway(self.client, speech_spool=spool)
@@ -359,6 +367,14 @@ class HomeOperationTests(unittest.TestCase):
         gateway = OrionGateway(client)
         gateway.submit({"operation": "rest"})
         self.assertEqual(client.commands[-1], "character rest")
+
+    def test_lamp_status_reads_manual_state_and_rejects_extra_arguments(self):
+        self.client = FakeOrionClient(); self.gateway = OrionGateway(self.client)
+        _, value = self.gateway.submit({'operation':'lamp_status'})
+        self.assertEqual(value['result']['lamp']['brightness'], 35)
+        self.assertEqual(self.client.commands[-1], 'lamp-status')
+        with self.assertRaises(GatewayError):
+            self.gateway.submit({'operation':'lamp_status','brightness':10})
 
     def test_lamp_effect_validates_before_execution(self):
         client = FakeOrionClient()

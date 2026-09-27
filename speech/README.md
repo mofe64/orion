@@ -62,7 +62,10 @@ Each job has a positive integer `id` and a `method`:
   mono 24 kHz PCM16, then an explicit `end` with the next sequence number.
 
 Metadata lines are bounded to 64 KiB. Input audio is bounded to 33 seconds;
-output chunks to two seconds and complete replies to 120 seconds. Failed jobs
+output chunks to two seconds. Replies have no total audio-duration cap. The
+coordinator splits text into at most 160 Unicode characters per inference job,
+which retains its 240-second deadline; Piper also splits native inputs and rejects
+more than 120 seconds of audio from any one input. Failed jobs
 send `error` and end the worker. The coordinator checks IDs, framing, rates,
 lengths, sequences, and completion before accepting results.
 

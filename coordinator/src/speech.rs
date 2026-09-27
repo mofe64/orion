@@ -68,10 +68,29 @@ impl SpeechRuntime {
         text: String,
         send: mpsc::Sender<Option<Chunk>>,
     ) -> Result<f64, String> {
-        match self.run("tts", Job::Synthesize(text, send)).await? {
-            Reply::End(ms) => Ok(ms),
-            _ => unreachable!(),
+        // Every piece gets its own inference deadline; an entire reply may be long.
+        let mut elapsed = 0.;
+        for piece in speech_segments(&text) {
+            let (piece_send, mut piece_receive) = mpsc::channel(8);
+            let job = self.run("tts", Job::Synthesize(piece, piece_send));
+            let forward = async {
+                while let Some(Some(chunk)) = piece_receive.recv().await {
+                    send.send(Some(chunk))
+                        .await
+                        .map_err(|_| "Synthesis consumer stopped")?;
+                }
+                Ok::<(), String>(())
+            };
+            let (reply, ()) = tokio::try_join!(job, forward)?;
+            match reply {
+                Reply::End(ms) => elapsed += ms,
+                _ => unreachable!(),
+            }
         }
+        send.send(None)
+            .await
+            .map_err(|_| "Synthesis consumer stopped")?;
+        Ok(elapsed)
     }
     async fn run(&self, role: &str, job: Job) -> Result<Reply, String> {
         tokio::time::timeout(Duration::from_secs(240), self.run_inner(role, job))
@@ -226,7 +245,6 @@ impl Process {
                 self.send(json!({"method":"synthesize", "id":id, "text":text}), &[])
                     .await?;
                 let mut sequence = 0;
-                let mut total = 0;
                 loop {
                     let value = self.read().await?;
                     if value["id"] != id || value["sequence"] != sequence {
@@ -251,10 +269,6 @@ impl Process {
                     {
                         return Err("Invalid synthesis chunk".into());
                     }
-                    total += samples;
-                    if total > 120 * 24000 {
-                        return Err("Synthesized reply exceeds 120 seconds".into());
-                    }
                     let generation_ms = duration(&value, "generationMs")?;
                     let mut pcm = vec![0; samples as usize * 2];
                     self.output
@@ -274,6 +288,40 @@ impl Process {
         }
     }
 }
+// Match the worker's speech_segments policy: sentences, then words, then Unicode characters.
+const MAX_TTS_CHARACTERS: usize = 160;
+fn speech_segments(text: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        let chars: Vec<_> = rest.char_indices().take(MAX_TTS_CHARACTERS + 1).collect();
+        let limit = chars
+            .get(MAX_TTS_CHARACTERS)
+            .map_or(rest.len(), |(offset, _)| *offset);
+        let sentence = chars
+            .iter()
+            .take(MAX_TTS_CHARACTERS)
+            .find_map(|&(offset, ch)| {
+                let end = offset + ch.len_utf8();
+                (matches!(ch, '.' | '!' | '?') && rest[end..].starts_with(char::is_whitespace))
+                    .then_some(end)
+            });
+        let cut = sentence.unwrap_or_else(|| {
+            if limit == rest.len() {
+                limit
+            } else {
+                rest[..limit]
+                    .rfind(char::is_whitespace)
+                    .filter(|cut| *cut > 0)
+                    .unwrap_or(limit)
+            }
+        });
+        pieces.push(rest[..cut].to_owned());
+        rest = rest[cut..].trim_start();
+    }
+    pieces
+}
+
 fn duration(value: &Value, key: &str) -> Result<f64, String> {
     value[key]
         .as_f64()
@@ -284,6 +332,26 @@ fn duration(value: &Value, key: &str) -> Result<f64, String> {
 #[cfg(test)]
 mod isolation_tests {
     use super::*;
+    #[test]
+    fn long_unpunctuated_text_is_split_without_losing_words_or_unicode() {
+        let text = "something ".repeat(2000);
+        let pieces = speech_segments(&text);
+        assert!(
+            pieces
+                .iter()
+                .all(|s| s.chars().count() <= MAX_TTS_CHARACTERS)
+        );
+        assert_eq!(pieces.join(" "), text.trim());
+        assert_eq!(
+            speech_segments(&"灯".repeat(500)).concat(),
+            "灯".repeat(500)
+        );
+        assert_eq!(
+            speech_segments("First sentence. Then another."),
+            ["First sentence.", "Then another."]
+        );
+    }
+
     #[tokio::test]
     async fn piper_handshake_matches_the_selected_model() {
         let runtime = SpeechRuntime::new(SpeechConfig {

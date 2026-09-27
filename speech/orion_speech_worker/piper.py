@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .tts import SpeechAudio
+from .tts import SpeechAudio, speech_segments
 
 
 MODEL_ID = "piper-alba-medium"
@@ -60,9 +60,11 @@ class PiperAlbaSynthesizer:
         self.resample = resample_poly
 
     def stream(self, text: str):
-        # The coordinator holds at least six seconds of audio before playback.
-        # Completing this fast model's sentence first avoids a producer thread
-        # while still supplying bounded chunks to the existing wire protocol.
+        # Bound each native decoder input, including punctuation-free final tails.
+        for segment in speech_segments(text):
+            yield from self._segment(segment)
+
+    def _segment(self, text: str):
         generated = self.model.generate(text, sid=0, speed=1.0)
         if generated.sample_rate != SOURCE_RATE:
             raise ValueError("Piper Alba changed its sample rate")

@@ -7,9 +7,11 @@ import shlex
 SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack')
 STOP_ORDER = tuple(reversed(SERVICES))
 TRAINED_WAKE_MODEL = 'hey_orion_trained_080.rpw'
+REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
+# The trained model proposes candidates for the packaged acoustic verifier
+# (voice/models/verifier); the reference stays packaged for rollback.
 ACTIVE_WAKE_MODEL = TRAINED_WAKE_MODEL
 ACTIVE_WAKE_THRESHOLD = '0.80'
-REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',

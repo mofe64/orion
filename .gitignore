@@ -11,9 +11,11 @@ voice/models/*
 !voice/models/wake/
 voice/models/wake/*
 !voice/models/wake/hey_orion_reference.rpw
+!voice/models/verifier/
 voice/rustpotter_native/target/
 
 .playwright-cli/
 runtime_archive/
 
 orion-service/target/
+artifacts/

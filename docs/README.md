@@ -15,6 +15,7 @@
 - [Configuration and environment variables](configuration.md)
 - [Motion asset schemas and catalog](motion-assets.md)
 - [Trajectory and joint-control internals](trajectory-and-joint-control.md)
+- [Servo tracking capture and analysis](servo-tracking.md)
 - [Runtime command and lifecycle reference](../runtime/README.md)
 - [Runtime code walkthrough](../runtime.md)
 - [Scene format and lifecycle](../scenes/README.md)

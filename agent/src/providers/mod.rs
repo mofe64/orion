@@ -11,6 +11,7 @@ type Shutdown<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 /// Backends translate those requests to a provider's conversation protocol.
 pub(crate) trait AgentBackend: Send {
     fn info(&self) -> AgentInfo;
+    fn requires_reset(&self) -> bool;
     fn respond<'a>(
         &'a mut self,
         text: &'a str,
@@ -20,6 +21,9 @@ pub(crate) trait AgentBackend: Send {
 }
 
 impl AgentBackend for codex::Codex {
+    fn requires_reset(&self) -> bool {
+        self.reset_required
+    }
     fn info(&self) -> AgentInfo {
         self.info.clone()
     }

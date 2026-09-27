@@ -155,6 +155,7 @@ class System:
                 expected_wake_model = Path(option(listener_args, '--wake-model',
                     str(release / 'voice/models/wake/hey_orion_trained_080.rpw'))).name
                 expected_wake_threshold = float(option(listener_args, '--threshold', '0.80'))
+                expected_verifier = '--no-verifier' not in listener_args
                 if not (status.get('coordinator_running') and not status.get('error') and
                         status.get('project_root') == str(release) and status.get('revision') == metadata['revision'] and
                         ready.get('asr', {}).get('provider') == 'qwen3-asr' and
@@ -163,7 +164,8 @@ class System:
                         ready.get('agent', {}).get('model') == expected_agent and
                         ready.get('agent', {}).get('effort') == expected_effort and
                         ready.get('wake', {}).get('model') == expected_wake_model and
-                        ready.get('wake', {}).get('threshold') == expected_wake_threshold):
+                        ready.get('wake', {}).get('threshold') == expected_wake_threshold and
+                        bool((ready.get('wake', {}).get('verifier') or {}).get('active')) == expected_verifier):
                     raise RuntimeError('The requested release is not speech-ready')
                 runtime = json.loads(self.run(release / 'runtime/target/release/oriond', '--socket', runtime_socket, '--status', capture_output=True, text=True, timeout=5).stdout)
                 if runtime.get('build_revision') != metadata['revision']:

@@ -51,7 +51,31 @@ async fn caller_reconnections_keep_conversation_and_only_speak_matching_final_tu
 async fn failures_reset_uncertain_session_and_next_request_recovers() {
     let service = service();
     let agent = service.handle();
-    for input in ["fail", "approval", "empty", "crash"] {
+    for input in ["start-rejected", "fail", "empty"] {
+        let before = agent.info().await.unwrap().conversation_id;
+        assert!(agent.respond(input).await.is_err());
+        assert_eq!(agent.info().await.unwrap().conversation_id, before);
+        assert!(
+            agent
+                .respond("Still here")
+                .await
+                .unwrap()
+                .contains("Still here")
+        );
+    }
+    for input in [
+        "approval",
+        "crash",
+        "unreadable",
+        "stale-tool",
+        "invalid-tool",
+        "multiple-finals",
+        "multiple-completed-finals",
+        "multiple-terminal-finals",
+        "changed-speech",
+        "empty-after-stream",
+        "tool-after-speech",
+    ] {
         let before = agent.info().await.unwrap().conversation_id;
         assert!(agent.respond(input).await.is_err());
         assert_eq!(
@@ -329,4 +353,135 @@ async fn profile_edits_reset_context_but_reads_and_conflicts_preserve_it() {
         .await
         .unwrap();
     assert_eq!(std::fs::read_to_string(memory).unwrap(), "");
+}
+
+#[tokio::test]
+async fn exactly_800_character_streamed_prefix_keeps_its_final_tail_and_conversation() {
+    let service = service();
+    let agent = service.handle();
+    let before = agent.info().await.unwrap().conversation_id;
+    let (send, mut receive) = tokio::sync::mpsc::channel(8);
+    let response = agent
+        .respond_with_events("800-prefix-fixture", Some(send))
+        .await
+        .unwrap();
+    let Some(orion_agent::AgentEvent::FinalSpeech(prefix)) = receive.recv().await else {
+        panic!("Missing speech")
+    };
+    assert_eq!(prefix.chars().count(), 800);
+    assert_eq!(response, format!("{prefix} This ending survives."));
+    assert_eq!(agent.info().await.unwrap().conversation_id, before);
+}
+
+#[tokio::test]
+async fn rejected_duplicate_and_excessive_tools_complete_the_turn_without_reset_or_repeat_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("MEMORY.md");
+    let service = AgentService::start(AgentConfig {
+        soul_path: None,
+        memory_path: Some(path.clone()),
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    })
+    .unwrap();
+    let agent = service.handle();
+    let before = agent.info().await.unwrap().conversation_id;
+    let answer = agent.respond("tool-budget-fixture").await.unwrap();
+    assert_eq!(
+        answer.matches("Duplicate or excessive tool calls").count(),
+        2
+    );
+    assert_eq!(answer.matches("\"success\": true").count(), 16, "{answer}");
+    assert_eq!(
+        std::fs::read_to_string(path)
+            .unwrap()
+            .matches("<!-- memoryEntry ")
+            .count(),
+        16
+    );
+    assert_eq!(agent.info().await.unwrap().conversation_id, before);
+    assert_eq!(
+        agent.respond("Continue").await.unwrap(),
+        "Reply 2: Continue"
+    );
+}
+
+#[tokio::test]
+async fn every_turn_includes_local_time_offset_and_iana_zone() {
+    let service = service();
+    let text = service.handle().respond("clock-fixture").await.unwrap();
+    let local = text
+        .split("Current local date/time: ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap();
+    chrono::DateTime::parse_from_rfc3339(local).unwrap();
+    let zone = text.split("IANA timezone: ").nth(1).unwrap();
+    assert!(zone == "UTC" || zone.contains('/'));
+}
+
+#[test]
+fn prompt_leaves_brevity_to_personality_and_specifies_listening_format() {
+    let instructions = orion_agent::ORION_INSTRUCTIONS;
+    assert!(instructions.contains("one short sentence"));
+    assert!(instructions.contains("no length limit"));
+    assert!(instructions.contains("no markdown, bullet symbols, tables or headings"));
+    assert!(!instructions.contains("18 words") && !instructions.contains("35 words"));
+    let off = orion_agent::profile::Personality {
+        traits: vec![],
+        behaviors: vec![],
+    }
+    .instructions()
+    .unwrap();
+    assert!(!off.contains("Prefer short answers"));
+    assert!(
+        orion_agent::profile::Personality::default()
+            .instructions()
+            .unwrap()
+            .contains("Prefer short answers")
+    );
+}
+
+#[tokio::test]
+async fn phase_less_messages_are_fallbacks_and_do_not_conflict_with_explicit_finals() {
+    let service = service();
+    let agent = service.handle();
+    let id = agent.info().await.unwrap().conversation_id;
+    assert_eq!(agent.respond("legacy-only").await.unwrap(), "Legacy 1.");
+    assert_eq!(
+        agent.respond("repeated-terminal-final").await.unwrap(),
+        "One answer."
+    );
+    let (send, mut receive) = tokio::sync::mpsc::channel(8);
+    let response = agent.respond_with_events("legacy-before-final", Some(send));
+    let collect = async {
+        let mut pieces = Vec::new();
+        while let Some(event) = receive.recv().await {
+            if let orion_agent::AgentEvent::FinalSpeech(text) = event {
+                pieces.push(text);
+            }
+        }
+        pieces
+    };
+    let (answer, pieces) = tokio::join!(response, collect);
+    assert_eq!(answer.unwrap(), "Only the final.");
+    assert_eq!(pieces, ["Only the final."]);
+    assert_eq!(agent.info().await.unwrap().conversation_id, id);
+}
+
+#[tokio::test]
+async fn delivery_limit_failure_is_visible_to_the_next_model_turn_once() {
+    let service = service();
+    let agent = service.handle();
+    agent.report_delivery_failure("Speech stream exceeds the 30-minute audio sanity limit; playback cannot complete this answer.");
+    let answer = agent.respond("What happened?").await.unwrap();
+    assert!(answer.contains("Previous speech delivery failed:"));
+    assert!(answer.contains("30-minute audio sanity limit"));
+    assert_eq!(
+        agent.respond("Try a shorter answer").await.unwrap(),
+        "Reply 2: Try a shorter answer"
+    );
 }

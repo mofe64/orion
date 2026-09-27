@@ -410,7 +410,7 @@ fn decode_word(bytes: &[u8]) -> i32 {
     u16::from_le_bytes([bytes[0], bytes[1]]) as i32
 }
 
-fn decode_sign_magnitude(value: i32, sign_bit: u32) -> i32 {
+pub(super) fn decode_sign_magnitude(value: i32, sign_bit: u32) -> i32 {
     let sign_mask = 1_i32 << sign_bit;
     if value & sign_mask != 0 {
         -(value & !sign_mask)

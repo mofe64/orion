@@ -38,9 +38,32 @@ pub(super) fn render_light(options: &Options, pixel: Option<usize>) -> crate::Re
     Ok(0)
 }
 
+pub(super) fn servo_profiles(options: &Options) -> crate::ServoProfiles {
+    let mut profiles = crate::make_orion_servo_profiles();
+    if let Some(selection) = &options.servo_gain_override {
+        let profile = profiles
+            .get_mut(&selection.joint)
+            .expect("validated arm joint");
+        profile.p_coefficient = selection.p;
+        profile.i_coefficient = selection.i;
+    }
+    profiles
+}
+
 pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<RustypotTransport>> {
     let calibrations = load_calibration_file(&options.calibration_file, &ORION_JOINT_NAMES)?;
-    let mut driver = Sts3215Driver::new(RustypotTransport::default());
+    let profiles = servo_profiles(options);
+    if let Some(selection) = &options.servo_gain_override {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "event": "servo.experimental_gains_selected", "joint": selection.joint,
+                "p": selection.p, "i": selection.i, "d": profiles[&selection.joint].d_coefficient,
+                "persistent_eeprom": true,
+            })
+        );
+    }
+    let mut driver = Sts3215Driver::with_profiles(RustypotTransport::default(), profiles);
     driver.connect(&options.port, options.baud_rate, calibrations)?;
     Ok(driver)
 }
@@ -145,6 +168,11 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     backend: &str,
 ) -> crate::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
+    if let Some(path) = &options.tracking_log {
+        core.enable_tracking(crate::control::tracking::TrackingTelemetry::create(
+            path, backend,
+        )?)?;
+    }
     let mut lighting = crate::expression::rest::RestLighting::new(lighting);
     let mut rest = crate::expression::rest::RestCoordinator::new(options.rest_after_seconds);
     let wall_time = || {

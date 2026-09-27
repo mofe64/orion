@@ -56,6 +56,28 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(messages[-1]['type'],'error')
             self.assertEqual(asr.calls,[])
 
+    def test_stream_transport_allows_more_than_120_seconds_in_bounded_chunks(self):
+        class LongTts(Tts):
+            def stream(self, text):
+                for _ in range(121):
+                    yield SimpleNamespace(pcm=b'\1\0'*24000, samples=24000, sample_rate=24000)
+        reader = io.BytesIO(control(dict(protocol=1,asr_model='fake',tts_model='fake')) +
+                            control(dict(method='synthesize',id=1,text='long')))
+        writer = io.BytesIO()
+        serve(reader, writer, lambda config:(Asr(),LongTts()))
+        output = io.BytesIO(writer.getvalue())
+        self.assertEqual(json.loads(output.readline())['type'], 'ready')
+        chunks = 0
+        while raw := output.readline():
+            value = json.loads(raw)
+            if value['type'] == 'chunk':
+                self.assertEqual(len(output.read(value['samples'] * 2)), 48000)
+                chunks += 1
+            else:
+                self.assertEqual(value['type'], 'end')
+                self.assertEqual(value['sequence'], 121)
+        self.assertEqual(chunks, 121)
+
     def test_empty_synthesis_and_agent_jobs_are_rejected(self):
         for job in [dict(method='synthesize',id=1,text=''),dict(method='respond',id=1,text='hello')]:
             messages,_=self.run_worker(control(job))

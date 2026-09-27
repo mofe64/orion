@@ -1,7 +1,8 @@
 # Orion voice listener
 
 The Pi listener captures microphone audio, detects “Hey Orion” with Rustpotter,
-and uses Silero to find the end of speech. It passes recordings to the onboard
+confirms it with an openWakeWord phrase verifier, and uses Silero to find the
+end of speech. It passes recordings to the onboard
 coordinator and forwards voice-session events to `oriond` for acknowledgement,
 waking and character feedback.
 
@@ -10,8 +11,8 @@ waking and character feedback.
 Use [Pi installation and deployment](../docs/quickstart.md#pi-local-voice-and-agent)
 to prepare the listener with the complete voice stack. The Pi needs working
 [ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
-Deployment builds the native Rustpotter adapter and checks both the active
-trained model and retained reference. See [wake-word training](../docs/wake-word-training.md)
+Deployment builds the native Rustpotter adapter and checks the active
+trained model, the retained reference and the packaged phrase verifier. See [wake-word training](../docs/wake-word-training.md)
 for the evidence and rollback policy.
 
 The listener runs as `orion-listener` with a Python 3.12 environment inside the
@@ -98,8 +99,12 @@ updates use the release deployment path.
 The listener advertises `toolFeedback: true`. After search acknowledgement plays,
 `session.processing` restores thinking feedback in the same session. Wake detection
 and command dispatch stay suppressed while the agent works, except for alarm
-dismissal. Final `session.finish` starts the echo guard and
-follow-up invitation. See [agent conversation](../docs/voice-architecture.md#agent-conversation-and-memory).
+dismissal. During synthesis and playback, `session.keepalive` renews the
+180-second lease and forwards `voice SESSION keepalive` to the runtime without
+changing the phase or triggering feedback. Unknown and expired sessions cannot
+renew. `session.processing` and `session.playing` mark actual phase transitions. A long response can continue while the
+coordinator owns it; a disappeared owner still expires. Final `session.finish`
+starts the echo guard and follow-up invitation. See [agent conversation](../docs/voice-architecture.md#agent-conversation-and-memory).
 
 ## Alarm dismissal
 

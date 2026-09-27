@@ -1,4 +1,4 @@
-"""Pi-owned capture and Rustpotter, with bounded, authenticated WebSocket sessions."""
+"""Pi-owned capture, Rustpotter and phrase verification, with bounded, authenticated WebSocket sessions."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +18,7 @@ import numpy as np
 from .direction import DirectionEstimator
 from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise, pcm16_rms
 from .rustpotter import RustpotterWakeDetector
+from .verifier import AcousticVerifier
 from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
 
 PROTOCOL = 1
@@ -35,8 +36,11 @@ WAKE_PREFIX_TAIL_MS = 200
 class SatelliteSession:
     """One capture owner, one active turn. Audio is never retained on disk."""
     def __init__(self, wake, direction=None, clock=time.monotonic, endpoint_factory=EnergyEndpointDetector,
-                 early_wake=False):
+                 early_wake=False, verifier=None):
         self.wake = wake
+        # The verifier hears every captured frame, across sessions, so its
+        # score history already covers the phrase when Rustpotter fires.
+        self.verifier = verifier
         self.direction = direction or DirectionEstimator(clock=clock)
         self.clock = clock
         self.endpoint_factory = endpoint_factory
@@ -55,6 +59,9 @@ class SatelliteSession:
         self.prefix = bytearray()
         self.prefix_pending = False
         self.prefix_sent = False
+        self.acoustic_pending = False
+        self.acoustic_verdict = None
+        self.verifier_candidate = None
         self.pending_utterance = []
         self.noise = ListeningNoise()
         self.endpoint = self.endpoint_factory(EndpointConfig())
@@ -68,6 +75,8 @@ class SatelliteSession:
         self.guard_started = 0.0
         self.wake.reset()
         self.direction.reset()
+        if self.verifier is not None:
+            self.verifier.cancel()
 
     def set_alarm(self, active):
         if active == self.alarm_active: return None
@@ -80,12 +89,45 @@ class SatelliteSession:
     def message(self, kind, **fields):
         return {"type": kind, "sessionId": self.session_id, **fields}
 
+    def verifier_active(self):
+        return self.verifier is not None and self.verifier.healthy
+
+    def restart_verifier(self):
+        """Discard score history after a capture gap; the stream is no longer continuous."""
+        if self.verifier is not None:
+            self.verifier.reset()
+
     def accept_stereo(self, pcm: bytes):
         if len(pcm) != FRAME_BYTES * 2:
             raise ValueError("Capture must supply complete 20 ms stereo frames")
         stereo = np.frombuffer(pcm, dtype="<i2").reshape(-1, 2)
         mono = stereo.astype(np.int32).sum(axis=1) // 2
-        audio = mono.astype("<i2").tobytes()
+        if self.verifier is not None:
+            self.verifier.feed(mono.astype(np.int16))
+        messages = self._accept_frame(stereo, mono.astype("<i2").tobytes())
+        if self.acoustic_pending:
+            messages.extend(self.acoustic_decision())
+        return messages
+
+    def acoustic_decision(self):
+        verdict = self.verifier.verdict()
+        if verdict is None:
+            return []
+        self.acoustic_pending = False
+        self.acoustic_verdict = verdict.accepted
+        latency_ms = round((verdict.decided_sample - self.verifier_candidate) / 16)
+        message = self.message("wake.verified", accepted=verdict.accepted, source="acoustic",
+                               score=None if verdict.score is None else round(verdict.score, 4),
+                               verifierMs=latency_ms)
+        print(json.dumps({"event": "voice.wake_verifier", "session_id": self.session_id,
+                          "accepted": verdict.accepted, "score": message["score"],
+                          "verifier_ms": latency_ms}), flush=True)
+        # An endpoint that arrived during verification was held back, like a
+        # pending ASR prefix; release it after the verdict so ordering holds.
+        pending, self.pending_utterance = self.pending_utterance, []
+        return [message, *pending]
+
+    def _accept_frame(self, stereo, audio):
         if self.alarm_active:
             # Alarm dismissal is local and never waits for ASR or the agent.
             if self.wake.process(audio) is not None:
@@ -115,13 +157,19 @@ class SatelliteSession:
             self.expires_at = self.clock() + 120
             self.update_direction()
             self.utterance = bytearray(self.pre_roll)
-            if self.early_wake:
+            verifying = self.verifier_active()
+            if verifying:
+                # The acoustic verifier replaces the ASR prefix pass.
+                self.verifier.begin()
+                self.verifier_candidate = self.verifier.candidate
+                self.acoustic_pending = True
+            elif self.early_wake:
                 self.prefix = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
                 self.prefix_pending = True
             self.pre_roll.clear()
             self.endpoint.prime_detected_speech()
             return [self.message("wake.candidate", name=detection.name, score=detection.score,
-                                 direction=self.observation)]
+                                 direction=self.observation, acousticVerification=verifying)]
         if self.phase in {"wake", "command"}:
             if self.phase == "wake":
                 self.direction.accept(stereo)
@@ -201,7 +249,7 @@ class SatelliteSession:
         self.phase = "confirming" if purpose == "wake_and_command" else "processing"
         messages = [self.message("utterance", purpose=purpose, bytes=len(audio), captureMs=self.endpoint.capture_ms,
                                  endReason=self.endpoint.end_reason), audio]
-        if purpose == "wake_and_command" and self.prefix_pending:
+        if purpose == "wake_and_command" and (self.prefix_pending or self.acoustic_pending):
             # Keep capturing follow-up speech while the short ASR pass finishes.
             # Only one ASR request can own this session at a time.
             self.pending_utterance = messages
@@ -251,11 +299,16 @@ class SatelliteSession:
                 self.phase = "processing"
                 self.followup.clear()
             return []
+        if kind == "session.keepalive" and self.phase in {"processing", "playing"}:
+            if self.clock() >= self.expires_at:
+                raise ValueError("Expired voice session ID")
+            self.expires_at = self.clock() + 180
+            return []
         if kind == "session.processing" and self.phase in {"processing", "playing"}:
             self.phase = "processing"
             self.expires_at = self.clock() + 180
             return []
-        if kind == "session.playing" and self.phase == "processing":
+        if kind == "session.playing" and self.phase in {"processing", "playing"}:
             self.phase = "playing"
             self.expires_at = self.clock() + 180
             return []
@@ -291,13 +344,14 @@ async def serve(args):
     if len(token) < 32:
         raise ValueError("Voice token must contain at least 32 characters")
     wake = RustpotterWakeDetector(args.wake_model, args.threshold)
+    verifier = AcousticVerifier(args.verifier_dir) if getattr(args, "verifier_dir", None) else None
     capture = StereoCapture(args.device)
     endpoint_factory = EnergyEndpointDetector
     if getattr(args, "vad_model", None):
         from .vad import SileroModel
         endpoint_factory = SileroModel(args.vad_model).endpoint
     session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing, args.channel_sign),
-                               endpoint_factory=endpoint_factory)
+                               endpoint_factory=endpoint_factory, verifier=verifier)
     lock = asyncio.Lock()
     capture_gate = asyncio.Lock()
     capture_ready = asyncio.Event()
@@ -311,6 +365,7 @@ async def serve(args):
     timing_history = deque(maxlen=128)
     changed = asyncio.Event()
     feedback = asyncio.Queue(maxsize=64)
+    background = set()
 
     def expression(kind, session_id=None):
         identity = session_id or session.session_id
@@ -353,6 +408,25 @@ async def serve(args):
         if result.get("ok") is not True:
             raise ValueError("Runtime did not accept wake confirmation")
 
+    async def confirmed_feedback(identity, observation, observed_at, followup=False):
+        await confirm_activity(identity)
+        side, confidence = observation["side"], observation["confidence"]
+        direction_age = session.clock() - observed_at
+        if 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
+            expression(f"attend_{side} {direction_age * 1000:.3f}", identity)
+        if followup: expression("followup", identity)
+
+    async def acoustic_confirmation(identity, observation, observed_at):
+        # Runs beside capture so waiting for oriond never delays microphone reads.
+        try:
+            await confirmed_feedback(identity, observation, observed_at)
+        except (OSError, ValueError, asyncio.TimeoutError):
+            if session.session_id == identity:
+                cancel_turn()
+                if outgoing is not None:
+                    with suppress(asyncio.QueueFull):
+                        outgoing.put_nowait({"type": "session.expired", "sessionId": identity})
+
     async def deliver(messages):
         nonlocal outgoing
         for message in messages:
@@ -368,9 +442,20 @@ async def serve(args):
                     except (OSError, ValueError, asyncio.TimeoutError):
                         pass
                     continue
-                if kind in {"wake.candidate", "utterance"}:
+                if kind in {"wake.candidate", "wake.verified", "utterance"}:
                     timing_history.append({"sessionId": message["sessionId"], "event": kind, "at": time.monotonic()})
-                if kind == "wake.candidate": expression("wake")
+                if kind == "wake.candidate":
+                    # With acoustic verification, the chime and light pulse wait for acceptance.
+                    if not message.get("acousticVerification"): expression("wake")
+                elif kind == "wake.verified" and message["accepted"]:
+                    # oriond opens its voice session on "wake" (chime and pulse) and
+                    # accepts confirmation while listening only after "verify".
+                    expression("wake")
+                    expression("verify")
+                    background.add(asyncio.create_task(acoustic_confirmation(
+                        message["sessionId"], session.observation.copy(), session.observed_at)))
+                    for task in list(background):
+                        if task.done(): background.discard(task)
                 elif kind == "command.candidate":
                     expression("finish", message["previousSessionId"])
                     expression("continue", message["sessionId"])
@@ -415,6 +500,7 @@ async def serve(args):
                             capture.close()
                             raise
                         opened = True
+                        session.restart_verifier()
                         capture_ready.set()
                     if muted: continue
                 epoch = generation
@@ -524,17 +610,24 @@ async def serve(args):
                     identity = session.session_id
                     observation = session.observation.copy()
                     observed_at = session.observed_at
+                    late_cue = message["type"] == "wake.confirmed" and session.acoustic_verdict is False
                     result = session.control(message)
-                    if message["type"] == "session.processing":
+                    if message["type"] == "session.playing":
+                        expression("playing")
+                    if message["type"] == "session.keepalive":
+                        expression("keepalive", identity)
+                    elif message["type"] == "session.processing":
                         expression("processing", identity)
                     elif message["type"] == "wake.confirmed" or (
                             message["type"] == "wake.verified" and message["accepted"]):
-                        await confirm_activity(identity)
-                        side, confidence = observation["side"], observation["confidence"]
-                        direction_age = session.clock() - observed_at
-                        if 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
-                            expression(f"attend_{side} {direction_age * 1000:.3f}", identity)
-                        if message.get("followup"): expression("followup", identity)
+                        # The verifier rejected a phrase that Qwen then confirmed:
+                        # give the deferred chime and pulse before the body wakes.
+                        if late_cue:
+                            # Replay the order oriond expects for an endpointed wake:
+                            # open the session, mark the endpoint, then confirm.
+                            expression("wake", identity)
+                            expression("endpoint", identity)
+                        await confirmed_feedback(identity, observation, observed_at, message.get("followup"))
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
                         expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
                                    else message["type"].split(".")[1], identity)
@@ -550,7 +643,8 @@ async def serve(args):
                     "wakePrefix": session.early_wake,
                     "maxUtteranceBytes": MAX_UTTERANCE_BYTES,
                     "vad": "silero" if getattr(args, "vad_model", None) else "energy",
-                    "wake": {"provider": wake.provider, "model": wake.model_name, "threshold": wake.threshold}}))
+                    "wake": {"provider": wake.provider, "model": wake.model_name, "threshold": wake.threshold,
+                             "verifier": verifier.describe() if verifier is not None else None}}))
                 tasks = [asyncio.create_task(job()) for job in (send, controls)]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done: task.result()
@@ -593,6 +687,9 @@ def main():
     parser.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
     parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_trained_080.rpw")
     parser.add_argument("--threshold", type=float, default=0.80)
+    parser.add_argument("--verifier-dir", type=Path, default=Path(__file__).resolve().parents[1] / "models/verifier",
+                        help="openWakeWord phrase verifier; pass --no-verifier to use the ASR prefix instead")
+    parser.add_argument("--no-verifier", dest="verifier_dir", action="store_const", const=None)
     parser.add_argument("--vad-model", type=Path, default=os.environ.get("ORION_VAD_MODEL"))
     parser.add_argument("--local-processor", action="store_true", help="Reserve processing ownership for the onboard coordinator")
     parser.add_argument("--mic-spacing", type=float, default=0.0)

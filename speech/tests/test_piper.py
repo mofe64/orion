@@ -98,6 +98,20 @@ class PiperTests(unittest.TestCase):
             self.assertEqual(len(output.read(message['samples'] * 2)), message['samples'] * 2)
         self.assertEqual(sizes, [48_000, 48_000, 24_000])
 
+    def test_long_unpunctuated_input_is_split_and_total_audio_is_not_capped(self):
+        tts = PiperAlbaSynthesizer('piper-alba-medium')
+        calls = []
+        def generate(text, sid, speed):
+            calls.append(text)
+            self.assertLessEqual(len(text), 160)
+            return SimpleNamespace(samples=FakeTts.samples, sample_rate=22_050)
+        tts.model.generate = generate
+        text = 'something ' * 1000
+        chunks = list(tts.stream(text))
+        self.assertEqual(' '.join(calls), text.strip())
+        self.assertGreater(sum(chunk.samples for chunk in chunks), 120 * 24_000)
+        self.assertTrue(all(chunk.samples <= 48_000 for chunk in chunks))
+
     def test_bad_audio_and_missing_weights_fail_before_pcm(self):
         tts = PiperAlbaSynthesizer('piper-alba-medium')
         tts.model.samples = np.array([np.nan], dtype=np.float32)

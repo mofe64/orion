@@ -444,6 +444,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
+    if command == "lamp-status" {
+        return serde_json::json!({"ok":true,"lamp":manual_light.as_ref().map(LampProgram::status)}).to_string();
+    }
     if command == "routines status" {
         return serde_json::json!({"ok":true,"routines":routines.status(wall, now_seconds)})
             .to_string();

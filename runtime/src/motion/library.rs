@@ -657,7 +657,7 @@ impl MotionSequence {
         // each joint is stationary (velocity is 0.0)
         let velocity = start.keys().map(|joint| (joint.clone(), 0.0)).collect();
         // compile the trajectory using the zero velocity start
-        Self::compile(motion, start.clone(), velocity, start)
+        Self::compile(motion, start.clone(), velocity, None, start)
     }
 
     /// Creates a motion sequence using the provided starting positions,
@@ -669,9 +669,17 @@ impl MotionSequence {
         motion: &MotionDefinition,
         start: JointPositions,
         start_velocity: JointPositions,
+        start_acceleration: Option<JointPositions>,
         anchor: JointPositions,
     ) -> Result<Self> {
-        Self::compile_scaled(motion, start, start_velocity, anchor, 1.0)
+        Self::compile_scaled(
+            motion,
+            start,
+            start_velocity,
+            start_acceleration,
+            anchor,
+            1.0,
+        )
     }
 
     /// compile_scaled creates a new motion sequence using the provided start and anchor positions,
@@ -682,14 +690,23 @@ impl MotionSequence {
         motion: &MotionDefinition,
         start: JointPositions,
         start_velocity: JointPositions,
+        start_acceleration: Option<JointPositions>,
         anchor: JointPositions,
         amplitude_scale: f64,
     ) -> Result<Self> {
-        Self::compile_scaled_inner(motion, start, start_velocity, anchor, amplitude_scale, None)
+        Self::compile_scaled_inner(
+            motion,
+            start,
+            start_velocity,
+            start_acceleration,
+            anchor,
+            amplitude_scale,
+            None,
+        )
     }
 
     /// Creates a motion sequence using the provided starting positions,
-    /// starting velocities, anchor, and amplitude scale.
+    /// starting velocities, optional commanded acceleration, anchor, and amplitude scale.
     /// Applies the scale to relative motion offsets and checks the resulting
     /// trajectory's sampled positions against calibrated joint-angle limits.
     /// May reduce the starting velocities used in the plan to keep it within
@@ -702,6 +719,7 @@ impl MotionSequence {
         motion: &MotionDefinition,
         start: JointPositions,
         start_velocity: JointPositions,
+        start_acceleration: Option<JointPositions>,
         anchor: JointPositions,
         amplitude_scale: f64,
         limits: &[JointLimit],
@@ -710,6 +728,7 @@ impl MotionSequence {
             motion,
             start,
             start_velocity,
+            start_acceleration,
             anchor,
             amplitude_scale,
             Some(limits),
@@ -721,6 +740,7 @@ impl MotionSequence {
         motion: &MotionDefinition,
         start: JointPositions,
         start_velocity: JointPositions,
+        start_acceleration: Option<JointPositions>,
         anchor: JointPositions,
         amplitude_scale: f64,
         limits: Option<&[JointLimit]>,
@@ -778,6 +798,7 @@ impl MotionSequence {
                 motion.name.clone(),
                 start,
                 start_velocity,
+                start_acceleration,
                 waypoints,
                 motion.style,
                 STS3215_MAX_SPEED_RAD_S,
@@ -788,6 +809,7 @@ impl MotionSequence {
                 motion.name.clone(),
                 start,
                 start_velocity,
+                start_acceleration,
                 waypoints,
                 motion.style,
                 STS3215_MAX_SPEED_RAD_S,
@@ -1032,6 +1054,7 @@ mod tests {
                     definition,
                     anchor.clone(),
                     zero_velocity,
+                    None,
                     anchor.clone(),
                     scale,
                 )
@@ -1107,6 +1130,7 @@ mod tests {
                     definition,
                     anchor.clone(),
                     start_velocity,
+                    None,
                     anchor,
                     scale,
                 )

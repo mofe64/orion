@@ -8,7 +8,10 @@ use tokio::sync::{mpsc, oneshot};
 /// Cloneable in-process client. Each call has its own reply channel; dropping
 /// that call cancels it without delivering its result to another caller.
 #[derive(Clone)]
-pub struct AgentHandle(mpsc::Sender<Request>);
+pub struct AgentHandle(
+    mpsc::Sender<Request>,
+    std::sync::Arc<std::sync::Mutex<Option<String>>>,
+);
 
 impl AgentHandle {
     pub fn same_runtime(&self, other: &Self) -> bool {
@@ -60,6 +63,12 @@ impl AgentHandle {
         }
     }
 
+    /// Preserve an explicit delivery failure for the next model turn without
+    /// starting an unsolicited inference request after playback fails.
+    pub fn report_delivery_failure(&self, reason: &str) {
+        *self.1.lock().unwrap() = Some(reason.chars().take(2048).collect());
+    }
+
     pub async fn respond(&self, text: &str) -> Result<String, String> {
         self.respond_with_events(text, None).await
     }
@@ -72,7 +81,15 @@ impl AgentHandle {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
             return Err("Agent input is empty or too large".into());
         }
-        match self.request(Some(text.trim().into()), events).await? {
+        let notice = self.1.lock().unwrap().take();
+        let input = match notice {
+            Some(reason) => format!(
+                "Previous speech delivery failed: {reason}\nUser request: {}",
+                text.trim()
+            ),
+            None => text.trim().into(),
+        };
+        match self.request(Some(input), events).await? {
             Reply::Text(text) => Ok(text),
             _ => Err("Invalid agent text response".into()),
         }
@@ -131,7 +148,7 @@ impl AgentService {
             if let Some(mut client) = client { client.close().await; }
         })).map_err(|e| e.to_string())?;
         Ok(Self {
-            handle: AgentHandle(send),
+            handle: AgentHandle(send, Default::default()),
             stop: Some(stop),
             thread: Some(thread),
         })
@@ -170,7 +187,7 @@ async fn dispatch(
             .map(Reply::Text),
         None => Ok(Reply::Info(client.info())),
     };
-    if result.is_ok() {
+    if result.is_ok() || !client.requires_reset() {
         *slot = Some(client);
     } else {
         client.close().await;

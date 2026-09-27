@@ -128,10 +128,12 @@ segments for one joint.
 The caller supplies start position and velocity. Ordinary movements use the
 latest measured position, clamped to calibration, and measured velocity.
 Character performance replacements sample the executing trajectory's
-commanded position and velocity. The compiler applies calibrated interruption
-protection to either input and starts acceleration at zero. Position and
-velocity can therefore continue across a replacement, but acceleration
-continuity is guaranteed only between segments within a compiled trajectory.
+commanded position, velocity and acceleration. Optional start acceleration
+defaults to zero for measured starts. Replacements preserve all three values
+when calibration permits. Protection halves the offending joint's velocity
+and acceleration together if its curve leaves the calibrated range; safe
+joints keep their supplied derivatives. This safety exception can break
+continuity at a replacement near a limit.
 
 ### Final point and settle arrivals
 
@@ -241,8 +243,29 @@ The driver rejects a delta outside its calibrated range before producing a raw
 goal. It also requires a command for exactly all five joints.
 
 Feedback conversion unwraps the raw value to the nearest signed half-turn from
-neutral and divides by encoder direction and `steps_per_radian`. Velocity uses
-the STS3215 present-speed conversion and the same encoder direction.
+neutral and divides by encoder direction and `steps_per_radian`. Orion's five
+servos have Phase register 18 bit 2 set: Present Speed register 58 reports
+encoder counts per second. The transport decodes the little-endian word as
+sign magnitude, with bit 15 marking a negative value. The driver converts it
+with one named constant:
+
+```text
+velocity_rad_s = signed_present_speed × (2π / 4096) × encoder_direction
+```
+
+The [Feetech magnetic-encoder memory table](https://www.feetechrc.com/Data/feetechrc/upload/file/20240702/舵机协议内存表-磁编码版本.xlsx)
+defines the count/s unit and the Phase selection; clearing bit 2 instead selects
+50 counts/s per unit and is incompatible with this conversion. The
+[vendor SDK's ReadSpeed](https://github.com/ftservo/FTServo_Arduino/blob/main/src/SMS_STS.cpp)
+confirms the sign encoding. The Orion profile preserves bit 2. This conversion
+assumes the commissioned setting; the driver does not add a unit-mode check.
+
+Fresh measured starts and final completion use this physical rad/s value.
+Speech spline replacements use commanded derivatives, and MuJoCo already
+reports rad/s. The hardware speed quantum is 50 counts/s, about 0.0767 rad/s,
+despite the count/s unit. That exceeds
+the unchanged 0.05 rad/s completion threshold, so these servos still need a
+zero-speed reading throughout the settle window.
 
 ## Hardware preparation and torque activation
 
@@ -263,8 +286,9 @@ servo:
 
 The driver applies and reads back return delay, operating mode, direction,
 PID coefficients, maximum acceleration, and runtime acceleration. Persistent
-register writes unlock and relock EEPROM. Elbow pitch and head pitch use their
-calibrated proportional gains for gravity load.
+register writes unlock and relock EEPROM. Shoulder pitch, elbow pitch and head
+pitch use raised proportional gains (32, 32 and 48; the others use 16) so
+gravity-loaded joints follow small animation offsets.
 
 The servo acceleration registers shape the actuator's local response. They do
 not replace the host trajectory or define a second motion plan.

@@ -60,6 +60,10 @@ impl LampProgram {
         }
         Ok(next)
     }
+    pub fn status(&self) -> serde_json::Value {
+        serde_json::json!({"brightness":self.brightness * 100.0, "effect":self.effect,
+            "colors":self.colors.iter().map(|c| [c.red,c.green,c.blue,c.white]).collect::<Vec<_>>()})
+    }
     pub fn render(&self, now: f64) -> Result<Vec<Rgbw8>> {
         if self.brightness == 0.0 || self.effect == "off" {
             return Ok(vec![Rgbw8::OFF; ORION_LIGHT_PIXEL_COUNT]);
@@ -96,6 +100,18 @@ mod tests {
     use super::*;
     fn patch(value: serde_json::Value) -> LampPatch {
         serde_json::from_value(value).unwrap()
+    }
+    #[test]
+    fn status_exposes_the_manual_palette_effect_and_percent_brightness() {
+        let lamp = LampProgram::default()
+            .updated(patch(serde_json::json!({
+                "brightness":0.35,"effect":"thinking_drift","colors":[[1,2,3,4],[5,6,7,8]]
+            })))
+            .unwrap();
+        assert_eq!(
+            lamp.status(),
+            serde_json::json!({"brightness":35.0,"effect":"thinking_drift","colors":[[1,2,3,4],[5,6,7,8]]})
+        );
     }
     #[test]
     fn brightness_changes_preserve_palette_and_effect_and_zero_is_off() {

@@ -6,8 +6,12 @@ motion:
   style: living_idle
   return_to_anchor: true
   keyframes:
+    - offsets: {head_pitch_joint: 0.004800}
+      duration: 0.0656
+      arrival: through
+      marker: idle_head_start
     - offsets: {shoulder_pitch_joint: 0.055, elbow_pitch_joint: -0.065, head_pitch_joint: 0.040}
-      duration: 1.3
+      duration: 1.2344
       arrival: through
     - offsets: {shoulder_pitch_joint: 0.025, elbow_pitch_joint: -0.030, head_pitch_joint: 0.018}
       duration: 0.9

@@ -129,7 +129,8 @@ Character shutdown cancels scene and speech work before returning home.
 
 `RuntimeCore` starts ordinary replacement movements from the most recent
 measured position and velocity. Speech extensions and the transition from
-thinking into speech instead preserve the active commanded position and velocity.
+thinking into speech instead preserve the active commanded position, velocity and acceleration when
+calibration permits. Measured starts use zero acceleration.
 This keeps a continuous command path while feedback may lag under load. A fresh
 speech performance starts from measured state when the runtime is holding.
 

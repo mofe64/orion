@@ -104,6 +104,116 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
+    async def acoustic_session(self, scores):
+        """Run the listener with a scripted verifier; return client, sid and expressions."""
+        from orion_voice.verifier import AcousticVerifier
+        from test_verifier import MODELS, ScriptedScorer
+        directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
+        token_file = Path(directory.name) / 'token'; token_file.write_text('a' * 32)
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+        args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+            wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+            daemon_socket=str(Path(directory.name) / 'no-robot.sock'), verifier_dir=MODELS)
+        expressions = []
+        async def daemon(command, path):
+            expressions.append(command)
+            return {'ok': True}
+        for target, value in [('RustpotterWakeDetector', FakeWake), ('StereoCapture', FakeCapture),
+                              ('daemon_command', daemon),
+                              ('AcousticVerifier', lambda path: AcousticVerifier(path, scorer=ScriptedScorer(scores)))]:
+            patcher = patch(f'orion_voice.satellite.{target}', value); patcher.start(); self.addCleanup(patcher.stop)
+        task = asyncio.create_task(serve(args))
+        async def stop():
+            task.cancel(); await asyncio.gather(task, return_exceptions=True)
+        self.addAsyncCleanup(stop)
+        for _ in range(100):
+            try:
+                client = await connect(f'ws://127.0.0.1:{port}'); break
+            except OSError: await asyncio.sleep(.01)
+        else: self.fail('Listener did not start')
+        self.addAsyncCleanup(client.close)
+        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, wakePrefix=True)))
+        ready = json.loads(await client.recv())
+        self.assertEqual(ready['wake']['verifier']['provider'], 'openwakeword')
+        candidate = json.loads(await client.recv())
+        self.assertTrue(candidate['acousticVerification'])
+        return client, candidate['sessionId'], expressions
+
+    async def wait_for(self, expressions, command):
+        for _ in range(200):
+            if command in expressions: return
+            await asyncio.sleep(.01)
+        self.fail(f'Missing {command}: {expressions}')
+
+    async def test_keepalives_are_forwarded_without_repeating_phase_transitions(self):
+        directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
+        token_file = Path(directory.name) / 'token'; token_file.write_text('a' * 32)
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+        args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+            wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+            daemon_socket=str(Path(directory.name) / 'no-robot.sock'), verifier_dir=None)
+        expressions = []
+        async def daemon(command, path):
+            expressions.append(command)
+            return {'ok': True}
+        for target, value in [('RustpotterWakeDetector', FakeWake), ('StereoCapture', FakeCapture),
+                              ('daemon_command', daemon)]:
+            patcher = patch(f'orion_voice.satellite.{target}', value); patcher.start(); self.addCleanup(patcher.stop)
+        task = asyncio.create_task(serve(args))
+        async def stop():
+            task.cancel(); await asyncio.gather(task, return_exceptions=True)
+        self.addAsyncCleanup(stop)
+        for _ in range(100):
+            try:
+                client = await connect(f'ws://127.0.0.1:{port}'); break
+            except OSError: await asyncio.sleep(.01)
+        else: self.fail('Listener did not start')
+        self.addAsyncCleanup(client.close)
+        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32)))
+        await client.recv()  # Listener readiness.
+        candidate = json.loads(await client.recv()); sid = candidate['sessionId']
+        full = json.loads(await asyncio.wait_for(client.recv(), 3)); await client.recv()
+        self.assertEqual(full['purpose'], 'wake_and_command')
+        await client.send(json.dumps({'type':'wake.confirmed','sessionId':sid,'followup':False}))
+        for _ in range(2):
+            await client.send(json.dumps({'type':'session.keepalive','sessionId':sid}))
+        await client.send(json.dumps({'type':'session.playing','sessionId':sid}))
+        await client.send(json.dumps({'type':'session.keepalive','sessionId':sid}))
+        for _ in range(100):
+            if expressions.count(f'voice {sid} keepalive') == 3: break
+            await asyncio.sleep(.01)
+        self.assertEqual(expressions.count(f'voice {sid} keepalive'), 3)
+        self.assertEqual(expressions.count(f'voice {sid} playing'), 1)
+        self.assertNotIn(f'voice {sid} processing', expressions)
+        await client.send(json.dumps({'type':'session.finish','sessionId':sid}))
+
+    async def test_acoustic_acceptance_cues_after_verdict_and_skips_prefix(self):
+        client, sid, expressions = await self.acoustic_session({1: 0.9})
+        verdict = json.loads(await client.recv())
+        self.assertEqual((verdict['type'], verdict['accepted']), ('wake.verified', True))
+        full = json.loads(await asyncio.wait_for(client.recv(), 3)); await client.recv()
+        self.assertEqual(full['purpose'], 'wake_and_command')
+        await self.wait_for(expressions, f'voice {sid} endpoint')
+        sequence = [f'voice {sid} {event}' for event in ['wake', 'verify', 'confirmed', 'endpoint']]
+        indices = [expressions.index(event) for event in sequence]
+        self.assertEqual(indices, sorted(indices))
+
+    async def test_acoustic_rejection_defers_cue_until_qwen_confirms(self):
+        client, sid, expressions = await self.acoustic_session({})
+        verdict = json.loads(await asyncio.wait_for(client.recv(), 3))
+        self.assertEqual((verdict['type'], verdict['accepted']), ('wake.verified', False))
+        full = json.loads(await asyncio.wait_for(client.recv(), 3)); await client.recv()
+        self.assertEqual(full['purpose'], 'wake_and_command')
+        await asyncio.sleep(.05)
+        self.assertNotIn(f'voice {sid} wake', expressions)
+        await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': sid, 'followup': False}))
+        await self.wait_for(expressions, f'voice {sid} confirmed')
+        tail = [e for e in expressions if e.startswith(f'voice {sid} ')]
+        wake = tail.index(f'voice {sid} wake')
+        self.assertEqual(tail[wake:wake + 3], [f'voice {sid} {e}' for e in ['wake', 'endpoint', 'confirmed']])
+
     async def test_unmute_waits_until_microphone_startup_finishes(self):
         opening, finish = threading.Event(), threading.Event()
         class SlowCapture(FakeCapture):

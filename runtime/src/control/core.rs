@@ -1,5 +1,6 @@
 use crate::control::state::{JointState, MotionState};
 use crate::control::state::{MovementPhase, RuntimeMode, StateSnapshot};
+use crate::control::tracking::{TrackingEvent, TrackingJoint, TrackingSample, TrackingTelemetry};
 use crate::devices::driver::RuntimeDriver;
 use crate::error::{OrionRuntimeError as Error, Result};
 use crate::motion::library::{
@@ -8,6 +9,17 @@ use crate::motion::library::{
 use crate::motion::pose::{JointPositions, PoseLibrary};
 use crate::motion::trajectory::JointTrajectory;
 use serde_json::json;
+use std::time::Instant;
+
+struct TrackingMovement {
+    started_at: f64,
+    last_elapsed: f64,
+    revision: u64,
+    name: String,
+    commanded_start: JointPositions,
+    measured_start: JointPositions,
+    last_command: JointPositions,
+}
 
 pub const OBSERVE_FREQUENCY_HZ: f64 = 50.0;
 pub const COMPLETION_POSITION_TOLERANCE_RAD: f64 = 0.05;
@@ -35,6 +47,7 @@ impl Default for CompletionCriteria {
 }
 
 struct ActiveMovement {
+    tracking: Option<TrackingMovement>,
     status: MotionState,
     target: JointPositions,
     settling_started_at: Option<f64>,
@@ -43,6 +56,7 @@ struct ActiveMovement {
 
 pub struct RuntimeCore<D: RuntimeDriver> {
     driver: D,
+    tracking: Option<TrackingTelemetry>,
     poses: PoseLibrary,
     motions: MotionLibrary,
     mode: RuntimeMode,
@@ -78,6 +92,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         )?;
         Ok(Self {
             driver,
+            tracking: None,
             poses,
             motions,
             mode: RuntimeMode::Observe,
@@ -93,6 +108,17 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         })
     }
 
+    /// Attach capture before starting any movement. Off by default for every core.
+    pub fn enable_tracking(&mut self, tracking: TrackingTelemetry) -> Result<()> {
+        if self.active_movement.is_some() {
+            return Err(Error::InvalidState(
+                "Enable tracking before starting movement.".into(),
+            ));
+        }
+        self.tracking = Some(tracking);
+        Ok(())
+    }
+
     pub fn tick(&mut self, now_seconds: f64) -> Result<()> {
         if !now_seconds.is_finite() {
             return Err(Error::InvalidArgument(
@@ -101,15 +127,25 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         }
         // Preserve C++ behavior: telemetry is sampled before this cycle's goal
         // is written, then published with the movement metadata for this tick.
+        let tracking_tick = self.tracking.as_ref().map(|_| Instant::now());
         let states = self.driver.read()?;
+        let feedback_read_seconds = tracking_tick
+            .map(|at| at.elapsed().as_secs_f64())
+            .unwrap_or(0.0);
+        let mut command_written = false;
         let elapsed = now_seconds - self.movement_started_at;
         let mut entered_settling = false;
 
         if let Some(sequence) = &self.motion_sequence {
-            self.driver.write(&sequence.sample(elapsed)?)?;
+            let command = sequence.sample(elapsed)?;
+            self.driver.write(&command)?;
+            command_written = true;
             let active = self.active_movement.as_mut().ok_or_else(|| {
                 Error::Runtime("Motion sequence has no active movement lifecycle.".into())
             })?;
+            if let Some(tracking) = &mut active.tracking {
+                tracking.last_command = command;
+            }
             active.status.keyframe = Some(sequence.keyframe_name(elapsed)?.to_owned());
             active.status.keyframe_index = Some(sequence.keyframe_index(elapsed)?);
             active.status.keyframe_count = Some(sequence.keyframe_count());
@@ -120,10 +156,15 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 entered_settling = true;
             }
         } else if let Some(trajectory) = &self.trajectory {
-            self.driver.write(&trajectory.sample(elapsed)?)?;
+            let command = trajectory.sample(elapsed)?;
+            self.driver.write(&command)?;
+            command_written = true;
             let active = self.active_movement.as_mut().ok_or_else(|| {
                 Error::Runtime("Joint trajectory has no active movement lifecycle.".into())
             })?;
+            if let Some(tracking) = &mut active.tracking {
+                tracking.last_command = command;
+            }
             active.status.progress = trajectory.progress(elapsed)?;
             if trajectory.complete(elapsed)? {
                 self.trajectory = None;
@@ -133,10 +174,21 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
 
         if entered_settling {
             self.enter_settling(now_seconds)?;
-        } else if self
-            .active_movement
-            .as_ref()
-            .is_some_and(|movement| matches!(movement.status.state, MovementPhase::Settling))
+        }
+        self.record_tracking(
+            now_seconds,
+            &states,
+            command_written,
+            feedback_read_seconds,
+            tracking_tick
+                .map(|at| at.elapsed().as_secs_f64())
+                .unwrap_or(0.0),
+        );
+        if !entered_settling
+            && self
+                .active_movement
+                .as_ref()
+                .is_some_and(|movement| matches!(movement.status.state, MovementPhase::Settling))
         {
             self.update_settling(now_seconds, &states)?;
         }
@@ -151,6 +203,58 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             Ok(response) => response,
             Err(error) => json!({"ok": false, "error": error.to_string()}).to_string(),
         }
+    }
+
+    fn record_tracking(
+        &mut self,
+        now: f64,
+        states: &[JointState],
+        command_written: bool,
+        feedback_read_seconds: f64,
+        control_work_seconds: f64,
+    ) {
+        let Some(sink) = &self.tracking else {
+            return;
+        };
+        let Some(active) = &mut self.active_movement else {
+            return;
+        };
+        let Some(tracking) = &mut active.tracking else {
+            return;
+        };
+        tracking.last_elapsed = now - tracking.started_at;
+        let joints = states
+            .iter()
+            .filter_map(|joint| {
+                tracking.last_command.get(&joint.name).map(|command| {
+                    (
+                        joint.name.clone(),
+                        TrackingJoint {
+                            commanded_position_rad: *command,
+                            measured_position_rad: joint.position,
+                            measured_velocity_rad_s: joint.velocity,
+                        },
+                    )
+                })
+            })
+            .collect();
+        sink.record(TrackingEvent::Sample(Box::new(TrackingSample {
+            sequence: self.sequence + 1,
+            runtime_time_seconds: now,
+            elapsed_seconds: tracking.last_elapsed,
+            trajectory_elapsed_seconds: now - self.movement_started_at,
+            trajectory_revision: tracking.revision,
+            run_id: active.status.run_id,
+            run_name: active.status.name.clone(),
+            motion_name: tracking.name.clone(),
+            phase: active.status.state,
+            command_written,
+            feedback_read_seconds,
+            control_work_seconds,
+            commanded_start: tracking.commanded_start.clone(),
+            measured_start: tracking.measured_start.clone(),
+            joints,
+        })));
     }
 
     fn handle_command_inner(&mut self, command: &str, now_seconds: f64) -> Result<String> {
@@ -266,6 +370,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 &definition,
                 start.clone(),
                 start_velocity,
+                None,
                 start,
                 amplitude_scale,
                 &limits,
@@ -333,7 +438,28 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .next_run_id
             .checked_add(1)
             .ok_or_else(|| Error::Runtime("Orion movement run ID overflowed.".into()))?;
+        let tracking = if self.tracking.is_some() {
+            let commanded_start = if let Some(sequence) = &self.motion_sequence {
+                sequence.sample(0.0)?
+            } else if let Some(trajectory) = &self.trajectory {
+                trajectory.sample(0.0)?
+            } else {
+                target.clone()
+            };
+            Some(TrackingMovement {
+                started_at: self.movement_started_at,
+                last_elapsed: 0.0,
+                revision: 0,
+                name: name.to_owned(),
+                last_command: commanded_start.clone(),
+                commanded_start,
+                measured_start: self.measured_positions(),
+            })
+        } else {
+            None
+        };
         self.active_movement = Some(ActiveMovement {
+            tracking,
             status: MotionState {
                 run_id,
                 name: name.to_owned(),
@@ -413,6 +539,13 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             Error::Runtime("Cannot finish without an active movement lifecycle.".into())
         })?;
         movement.status.state = phase;
+        if let (Some(sink), Some(tracking)) = (&self.tracking, &movement.tracking) {
+            sink.record(TrackingEvent::End {
+                run_id: movement.status.run_id,
+                elapsed_seconds: tracking.last_elapsed,
+                state: phase,
+            });
+        }
         self.last_movement = Some(movement.status);
         self.mode = RuntimeMode::Holding;
         self.sync_lifecycle_to_snapshot();
@@ -568,6 +701,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 .driver
                 .clamp_positions_to_safe_range(&self.measured_positions())?,
         };
+        let acceleration = state.as_ref().map(|state| state.accelerations.clone());
         let velocity = match state {
             Some(state) => state.velocities,
             None => self.measured_velocities(),
@@ -582,6 +716,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             &definition,
             start,
             velocity,
+            acceleration,
             anchor,
             amplitude_scale,
             &limits,
@@ -590,12 +725,37 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .last()
             .cloned()
             .ok_or_else(|| Error::InvalidArgument("Character clip has no final target.".into()))?;
+        if definition.name == "speaking_performance" {
+            let apices: Vec<_> = definition
+                .keyframes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, keyframe)| {
+                    let peak = keyframe
+                        .marker
+                        .as_deref()
+                        .and_then(crate::expression::character::speech_peak)?;
+                    let apex = sequence.keyframe_arrival_time(index)?;
+                    Some(json!({"marker": keyframe.marker, "peak_seconds": peak,
+                    "commanded_apex_seconds": apex, "apex_minus_peak_seconds": apex - peak}))
+                })
+                .collect();
+            eprintln!(
+                "{}",
+                json!({"event": "speech.motion_compiled", "motion_run_id": replacing.unwrap_or(self.next_run_id),
+                "trajectory_start_runtime_seconds": now_seconds, "apices": apices})
+            );
+        }
         self.motion_sequence = Some(sequence);
         self.trajectory = None;
         self.movement_started_at = now_seconds;
         self.mode = RuntimeMode::Moving;
         if let Some(run_id) = replacing {
             let movement = self.active_movement.as_mut().unwrap();
+            if let Some(tracking) = &mut movement.tracking {
+                tracking.revision += 1;
+                tracking.name = definition.name.clone();
+            }
             movement.target = target;
             movement.status.progress = 0.0;
             Ok(run_id)
@@ -823,6 +983,32 @@ mod tests {
     }
 
     #[test]
+    fn measured_start_preserves_realistic_servo_speed_without_ceiling_cap() {
+        use crate::devices::sts3215::driver::VELOCITY_RAW_TO_RADIANS_PER_SECOND;
+        use crate::motion::trajectory::STS3215_MAX_SPEED_RAD_S;
+
+        let expected = 0.536_893_275_759_974_4; // Present Speed = 350 counts/s.
+        let mut driver = FakeDriver::new();
+        driver.velocity_rad_s = 350.0 * VELOCITY_RAW_TO_RADIANS_PER_SECOND;
+        let mut core = core_with_driver(driver);
+        activate(&mut core);
+        let response: serde_json::Value =
+            serde_json::from_str(&core.handle_command("play idle_breathe", 0.0)).unwrap();
+        assert_eq!(response["ok"], true);
+        let first = core
+            .motion_sequence
+            .as_ref()
+            .unwrap()
+            .sample_state(0.0)
+            .unwrap();
+        for name in ORION_JOINT_NAMES {
+            assert!((core.measured_velocities()[name] - expected).abs() < 1e-12);
+            assert!((first.velocities[name] - expected).abs() < 1e-12);
+            assert!(first.velocities[name].abs() < STS3215_MAX_SPEED_RAD_S);
+        }
+    }
+
+    #[test]
     fn extending_character_spline_preserves_run_position_and_velocity() {
         let mut core = core();
         activate(&mut core);
@@ -855,6 +1041,7 @@ mod tests {
         for name in ORION_JOINT_NAMES {
             assert!((before.positions[name] - after.positions[name]).abs() < 1e-9);
             assert!((before.velocities[name] - after.velocities[name]).abs() < 1e-9);
+            assert!((before.accelerations[name] - after.accelerations[name]).abs() < 1e-9);
         }
         assert!(
             core.extend_character_performance(run + 1, definition, anchor, 0.3)
@@ -895,11 +1082,101 @@ mod tests {
             for name in ORION_JOINT_NAMES {
                 assert!((before.positions[name] - after.positions[name]).abs() < 1e-9);
                 assert!((before.velocities[name] - after.velocities[name]).abs() < 1e-9);
+                assert!((before.accelerations[name] - after.accelerations[name]).abs() < 1e-9);
             }
             let end = sequence.sample_state(100.0).unwrap();
             assert_eq!(end.positions, anchor);
             assert!(end.velocities.values().all(|v| v.abs() < 1e-9));
         }
+    }
+
+    #[test]
+    fn tracking_captures_exact_writes_prewrite_feedback_and_terminal_settling() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tracking.jsonl");
+        let mut core = core();
+        assert!(core.tracking.is_none());
+        core.enable_tracking(TrackingTelemetry::create(&path, "test").unwrap())
+            .unwrap();
+        activate(&mut core);
+        core.handle_command("goto home 1.0", 0.0);
+        core.tick(0.2).unwrap();
+        let first_command = core.driver.writes.last().unwrap().clone();
+        core.tick(0.4).unwrap();
+        core.tick(2.0).unwrap();
+        let writes = core.driver.writes.len();
+        core.tick(2.02).unwrap();
+        core.tick(2.30).unwrap();
+        assert_eq!(core.driver.writes.len(), writes);
+        assert_eq!(
+            core.last_movement.as_ref().unwrap().state,
+            MovementPhase::Completed
+        );
+        drop(core);
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let samples: Vec<_> = rows.iter().filter(|r| r["kind"] == "sample").collect();
+        assert_eq!(samples.len(), 5);
+        for name in ORION_JOINT_NAMES {
+            assert_eq!(
+                samples[0]["joints"][name]["commanded_position_rad"],
+                first_command[name]
+            );
+            assert_eq!(samples[0]["joints"][name]["measured_position_rad"], 0.0);
+            assert_eq!(
+                samples[1]["joints"][name]["measured_position_rad"],
+                first_command[name]
+            );
+            assert_eq!(
+                samples[4]["joints"][name]["commanded_position_rad"],
+                samples[2]["joints"][name]["commanded_position_rad"]
+            );
+        }
+        assert_eq!(samples[4]["command_written"], false);
+        assert_eq!(samples[4]["phase"], "settling");
+        assert_eq!(rows[rows.len() - 2]["state"], "completed");
+    }
+
+    #[test]
+    fn tracking_run_clock_survives_speech_replacement_and_records_actual_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tracking.jsonl");
+        let mut core = core();
+        core.enable_tracking(TrackingTelemetry::create(&path, "test").unwrap())
+            .unwrap();
+        activate(&mut core);
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let definition = core
+            .motions()
+            .motion("speak_reflective_tilt")
+            .unwrap()
+            .clone();
+        let run = core
+            .play_generated_anchored_relative(definition.clone(), anchor.clone(), 10.0)
+            .unwrap();
+        core.tick(10.3).unwrap();
+        let mut replacement = definition;
+        replacement.name = "speaking_performance".into();
+        core.extend_character_performance(run, replacement, anchor, 10.3)
+            .unwrap();
+        core.tick(10.4).unwrap();
+        core.handle_command("stop", 10.4);
+        drop(core);
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let samples: Vec<_> = rows.iter().filter(|r| r["kind"] == "sample").collect();
+        assert!((samples[1]["elapsed_seconds"].as_f64().unwrap() - 0.4).abs() < 1e-9);
+        assert!((samples[1]["trajectory_elapsed_seconds"].as_f64().unwrap() - 0.1).abs() < 1e-9);
+        assert_eq!(samples[1]["trajectory_revision"], 1);
+        assert_eq!(samples[1]["run_id"], run);
+        assert_eq!(samples[1]["motion_name"], "speaking_performance");
+        assert_eq!(rows[rows.len() - 2]["state"], "cancelled");
     }
 
     #[test]

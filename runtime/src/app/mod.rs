@@ -193,6 +193,130 @@ mod tests {
     }
 
     #[test]
+    fn experimental_gains_are_opt_in_and_isolate_one_arm() {
+        let defaults = make_orion_servo_profiles();
+        let ordinary = parse(&["--serve"]).unwrap();
+        assert!(ordinary.servo_gain_override.is_none());
+        assert_eq!(servo_profiles(&ordinary), defaults);
+        for (joint, p, i) in [
+            ("shoulder_pitch_joint", 24, 0),
+            ("elbow_pitch_joint", 48, 1),
+        ] {
+            let value = format!("{joint}:{p}:{i}");
+            let options = parse(&[
+                "--serve",
+                "--tracking-log",
+                "/tmp/gain-test.jsonl",
+                "--experimental-servo-gains",
+                &value,
+            ])
+            .unwrap();
+            let profiles = servo_profiles(&options);
+            for name in ORION_JOINT_NAMES {
+                if name == joint {
+                    assert_eq!(profiles[name].p_coefficient, p);
+                    assert_eq!(profiles[name].i_coefficient, i);
+                    assert_eq!(profiles[name].d_coefficient, defaults[name].d_coefficient);
+                } else {
+                    assert_eq!(profiles[name], defaults[name]);
+                }
+            }
+        }
+        assert_eq!(make_orion_servo_profiles(), defaults);
+    }
+
+    #[test]
+    fn experimental_gains_reject_invalid_or_untracked_uses() {
+        for value in [
+            "head_roll_joint:24:0",
+            "shoulder_pitch_joint",
+            "shoulder_pitch_joint:24:0:32",
+            "shoulder_pitch_joint:0:0",
+            "shoulder_pitch_joint:255:0",
+            "shoulder_pitch_joint:24:2",
+            "shoulder_pitch_joint:24:-1",
+            "shoulder_pitch_joint:abc:0",
+        ] {
+            assert!(
+                parse(&[
+                    "--serve",
+                    "--tracking-log",
+                    "/tmp/gain-test.jsonl",
+                    "--experimental-servo-gains",
+                    value
+                ])
+                .is_err(),
+                "{value}"
+            );
+        }
+        for args in [
+            vec!["--serve"],
+            vec!["--check", "--tracking-log", "/tmp/gain-test.jsonl"],
+            vec![
+                "--serve",
+                "--backend",
+                "mujoco",
+                "--tracking-log",
+                "/tmp/gain-test.jsonl",
+            ],
+        ] {
+            let mut args = args;
+            args.extend(["--experimental-servo-gains", "shoulder_pitch_joint:24:0"]);
+            assert!(parse(&args).is_err());
+        }
+        assert!(
+            parse(&[
+                "--serve",
+                "--tracking-log",
+                "/tmp/gain-test.jsonl",
+                "--experimental-servo-gains",
+                "shoulder_pitch_joint:24:0",
+                "--experimental-servo-gains",
+                "elbow_pitch_joint:40:0"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn tracking_is_opt_in_and_only_available_to_the_server() {
+        let options = parse_options(
+            ["--serve", "--backend", "mujoco"]
+                .into_iter()
+                .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(options.tracking_log.is_none());
+        let options = parse_options(
+            [
+                "--serve",
+                "--backend",
+                "mujoco",
+                "--tracking-log",
+                "/tmp/tracking.jsonl",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert_eq!(
+            options.tracking_log.unwrap(),
+            PathBuf::from("/tmp/tracking.jsonl")
+        );
+        assert!(
+            parse_options(
+                ["--status", "--tracking-log", "/tmp/tracking.jsonl"]
+                    .into_iter()
+                    .map(str::to_owned)
+            )
+            .is_err()
+        );
+        assert!(
+            parse_options(["--serve", "--tracking-log"].into_iter().map(str::to_owned)).is_err()
+        );
+    }
+
+    #[test]
     fn character_startup_defaults_on_and_supports_maintenance_override() {
         assert!(
             parse(&["--serve", "--backend", "mujoco"])

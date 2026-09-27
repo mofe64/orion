@@ -317,6 +317,10 @@ class OrionGateway:
             if colors is not None and (not isinstance(colors, list) or not 1 <= len(colors) <= 2 or any(not isinstance(c, list) or len(c) != 4 or any(type(v) is not int or not 0 <= v <= 255 for v in c) for c in colors)):
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Expected one or two RGBW colors.")
             response = self._checked("lamp-effect " + json.dumps(settings, allow_nan=False))
+        elif operation == "lamp_status":
+            if set(payload) != {"operation"}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Lamp status takes no parameters.")
+            response = self._checked("lamp-status")
         elif operation == "lamp":
             channels = payload.get("rgbw")
             if (not isinstance(channels, list) or len(channels) != 4
@@ -338,7 +342,7 @@ class OrionGateway:
             raise GatewayError(
                 HTTPStatus.BAD_REQUEST,
                 "unsupported_operation",
-                "Supported operations are goto, motion, scene, preview_scene, speech, rest, sleep, routines, lamp, lamp_effect, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
+                "Supported operations are goto, motion, scene, preview_scene, speech, rest, sleep, routines, lamp, lamp_effect, lamp_status, character_start, character_stop, character_state, prepare_movement, release_movement, and cancel.",
             )
 
         return HTTPStatus.ACCEPTED, {
@@ -400,7 +404,7 @@ class OrionGateway:
             speech = status.get(key)
             if isinstance(speech, dict) and speech.get("run_id") == run_id:
                 state = speech.get("state")
-                return {"api_version": API_VERSION, "run_id": run_id, "state": state, "error": speech.get("error"), "first_playback_ms": speech.get("first_playback_ms"), "elapsed_ms": speech.get("elapsed_ms")}
+                return {"api_version": API_VERSION, "run_id": run_id, "state": state, "error": speech.get("error"), "first_playback_ms": speech.get("first_playback_ms"), "elapsed_ms": speech.get("elapsed_ms"), "buffered_ms": speech.get("buffered_ms")}
         raise GatewayError(HTTPStatus.NOT_FOUND, "speech_run_not_found", f"Speech run {run_id} is not active or the most recent result.")
 
     def compile_trajectory_preview(self, payload: Any) -> dict[str, Any]:

@@ -40,15 +40,30 @@ mod tests {
     }
     #[test]
     fn slow_generation_and_long_pauses_latch_complete_buffering() {
-        for ms in [1000., 6000.] {
+        for ms in [800., 6000.] {
             let mut buffer = StartupBuffer::default();
             for _ in 0..6 {
                 assert!(!buffer.add(&chunk(ms)));
             }
-            for _ in 0..30 {
-                assert!(!buffer.add(&chunk(1.)));
+            assert!(buffer.complete_only);
+            for _ in 0..40 {
+                assert!(
+                    !buffer.add(&chunk(1.)),
+                    "later fast chunks must not clear the latch"
+                );
             }
         }
+    }
+    #[test]
+    fn the_generation_ratio_threshold_is_strict() {
+        let mut buffer = StartupBuffer::default();
+        for _ in 0..5 {
+            assert!(!buffer.add(&chunk(750.)));
+        }
+        assert!(
+            buffer.add(&chunk(750.)),
+            "exactly 0.75 remains on the fast path"
+        );
     }
     #[test]
     fn decoder_pause_increases_required_reserve() {

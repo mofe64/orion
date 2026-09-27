@@ -7,7 +7,7 @@ pub fn schemas() -> Vec<Value> {
         json!({"type":"function","name":"set_mode","description":"Select lamp mode (idle animations, no automatic sleep) or idle mode (character animations, rest after 30 minutes). Only when requested.","inputSchema":object(json!({"mode":{"type":"string","enum":["lamp","idle"]}}),json!(["mode"]))}),
         json!({"type":"function","name":"go_to_sleep","description":"Ask Orion to move to rest after its spoken acknowledgement. Only when requested. Existing alerts remain scheduled.","inputSchema":object(json!({}),json!([]))}),
         json!({"type":"function","name":"set_timer","description":"Create a one-time countdown on Orion. It rings until Hey Orion dismisses it, or for at most five minutes. Confirm the returned duration and label after success.","inputSchema":object(json!({"seconds":{"type":"number","minimum":1,"maximum":604800},"label":{"type":"string","maxLength":80}}),json!(["seconds","label"]))}),
-        json!({"type":"function","name":"set_alarm","description":"Create a one-time clock alarm. Call list_alerts first for current local time and timezone; use the UTC offset that applies on the requested date. Supply a future RFC3339 timestamp with explicit UTC offset. Clarify ambiguous AM/PM or date; never silently choose a timezone. Repeats are unsupported.","inputSchema":object(json!({"at":{"type":"string"},"label":{"type":"string","maxLength":80}}),json!(["at","label"]))}),
+        json!({"type":"function","name":"set_alarm","description":"Create a one-time clock alarm. Call list_alerts first for current local time and timezone; use the UTC offset that applies on the requested date. If the IANA timezone is unknown, use the reported local offset for today and clarify the offset for a future date when it cannot be determined. Supply a future RFC3339 timestamp with explicit UTC offset. Clarify ambiguous AM/PM or date; never silently choose a timezone. Repeats are unsupported.","inputSchema":object(json!({"at":{"type":"string"},"label":{"type":"string","maxLength":80}}),json!(["at","label"]))}),
         json!({"type":"function","name":"list_alerts","description":"Read Orion's current local time and pending, ringing and recent timers and alarms. Use before setting a clock alarm or choosing an alert to cancel.","inputSchema":object(json!({}),json!([]))}),
         json!({"type":"function","name":"cancel_alert","description":"Cancel a specific timer or alarm by its returned ID. List alerts if the ID is unknown; clarify when several match.","inputSchema":object(json!({"id":{"type":"integer","minimum":1}}),json!(["id"]))}),
         json!({"type":"function","name":"stop_alert","description":"Dismiss all alerts ringing now. Pending alerts stay scheduled.","inputSchema":object(json!({}),json!([]))}),
@@ -43,6 +43,10 @@ fn parse<T: serde::de::DeserializeOwned>(v: Value) -> Result<T, String> {
 }
 pub fn resolve(name: &str, arguments: Value) -> Result<Value, String> {
     let request = match name {
+        "get_lighting" => {
+            let _: Empty = parse(arguments)?;
+            return Ok(json!({"operation":"lamp_status"}));
+        }
         "set_mode" => {
             let a: Mode = parse(arguments)?;
             if !["lamp", "idle"].contains(&a.mode.as_str()) {
@@ -80,26 +84,79 @@ pub fn resolve(name: &str, arguments: Value) -> Result<Value, String> {
 }
 /// The Pi's IANA zone lets the agent account for future daylight-saving changes.
 /// Clock offsets remain explicit in every scheduled alarm.
-pub fn timezone() -> String {
-    std::env::var("TZ")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
+pub fn timezone() -> Option<String> {
+    resolve_timezone(
+        std::env::var("TZ").ok(),
+        || {
             std::fs::read_link("/etc/localtime").ok().and_then(|path| {
                 path.to_str()
                     .and_then(|s| s.split_once("zoneinfo/").map(|(_, zone)| zone.to_owned()))
             })
-        })
-        .or_else(|| {
+        },
+        || {
             std::fs::read_to_string("/etc/timezone")
                 .ok()
                 .map(|s| s.trim().to_owned())
-        })
-        .unwrap_or_else(|| chrono::Local::now().format("%Z").to_string())
+        },
+    )
 }
+fn is_iana_name(value: &str) -> bool {
+    value == "UTC"
+        || (value.contains('/')
+            && value.split('/').all(|part| {
+                !part.is_empty()
+                    && part != "."
+                    && part != ".."
+                    && part
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '+'))
+            }))
+}
+fn resolve_timezone(
+    tz: Option<String>,
+    link: impl FnOnce() -> Option<String>,
+    file: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    tz.filter(|value| is_iana_name(value))
+        .or_else(|| link().filter(|value| is_iana_name(value)))
+        .or_else(|| file().filter(|value| is_iana_name(value)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn posix_tz_values_fall_through_to_the_system_iana_name() {
+        for tz in [
+            "CET-1CEST",
+            ":/etc/localtime",
+            "/etc/localtime",
+            "",
+            "../London",
+            "Europe//London",
+        ] {
+            assert_eq!(
+                resolve_timezone(Some(tz.into()), || Some("Europe/London".into()), || None),
+                Some("Europe/London".into())
+            );
+        }
+        for tz in [
+            "Europe/London",
+            "America/Argentina/Buenos_Aires",
+            "Etc/GMT+1",
+            "UTC",
+        ] {
+            assert_eq!(
+                resolve_timezone(Some(tz.into()), || panic!("Valid TZ must win"), || None),
+                Some(tz.into())
+            );
+        }
+        assert_eq!(resolve_timezone(None, || None, || None), None);
+        assert_eq!(
+            resolve_timezone(Some("CET-1CEST".into()), || None, || None),
+            None
+        );
+    }
     #[test]
     fn validates_time_and_blocks_extra_authority() {
         assert!(resolve("go_to_sleep", json!({"session_id":"other"})).is_err());

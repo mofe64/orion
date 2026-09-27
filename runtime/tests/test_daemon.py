@@ -51,6 +51,18 @@ class DaemonTests(DaemonTestCase):
             self.assertEqual(request(path, 'status')['mode'], 'holding')
             self.assertTrue(request(path, 'disable')['ok'])
 
+    def test_lamp_status_exposes_manual_changes_and_character_clears_them(self):
+        with daemon() as path:
+            self.assertIsNone(request(path, 'lamp-status')['lamp'])
+            settings = {'brightness':0.35,'effect':'solid','colors':[[255,0,0,0]]}
+            self.assertTrue(request(path, 'lamp-effect ' + json.dumps(settings))['ok'])
+            self.assertEqual(request(path, 'lamp-status')['lamp'],
+                             {'brightness':35,'effect':'solid','colors':[[255,0,0,0]]})
+            self.assertTrue(request(path, 'configure')['ok'])
+            self.assertTrue(request(path, 'enable')['ok'])
+            self.assertTrue(request(path, 'character start')['ok'])
+            self.assertIsNone(request(path, 'lamp-status')['lamp'])
+
     def test_default_startup_enables_character_and_stop_finishes(self):
         with daemon(automatic_character=True) as path:
             self.wait_for_character(path, 'home_idle', True)

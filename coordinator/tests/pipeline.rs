@@ -2,7 +2,11 @@ use futures_util::{SinkExt, StreamExt};
 use orion_agent::{AgentConfig, AgentService};
 use orion_coordinator::{Coordinator, CoordinatorConfig, SpeechConfig};
 use serde_json::{Value, json};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -29,7 +33,63 @@ struct GatewayState {
     lighting: Vec<Value>,
     robot_operations: Vec<Value>,
     reject_lighting: bool,
+    reject_robot: Option<String>,
+    reject_upload: Option<String>,
+    buffered_ms: Option<i64>,
+    playback_clock: Option<PlaybackClock>,
 }
+#[derive(Default)]
+struct PlaybackClock {
+    received_ms: u64,
+    first_upload: Option<Instant>,
+    last_upload: Option<Instant>,
+    started: Option<Instant>,
+    deferred: bool,
+    start_after_received_ms: Option<u64>,
+    error: Option<&'static str>,
+    max_upload_gap: Duration,
+    saw_playing_backpressure: bool,
+}
+impl PlaybackClock {
+    fn accept(&mut self, audio_bytes: usize) {
+        let now = Instant::now();
+        self.first_upload.get_or_insert(now);
+        if let Some(last) = self.last_upload.replace(now) {
+            self.max_upload_gap = self.max_upload_gap.max(now.duration_since(last));
+        }
+        self.received_ms += audio_bytes as u64 / 48;
+        if self
+            .start_after_received_ms
+            .is_some_and(|threshold| self.received_ms >= threshold)
+        {
+            self.deferred = false;
+        }
+    }
+    fn status(&mut self, ended: bool) -> Value {
+        if self.started.is_none() && !self.deferred && (self.received_ms >= 2000 || ended) {
+            self.started = Some(Instant::now());
+        }
+        let played_ms = self
+            .started
+            .map(|at| at.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        if !ended {
+            if self
+                .last_upload
+                .is_some_and(|at| at.elapsed() > Duration::from_secs(10))
+            {
+                self.error = Some("upload_timeout");
+            } else if self.started.is_some() && played_ms > self.received_ms + 120 {
+                self.error = Some("buffer_exhausted");
+            }
+        }
+        let buffered_ms = self.received_ms as i64 - played_ms as i64;
+        self.saw_playing_backpressure |= self.started.is_some() && buffered_ms > 16_000;
+        json!({"state":if self.error.is_some() {"failed"} else if ended && played_ms >= self.received_ms {"completed"} else if self.started.is_some() {"playing"} else {"queued"},
+            "error":self.error, "first_playback_ms":self.started.map(|_|25), "buffered_ms":buffered_ms})
+    }
+}
+
 struct Harness {
     coordinator: Option<Coordinator>,
     agent: AgentService,
@@ -234,14 +294,22 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
     let mut body = vec![0; size];
     socket.read_exact(&mut body).await.unwrap();
     let mut state = state.lock().await;
+    let mut status = "200 OK";
     let value = if path == "/api/v2/operations" {
         let value: Value = serde_json::from_slice(&body).unwrap();
         if value["operation"] == "lamp_effect" {
             state.lighting.push(value["settings"].clone());
             json!({"accepted":!state.reject_lighting,"result":{"ok":!state.reject_lighting}})
+        } else if value["operation"] == "lamp_status" {
+            json!({"accepted":true,"result":{"ok":true,"lamp":{"brightness":35,"effect":"solid","colors":[[255,0,0,0]]}}})
         } else if value["operation"] == "sleep" || value["operation"] == "routines" {
             state.robot_operations.push(value.clone());
-            json!({"accepted":true,"result":{"ok":true,"sleep_after_reply":value["operation"]=="sleep"}})
+            if let Some(reason) = &state.reject_robot {
+                status = "409 Conflict";
+                json!({"error":{"message":reason}})
+            } else {
+                json!({"accepted":true,"result":{"ok":true,"sleep_after_reply":value["operation"]=="sleep"}})
+            }
         } else {
             state.cancellations.push(value["run_id"].as_u64().unwrap());
             json!({"ok":true})
@@ -258,17 +326,28 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
             state.runs += 1;
             state.ended = false;
         }
+        if let Some(clock) = &mut state.playback_clock {
+            clock.accept(body.len() - 44);
+        }
         state.uploads.push((path, request_id, body));
-        json!({"run_id":state.runs})
+        if let Some(reason) = &state.reject_upload {
+            status = "400 Bad Request";
+            json!({"error":{"message":reason}})
+        } else {
+            json!({"run_id":state.runs})
+        }
     } else if path.ends_with("/end") {
         state.ended = true;
         json!({"ok":true})
+    } else if state.playback_clock.is_some() {
+        let ended = state.ended;
+        state.playback_clock.as_mut().unwrap().status(ended)
     } else {
-        json!({"state":if state.fail_playback { "failed" } else if state.ended && state.allow_complete {"completed"} else {"playing"}, "first_playback_ms":25})
+        json!({"state":if state.fail_playback { "failed" } else if state.ended && state.allow_complete {"completed"} else {"playing"}, "first_playback_ms":25, "buffered_ms":state.buffered_ms})
     };
     drop(state);
     let body = value.to_string();
-    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+    socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
 }
 
 #[tokio::test]
@@ -306,6 +385,60 @@ async fn prefix_wakes_early_but_only_complete_audio_reaches_agent() {
     assert_eq!(
         until(&mut h.observer, "agent.response").await["text"],
         "Reply 1: keep every command word"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn acoustic_verdict_confirms_early_without_asr_prefix() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.4,"acousticVerification":true}),
+    )
+    .await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.verified","sessionId":SID,"accepted":true,"source":"acoustic","score":0.9,"verifierMs":0}),
+    )
+    .await;
+    let confirmed = until(&mut h.observer, "wake.confirmed").await;
+    assert_eq!(
+        (confirmed["early"].clone(), confirmed["source"].clone()),
+        (json!(true), json!("acoustic"))
+    );
+    // The prefix pass is replaced, so a late prefix would be a protocol error.
+    h.utterance(SID, "wake_and_command", "He Orion, keep every command word")
+        .await;
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: keep every command word"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn acoustic_rejection_still_lets_qwen_confirm_or_reject() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.4,"acousticVerification":true}),
+    )
+    .await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.verified","sessionId":SID,"accepted":false,"source":"acoustic","score":0.1,"verifierMs":1000}),
+    )
+    .await;
+    until(&mut h.observer, "wake.verification_deferred").await;
+    h.utterance(SID, "wake_and_command", "Hey Orion, complete request")
+        .await;
+    assert_eq!(until(&mut h.pi, "wake.confirmed").await["followup"], false);
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: complete request"
     );
     h.stop().await;
 }
@@ -667,6 +800,298 @@ async fn alarm_interrupt_retires_playback_and_accepts_a_later_wake() {
     assert!(!h.gateway.lock().await.cancellations.is_empty());
     h.gateway.lock().await.allow_complete = true;
     h.wake("Hey Orion, hello again").await;
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn runtime_alarm_reason_reaches_the_agent_tool_result_unchanged() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.reject_robot = Some("Alarm must be in the next 366 days".into());
+    let before = h.agent.handle().info().await.unwrap().conversation_id;
+    h.wake(r#"Hey Orion, tool:{"name":"set_alarm","arguments":{"at":"2030-01-01T09:00:00+00:00","label":"wake"}}"#).await;
+    let tool = until(&mut h.observer, "agent.tool").await;
+    assert_eq!(
+        tool["result"]["error"],
+        "Alarm must be in the next 366 days"
+    );
+    assert_eq!(tool["success"], false);
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        h.agent.handle().info().await.unwrap().conversation_id,
+        before
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn long_unpunctuated_answer_synthesizes_every_bounded_piece() {
+    let mut h = Harness::new().await;
+    let command = format!("Hey Orion, {}", "something ".repeat(1200));
+    h.wake(&command).await;
+    let response = until(&mut h.observer, "agent.response").await;
+    assert_eq!(
+        response["text"].as_str().unwrap(),
+        format!("Reply 1: {}", "something ".repeat(1200).trim())
+    );
+    until(&mut h.pi, "session.finish").await;
+    // Fixture emits two seconds per bounded TTS input: the reply exceeds 800 chars.
+    let state = h.gateway.lock().await;
+    assert!(
+        state
+            .uploads
+            .iter()
+            .map(|(_, _, wav)| wav.len() - 44)
+            .sum::<usize>()
+            > 150 * 48_000
+    );
+    assert_eq!(state.runs, 1);
+    assert!(state.ended);
+    drop(state);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn get_lighting_returns_manual_state_to_the_agent() {
+    let mut h = Harness::new().await;
+    h.wake(r#"Hey Orion, tool:{"name":"get_lighting","arguments":{}}"#)
+        .await;
+    let tool = until(&mut h.observer, "agent.tool").await;
+    assert_eq!(tool["name"], "get_lighting");
+    assert_eq!(tool["result"]["lamp"]["brightness"], 35);
+    assert_eq!(tool["success"], true);
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn long_playback_renews_the_listener_lease_until_completion() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, reply please").await;
+    until(&mut h.pi, "session.playing").await;
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let value = h.pi.next().await.unwrap().unwrap();
+            if let Message::Text(raw) = value {
+                let value: Value = serde_json::from_str(&raw).unwrap();
+                if value["type"] == "session.keepalive" {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    h.gateway.lock().await.allow_complete = true;
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn slow_synthesis_does_not_backpressure_agent_generation() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, many-sentences-fixture").await;
+    // The first TTS input hangs after six chunks. The entire Codex turn must
+    // still complete promptly, including more text events than the old queue.
+    let response = until(&mut h.observer, "agent.response").await;
+    assert!(response["text"].as_str().unwrap().ends_with("Sentence 39."));
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn preplayback_wait_renews_without_repeating_processing_or_playing() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, preplay-tts").await;
+    until(&mut h.pi, "session.processing").await;
+    let renewal = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if let Message::Text(raw) = h.pi.next().await.unwrap().unwrap() {
+                let value: Value = serde_json::from_str(&raw).unwrap();
+                assert_ne!(value["type"], "session.processing");
+                assert_ne!(value["type"], "session.playing");
+                if value["type"] == "session.keepalive" {
+                    break value;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(renewal["sessionId"], SID);
+    assert!(h.gateway.lock().await.uploads.is_empty());
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn uploads_wait_for_playback_to_drain_instead_of_accumulating_the_reply() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.buffered_ms = Some(18_000);
+    h.wake("Hey Orion, long long long long long").await;
+    until(&mut h.pi, "session.playing").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(h.gateway.lock().await.uploads.len(), 1);
+    assert!(!h.gateway.lock().await.ended);
+    h.gateway.lock().await.buffered_ms = Some(0);
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(h.gateway.lock().await.uploads.len(), 10);
+    assert!(h.gateway.lock().await.ended);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn speech_sanity_failure_reaches_the_user_and_next_model_turn() {
+    let mut h = Harness::new().await;
+    let reason = "Speech stream exceeds the 30-minute audio sanity limit; playback cannot complete this answer.";
+    h.gateway.lock().await.reject_upload = Some(reason.into());
+    h.wake("Hey Orion, reply please").await;
+    let failure = loop {
+        let value = next(&mut h.observer).await;
+        if value["type"] == "worker.error" {
+            break value;
+        }
+    };
+    assert!(failure["message"].as_str().unwrap().contains(reason));
+    let answer = h.agent.handle().respond("What happened?").await.unwrap();
+    assert!(answer.contains("Previous speech delivery failed:"));
+    assert!(answer.contains(reason));
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn slower_than_realtime_generation_waits_for_the_complete_reply_and_plays_without_underrun() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.playback_clock = Some(PlaybackClock::default());
+    let requested = Instant::now();
+    h.wake("Hey Orion, slow-reply-tts").await;
+    tokio::time::timeout(Duration::from_secs(55), async {
+        loop {
+            if let Message::Text(raw) = h.pi.next().await.unwrap().unwrap() {
+                let value: Value = serde_json::from_str(&raw).unwrap();
+                assert_ne!(value["type"], "session.cancel", "{value}");
+                if value["type"] == "session.playing" {
+                    let state = h.gateway.lock().await;
+                    let clock = state.playback_clock.as_ref().unwrap();
+                    // Twenty one-second chunks take at least 21 seconds to generate.
+                    // The old 12-second release would fail this check and exhaust
+                    // the fake runtime, which consumes PCM at real-time speed.
+                    assert!(
+                        clock.first_upload.unwrap().duration_since(requested)
+                            >= Duration::from_secs(21)
+                    );
+                }
+                if value["type"] == "session.finish" {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let state = h.gateway.lock().await;
+        let clock = state.playback_clock.as_ref().unwrap();
+        assert_eq!(state.uploads.len(), 20);
+        assert_eq!(state.runs, 1);
+        assert!(state.ended);
+        assert_eq!(clock.error, None);
+        assert!(
+            clock.saw_playing_backpressure,
+            "burst exceeds sixteen seconds while playing"
+        );
+        assert!(clock.max_upload_gap < Duration::from_secs(10));
+        assert!(state.cancellations.is_empty());
+    }
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn complete_reply_finishes_uploading_when_runtime_playback_is_deferred() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.playback_clock = Some(PlaybackClock {
+        deferred: true,
+        ..Default::default()
+    });
+    h.wake("Hey Orion, latched-burst-tts").await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !h.gateway.lock().await.ended {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let mut state = h.gateway.lock().await;
+        assert_eq!(state.uploads.len(), 20);
+        let clock = state.playback_clock.as_mut().unwrap();
+        assert_eq!(clock.received_ms, 20_000);
+        assert_eq!(clock.started, None);
+        assert_eq!(clock.error, None);
+        assert!(clock.max_upload_gap < Duration::from_secs(10));
+        // Advance only fixture playback after proving the queued burst reached
+        // its end marker; no real hardware or long home movement is needed.
+        clock.deferred = false;
+        clock.started = Some(Instant::now() - Duration::from_secs(20));
+    }
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn a_complete_buffered_reply_over_thirty_minutes_fails_before_any_upload() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, over-limit-tts").await;
+    let failure = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Message::Text(raw) = h.observer.next().await.unwrap().unwrap() {
+                let value: Value = serde_json::from_str(&raw).unwrap();
+                if value["type"] == "worker.error" {
+                    break value;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let reason = "Speech stream exceeds the 30-minute audio sanity limit; playback cannot complete this answer.";
+    assert!(failure["message"].as_str().unwrap().contains(reason));
+    assert!(h.gateway.lock().await.uploads.is_empty());
+    assert!(!h.gateway.lock().await.ended);
+    let answer = h.agent.handle().respond("What happened?").await.unwrap();
+    assert!(answer.contains(reason));
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn a_queued_complete_burst_keeps_uploading_when_playback_starts_midway() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.playback_clock = Some(PlaybackClock {
+        deferred: true,
+        start_after_received_ms: Some(30_000),
+        ..Default::default()
+    });
+    h.wake("Hey Orion, transition-burst-tts").await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !h.gateway.lock().await.ended {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let mut state = h.gateway.lock().await;
+        assert_eq!(state.uploads.len(), 50);
+        let clock = state.playback_clock.as_mut().unwrap();
+        assert!(
+            clock.started.is_some(),
+            "playback must start before the burst ends"
+        );
+        assert!(clock.saw_playing_backpressure);
+        assert_eq!(clock.error, None);
+        assert!(clock.max_upload_gap < Duration::from_secs(10));
+        clock.started = Some(Instant::now() - Duration::from_secs(50));
+    }
     until(&mut h.pi, "session.finish").await;
     h.stop().await;
 }

@@ -206,6 +206,7 @@ impl CompiledTrajectory {
         name: impl Into<String>,
         start: JointPositions,
         start_velocity: JointPositions,
+        start_acceleration: Option<JointPositions>,
         waypoints: Vec<TrajectoryWaypoint>,
         style: MotionStyle,
         maximum_velocity_rad_s: f64,
@@ -218,6 +219,15 @@ impl CompiledTrajectory {
             &waypoints,
             maximum_velocity_rad_s,
         )?;
+
+        if let Some(acceleration) = &start_acceleration {
+            if start.keys().ne(acceleration.keys()) || acceleration.values().any(|a| !a.is_finite())
+            {
+                return Err(Error::InvalidArgument(
+                    "Trajectory start acceleration must share finite starting joints.".into(),
+                ));
+            }
+        }
 
         // first we apply style to our requested travel times
         // for through waypoints duration = requested_duration / tempo
@@ -244,6 +254,7 @@ impl CompiledTrajectory {
                 &name,
                 &start,
                 &start_velocity,
+                start_acceleration.as_ref(),
                 &waypoints,
                 &durations,
                 style,
@@ -276,6 +287,7 @@ impl CompiledTrajectory {
             &name,
             &start,
             &start_velocity,
+            start_acceleration.as_ref(),
             &waypoints,
             &durations,
             style,
@@ -294,7 +306,7 @@ impl CompiledTrajectory {
 
     /// Compile a trajectory similar to [`Self::compile`], but with additional joint angle checks
     /// Bounds starting speeds above the motor-speed ceiling, then reduces
-    /// individual starting velocities when needed to keep the trajectory's
+    /// individual starting velocities and accelerations when needed to keep the trajectory's
     /// 50 Hz position samples inside the calibrated joint-angle ranges.
     /// Returns an error if compilation cannot find an acceptable trajectory.
     /// this method is used to address cases of interruptions near a boundary.
@@ -309,6 +321,7 @@ impl CompiledTrajectory {
         name: impl Into<String>,
         start: JointPositions,
         start_velocity: JointPositions,
+        start_acceleration: Option<JointPositions>,
         waypoints: Vec<TrajectoryWaypoint>,
         style: MotionStyle,
         maximum_velocity_rad_s: f64,
@@ -324,6 +337,7 @@ impl CompiledTrajectory {
         // - A starting position inside each range.
         validate_limits(&start, limits)?;
         let mut blended_velocity = start_velocity;
+        let mut blended_acceleration = start_acceleration;
         let bounded_start_speed = maximum_velocity_rad_s * INTERRUPT_SPEED_HEADROOM;
         // bound above ceiling starting speeds
         // we replace above-ceiling starting speeds with 95% of the ceiling,
@@ -342,6 +356,7 @@ impl CompiledTrajectory {
                 name.clone(),
                 start.clone(),
                 blended_velocity.clone(),
+                blended_acceleration.clone(),
                 waypoints.clone(),
                 style,
                 maximum_velocity_rad_s,
@@ -362,6 +377,17 @@ impl CompiledTrajectory {
                     ))
                 })?;
                 *velocity *= 0.5;
+                if let Some(acceleration) = blended_acceleration.as_mut() {
+                    let acceleration = acceleration.get_mut(&joint).ok_or_else(|| {
+                        Error::InvalidArgument(format!(
+                            "Missing starting acceleration for '{joint}'."
+                        ))
+                    })?;
+                    *acceleration *= 0.5;
+                    if acceleration.abs() < 1e-6 {
+                        *acceleration = 0.0;
+                    }
+                }
                 if velocity.abs() < 1e-6 {
                     *velocity = 0.0;
                 }
@@ -557,6 +583,7 @@ fn compile_with_durations(
     name: &str,
     start: &JointPositions,
     start_velocity: &JointPositions,
+    start_acceleration: Option<&JointPositions>,
     waypoints: &[TrajectoryWaypoint],
     durations: &[f64],
     style: MotionStyle,
@@ -566,9 +593,24 @@ fn compile_with_durations(
     let mut points = vec![start.clone()];
     points.extend(waypoints.iter().map(|waypoint| waypoint.positions.clone()));
     // next calculate velocity and acceleration at each point along the path
-    let mut velocities = derivative_maps(start, start_velocity, waypoints, durations, style, true);
-    let mut accelerations =
-        derivative_maps(start, start_velocity, waypoints, durations, style, false);
+    let mut velocities = derivative_maps(
+        start,
+        start_velocity,
+        start_acceleration,
+        waypoints,
+        durations,
+        style,
+        true,
+    );
+    let mut accelerations = derivative_maps(
+        start,
+        start_velocity,
+        start_acceleration,
+        waypoints,
+        durations,
+        style,
+        false,
+    );
     // reduce problematic internal derivatives
     clamp_unrequested_overshoot(&points, durations, &mut velocities, &mut accelerations);
     let mut starts_at = 0.0;
@@ -636,6 +678,7 @@ fn compile_with_durations(
 fn derivative_maps(
     start: &JointPositions,
     start_velocity: &JointPositions,
+    start_acceleration: Option<&JointPositions>,
     waypoints: &[TrajectoryWaypoint],
     durations: &[f64],
     style: MotionStyle,
@@ -648,9 +691,13 @@ fn derivative_maps(
             start
                 .keys()
                 .map(|joint| {
-                    // at the start of the trajectory, we use the supplied velocity when calculating for velocity and zero acceleration when calculating for acceleration
+                    // at the start of the trajectory, we use the supplied velocity when calculating for velocity and the supplied acceleration (or zero) when calculating for acceleration
                     let value = if index == 0 {
-                        if velocity { start_velocity[joint] } else { 0.0 }
+                        if velocity {
+                            start_velocity[joint]
+                        } else {
+                            start_acceleration.map_or(0.0, |a| a[joint])
+                        }
                     }
                     // at the end of the trajectory or at any point that settles, we assume zero velocity and acceleration
                     else if index + 1 == points.len()
@@ -981,6 +1028,7 @@ impl JointTrajectory {
                 name,
                 start,
                 start_velocity,
+                None,
                 waypoints,
                 style,
                 STS3215_MAX_SPEED_RAD_S,
@@ -992,6 +1040,7 @@ impl JointTrajectory {
                 name,
                 start,
                 start_velocity,
+                None,
                 waypoints,
                 style,
                 STS3215_MAX_SPEED_RAD_S,
@@ -1038,6 +1087,7 @@ mod tests {
             "fluid",
             positions(&[("joint", 0.0)]),
             positions(&[("joint", 0.0)]),
+            None,
             vec![
                 TrajectoryWaypoint {
                     label: "through".into(),
@@ -1080,6 +1130,7 @@ mod tests {
             "fast",
             positions(&[("joint", 0.0)]),
             positions(&[("joint", 0.0)]),
+            None,
             vec![TrajectoryWaypoint {
                 label: "end".into(),
                 positions: positions(&[("joint", 3.0)]),
@@ -1123,6 +1174,7 @@ mod tests {
             "interrupted",
             start.clone(),
             velocity.clone(),
+            None,
             vec![TrajectoryWaypoint {
                 label: "new_target".into(),
                 positions: positions(&[("joint", 1.0)]),
@@ -1150,6 +1202,7 @@ mod tests {
             "calibrated-interruption",
             start.clone(),
             measured_velocity.clone(),
+            None,
             vec![TrajectoryWaypoint {
                 label: "new_target".into(),
                 positions: positions(&[("safe", 0.6), ("edge", 0.0)]),
@@ -1190,17 +1243,97 @@ mod tests {
     }
 
     #[test]
+    fn calibrated_interruption_attenuates_start_acceleration_with_velocity_only_on_offending_joint()
+    {
+        let start = positions(&[("safe", 0.0), ("edge", 0.995)]);
+        let velocity = positions(&[("safe", 0.1), ("edge", 0.4)]);
+        let acceleration = positions(&[("safe", 0.3), ("edge", 8.0)]);
+        let limits = [
+            JointLimit {
+                name: "safe".into(),
+                lower_rad: -1.0,
+                upper_rad: 1.0,
+            },
+            JointLimit {
+                name: "edge".into(),
+                lower_rad: -1.0,
+                upper_rad: 1.0,
+            },
+        ];
+        let trajectory = CompiledTrajectory::compile_calibrated(
+            "acceleration-boundary",
+            start.clone(),
+            velocity.clone(),
+            Some(acceleration.clone()),
+            vec![TrajectoryWaypoint {
+                label: "return".into(),
+                positions: positions(&[("safe", 0.2), ("edge", 0.0)]),
+                duration_seconds: 0.8,
+                arrival: WaypointArrival::Settle,
+                hold_seconds: 0.0,
+                marker: None,
+            }],
+            style(),
+            STS3215_MAX_SPEED_RAD_S,
+            &limits,
+        )
+        .unwrap();
+        let first = trajectory.sample_state(0.0).unwrap();
+        assert_eq!(first.positions, start);
+        assert_eq!(first.velocities["safe"], velocity["safe"]);
+        assert_eq!(first.accelerations["safe"], acceleration["safe"]);
+        assert!(first.accelerations["edge"] < acceleration["edge"]);
+        assert!(
+            (first.accelerations["edge"] / acceleration["edge"]
+                - first.velocities["edge"] / velocity["edge"])
+                .abs()
+                < 1e-12
+        );
+        for step in 0..=200 {
+            let sample = trajectory
+                .sample(trajectory.duration_seconds() * step as f64 / 200.0)
+                .unwrap();
+            assert!(sample.values().all(|p| (-1.0..=1.0).contains(p)));
+        }
+    }
+
+    #[test]
+    fn rejects_nonfinite_or_incomplete_start_acceleration() {
+        for acceleration in [JointPositions::new(), positions(&[("joint", f64::NAN)])] {
+            assert!(
+                CompiledTrajectory::compile(
+                    "invalid-acceleration",
+                    positions(&[("joint", 0.0)]),
+                    positions(&[("joint", 0.0)]),
+                    Some(acceleration),
+                    vec![TrajectoryWaypoint {
+                        label: "end".into(),
+                        positions: positions(&[("joint", 0.1)]),
+                        duration_seconds: 0.5,
+                        arrival: WaypointArrival::Settle,
+                        hold_seconds: 0.0,
+                        marker: None
+                    }],
+                    style(),
+                    STS3215_MAX_SPEED_RAD_S
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn calibrated_interruption_bounds_telemetry_above_motor_ceiling() {
         let start = positions(&[("joint", -0.22)]);
-        // STS3215 present-speed telemetry is quantized in 0.732 RPM units.
-        // A transient raw value of 100 reports 7.665 rad/s, above the motor
-        // profile ceiling and therefore impossible to preserve in a bounded
-        // compiled command stream.
-        let measured_velocity = positions(&[("joint", 7.665_486_074_759_095)]);
+        // Malformed rad/s feedback must still be bounded even after correcting
+        // the STS3215 conversion. This intentionally exceeds the motor ceiling;
+        // a realistic raw speed of 100 counts/s is only about 0.153 rad/s.
+        let measured_velocity = positions(&[("joint", STS3215_MAX_SPEED_RAD_S * 1.5)]);
         let trajectory = CompiledTrajectory::compile_calibrated(
             "reversing-interruption",
             start.clone(),
             measured_velocity.clone(),
+            None,
             vec![TrajectoryWaypoint {
                 label: "new_target".into(),
                 positions: positions(&[("joint", -0.36)]),

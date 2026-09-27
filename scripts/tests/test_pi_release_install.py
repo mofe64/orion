@@ -91,7 +91,7 @@ class ConfigurationTests(Fixture):
         self.assertNotIn('--threshold 0.35', result)
         self.assertIn('hey_orion_reference.rpw', result)
 
-    def test_managed_listener_reference_migrates_but_retains_rollback_model(self):
+    def test_managed_listener_reference_migrates_to_verified_trained_model(self):
         self.installed_units()
         path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --local-processor --threshold 0.35 --host 0.0.0.0\n')
@@ -99,6 +99,7 @@ class ConfigurationTests(Fixture):
         self.assertIn('--threshold 0.80', result)
         self.assertIn(str(self.release / 'voice/models/wake/hey_orion_trained_080.rpw'), result)
         self.assertNotIn('--threshold 0.35', result)
+        self.assertNotIn('--no-verifier', result)
 
     def test_managed_listener_can_switch_back_to_packaged_reference(self):
         self.installed_units()
@@ -382,13 +383,14 @@ class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
         for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
                       'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
-                      'wrong-wake-model', 'wrong-wake-threshold'):
+                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier'):
             with self.subTest(fault=fault):
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
                 event = dict(type='ready', asr=dict(provider='qwen3-asr'),
                              tts=dict(provider='piper-tts', model='piper-alba-medium'),
                              agent=dict(provider='codex', model='gpt-6-luna', effort='medium'),
-                             wake=dict(provider='rustpotter', model='hey_orion_trained_080.rpw', threshold=0.80))
+                             wake=dict(provider='rustpotter', model='hey_orion_trained_080.rpw', threshold=0.80,
+                                       verifier=dict(provider='openwakeword', active=True)))
                 revision, gateway_pid = 'new', 42
                 if fault == 'old-service': status['project_root'] = '/old/release'
                 if fault == 'old-runtime': revision = 'old'
@@ -400,6 +402,7 @@ class ReadinessTests(Fixture):
                 if fault == 'wrong-agent-model': event['agent']['model'] = 'gpt-5.6-sol'
                 if fault == 'wrong-wake-model': event['wake']['model'] = 'hey_orion_reference.rpw'
                 if fault == 'wrong-wake-threshold': event['wake']['threshold'] = 0.35
+                if fault == 'no-verifier': event['wake']['verifier'] = None
                 system = installer.System()
                 self.write(self.home / '.config/orion/custom-token', 'fixture-token')
                 cmdline = '\0'.join(['python3', 'gateway.py', '--port', '7555', '--socket', '/tmp/custom.sock', '--token-file', str(self.home / '.config/orion/custom-token'), '']).encode()

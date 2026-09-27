@@ -35,6 +35,38 @@ pub(super) enum Backend {
     Mujoco,
 }
 
+/// One arm's temporary P/I selection; D remains the commissioned value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ServoGainOverride {
+    pub(super) joint: String,
+    pub(super) p: i32,
+    pub(super) i: i32,
+}
+
+impl ServoGainOverride {
+    fn parse(value: &str) -> crate::Result<Self> {
+        let parts: Vec<_> = value.split(':').collect();
+        let invalid = || {
+            crate::Error::InvalidArgument(
+            "--experimental-servo-gains requires shoulder_pitch_joint:P:I or elbow_pitch_joint:P:I (P=1..254, I=0..1).".into(),
+        )
+        };
+        if parts.len() != 3 || !matches!(parts[0], "shoulder_pitch_joint" | "elbow_pitch_joint") {
+            return Err(invalid());
+        }
+        let p = parts[1].parse::<i32>().map_err(|_| invalid())?;
+        let i = parts[2].parse::<i32>().map_err(|_| invalid())?;
+        if !(1..=254).contains(&p) || !(0..=1).contains(&i) {
+            return Err(invalid());
+        }
+        Ok(Self {
+            joint: parts[0].into(),
+            p,
+            i,
+        })
+    }
+}
+
 pub(super) struct Options {
     pub(super) operation: Operation,
     pub(super) backend: Backend,
@@ -42,6 +74,8 @@ pub(super) struct Options {
     pub(super) character_on_start: bool,
     pub(super) rest_after_seconds: f64,
     pub(super) routines_file: Option<PathBuf>,
+    pub(super) tracking_log: Option<PathBuf>,
+    pub(super) servo_gain_override: Option<ServoGainOverride>,
     pub(super) wait: bool,
     pub(super) port: String,
     pub(super) baud_rate: i32,
@@ -76,6 +110,8 @@ impl Default for Options {
             character_on_start: true,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
             routines_file: None,
+            tracking_log: None,
+            servo_gain_override: None,
             wait: false,
             port: "/dev/ttyACM0".into(),
             baud_rate: DEFAULT_BAUD_RATE,
@@ -161,6 +197,8 @@ pub(super) fn usage() -> &'static str {
   --character-on-start on|off  Start character automatically (default: on).\n\
   --rest-after-seconds SECONDS  Idle-mode inactivity before rest (default: 1800).\n\
   --routines-file PATH  Saved user mode and alerts (hardware: ~/.config/orion/routines.json).\n\
+  --tracking-log FILE  Opt-in asynchronous movement JSONL capture; file must not exist.\n\
+  --experimental-servo-gains JOINT:P:I  One arm's EEPROM gain override; hardware --serve with --tracking-log only.\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
   --help              Show this help.\n\n\
 Check never enables torque. Serve starts powered character mode unless --character-on-start off.\n"
@@ -291,6 +329,20 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                         )
                     })?;
             }
+            "--experimental-servo-gains" => {
+                if options.servo_gain_override.is_some() {
+                    return Err(crate::Error::InvalidArgument(
+                        "Only one --experimental-servo-gains selection is allowed.".into(),
+                    ));
+                }
+                options.servo_gain_override = Some(ServoGainOverride::parse(&require_value(
+                    &mut arguments,
+                    &argument,
+                )?)?);
+            }
+            "--tracking-log" => {
+                options.tracking_log = Some(require_value(&mut arguments, &argument)?.into())
+            }
             "--start-pose" => options.start_pose = require_value(&mut arguments, &argument)?,
             "--lighting-device" => {
                 options.lighting_device = require_value(&mut arguments, &argument)?.into()
@@ -312,6 +364,20 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
     if options.backend == Backend::Mujoco && options.operation == Operation::Check {
         return Err(crate::Error::InvalidArgument(
             "--check is a direct-hardware operation; use --serve --backend mujoco.".into(),
+        ));
+    }
+    if options.tracking_log.is_some() && options.operation != Operation::Serve {
+        return Err(crate::Error::InvalidArgument(
+            "--tracking-log requires --serve.".into(),
+        ));
+    }
+    if options.servo_gain_override.is_some()
+        && (options.operation != Operation::Serve
+            || options.backend != Backend::Hardware
+            || options.tracking_log.is_none())
+    {
+        return Err(crate::Error::InvalidArgument(
+            "--experimental-servo-gains requires hardware --serve with --tracking-log.".into(),
         ));
     }
     if options.wait

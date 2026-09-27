@@ -54,6 +54,28 @@ at `.venv/bin/python`. Physical rest/wake acceptance remains separate;
 see the [rest/wake integration tests](tests/test_rest.py).
 Set `ORION_TEST_BIN_DIR` to an absolute binary directory to test a release build.
 
+## Opt-in servo tracking
+
+Pass `--tracking-log FILE` with `--serve` to capture exact trajectory goals and
+measured feedback without blocking on file I/O. The file must not exist.
+See [servo tracking capture](../docs/servo-tracking.md) for timing semantics,
+repeatable idle/speech trials, analysis commands and measurement limitations.
+
+## Experimental servo gains
+
+Hardware measurements can select one arm's P/I coefficients with
+`--experimental-servo-gains shoulder_pitch_joint:24:0` or
+`--experimental-servo-gains elbow_pitch_joint:40:0`. This flag requires
+`--serve --backend hardware --tracking-log FILE`. It accepts P from 1 to 254
+and I from 0 to 1, rejects repeated selections and other joints, and preserves D.
+Without the flag, the commissioned profiles are unchanged.
+
+The coefficients are EEPROM settings, not process-local servo state. The driver
+writes only differences, but ending the daemon does not itself restore them.
+Use a temporary service, re-apply the original profile while torque is off, and
+read back P/D/I and the EEPROM lock before returning to ordinary operation.
+See [gain experiment procedure](../docs/servo-tracking.md#gain-experiments).
+
 ## Deploy an update to the Raspberry Pi
 
 Use the [Pi deployment procedure](../docs/quickstart.md#deploy-to-the-pi) from the
@@ -378,7 +400,14 @@ runtime/target/release/oriond --stop-speech
 
 Speech states are `queued`, `playing`, `completed`, `failed`, and `cancelled`.
 Only the active run and most recent terminal result are retained. The spool
-WAV is removed after completion, cancellation, or playback failure.
+WAV is removed after completion, cancellation, or playback failure. Stream chunks
+remain bounded to two seconds. The stream accepts thirty minutes of audio and
+rejects more with an explicit sanity-limit reason. PCM is released after the
+player accepts it; energy frames are computed incrementally, including partial
+frames across chunk boundaries. Compact, absolute-indexed animation analysis is
+retained until completion. Complete-WAV uploads retain their 120-second bound.
+`voice SESSION keepalive` renews an active processing, thinking or speaking lease
+without changing phase, history or feedback; stale and expired IDs are rejected.
 
 `SpeechCoordinator` validates and analyzes the waveform, while
 `CharacterCoordinator` composes one anchor-relative utterance performance and
@@ -426,7 +455,10 @@ non-null field. Invalid patches leave the existing program unchanged.
 Brightness-only updates preserve the palette and effect; zero brightness is
 fully off. Lamp programs resume after higher-priority voice feedback or speech.
 Scene or speech playback rejects changes until it finishes. The existing
-`lamp R G B W` command still sets a steady color.
+`lamp R G B W` command still sets a steady color. `lamp-status` reads the manual
+program as `lamp` with brightness in percent, effect and RGBW colors, or null when
+no manual program exists. The gateway exposes this through `lamp_status` and the
+agent through `get_lighting`. Starting the character clears the manual program.
 
 ## Mode and alert commands
 

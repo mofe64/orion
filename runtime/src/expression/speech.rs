@@ -10,6 +10,11 @@ use crate::{AudioDevice, Error, Result};
 pub const DEFAULT_SPEECH_SPOOL_PATH: &str = "/tmp/orion-speech-spool";
 pub const MAX_SPEECH_WAV_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_SPEECH_SECONDS: f64 = 120.0;
+// Absolute-indexed animation analysis and unpaced external uploads retain state.
+// Bound that state without constraining ordinary multi-minute spoken answers.
+const MAX_STREAM_SAMPLES: u64 = 30 * 60 * 24_000;
+const STREAM_LIMIT_ERROR: &str =
+    "Speech stream exceeds the 30-minute audio sanity limit; playback cannot complete this answer.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,7 +65,7 @@ struct ActiveSpeech {
 }
 
 struct StreamSpeech {
-    pcm: Vec<u8>,
+    analyzer: EnergyAnalyzer,
     pending: VecDeque<Vec<u8>>,
     next_sequence: usize,
     finished: bool,
@@ -149,10 +154,13 @@ impl SpeechCoordinator {
                 "Stream chunks must be at most two seconds.".into(),
             ));
         }
+        active.analysis = empty_analysis();
+        let mut analyzer = EnergyAnalyzer::default();
+        analyzer.append(&pcm, &mut active.analysis);
         active.analysis.streaming = true;
         active.stream = Some(StreamSpeech {
             pending: pcm.chunks(24_000).map(Vec::from).collect(),
-            pcm,
+            analyzer,
             next_sequence: 1,
             finished: false,
             updated: Instant::now(),
@@ -187,20 +195,18 @@ impl SpeechCoordinator {
             .stream
             .as_mut()
             .ok_or_else(|| Error::InvalidState("Not a speech stream.".into()))?;
-        if stream.finished
-            || sequence != stream.next_sequence
-            || pcm.len() > 96_000
-            || stream.pcm.len() + pcm.len() > 120 * 48_000
-        {
+        if stream.finished || sequence != stream.next_sequence || pcm.len() > 96_000 {
             return Err(Error::InvalidArgument(
                 "Invalid, out-of-order or oversized speech stream.".into(),
             ));
         }
-        stream.pcm.extend_from_slice(&pcm);
+        if stream.analyzer.samples + (pcm.len() / 2) as u64 > MAX_STREAM_SAMPLES {
+            return Err(Error::InvalidArgument(STREAM_LIMIT_ERROR.into()));
+        }
+        stream.analyzer.append(&pcm, &mut active.analysis);
         stream.pending.extend(pcm.chunks(24_000).map(Vec::from));
         stream.next_sequence += 1;
         stream.updated = Instant::now();
-        active.analysis = analyze_pcm(&stream.pcm)?;
         active.analysis.streaming = true;
         eprintln!(
             "{}",
@@ -294,7 +300,7 @@ impl SpeechCoordinator {
             if active
                 .stream
                 .as_ref()
-                .is_some_and(|s| !s.finished && s.pcm.len() < 96_000)
+                .is_some_and(|s| !s.finished && s.analyzer.samples < 48_000)
             {
                 return;
             }
@@ -515,22 +521,62 @@ fn analyze_pcm16_mono_wav(path: &Path) -> Result<SpeechAnalysis> {
     analyze_pcm(&decode_pcm16_mono_wav(path)?)
 }
 
-fn analyze_pcm(pcm: &[u8]) -> Result<SpeechAnalysis> {
-    let sample_rate = 24_000;
-    let duration_seconds = pcm.len() as f64 / 48_000.0;
-    let samples: Vec<f64> = pcm
-        .chunks_exact(2)
-        .map(|sample| i16::from_le_bytes([sample[0], sample[1]]) as f64 / 32768.0)
-        .collect();
-    let mut rms_20ms = Vec::new();
-    let mut smoothed = 0.0;
-    let frame_samples = (sample_rate as usize / 50).max(1);
-    for frame in samples.chunks(frame_samples) {
-        let rms =
-            (frame.iter().map(|sample| sample * sample).sum::<f64>() / frame.len() as f64).sqrt();
-        smoothed = 0.65 * smoothed + 0.35 * rms;
-        rms_20ms.push(smoothed);
+fn empty_analysis() -> SpeechAnalysis {
+    SpeechAnalysis {
+        rms_20ms: Vec::new(),
+        quiet_regions: Vec::new(),
+        phrase_peaks: Vec::new(),
+        duration_seconds: 0.0,
+        streaming: false,
     }
+}
+
+#[derive(Default)]
+struct EnergyAnalyzer {
+    samples: u64,
+    frame_samples: usize,
+    frame_sum: f64,
+    smoothed: f64,
+}
+impl EnergyAnalyzer {
+    fn append(&mut self, pcm: &[u8], analysis: &mut SpeechAnalysis) {
+        // A partial final frame is provisional. Replace it on the next append
+        // so WAV chunk boundaries do not change the 20 ms energy timeline.
+        if self.frame_samples != 0 {
+            analysis.rms_20ms.pop();
+        }
+        for sample in pcm.as_chunks::<2>().0 {
+            let value = i16::from_le_bytes([sample[0], sample[1]]) as f64 / 32768.0;
+            self.samples += 1;
+            self.frame_samples += 1;
+            self.frame_sum += value * value;
+            if self.frame_samples == 480 {
+                self.smoothed = 0.65 * self.smoothed + 0.35 * (self.frame_sum / 480.0).sqrt();
+                analysis.rms_20ms.push(self.smoothed);
+                self.frame_sum = 0.0;
+                self.frame_samples = 0;
+            }
+        }
+        if self.frame_samples != 0 {
+            analysis.rms_20ms.push(
+                0.65 * self.smoothed + 0.35 * (self.frame_sum / self.frame_samples as f64).sqrt(),
+            );
+        }
+        analysis.duration_seconds = self.samples as f64 / 24_000.0;
+        // Thresholds depend on the whole energy envelope, not raw samples.
+        // Rebuild compact landmarks to preserve the character's existing contract.
+        refresh_landmarks(analysis);
+    }
+}
+
+fn analyze_pcm(pcm: &[u8]) -> Result<SpeechAnalysis> {
+    let mut analysis = empty_analysis();
+    EnergyAnalyzer::default().append(pcm, &mut analysis);
+    Ok(analysis)
+}
+
+fn refresh_landmarks(analysis: &mut SpeechAnalysis) {
+    let rms_20ms = &analysis.rms_20ms;
     let maximum = rms_20ms.iter().copied().fold(0.0, f64::max);
     let quiet_threshold = (maximum * 0.12).max(0.004);
     let mut quiet_regions = Vec::new();
@@ -538,10 +584,10 @@ fn analyze_pcm(pcm: &[u8]) -> Result<SpeechAnalysis> {
     for (index, energy) in rms_20ms.iter().enumerate() {
         if *energy <= quiet_threshold {
             quiet_start.get_or_insert(index);
-        } else if let Some(start) = quiet_start.take() {
-            if index - start >= 3 {
-                quiet_regions.push((start, index));
-            }
+        } else if let Some(start) = quiet_start.take()
+            && index - start >= 3
+        {
+            quiet_regions.push((start, index));
         }
     }
     if let Some(start) = quiet_start {
@@ -560,13 +606,8 @@ fn analyze_pcm(pcm: &[u8]) -> Result<SpeechAnalysis> {
             phrase_peaks.push(index);
         }
     }
-    Ok(SpeechAnalysis {
-        rms_20ms,
-        quiet_regions,
-        phrase_peaks,
-        duration_seconds,
-        streaming: false,
-    })
+    analysis.quiet_regions = quiet_regions;
+    analysis.phrase_peaks = phrase_peaks;
 }
 
 #[cfg(test)]
@@ -576,6 +617,63 @@ mod tests {
     use crate::{RecordingAudioDevice, UnavailableAudioDevice};
 
     use super::*;
+
+    #[test]
+    fn a_stream_accepts_30_minutes_and_rejects_more_with_a_clear_reason() {
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        write_energy_test_wav(&directory.path().join("next.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let run = speech.start_stream("first").unwrap().run_id;
+        speech
+            .active
+            .as_mut()
+            .unwrap()
+            .stream
+            .as_mut()
+            .unwrap()
+            .analyzer
+            .samples = MAX_STREAM_SAMPLES - 24_000;
+        speech.append_stream(run, 1, "next").unwrap();
+        assert_eq!(speech.active_analysis().unwrap().duration_seconds, 1800.);
+        write_energy_test_wav(&directory.path().join("extra.wav"));
+        let error = speech
+            .append_stream(run, 2, "extra")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(STREAM_LIMIT_ERROR));
+        assert_eq!(speech.active_analysis().unwrap().duration_seconds, 1800.);
+        speech.end_stream(run, 2).unwrap();
+    }
+
+    #[test]
+    fn incremental_analysis_matches_whole_pcm_across_partial_frames() {
+        let pcm: Vec<u8> = (0..27_173i16).flat_map(i16::to_le_bytes).collect();
+        let expected = analyze_pcm(&pcm).unwrap();
+        let mut actual = empty_analysis();
+        let mut analyzer = EnergyAnalyzer::default();
+        for chunk in pcm.chunks(734) {
+            analyzer.append(chunk, &mut actual);
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(actual.rms_20ms.len(), 57);
+    }
+
+    #[test]
+    fn accepted_pcm_is_released_while_analysis_keeps_absolute_frames() {
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let run = speech.start_stream("first").unwrap().run_id;
+        write_energy_test_wav(&directory.path().join("second.wav"));
+        speech.append_stream(run, 1, "second").unwrap();
+        let mut audio = RecordingAudioDevice::blocking();
+        speech.tick(&mut audio);
+        let active = speech.active.as_ref().unwrap();
+        assert!(active.stream.as_ref().unwrap().pending.is_empty());
+        assert_eq!(active.analysis.rms_20ms.len(), 100);
+        assert_eq!(active.analysis.duration_seconds, 2.);
+    }
 
     #[test]
     fn streaming_uses_one_player_and_requires_ordered_end() {

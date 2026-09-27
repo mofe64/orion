@@ -134,7 +134,17 @@ pub(crate) fn clear(path: &Path, expected: &[Entry]) -> Result<(), String> {
     }
     write(path, &[])
 }
-fn edit_lock(path: &Path) -> Result<std::fs::File, String> {
+struct EditLock(std::fs::File);
+impl Drop for EditLock {
+    fn drop(&mut self) {
+        // A concurrently spawned process can briefly inherit this descriptor
+        // before exec closes it. Release the lock explicitly rather than wait
+        // for every copy of the open file description to close.
+        let _ = self.0.unlock();
+    }
+}
+
+fn edit_lock(path: &Path) -> Result<EditLock, String> {
     let parent = path.parent().ok_or("Invalid memory path")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let file = std::fs::OpenOptions::new()
@@ -146,7 +156,7 @@ fn edit_lock(path: &Path) -> Result<std::fs::File, String> {
         .map_err(|e| e.to_string())?;
     file.try_lock()
         .map_err(|_| "Memory is being edited; retry shortly")?;
-    Ok(file)
+    Ok(EditLock(file))
 }
 
 pub(crate) fn search(path: &Path, query: &str) -> Result<Vec<Entry>, String> {
@@ -175,6 +185,23 @@ pub(crate) fn search(path: &Path, query: &str) -> Result<Vec<Entry>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn finishing_an_edit_unlocks_even_with_an_inherited_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("MEMORY.md");
+        let lock = edit_lock(&path).unwrap();
+        let inherited = lock.0.try_clone().unwrap();
+        assert!(
+            edit_lock(&path).is_err(),
+            "active writers still exclude each other"
+        );
+        drop(lock);
+        let next = edit_lock(&path)
+            .expect("an inherited descriptor must not retain the completed edit lock");
+        drop(next);
+        drop(inherited);
+    }
+
     #[test]
     fn stores_individual_entries_and_rejects_corruption() {
         let dir = tempfile::tempdir().unwrap();

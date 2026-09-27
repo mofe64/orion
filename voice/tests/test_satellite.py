@@ -38,6 +38,27 @@ class SatelliteTests(unittest.TestCase):
             if result: return result
         self.fail('No endpoint')
 
+    def test_keepalives_preserve_long_wait_and_playback_then_expire(self):
+        sid = self.trigger(); self.endpoint()
+        self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})
+        for phase, times in [('processing', [0, 100, 200, 300, 400]), ('playing', [500, 600, 700, 800])]:
+            if phase == 'playing':
+                self.session.control({'type':'session.playing','sessionId':sid})
+            for now in times:
+                self.now = now
+                self.session.control({'type':'session.keepalive','sessionId':sid})
+                self.assertEqual(self.session.phase, phase)
+                self.assertEqual(self.session.expires_at, now + 180)
+                self.assertEqual(self.session.accept_stereo(frame()), [])
+        with self.assertRaises(ValueError):
+            self.session.control({'type':'session.keepalive','sessionId':'b'*32})
+        self.now = 980
+        with self.assertRaises(ValueError):
+            self.session.control({'type':'session.keepalive','sessionId':sid})
+        self.assertEqual(self.session.accept_stereo(frame())[0]['type'], 'session.expired')
+        with self.assertRaises(ValueError):
+            self.session.control({'type':'session.keepalive','sessionId':sid})
+
     def test_intermediate_playback_returns_to_processing_without_capture(self):
         sid = self.trigger(); self.endpoint()
         self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})

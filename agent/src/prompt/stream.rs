@@ -1,4 +1,4 @@
-use super::{MAX_RESPONSE_CHARACTERS, spoken_response};
+use super::spoken_response;
 
 /// Release complete sentences only; never pass partial citation markup to TTS.
 #[derive(Default)]
@@ -35,9 +35,6 @@ impl Sentences {
             return Ok(None);
         };
         let plain = spoken_response(&self.raw[..boundary])?;
-        if plain.chars().count() > MAX_RESPONSE_CHARACTERS || plain.ends_with('…') {
-            return Ok(None);
-        }
         let next = plain
             .strip_prefix(&self.emitted)
             .ok_or("Streamed answer changed an emitted sentence")?
@@ -54,6 +51,27 @@ impl Sentences {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streams_beyond_800_characters_and_keeps_the_runaway_guard() {
+        let mut stream = Sentences::default();
+        let prefix = format!("{}.", "a".repeat(799));
+        assert_eq!(
+            stream.push(&format!("{prefix} ")).unwrap(),
+            Some(prefix.clone())
+        );
+        assert_eq!(
+            stream.push("More words. ").unwrap().as_deref(),
+            Some("More words.")
+        );
+        let final_text = format!("{prefix} More words. An ending.");
+        assert!(
+            spoken_response(&final_text)
+                .unwrap()
+                .starts_with(&stream.emitted)
+        );
+        assert!(stream.push(&"x".repeat(64 * 1024)).is_err());
+    }
+
     #[test]
     fn waits_for_a_sentence_and_never_reads_partial_citations() {
         let mut stream = Sentences::default();

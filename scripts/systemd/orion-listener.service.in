@@ -1,5 +1,5 @@
 [Unit]
-Description=Orion Pi microphone and Rustpotter listener
+Description=Orion Pi microphone, Rustpotter and phrase-verifier listener
 After=network-online.target sound.target oriond.service
 Wants=network-online.target oriond.service
 PartOf=oriond.service

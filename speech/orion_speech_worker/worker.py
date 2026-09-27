@@ -80,7 +80,7 @@ def serve(reader, writer, loader=load_models):
                     raise ValueError('Empty synthesis input')
                 started = time.monotonic()
                 stream = iter(tts.stream(text))
-                sequence = total = 0
+                sequence = 0
                 try:
                     while True:
                         before = time.monotonic()
@@ -90,9 +90,6 @@ def serve(reader, writer, loader=load_models):
                             break
                         if audio.sample_rate != 24000 or not audio.pcm or len(audio.pcm) % 2 or audio.samples > 48000:
                             raise ValueError('Invalid synthesis PCM16 chunk')
-                        total += audio.samples
-                        if total > 120 * 24000:
-                            raise ValueError('Synthesized reply exceeds 120 seconds')
                         send(writer, dict(type='chunk', id=request_id, sequence=sequence,
                              sampleRate=24000, samples=audio.samples,
                              generationMs=(generated-before)*1000,

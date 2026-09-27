@@ -25,6 +25,7 @@ pub const COLORS: &[&str] = &[
     "purple",
     "pink",
 ];
+const ACCENTS: &[&str] = &["red", "amber", "green", "teal", "blue", "purple", "pink"];
 pub const MOODS: &[&str] = &["ambient", "warm", "cool", "warm_red"];
 // Shared golden bulb-style mix; tune against the physical LEDs and diffuser.
 const VINTAGE_GOLD: [u8; 4] = [255, 100, 0, 80];
@@ -80,7 +81,7 @@ pub(crate) fn resolve(value: Value) -> Result<Value, String> {
         colors = Some(palette.into_iter().map(str::to_owned).collect());
     }
     if colors.is_none() && effect.as_ref().is_some_and(|s| s != "off" && s != "solid") {
-        let accents = &COLORS[2..];
+        let accents = ACCENTS;
         let index = uuid::Uuid::new_v4().as_u128() as usize % accents.len();
         colors = Some(vec!["warm_white".into(), accents[index].into()]);
     }
@@ -115,6 +116,14 @@ pub(crate) fn schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn random_accent_palette_has_no_duplicate_colors() {
+        let colors: std::collections::HashSet<_> =
+            ACCENTS.iter().map(|name| color(name).unwrap()).collect();
+        assert_eq!(colors.len(), ACCENTS.len());
+        assert!(!ACCENTS.contains(&"orange"));
+        assert_eq!(color("orange").unwrap(), color("amber").unwrap());
+    }
     #[test]
     fn golden_names_match_for_steady_and_animated_lighting() {
         for effect in ["solid", "warm_idle_breathe", "thinking_drift"] {

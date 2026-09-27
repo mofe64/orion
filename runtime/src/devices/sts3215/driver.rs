@@ -9,7 +9,11 @@ use crate::motion::calibration::{ENCODER_RESOLUTION, JointCalibration};
 use crate::motion::pose::JointPositions;
 
 pub const STS3215_MODEL_NUMBER: i32 = 777;
-pub const VELOCITY_RAW_TO_RADIANS_PER_SECOND: f64 = 0.732 * 2.0 * PI / 60.0;
+/// Radians/second per Present Speed count/second on Orion's Phase bit-2=1 servos.
+/// Feetech magnetic-encoder memory table: address 58 is steps/s; address 18
+/// bit 2 selects one step/s (set) or 50 steps/s (clear). One turn is 4096 steps.
+/// Source: <https://www.feetechrc.com/Data/feetechrc/upload/file/20240702/舵机协议内存表-磁编码版本.xlsx>.
+pub const VELOCITY_RAW_TO_RADIANS_PER_SECOND: f64 = 2.0 * PI / ENCODER_RESOLUTION as f64;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JointServoProfile {
@@ -52,6 +56,14 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
     // so its commissioned gain is higher than the elbow's.
     profiles.get_mut("elbow_pitch_joint").unwrap().p_coefficient = 32;
     profiles.get_mut("head_pitch_joint").unwrap().p_coefficient = 48;
+    // At P = 16 the shoulder ignored small animation offsets (-0.02 rad moved
+    // 0%). P = 32 moved 65% of -0.02 rad and 92% of -0.04 rad, returned within
+    // 7 mrad, and held at 28 °C with no hunting or noise in hardware trials on
+    // 2026-09-27.
+    profiles
+        .get_mut("shoulder_pitch_joint")
+        .unwrap()
+        .p_coefficient = 32;
     profiles
 }
 
@@ -723,6 +735,68 @@ mod tests {
     }
 
     #[test]
+    fn gain_reconfiguration_writes_only_changes_and_restores_defaults() {
+        let mut transport = FakeTransport::default();
+        transport.add_servo(2, 1259);
+        let mut driver = Sts3215Driver::new(transport);
+        driver
+            .configure(
+                "/dev/fake",
+                1_000_000,
+                vec![calibration("shoulder_pitch_joint", 2, 1259, -739, 480)],
+            )
+            .unwrap();
+        driver.transport.register_writes.clear();
+        driver.transport.calls.clear();
+        let profile = driver
+            .servo_profiles
+            .get_mut("shoulder_pitch_joint")
+            .unwrap();
+        profile.p_coefficient = 24;
+        profile.i_coefficient = 1;
+        driver.apply_servo_profile().unwrap();
+        assert_eq!(
+            driver.transport.register_writes,
+            vec![
+                (2, Register::PCoefficient, 24),
+                (2, Register::ICoefficient, 1)
+            ]
+        );
+        driver.apply_servo_profile().unwrap();
+        assert_eq!(driver.transport.register_writes.len(), 2);
+        driver.servo_profiles = make_orion_servo_profiles();
+        driver.apply_servo_profile().unwrap();
+        assert_eq!(
+            driver.transport.register_writes,
+            vec![
+                (2, Register::PCoefficient, 24),
+                (2, Register::ICoefficient, 1),
+                (2, Register::PCoefficient, 32),
+                (2, Register::ICoefficient, 0)
+            ]
+        );
+        assert_eq!(
+            driver
+                .transport
+                .calls
+                .iter()
+                .filter(|c| c.as_str() == "eeprom_unlock")
+                .count(),
+            2
+        );
+        assert_eq!(
+            driver
+                .transport
+                .calls
+                .iter()
+                .filter(|c| c.as_str() == "eeprom_lock")
+                .count(),
+            2
+        );
+        assert_eq!(driver.transport.registers[&(2, Register::DCoefficient)], 32);
+    }
+
+    #[test]
     fn accepts_an_injected_per_joint_servo_profile() {
         let mut transport = FakeTransport::default();
         transport.add_servo(3, 1259);
@@ -862,6 +936,37 @@ mod tests {
                 ]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn converts_present_speed_counts_per_second_and_encoder_direction() {
+        use crate::devices::sts3215::transport::decode_sign_magnitude;
+
+        let mut transport = FakeTransport::default();
+        transport.add_servo(1, 942);
+        transport.add_servo(5, 3476);
+        let mut joints = calibrations();
+        joints[1].encoder_direction = -1;
+        let mut driver = Sts3215Driver::new(transport);
+        driver.connect("/dev/fake", 1_000_000, joints).unwrap();
+
+        // 0x815e is sign-magnitude -350, not two's-complement -32418.
+        let negative = decode_sign_magnitude(u16::from_le_bytes([0x5e, 0x81]) as i32, 15);
+        assert_eq!(negative, -350);
+        for (raw, expected) in [
+            (0, 0.0),
+            (100, 0.153_398_078_788_564_12),
+            (350, 0.536_893_275_759_974_4),
+            (negative, -0.536_893_275_759_974_4),
+            (4096, 2.0 * PI),
+        ] {
+            let mut states = driver.transport().states.clone();
+            states.get_mut(&1).unwrap().velocity = raw;
+            states.get_mut(&5).unwrap().velocity = raw;
+            let converted = driver.convert_states(&states).unwrap();
+            assert!((converted[0].velocity - expected).abs() < 1e-12);
+            assert!((converted[1].velocity + expected).abs() < 1e-12);
+        }
     }
 
     #[test]

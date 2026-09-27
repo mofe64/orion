@@ -123,6 +123,16 @@ impl VoiceFeedback {
                 Some(("listening", None))
             });
         }
+        if event == "keepalive" {
+            if self.session.as_deref() != Some(id) || now >= self.deadline {
+                return Err("Stale or expired voice session ID");
+            }
+            if !matches!(self.phase.as_str(), "processing" | "thinking" | "speaking") {
+                return Err("Voice keepalive requires an active response");
+            }
+            self.deadline = now + 180.0;
+            return Ok(None);
+        }
         if self.session.as_deref() != Some(id) {
             return Ok(None);
         }
@@ -130,6 +140,11 @@ impl VoiceFeedback {
             "verify" if self.phase == "listening" && !self.confirmed => {
                 self.verifying_wake = true;
                 self.record("wake_verification", now);
+                Ok(None)
+            }
+            "playing" if self.phase == "speaking" => {
+                // Actual playback transition; periodic renewal uses keepalive.
+                self.deadline = now + 180.0;
                 Ok(None)
             }
             "processing" if matches!(self.phase.as_str(), "speaking" | "thinking") => {
@@ -196,7 +211,9 @@ impl VoiceFeedback {
                 self.record("unavailable", now);
                 Ok(self.confirmed.then_some(("neutral", Some("error_muted"))))
             }
-            "endpoint" | "followup" | "unavailable" | "guard" | "window" | "verify" => Ok(None),
+            "endpoint" | "followup" | "unavailable" | "guard" | "window" | "verify" | "playing" => {
+                Ok(None)
+            }
             _ => Err("Unknown voice event"),
         }
     }
@@ -282,6 +299,36 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn keepalives_preserve_feedback_through_long_wait_and_playback_then_expire() {
+        let mut feedback = VoiceFeedback::default();
+        feedback.event(ID, "wake", 0.).unwrap();
+        feedback.event(ID, "endpoint", 1.).unwrap();
+        feedback.confirm(ID, 2.);
+        for now in [100., 200., 300., 400.] {
+            let history = feedback.history.clone();
+            let since = feedback.since;
+            assert_eq!(feedback.event(ID, "keepalive", now).unwrap(), None);
+            assert_eq!(feedback.history, history);
+            assert_eq!(feedback.since, since);
+            assert_eq!(feedback.reaction(), "thinking");
+            assert!(!feedback.expire(now + 50.));
+        }
+        feedback.playback_started(401.);
+        for now in [500., 600., 700., 800.] {
+            assert_eq!(feedback.event(ID, "keepalive", now).unwrap(), None);
+            assert_eq!(feedback.phase, "speaking");
+            assert!(!feedback.expire(now + 50.));
+        }
+        assert!(
+            feedback
+                .event("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "keepalive", 850.)
+                .is_err()
+        );
+        assert!(feedback.event(ID, "keepalive", 980.).is_err());
+        assert!(feedback.expire(980.));
+        assert!(feedback.event(ID, "keepalive", 981.).is_err());
+    }
 
     #[test]
     fn candidate_pulses_once_then_rejection_clears_feedback_without_confirmation() {

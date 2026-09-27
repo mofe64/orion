@@ -2,7 +2,7 @@
 
 Orion's Pi runs microphone capture, wake detection, speech recognition, speech
 synthesis and the agent coordinator. Rustpotter detects a possible wake phrase,
-Silero finds the end of speech, Qwen3-ASR transcribes, and Piper Alba Medium
+an openWakeWord phrase verifier confirms it acoustically, Silero finds the end of speech, Qwen3-ASR transcribes, and Piper Alba Medium
 produces the reply. Codex App Server runs on the Pi
 and uses online model inference. Studio provides settings and observation through
 the gateway.
@@ -12,9 +12,9 @@ the gateway.
 ```text
 ReSpeaker stereo capture
   -> direction observation and mono downmix
-  -> Rustpotter wake candidate -> chime and three-color light pulse
-  -> short Qwen wake verification while command capture continues
-  -> Silero endpoint -> Qwen transcription of the complete recording
+  -> Rustpotter wake candidate -> acoustic phrase verification
+  -> accepted: chime, three-color light pulse and wake confirmation
+  -> Silero endpoint -> Qwen transcription and wake-phrase check of the complete recording
   -> confirmed command -> Rust agent -> Codex App Server
   -> final answer sentences -> Piper Alba TTS -> coordinator audio buffer
   -> local gateway -> oriond playback and speech animation
@@ -40,8 +40,34 @@ before downmixing to mono and retains three seconds of audio in memory. When
 Rustpotter detects a candidate, the listener assigns a random session ID and
 registers a silent runtime session before notifying the coordinator.
 
-With the negotiated `wakePrefix` capability, the listener sends up to two seconds
-before detection plus 200 ms afterward for Qwen verification. Capture continues
+### Acoustic wake verification
+
+The packaged verifier in `voice/models/verifier/` scores every captured frame
+with openWakeWord's frozen melspectrogram and embedding models and a small
+“Hey Orion” classifier. It streams 80 ms chunks and ignores its first 26
+chunks after capture opens. `config.json` holds the decision rule. A candidate
+is accepted when a score reaches 0.2 between 0.8 seconds before and 1 second
+after the Rustpotter candidate; otherwise the verifier rejects it at the
+1-second deadline. A score from before the candidate accepts at the candidate,
+so a typical acceptance adds no delay.
+
+Acceptance sends `wake.verified` with `source: "acoustic"` to the coordinator
+and replaces the Qwen prefix pass. Rejection does not end the session: capture
+continues and Qwen checks the complete recording, as it does for an
+inconclusive prefix. Qwen's complete-recording wake check remains the final
+authority in both cases. An endpoint that arrives before the verdict is held
+until the verdict is sent.
+
+The verifier falls back to the prefix pass below when more than a tenth of
+its recent chunks take over 40 ms, or when the listener starts with
+`--no-verifier`. The ready message reports the verifier's settings and
+whether it is active.
+
+### ASR prefix fallback
+
+With the negotiated `wakePrefix` capability and no active verifier, the
+listener sends up to two seconds before detection plus 200 ms afterward for
+Qwen verification. Capture continues
 into the same complete recording while that job runs. Prefix text can confirm
 the wake phrase; the agent command always comes from a complete utterance. An
 inconclusive prefix falls back to confirmation using the full recording.
@@ -80,12 +106,16 @@ separate settings described in [configuration](configuration.md#pi-runtime-and-l
 
 ## Confirmed waking
 
-At mechanical rest, a Rustpotter candidate plays the wake chime and the
-three-color light pulse while the body remains still. Qwen confirmation starts
-the return home. A rejected candidate ends its light feedback without waking
-the body or dispatching a command. Other lighting remains suppressed at rest.
+With the acoustic verifier active, the wake chime and three-color light pulse
+play only after the verifier accepts. The listener then confirms the wake
+itself, which starts the return home at mechanical rest. A candidate the
+verifier rejects stays silent; if Qwen later confirms the complete recording,
+the chime and pulse play at that confirmation. Without the verifier, the
+candidate plays the chime and pulse and Qwen confirmation starts the return
+home. A rejected wake ends any light feedback without waking the body or
+dispatching a command. Other lighting remains suppressed at rest.
 
-The coordinator sends `wake.verified` after a successful prefix or
+The coordinator sends `wake.verified` after a successful ASR prefix or
 `wake.confirmed` after confirming the complete utterance. The listener forwards
 `voice SESSION confirmed` through its ordered runtime queue and waits up to five
 seconds for acknowledgement. The runtime accepts one confirmation for the current
@@ -122,7 +152,12 @@ endpointing applies. The follow-up receives a fresh session ID linked to the
 preceding completed turn. The coordinator validates that link and transcribes the
 recording directly as a command.
 
-Processing has a 120-second session lease; entering playback grants 180 seconds.
+Processing starts with a 120-second session lease; entering playback grants 180
+seconds. During synthesis and playback, the coordinator sends `session.keepalive`
+every five seconds. The listener extends its deadline and forwards `voice SESSION
+keepalive`; the runtime extends its processing/thinking/speaking deadline without
+changing phase, reaction, cue or history. Stale or expired sessions cannot renew.
+`session.processing` and `session.playing` mark actual phase transitions. The lease expires if the owner disappears.
 Disconnect, mute, cancellation and timeout clear the current session. The
 coordinator reconnects automatically. Protocol capabilities allow older peers to
 confirm the complete utterance or receive a single response without a follow-up
@@ -185,9 +220,10 @@ Mode and alert calls use the gateway's `routines` operation. Sleep requests atta
 the current confirmed voice session; rest waits until its acknowledgement ends.
 The agent cannot specify joint targets or bypass the rest lifecycle.
 
-Tool requests must match the active Codex thread and turn and are limited to
-16 per turn. Unexpected interactive requests fail the turn. Orion disables Codex
-shell, desktop, browser, plugin and multi-agent capabilities for its conversation.
+Tool requests must match the active Codex thread and turn. At most 16 distinct
+calls execute per turn; duplicates and excess calls receive error results without
+repeating an action. Unexpected interactive requests fail the turn. Orion disables
+Codex shell, desktop, browser, plugin and multi-agent capabilities for its conversation.
 The provider's protocol checks live in
 [the Codex adapter](../agent/src/providers/codex.rs).
 
@@ -199,9 +235,13 @@ do not identify the agent conversation. Pi transport reconnects and idle
 coordinator reloads can retain that conversation.
 
 Changing the agent model, effort or executable, stopping the host, or cancelling
-or failing an active agent request retires the conversation. The next request
-starts a fresh thread. There is no persisted thread-resume policy or idle-time
-rotation. Closing the five-second follow-up window preserves conversation context.
+an active request retires the conversation. Protocol uncertainty also retires it:
+process exit, unreadable events, mid-turn timeout, stale/invalid calls, multiple
+final answers, changed streamed speech or unsupported server requests. The next
+request starts a fresh thread. Matching terminal turns retain the conversation,
+including failed turns and empty final answers without streamed speech; explicit
+turn-start rejections also retain it. There is no persisted thread-resume policy
+or idle-time rotation. Closing the five-second follow-up window preserves context.
 
 The agent saves memories only when requested. Entries use IDs and UTC creation
 dates in a local `MEMORY.md`; writes are locked and replace the file atomically.
@@ -242,9 +282,10 @@ Piper Alba generates 22,050 Hz speech. Its worker completes a sentence, resample
 it to the 24,000 Hz playback protocol, then sends chunks of at most two seconds.
 The coordinator buffers at least six
 seconds of audio, or the complete response when shorter, before uploading it.
-It can retain a slower reply until completion to prevent playback gaps. The
-buffering decision follows generation speed for the current response, rather
-than a fixed model choice.
+Fast generation releases a reserve between six and twelve seconds. Measured slow
+generation or a decoder pause requiring a larger reserve latches complete-reply
+buffering, so playback cannot outrun synthesis. The coordinator retains that
+reply until its final synthesis end marker, subject to the thirty-minute cap.
 
 A first generated chunk, a first upload and audible speech are different points
 in the turn. Debug exposes separate stage durations. Stages overlap, so adding
@@ -268,17 +309,42 @@ calibration is required before enabling direction estimates.
 
 The Codex adapter streams speech text only from a matching thread, turn and item
 explicitly marked `final_answer`. Complete sentences can reach the selected TTS
-model while Codex finishes. Unknown phases wait for final completion. Model
+model while Codex finishes. Phase-less messages wait for final completion. They do not participate in
+multiple-final or streamed-item checks. If the turn has no explicit final, the
+last phase-less message is the answer. Two distinct explicit final items retire
+the conversation. Model
 commentary and citation markers are removed from spoken output. The final text
 must preserve any prefix
-already emitted; a mismatch cancels the turn. Spoken output is capped at
-800 Unicode characters plus an ellipsis.
+already emitted; a mismatch cancels the turn and retires the agent conversation.
+The base prompt requests a short opening sentence and prose for listening, without
+markdown, bullet symbols, tables or headings. There is no output truncation or
+word/sentence quota. The personality's “Keep it brief” habit controls brevity, and
+the 64 KiB streamed-answer bound guards runaway generation.
 
 Successive sentences use one TTS worker and one runtime speech run. The selected
-voice is captured when the response starts. Bounded queues and explicit job IDs,
+voice is captured when the response starts. Bounded PCM queues and explicit job IDs,
 chunk sequences and end markers prevent mixed or incomplete responses from being
-accepted. A speech job has a 240-second host deadline, while the listener's lease
-also bounds the overall turn.
+accepted. Text delivery queues independently of inference, bounded by the agent's
+64 KiB streamed-answer and 2 MiB event guards, so slow TTS does not hold the Codex
+turn open. Every sentence or unpunctuated tail is divided into pieces of at most
+160 Unicode characters before inference, preferring words and sentence ends. Each
+piece gets its own 240-second deadline. Piper also bounds its native decoder
+inputs, retaining the 120-second per-input audio sanity guard.
+
+The service's 135-second RPC read, 130-second dispatch and 140-second remote
+request deadlines cover control/profile requests, not voice playback. The agent's
+120-second deadline covers a Codex turn and tool results; final synthesis and
+playback continue independently after it finishes. See [agent conversation](#agent-conversation-and-memory)
+for failure recovery. Every turn includes UTC time, local time with an offset and
+a discovered IANA zone. If no zone is known, both the context and `list_alerts`
+say `unknown; use the local UTC offset above`. Today's offset is known even when
+the zone is not; a future date's offset may require clarification.
+
+Gateway validation reasons reach the agent through `error.message` or the
+runtime's `result.error`, with an HTTP status fallback and credential/URL redaction.
+`get_lighting` reads manual brightness in percent, effect and RGBW colors; null
+means no manual override. `set_lighting` explains that scenes/speech reject changes
+and character startup clears a manual light.
 
 The coordinator uploads mono 24 kHz PCM16 WAV through the gateway.
 `POST /api/v2/speech/stream` creates a runtime run,
@@ -286,19 +352,64 @@ The coordinator uploads mono 24 kHz PCM16 WAV through the gateway.
 `/api/v2/speech/{run}/end` declares the final sequence. The complete-WAV endpoint
 also remains available.
 
-The startup reserve is the larger of six seconds of audio or twice the longest
+The required startup reserve is the larger of six seconds or twice the longest
 measured generation step plus two seconds. Once six seconds have accumulated,
-generation taking more than 75% of the audio duration, or a reserve above twelve
-seconds, makes the coordinator buffer the complete response. Short replies finish generation
-before upload. The 120-second audio limit bounds the coordinator's PCM buffer to
-about 5.8 MB; it does not extend the voice-session deadline.
+generation taking more than 75% of audio duration, or a required reserve above
+twelve seconds, latches complete buffering. That reply uploads only after the
+final synthesis end marker, even if later chunks are faster. Fast generation
+continues to release between six and twelve seconds, with at most one chunk of
+overshoot. Short replies finish generation before upload.
+
+Uploads wait while `buffered_ms` exceeds sixteen seconds, limiting accepted audio
+to about eighteen seconds ahead of playing audio. Bounded synthesis channels
+apply backpressure while the player catches up. A complete buffered reply bypasses
+this wait while the runtime remains `queued`: no playback can drain that reserve,
+and withholding more chunks would eventually hit upload-idle expiry. Its remaining
+chunks and end marker can therefore arrive in a burst before playback readiness.
+A complete reply that begins a queued burst finishes it even if playback starts
+midway: a large accumulated lead could take more than ten seconds to drain to the
+pacing threshold. Replies uploaded to an already-playing runtime retain normal
+sixteen-second pacing. Under normal paced playback each at-most-two-second upload
+renews the runtime's existing ten-second upload-idle guard well before expiry.
+The guard remains active until the end marker; after that marker, upload-idle
+expiry no longer applies. Per-upload WAV bounds and two-second chunk bounds remain.
+
+The runtime computes smoothed 20 ms energy frames incrementally, replacing a
+provisional partial frame when the next chunk arrives. Quiet regions and phrase
+peaks use this compact energy history; raw PCM leaves memory after the player
+accepts it. Stream chunk files are deleted after acceptance, not read by the
+player. Character planning requires absolute frame indices, so analysis history
+remains until completion. Streams accept thirty minutes of audio, then fail with
+an explicit sanity-limit reason. The coordinator cancels playback, publishes the
+failure, and supplies the reason to the next model turn. No extra inference starts
+on failure and no successful completion conceals truncated speech.
+
+At 24 kHz mono PCM16, raw audio costs 2.88 MB per minute. The removed retained
+copy and full decoded-sample allocation cost 2.88 MB and 11.52 MB per minute,
+respectively. Incremental RMS history costs 24 KB per minute plus quiet/peak
+indices; its worst-case logical landmark storage is below 50 KB per minute.
+Fast-path PCM queues and startup reserve have fixed bounds. A complete-buffered
+reply retains 2.88 MB per minute in the coordinator, up to 86.4 MB at thirty
+minutes. The coordinator checks this cap before retaining each chunk and reports
+the same explicit runtime failure reason if another chunk would exceed it. A
+queued complete-reply burst or an unpaced external uploader can also queue up to
+86.4 MB at the runtime. Complete queued bursts finish uploading without pacing;
+other replies retain the sixteen-second upload threshold.
+These figures describe payloads, excluding allocator capacity, in-flight chunks
+and process/library overhead.
 
 The runtime prebuffers two seconds, or a shorter complete reply, and feeds one
 `aplay` process continuously. Each chunk contains at most two seconds of audio.
 Upload completion is followed by actual player completion before the listener is
 acknowledged. Out-of-order chunks, upload stalls, cancellation and buffer
 exhaustion terminate the run. A later generation slowdown can still exhaust a
-buffer chosen from earlier timings.
+buffer chosen from earlier timings. The coordinator replaces a total playback
+deadline with a 20-second stall guard: state changes, accepted chunks and advancing
+software playback position reset it. Waiting for synthesis with an exhausted buffer
+does not consume the stall budget. `buffered_ms` estimates playback position from
+elapsed time rather than measuring ALSA consumption, so a hung player is detected
+after the expected audio end plus the stall interval. Physical audio completion
+still comes from the player.
 
 The runtime analyzes received audio and extends the character's existing motion
 run at gesture boundaries. Extension preserves commanded position and velocity,

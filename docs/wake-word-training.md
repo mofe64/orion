@@ -1,12 +1,15 @@
 # Train and evaluate “Hey Orion”
 
 Orion's managed listener uses the trained Rustpotter model
-`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80`. The earlier
-six-example **reference**, `voice/models/wake/hey_orion_reference.rpw` at
-threshold `0.35`, stays in the release for rollback. The trained model was
-selected for a live trial after a paired offline comparison; its final
-false-activation rate and live latency remain unverified. Rustpotter can load
-either `.rpw` without changing the listener's audio path.
+`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80`, followed by
+the openWakeWord phrase verifier in `voice/models/verifier/`. The six-example
+**reference**, `voice/models/wake/hey_orion_reference.rpw` at threshold `0.35`,
+stays in the release for rollback. Rustpotter can load either `.rpw` without changing the
+listener's audio path.
+
+The verifier's classifier was trained on screened Piper speech and reviewed
+original recordings. Its models inherit the non-commercial CC BY-NC-SA licence
+of openWakeWord's training features.
 
 ## Record the baseline
 
@@ -63,14 +66,14 @@ material regression in the other measures. Keep the reference for rollback.
 ## Deploy and clean up
 
 The listener accepts `--wake-model PATH` and `--threshold VALUE`. Both the
-trained model and reference are present in every managed release. Select the
-reference and `0.35` together in `ACTIVE_WAKE_MODEL` and
+trained model and reference are present in every managed release. To roll back,
+select the reference and `0.35` together in `ACTIVE_WAKE_MODEL` and
 `ACTIVE_WAKE_THRESHOLD` in `scripts/pi_service_config.py` and in the listener
 service template, then
 commit, push, and run the [Pi deployment procedure](quickstart.md#deploy-to-the-pi)
-to switch back. Record model hash and threshold with each release. A candidate
-chime and light pulse can happen before Qwen verifies the phrase; Qwen still
-gates commands and body waking.
+to switch back. Record model hash and threshold with each release. With the
+verifier active, the chime, light pulse and body waking wait for its acceptance;
+Qwen still checks the complete recording before any command runs.
 
 The experiment manifest should list all recordings, temporary WAVs, candidate
 models, logs and capture tools. Delete rejected models and raw recordings at the

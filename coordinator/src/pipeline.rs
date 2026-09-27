@@ -328,6 +328,18 @@ async fn connected(
                             followup = None;
                             if continuation { event(hub, sid, json!({"type":"command.started"})); } else { hub.publish(message); }
                         },
+                        "wake.verified" => {
+                            // The listener's acoustic verifier decided before any ASR ran.
+                            let current = session.as_mut().ok_or("Acoustic verdict without wake session")?;
+                            let accepted = message["accepted"].as_bool().ok_or("Acoustic verdict needs accepted")?;
+                            current.acoustic_verdict(sid, accepted)?;
+                            event(hub, sid, if accepted {
+                                json!({"type":"wake.confirmed", "text":"", "hasCommand":false, "early":true,
+                                       "source":"acoustic", "score":message["score"], "verifierMs":message["verifierMs"]})
+                            } else {
+                                json!({"type":"wake.verification_deferred", "source":"acoustic", "score":message["score"]})
+                            });
+                        },
                         "conversation.ready" | "conversation.closed" => {
                             if followup.as_deref() != Some(sid) { return Err("Stale conversation window event".into()); }
                             let open = message["type"] == "conversation.ready";
@@ -412,7 +424,9 @@ async fn response(
     let sleep_requested = std::sync::atomic::AtomicBool::new(false);
     let started = Instant::now();
     let (send, mut receive) = mpsc::channel(8);
-    let (text_send, text_receive) = mpsc::channel(8);
+    // Text is bounded by the agent's streamed-answer/event guards. Queue it
+    // independently so slow inference cannot consume the agent turn deadline.
+    let (text_send, text_receive) = mpsc::unbounded_channel();
     let streamed_text = text_send.clone();
     let activity = async {
         let text_send = streamed_text;
@@ -440,7 +454,6 @@ async fn response(
                     prefix.push_str(&text);
                     text_send
                         .send(text)
-                        .await
                         .map_err(|_| "Speech renderer stopped")?;
                 }
                 orion_agent::AgentEvent::SearchStarted => {
@@ -503,7 +516,6 @@ async fn response(
         if !remaining.is_empty() {
             text_send
                 .send(remaining.into())
-                .await
                 .map_err(|_| "Speech renderer stopped")?;
         }
         drop(text_send);
@@ -525,7 +537,13 @@ async fn response(
         active.clone(),
         false,
     );
-    tokio::try_join!(agent_turn, spoken)?;
+    let result = tokio::try_join!(agent_turn, spoken);
+    if let Err(reason) = &result
+        && reason.contains("30-minute audio sanity limit")
+    {
+        agent.report_delivery_failure(reason);
+    }
+    result?;
     Ok(sleep_requested.load(std::sync::atomic::Ordering::Relaxed))
 }
 
@@ -541,10 +559,8 @@ async fn speak(
     active: ActiveRun,
     intermediate: bool,
 ) -> Result<(), String> {
-    let (send, receive) = mpsc::channel(1);
-    send.send(text)
-        .await
-        .map_err(|_| "Speech renderer stopped")?;
+    let (send, receive) = mpsc::unbounded_channel();
+    send.send(text).map_err(|_| "Speech renderer stopped")?;
     drop(send);
     speak_sequence(
         speech,
@@ -568,12 +584,14 @@ async fn speak_sequence(
     hub: &Hub,
     sid: &str,
     request: u64,
-    mut texts: mpsc::Receiver<String>,
+    mut texts: mpsc::UnboundedReceiver<String>,
     active: ActiveRun,
     intermediate: bool,
 ) -> Result<(), String> {
     let (run_send, mut run_receive) = watch::channel(None::<u64>);
     let (end_send, mut end_receive) = watch::channel(false);
+    let (progress_send, progress_receive) = watch::channel(UploadProgress::default());
+    let (synthesis_started, synthesis_ready) = watch::channel(false);
     let synthesize = async {
         let (send, receive) = mpsc::channel(8);
         let produce = async {
@@ -581,6 +599,7 @@ async fn speak_sequence(
             while let Some(text) = texts.recv().await {
                 if started.is_none() {
                     started = Some(Instant::now());
+                    let _ = synthesis_started.send(true);
                     if !intermediate {
                         event(
                             hub,
@@ -610,7 +629,16 @@ async fn speak_sequence(
             send.send(None).await.map_err(|_| "Speech upload stopped")?;
             Ok::<f64, String>(elapsed)
         };
-        let upload = upload_chunks(receive, gateway, &active, sid, request, hub, run_send);
+        let upload = upload_chunks(
+            receive,
+            gateway,
+            &active,
+            sid,
+            request,
+            hub,
+            run_send,
+            progress_send,
+        );
         let (synthesis_ms, (run_id, sequence)) = tokio::try_join!(produce, upload)?;
         gateway
             .request(
@@ -632,8 +660,9 @@ async fn speak_sequence(
                 .await
                 .map_err(|_| "Synthesis stopped before playback")?;
         };
-        tokio::time::timeout(Duration::from_secs(150), async {
+        {
             let mut playing = false;
+            let mut progress = PlaybackProgress::new(Instant::now());
             loop {
                 let status = gateway
                     .request(&format!("/api/v2/speech/{run}"), None)
@@ -674,16 +703,48 @@ async fn speak_sequence(
                     Some("queued" | "playing") => {}
                     _ => return Err("Unknown Pi speech state".into()),
                 }
+                let uploaded = *progress_receive.borrow();
+                let buffered = status["buffered_ms"].as_i64();
+                // buffered_ms is a software estimate. Clamp at zero so elapsed
+                // wall time cannot disguise a player stuck after its expected end.
+                let played_ms =
+                    buffered.map(|ms| uploaded.audio_ms.saturating_sub(ms.max(0) as u64));
+                let waiting_for_synthesis =
+                    !*end_receive.borrow() && buffered.is_some_and(|ms| ms <= 0);
+                if progress.stalled(
+                    Instant::now(),
+                    status["state"].as_str().unwrap_or_default(),
+                    uploaded.chunks,
+                    played_ms,
+                    waiting_for_synthesis,
+                ) {
+                    return Err("Pi playback stalled for 20 seconds".into());
+                }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        })
-        .await
-        .map_err(|_| "Pi playback timed out")?
+        }
     };
-    tokio::try_join!(synthesize, playback)?;
-    Ok(())
+    let keep_alive = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            // A final sequence waiting for agent text must not overwrite the
+            // phase of a concurrently spoken search acknowledgement.
+            if !*synthesis_ready.borrow() {
+                continue;
+            }
+            pi.send(json!({"type":"session.keepalive", "sessionId":sid}))
+                .await?;
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), String>(())
+    };
+    tokio::select! {
+        result = async { tokio::try_join!(synthesize, playback).map(|_| ()) } => result,
+        result = keep_alive => result,
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upload_chunks(
     mut receive: mpsc::Receiver<Option<Chunk>>,
     gateway: &Gateway,
@@ -692,13 +753,15 @@ async fn upload_chunks(
     request: u64,
     hub: &Hub,
     run_send: watch::Sender<Option<u64>>,
+    progress_send: watch::Sender<UploadProgress>,
 ) -> Result<(u64, u64), String> {
     let mut buffer = StartupBuffer::default();
+    let mut audio_bytes = 0;
     let mut held = Vec::new();
     let mut released = false;
     let mut sequence = 0u64;
     let mut run = None;
-    let mut total_bytes = 0usize;
+    let mut queued_complete_burst = false;
     loop {
         let item = receive
             .recv()
@@ -707,11 +770,9 @@ async fn upload_chunks(
         let ended = item.is_none();
         let mut ready = ended;
         if let Some(chunk) = item {
-            // The limit belongs to the complete reply, including every sentence.
-            total_bytes = total_bytes.saturating_add(chunk.pcm.len());
-            if total_bytes > 120 * 48_000 {
-                return Err("Synthesized reply exceeds 120 seconds".into());
-            }
+            // Check before retaining PCM, including complete-buffered replies
+            // that have not created a runtime run yet.
+            audio_bytes = checked_audio_total(audio_bytes, chunk.pcm.len())?;
             if !released {
                 ready = buffer.add(&chunk);
             }
@@ -731,6 +792,28 @@ async fn upload_chunks(
                     None => "/api/v2/speech/stream".into(),
                     Some(run) => format!("/api/v2/speech/{run}/chunks/{sequence}"),
                 };
+                if let Some(id) = run {
+                    // Keep PCM ahead of software playback bounded. This is
+                    // backpressure, not a duration limit; synthesis queues wait.
+                    loop {
+                        let status = gateway
+                            .request(&format!("/api/v2/speech/{id}"), None)
+                            .await?;
+                        if matches!(status["state"].as_str(), Some("failed" | "cancelled")) {
+                            return Err(format!("Pi playback stopped: {}", status["error"]));
+                        }
+                        // Finish a complete queued burst even if playback starts
+                        // midway: its accumulated lead can take longer than the
+                        // upload-idle guard to drain to the pacing threshold.
+                        queued_complete_burst |= ended && status["state"] == "queued";
+                        if queued_complete_burst
+                            || !status["buffered_ms"].as_i64().is_some_and(|ms| ms > 16_000)
+                        {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
                 let started = Instant::now();
                 let accepted = gateway
                     .upload(&path, &chunk.pcm, &format!("voice:{sid}"))
@@ -752,6 +835,10 @@ async fn upload_chunks(
                     timing(hub, sid, "firstChunkMs", chunk.synthesis_ms);
                 }
                 sequence += 1;
+                progress_send.send_modify(|progress| {
+                    progress.chunks = sequence;
+                    progress.audio_ms += chunk.pcm.len() as u64 / 48;
+                });
             }
         }
         if ended {
@@ -761,35 +848,123 @@ async fn upload_chunks(
     Ok((run.ok_or("Synthesis returned no audio")?, sequence))
 }
 
-#[cfg(test)]
-mod reply_limit_tests {
-    use super::*;
+const MAX_REPLY_AUDIO_BYTES: u64 = 30 * 60 * 48_000;
+const SPEECH_LIMIT_REASON: &str =
+    "Speech stream exceeds the 30-minute audio sanity limit; playback cannot complete this answer.";
 
-    #[tokio::test]
-    async fn bounds_the_complete_reply_before_uploading_slow_audio() {
-        let (send, receive) = mpsc::channel(3);
-        for _ in 0..2 {
-            send.send(Some(Chunk {
-                pcm: vec![0; 61 * 48_000],
-                generation_ms: 180_000.,
-                synthesis_ms: 180_000.,
-            }))
-            .await
-            .unwrap();
+fn checked_audio_total(received: u64, chunk_bytes: usize) -> Result<u64, String> {
+    received
+        .checked_add(chunk_bytes as u64)
+        .filter(|total| *total <= MAX_REPLY_AUDIO_BYTES)
+        .ok_or_else(|| SPEECH_LIMIT_REASON.into())
+}
+
+// A reply can play indefinitely while it progresses. Waiting for synthesis has
+// its own per-job guard and must not consume the playback stall budget.
+const PLAYBACK_STALL_TIMEOUT: Duration = Duration::from_secs(20);
+#[derive(Clone, Copy, Default)]
+struct UploadProgress {
+    chunks: u64,
+    audio_ms: u64,
+}
+struct PlaybackProgress {
+    last: Instant,
+    observed: Option<(String, u64, Option<u64>)>,
+}
+impl PlaybackProgress {
+    fn new(now: Instant) -> Self {
+        Self {
+            last: now,
+            observed: None,
         }
-        let (run_send, _) = watch::channel(None);
-        let active = Arc::new(Mutex::new(None));
-        let result = upload_chunks(
-            receive,
-            &Gateway::new("http://127.0.0.1:1", "test").unwrap(),
-            &active,
-            "test",
-            1,
-            &Hub::new(),
-            run_send,
-        )
-        .await;
-        assert_eq!(result.unwrap_err(), "Synthesized reply exceeds 120 seconds");
-        assert!(active.lock().await.is_none());
+    }
+    fn stalled(
+        &mut self,
+        now: Instant,
+        state: &str,
+        chunks: u64,
+        played_ms: Option<u64>,
+        waiting: bool,
+    ) -> bool {
+        let observed = (state.to_owned(), chunks, played_ms);
+        if waiting || self.observed.as_ref() != Some(&observed) {
+            self.last = now;
+        }
+        self.observed = Some(observed);
+        now.duration_since(self.last) >= PLAYBACK_STALL_TIMEOUT
+    }
+}
+
+#[cfg(test)]
+mod playback_tests {
+    use super::*;
+    #[test]
+    fn retained_audio_accepts_exactly_thirty_minutes_and_rejects_more() {
+        assert_eq!(
+            checked_audio_total(MAX_REPLY_AUDIO_BYTES - 96_000, 96_000).unwrap(),
+            MAX_REPLY_AUDIO_BYTES
+        );
+        assert_eq!(
+            checked_audio_total(MAX_REPLY_AUDIO_BYTES, 2).unwrap_err(),
+            SPEECH_LIMIT_REASON
+        );
+        assert_eq!(
+            checked_audio_total(u64::MAX, 2).unwrap_err(),
+            SPEECH_LIMIT_REASON
+        );
+    }
+
+    #[test]
+    fn long_playback_progress_and_synthesis_waits_do_not_time_out() {
+        let start = Instant::now();
+        let mut progress = PlaybackProgress::new(start);
+        for seconds in 0..400 {
+            assert!(!progress.stalled(
+                start + Duration::from_secs(seconds),
+                "playing",
+                100,
+                Some(seconds * 1000),
+                false
+            ));
+        }
+        for seconds in 400..700 {
+            assert!(!progress.stalled(
+                start + Duration::from_secs(seconds),
+                "playing",
+                100,
+                Some(399000),
+                true
+            ));
+        }
+        assert!(!progress.stalled(
+            start + Duration::from_secs(700),
+            "playing",
+            101,
+            Some(399000),
+            false
+        ));
+        assert!(!progress.stalled(
+            start + Duration::from_secs(719),
+            "playing",
+            101,
+            Some(399000),
+            false
+        ));
+        assert!(progress.stalled(
+            start + Duration::from_secs(720),
+            "playing",
+            101,
+            Some(399000),
+            false
+        ));
+    }
+    #[test]
+    fn state_changes_or_new_accepted_chunks_reset_the_stall_clock() {
+        let start = Instant::now();
+        let mut progress = PlaybackProgress::new(start);
+        assert!(!progress.stalled(start, "queued", 1, None, false));
+        assert!(!progress.stalled(start + Duration::from_secs(19), "playing", 1, None, false));
+        assert!(!progress.stalled(start + Duration::from_secs(38), "playing", 2, None, false));
+        assert!(progress.stalled(start + Duration::from_secs(58), "playing", 2, None, false));
     }
 }

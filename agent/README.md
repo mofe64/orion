@@ -8,12 +8,16 @@ independently of the voice coordinator on the Pi.
 `AgentService::start(AgentConfig)` starts an independent executor. Pass its
 cloneable `service.handle()` to the [coordinator](../coordinator/README.md).
 `AgentHandle::info()` reads status and `AgentHandle::respond(text)` returns
-spoken text. Calls use bounded Rust channels within the host process.
+spoken text. Calls use bounded Rust channels within the host process. Memory
+edits explicitly unlock at completion so a descriptor inherited during a concurrent
+subprocess launch cannot retain a finished write lock.
 Dropping an active call cancels it; dropping the service shuts down Codex.
 
 The first status or response request starts `codex app-server`, checks its account
-and model catalog, and creates an ephemeral conversation. Successful calls reuse
-it. Keep the service alive when restarting the coordinator or reloading speech
+and model catalog, and creates an ephemeral conversation. Calls reuse it after a matching terminal
+turn event, including a completed turn with tool errors or empty speech. Protocol
+uncertainty (interruption, unreadable events, stale calls, inconsistent final
+speech or unsupported server requests) retires it. Keep the service alive when restarting the coordinator or reloading speech
 models. See [conversation lifecycle](../docs/voice-architecture.md#agent-conversation-and-memory)
 and [runtime configuration](../docs/configuration.md#pi-voice-profile).
 
@@ -90,8 +94,12 @@ visual tuning on the physical lamp; it is not a calibrated color temperature.
 `ambient` selects one color so animated effects retain that golden hue.
 `cool` combines cool white and blue,
 `warm` uses warm white, and `warm_red` combines warm white and red. Brightness
-is absolute percent. Effect palettes default to warm white and a random accent;
-explicit palettes contain one or two named colors.
+is absolute percent. `get_lighting` returns the manual lamp's brightness in
+percent, effect and RGBW colors; a null lamp means no manual override. Read it
+before a relative adjustment. Changes are refused during a scene or speech, and
+starting the character clears the manual light. Effect palettes default to warm
+white and a random accent with unique RGBW values; amber and orange remain
+aliases for explicit palettes.
 
 The mode and alert tools use `src/tools/routines.rs`:
 
@@ -104,6 +112,19 @@ The mode and alert tools use `src/tools/routines.rs`:
 | `list_alerts` | No arguments; returns Pi local time, active and recent alerts |
 | `cancel_alert` | `id` from a previous tool result |
 | `stop_alert` | No arguments; silences alerts ringing now |
+
+Every turn includes UTC time, local time with its offset, and a discovered IANA
+zone. POSIX `TZ` settings fall through to system timezone files. When discovery
+fails, the context and `list_alerts` say `unknown; use the local UTC offset above`.
+For a future alarm date, clarify an offset that cannot be determined. A speech
+sanity-limit failure is included in the next model turn without starting extra
+inference after playback fails.
+
+Duplicate calls or calls beyond the per-turn budget return a tool error without
+repeating the action or resetting a completed conversation.
+
+Only explicit `final_answer` items participate in multiple-final and streamed-item checks. Without an explicit final, the last
+phase-less message wins; those legacy messages are never streamed early.
 
 Read `list_alerts` before choosing a clock-alarm timestamp. Clarify ambiguous
 times and cancellation targets. Clock alarms must fall within the next 366 days;
@@ -121,7 +142,12 @@ cargo test --manifest-path agent/Cargo.toml installed_runtime_search_and_lightin
 ## Personality and profile edits
 
 Studio Settings offers five traits and four conversational habits. Defaults are
-Warm, Calm, and Keep it brief. Selecting none uses a neutral, clear tone.
+Warm, Calm, and Keep it brief. This habit is the only overall brevity control;
+deselecting it allows long answers. The base prompt asks for a short opening
+sentence and speech-friendly prose without markdown, bullet symbols, tables or
+headings. Speech normalization strips citations and whitespace without truncation;
+the streamed-answer runaway guard remains 64 KiB. Selecting none uses a neutral,
+clear tone.
 `SOUL.md` defaults to `$HOME/.local/share/orion/SOUL.md`; `ORION_SOUL_PATH`
 overrides its location and `AgentConfig.soul_path = None` disables persistence.
 The file is created on the first save. Its first HTML comment contains an

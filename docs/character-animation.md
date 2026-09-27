@@ -83,8 +83,8 @@ the current movement and its timing. They can refresh attention expiry without
 replaying the opening tilt. This prevents a processing-stage transition from
 causing a sudden movement restart.
 
-When speech takes over, the runtime starts from the commanded thinking position
-and velocity when available. Speech and its final settle retain priority over
+When speech takes over, the runtime starts from the commanded thinking position,
+velocity and acceleration when available. Speech and its final settle retain priority over
 later listening, thinking or neutral notifications. These rules live in
 `CharacterCoordinator` and `RuntimeCore::extend_character_performance()`.
 Tests cover repeated thinking requests and the handover into speech.
@@ -140,6 +140,22 @@ shoulder adjustment, weight shift, and soft head shake;
 - directional anchors use `idle_directional_hold` and avoid yaw clips that
 would collapse against the left or right calibration boundary.
 
+Each play clones its selected asset, mirrors yaw and roll as a
+pair with 50% probability, varies head/yaw amplitude by 0.85–1.15, and divides
+travel durations by a seeded tempo factor of 0.9–1.1. Arm offsets retain their
+authored magnitudes until P11. Directional variants point yaw inward; mirrors
+cannot push a lateral joint toward its nearby calibration limit.
+`idle_breathe` belongs only to micro selection. `idle_micro_glance` reaches a
+real settle at its look target, holds for 0.5–1.0 seconds per play, then returns.
+There is no continuous idle layer or coupling to voice attention.
+
+`idle_breathe`, `idle_attentive_hold`, `idle_directional_hold` and
+`idle_weight_shift` start with an 80 ms head-only drawing at 12% of their
+original first head target. Arms then follow to the unchanged authored
+drawing. Total authored travel time and all original arm offsets stay intact;
+tempo variation keeps the added head start inside 50–100 ms. This small
+intermediate drawing avoids compressing the entire head stroke into 80 ms.
+
 The two categories create contrast. Micro-idles are short details; larger
 idles redistribute more of the body and happen less often.
 
@@ -169,9 +185,12 @@ are sufficient to communicate life.
 
 ## Speech-driven animation
 
-Speech uses one continuous performance lifecycle. Complete files can be planned
-up front; streaming replies extend the spline from commanded position and
-velocity after the current body follow and any hold finish. Newly received audio
+Speech uses one continuous performance lifecycle. Each plan covers at most
+20 seconds of audio, or all the remaining audio when no more than 25 seconds
+remain. Longer complete files are planned in pieces and extended like streamed
+audio, which keeps planning inside one 50 Hz cycle however long the reply is.
+Streaming replies and later pieces extend the spline from commanded position,
+velocity and acceleration after the current body follow and any hold finish. Newly received audio
 does not replace a gesture midway through its head lead. Gesture history, random
 state, and body shape advance only when the runtime passes a planned body-follow
 checkpoint; composing an unperformed future does not advance that history. The motion run and immutable
@@ -223,7 +242,10 @@ occasional explanatory shapes;
   selection weights without forcing a fixed three-clip cycle;
 - duration varies around the phrase category's nominal timing;
 - head roll may retain its direction, ease toward neutral, or change sides;
-- head pitch supplies nods, lifts, and counter-shapes;
+  yaw turns bias non-reflective roll toward matching signs (the same side in
+  grounded-base MuJoCo), while reflective tilts keep their authored sign;
+- head pitch supplies nods, lifts, and authored emphasis counter-strokes;
+  mean RMS over each drawing's audio window gently scales its head amplitude;
 - small base-yaw turns are chosen without repeating a direction and are
 constrained away from a directional anchor's nearby limit.
 
@@ -240,7 +262,16 @@ Every planned phrase is divided into a head lead and body follow:
 2. **Body follow:** shoulder and elbow arrive later while the head blends
   toward the next phrase's arc.
 
-The head lead receives roughly two-thirds of the phrase duration. During the
+Ordinary head leads receive roughly two-thirds of the phrase duration. Emphasis
+strokes receive 25–35%, followed by the authored second head drawing: the nod
+lifts and then drops. Reflective tilts retain their authored roll sign.
+Emphasis is planned backward from an audio peak, targeting a commanded apex
+0.17 seconds before it; a preceding drawing shorter than 0.35 seconds is
+not compressed to make room. Compiled arrival checks include style tempo and
+speed retiming. All emphases in a plan are aligned together: one compile
+measures every apex, corrections carry their time shift forward to later
+emphases, and a second pass corrects retiming effects, so a plan compiles at
+most three times. Peaks that cannot fit safely are skipped. During an ordinary
 body follow, the head target includes an 18% look-ahead toward the following
 phrase's head target. That staging creates anticipation and overlap inside the
 same continuous spline. At selected quiet intervals, the body follow instead
@@ -257,6 +288,9 @@ of these conditions hold:
 (at least two drawings intervene); and
 - it would not immediately repeat an explanatory lean.
 
+The full body beat uses the explanatory lean's approved arm shape beneath the
+selected head stroke; it does not replace the nod with another lift.
+
 This is the movement hierarchy:
 
 ```text
@@ -266,6 +300,15 @@ full explanatory body beat          sparse emphasis only
 speaking-energy light               supporting state cue
 audio                               timing source and semantic content
 ```
+
+A fresh speech onset from holding prepares with a 0.18-second head drawing
+opposite the first lead at 25% of its amplitude. An executing thinking or idle
+handover skips this preparation; streamed extensions never repeat it. Audio
+starts without waiting for motion preparation. Completed audio with at least
+two seconds of performance budget reserves a 0.28-second resolve drawing,
+lifting head pitch by 0.035 rad toward the listener before the anchor return.
+Provisional streams omit resolve, and finalization with at most 0.9 seconds
+left retains its plain settle-only path.
 
 The performance ends with one zero-offset `settle` around the pre-speech
 anchor. Internal drawings are `through` except intentional quiet holds, which
@@ -278,14 +321,21 @@ These values are character policy, not hardware limits:
 
 | Policy                                      | Implemented value                                     |
 | ------------------------------------------- | ----------------------------------------------------- |
+| Onset preparation                          | `0.18 s`, opposite head lead at `0.25 ×` amplitude      |
+| Turn-yield resolve                          | `0.28 s`, `+0.035 rad` pitch when budget permits        |
+| Idle head/yaw amplitude variation            | `0.85–1.15`; arm offsets unchanged                     |
+| Idle travel tempo variation                 | `0.9–1.1`; glance hold `0.5–1.0 s`                      |
+| Added idle head start                       | Nominal `0.08 s`; 12% intermediate head drawing        |
 | Motion end lead before audio duration       | `0.12 s`                                              |
 | Nominal final settle budget                 | `0.55 s`, bounded for short utterances                |
 | Phrase-duration scale                       | `1.35`                                                |
 | Ordinary phrase base duration               | `1.35 s` before scale, randomization, and style tempo |
 | Emphasis phrase base duration               | `0.90 s` before scale, randomization, and style tempo |
 | Emphasis eligibility spacing               | At least `3.5 s` of planned performance time          |
-| Peak look-ahead                             | `0.5 s`                                              |
-| Quiet hold eligibility                      | Quiet interval at least `0.4 s`; hold capped at `1.2 s` before retiming |
+| Commanded emphasis apex lead                | `0.17 s`; compiled acceptance `0.08–0.25 s` before peak |
+| Minimum preceding drawing                   | `0.35 s`                                             |
+| Quiet hold eligibility                      | Quiet interval at least `0.4 s`; hold matches the gap, capped at `1.2 s` |
+| Speech plan length                          | `20 s` per piece; up to `25 s` when that finishes the audio |
 | Duration randomization                      | `0.90–1.10`                                           |
 | Ordinary head amplitude multiplier          | `0.88–1.10`                                           |
 | Emphasis head amplitude multiplier          | `1.05–1.24`                                           |
@@ -293,7 +343,9 @@ These values are character policy, not hardware limits:
 | Emphasis yaw turn                           | `0.070–0.110 rad`                                     |
 | Ordinary body multiplier on source drawing  | `0.32–0.48`                                           |
 | Full body-beat multiplier on source drawing | `0.78–0.96`                                           |
-| Head-lead share of each phrase              | `0.64–0.74`                                           |
+| Head-lead share                             | Ordinary `0.64–0.74`; emphasis `0.25–0.35`              |
+| Local loudness head multiplier              | `0.85 + 0.30 × smoothstep(mean RMS / maximum RMS)`      |
+| Matching roll/yaw signs                     | 70% bias; reflective roll keeps its authored sign     |
 | Next-head look-ahead during body follow     | `0.18`                                                |
 | Full body-beat energy gate                  | At least `0.72` of available waveform maximum                  |
 | Full body-beat spacing                      | Drawing-index difference of at least `3`              |
@@ -308,13 +360,15 @@ Speech motion is best-effort: a movement-planning failure must not silence a
 valid response. If movement cannot start, audio continues.
 
 When playback ends before the generated movement, the runtime replaces the
-executing spline with an anchor-relative settle from commanded position and
-velocity, preserving the motion run. A settle already installed by stream
+executing spline with an anchor-relative settle from commanded position,
+velocity and acceleration, preserving the motion run. A settle already installed by stream
 finalization, or a performance waiting for measured settling, continues without
 restarting. If spline replacement is unavailable,
 the runtime falls back to stopping and settling from measured state.
-Cancellation does the same. Position and velocity are preserved at replacement;
-acceleration continuity across replacements is not guaranteed.
+Cancellation does the same. Position, velocity and acceleration are preserved at replacement when
+calibration permits. Near a limit, safety protection halves the offending
+joint's starting velocity and acceleration together; continuity yields to
+calibration bounds. Measured starts use zero acceleration.
 If audio upload, validation, synthesis, or playback
 fails, the speech run becomes `failed`, the coordinator removes its temporary
 file, and character motion returns to the anchor. Idle resumes only after the

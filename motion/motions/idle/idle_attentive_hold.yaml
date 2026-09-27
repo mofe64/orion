@@ -6,8 +6,12 @@ motion:
   style: attentive
   return_to_anchor: true
   keyframes:
+    - offsets: {head_pitch_joint: 0.010800}
+      duration: 0.0864
+      arrival: through
+      marker: idle_head_start
     - offsets: {shoulder_pitch_joint: 0.065, head_pitch_joint: 0.090, elbow_pitch_joint: -0.055}
-      duration: 0.75
+      duration: 0.6636
       arrival: through
     - offsets: {head_roll_joint: 0.060, head_pitch_joint: 0.040, shoulder_pitch_joint: 0.025}
       duration: 0.65

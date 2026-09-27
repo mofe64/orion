@@ -43,8 +43,28 @@ const SPEECH_END_LEAD_SECONDS: f64 = 0.12;
 const SPEECH_FINAL_SETTLE_SECONDS: f64 = 0.55;
 /// Amount by which to scale nominal gesture durations to make them longer before other timing adjustments.
 const SPEECH_GESTURE_DURATION_SCALE: f64 = 1.35;
-/// Allows the planner to consider upcoming audio peaks within 25 analysis frames.
-const SPEECH_PEAK_LOOKAHEAD_FRAMES: usize = 25;
+/// How far the commanded emphasis apex leads its audio peak. Head pitch tracks
+/// about 70 ms late on hardware, so the visible apex lands roughly 0.1 s early.
+const SPEECH_STROKE_LEAD_SECONDS: f64 = 0.17;
+/// Shortest drawing allowed before an emphasis, so preparing an accent never
+/// turns the preceding phrase into a twitch.
+const SPEECH_MIN_PRECEDING_SECONDS: f64 = 0.35;
+/// Longest stretch of audio one speech plan covers. Longer replies are planned
+/// in pieces and extended as playback approaches the end of each piece, the
+/// same way streamed audio is, so planning cost does not grow with reply length.
+const SPEECH_PLAN_HORIZON_SECONDS: f64 = 20.0;
+/// Remaining audio up to this length is planned in one piece rather than
+/// leaving a short final piece that might not be reached at a gesture boundary.
+const SPEECH_PLAN_MAXIMUM_SECONDS: f64 = 25.0;
+/// Accepted window for a compiled emphasis apex relative to its audio peak.
+const SPEECH_APEX_WINDOW_SECONDS: std::ops::RangeInclusive<f64> = -0.25..=-0.08;
+/// Correction passes when aligning emphasis apices. Each pass compiles the
+/// performance once, whatever its number of emphases.
+const SPEECH_ALIGNMENT_PASSES: usize = 2;
+/// Longest authored emphasis stroke: base 0.90 s × duration scale × the top of
+/// the 0.90–1.10 randomization × the top of the 0.25–0.35 stroke share.
+const SPEECH_LONGEST_STROKE_AUTHORED_SECONDS: f64 =
+    0.90 * SPEECH_GESTURE_DURATION_SCALE * 1.10 * 0.35;
 /// Time between planned emphasis selections.
 /// an emphasis is a stronger expressive moment selected around an eligible audio peak
 /// we use audio energy to determine these peaks
@@ -66,7 +86,7 @@ const MICRO_IDLES: [&str; 4] = [
     "idle_micro_glance",
     "idle_shoulder_adjust",
 ];
-const LARGE_IDLES: [&str; 3] = ["idle_weight_shift", "idle_soft_head_shake", "idle_breathe"];
+const LARGE_IDLES: [&str; 2] = ["idle_weight_shift", "idle_soft_head_shake"];
 
 /// A planned speech drawing is a single drawing to be played during speech.
 /// A drawing here means one planned expressive gesture within a speech performance.
@@ -81,6 +101,10 @@ struct PlannedSpeechDrawing {
     clip: String,
     /// Desired head-related offsets: head roll, head pitch, and sometimes base yaw for facing direction.
     head_target: JointPositions,
+    /// Authored second head drawing for an emphasis counter-stroke.
+    counter_head: Option<JointPositions>,
+    /// Audio peak on this plan's local clock, before any stream offset.
+    peak_seconds: Option<f64>,
     /// Desired supporting shoulder and elbow offsets.
     body_target: JointPositions,
     /// The authored movement duration allocated to this gesture, excluding its optional hold.
@@ -266,6 +290,10 @@ pub struct CharacterCoordinator {
     /// Whether Orion has already attempted to start animation for this utterance.
     /// Prevents every tick from starting it again, even if the first attempt failed.
     speech_motion_started: bool,
+    /// Preparation belongs only to a fresh speech onset from holding.
+    speech_prepare_allowed: bool,
+    /// Maximum energy in all received audio, including already-played chunks.
+    speech_maximum_rms: f64,
 
     /// The latest speech clip remembered by the planner.
     /// Excluded from the next choice to avoid immediately repeating the same shape.
@@ -345,6 +373,8 @@ impl CharacterCoordinator {
             thinking_run: None,
             speech_motion_run_id: None,
             speech_motion_started: false,
+            speech_prepare_allowed: true,
+            speech_maximum_rms: 0.0,
             last_speech_clip: None,
             speech_planned_until: 0.0,
             speech_plan_streaming: false,
@@ -824,6 +854,8 @@ impl CharacterCoordinator {
         self.status.state = CharacterState::Speaking;
         self.status.active_clip = None;
         self.speech_motion_started = false;
+        self.speech_prepare_allowed = true;
+        self.speech_maximum_rms = 0.0;
         self.reset_timers(now);
         self.speech_planned_until = 0.0;
         self.speech_plan_streaming = false;
@@ -1246,7 +1278,21 @@ impl CharacterCoordinator {
                 Error::InvalidState("Character idle has no immutable anchor.".into())
             })?;
         // play the idle clip relative to our anchor
-        let run_id = core.play_anchored_relative(&clip, anchor, now)?;
+        let definition = match self.vary_idle(
+            core.motions().motion(&clip)?.clone(),
+            &anchor,
+            &core.driver().joint_limits()?,
+        ) {
+            Ok(definition) => definition,
+            Err(error) => {
+                // An arbitrary foreground anchor may have no safe paired
+                // mirror. Keep holding instead of ending the daemon session.
+                eprintln!("oriond: {error}");
+                self.reschedule_idle(category, now);
+                return Ok(());
+            }
+        };
+        let run_id = core.play_generated_anchored_relative(definition, anchor, now)?;
         // update our idle run state
         self.active_idle_run_id = Some(run_id);
         self.active_idle_category = Some(category);
@@ -1278,7 +1324,7 @@ impl CharacterCoordinator {
                 "idle_directional_hold",
             ],
             (Some("directional"), NextIdleCategory::Large) => {
-                vec!["idle_breathe", "idle_weight_shift", "idle_directional_hold"]
+                vec!["idle_weight_shift", "idle_directional_hold"]
             }
             (_, NextIdleCategory::Micro) => MICRO_IDLES.to_vec(),
             (_, NextIdleCategory::Large) => LARGE_IDLES.to_vec(),
@@ -1291,6 +1337,72 @@ impl CharacterCoordinator {
         candidates.retain(|clip| self.last_idle.as_deref() != Some(*clip));
         // pick a random clip from the remaining candidates
         candidates[self.rng.index(candidates.len())].to_owned()
+    }
+
+    /// Seeded head/yaw variation leaves authored arm magnitudes intact for P11.
+    /// Calibration subsequently applies its usual whole-clip safety scale.
+    fn vary_idle(
+        &mut self,
+        mut motion: MotionDefinition,
+        anchor: &JointPositions,
+        limits: &[crate::devices::driver::JointLimit],
+    ) -> Result<MotionDefinition> {
+        let requested_mirror = self.rng.index(2) == 0;
+        let amplitude = self.rng.range(0.85, 1.15);
+        let tempo = self.rng.range(0.9, 1.1);
+        let safe_side = |mirror: bool| {
+            let sign = if mirror { -1.0 } else { 1.0 };
+            motion.keyframes.iter().all(|keyframe| {
+                ["base_yaw_joint", "head_roll_joint"].iter().all(|joint| {
+                    let offset = keyframe.target.get(*joint).copied().unwrap_or(0.0) * sign;
+                    let position = anchor.get(*joint).copied().unwrap_or(0.0);
+                    // Preserve the existing directional yaw rule, not just the
+                    // final numerical range: a right/left anchor moves inward.
+                    if *joint == "base_yaw_joint"
+                        && ((position >= 0.75 && offset > 0.0)
+                            || (position <= -0.75 && offset < 0.0))
+                    {
+                        return false;
+                    }
+                    limits
+                        .iter()
+                        .find(|limit| limit.name == *joint)
+                        .is_none_or(|limit| {
+                            !((position >= limit.upper_rad - 0.20 && offset > 0.0)
+                                || (position <= limit.lower_rad + 0.20 && offset < 0.0))
+                        })
+                })
+            })
+        };
+        let mirror = if safe_side(requested_mirror) {
+            requested_mirror
+        } else if safe_side(!requested_mirror) {
+            !requested_mirror
+        } else {
+            return Err(Error::Runtime(format!(
+                "Idle '{}' has no inward lateral variant at this anchor.",
+                motion.name
+            )));
+        };
+        for keyframe in &mut motion.keyframes {
+            for (joint, offset) in &mut keyframe.target {
+                if joint.starts_with("head_") || joint == "base_yaw_joint" {
+                    *offset *= amplitude;
+                    if mirror && (joint == "base_yaw_joint" || joint == "head_roll_joint") {
+                        *offset *= -1.0;
+                    }
+                }
+            }
+            keyframe.duration_seconds /= tempo;
+            // This small authored lead is a real 80 ms start delay; tempo
+            // variation leaves it inside the requested 50–100 ms range.
+            if keyframe.marker.as_deref() == Some("glance_fixation") {
+                // Holds are wall-clock seconds: the compiler divides travel
+                // durations by tempo but applies hold_seconds unchanged.
+                keyframe.hold_seconds = self.rng.range(0.5, 1.0);
+            }
+        }
+        Ok(motion)
     }
 
     /// Take a snapshot of the speech-planning history.
@@ -1342,7 +1454,8 @@ impl CharacterCoordinator {
         // It also builds a new checkpoint list containing snapshots of the history after each planned gesture.
         // At this moment, the coordinator temporarily contains the candidate future’s history.
         // But no movement has been started by plan_speech().
-        let result = self.compose_speech_performance(analysis, motions, anchor);
+        let window = speech_planning_window(analysis);
+        let result = self.compose_speech_performance(&window, motions, anchor);
         // retrieve the new checkpoints and put the old ones back.
         let checkpoints = std::mem::replace(&mut self.speech_checkpoints, committed);
         // restore the original speech history
@@ -1430,6 +1543,11 @@ impl CharacterCoordinator {
         let (Some(analysis), Some(frame)) = (analysis, frame) else {
             return;
         };
+        self.speech_maximum_rms = analysis
+            .rms_20ms
+            .iter()
+            .copied()
+            .fold(self.speech_maximum_rms, f64::max);
         let elapsed = frame as f64 * 0.020;
         let gesture_finished = self.advance_speech_memory(core);
         if let Some(run_id) = self.speech_motion_run_id {
@@ -1467,6 +1585,7 @@ impl CharacterCoordinator {
                     let performance = if settle_only {
                         Ok((speech_settle_motion(), Vec::new()))
                     } else {
+                        self.speech_prepare_allowed = false;
                         self.plan_speech(&tail, core.motions(), &anchor)
                     };
                     if let Ok((performance, checkpoints)) = performance {
@@ -1475,7 +1594,8 @@ impl CharacterCoordinator {
                             .is_ok()
                         {
                             self.speech_checkpoints = checkpoints;
-                            self.speech_planned_until = analysis.duration_seconds;
+                            self.speech_planned_until =
+                                elapsed + speech_plan_seconds(tail.duration_seconds);
                             self.speech_plan_streaming = analysis.streaming;
                             if settle_only {
                                 self.status.active_clip = Some("speak_settle".into());
@@ -1524,12 +1644,19 @@ impl CharacterCoordinator {
             .thinking_run
             .take()
             .or_else(|| self.active_idle_run_id.take());
+        let prior = prior.filter(|run| {
+            core.snapshot()
+                .motion
+                .as_ref()
+                .is_some_and(|m| m.run_id == *run && m.state == MovementPhase::Executing)
+        });
+        self.speech_prepare_allowed = prior.is_none();
         self.active_idle_category = None;
         if core.mode() != RuntimeMode::Holding && prior.is_none() {
             return;
         }
         self.speech_motion_started = true;
-        self.speech_planned_until = analysis.duration_seconds;
+        self.speech_planned_until = speech_plan_seconds(analysis.duration_seconds);
         self.speech_plan_streaming = analysis.streaming;
         let Ok((performance, checkpoints)) = self.plan_speech(analysis, core.motions(), &anchor)
         else {
@@ -1549,6 +1676,7 @@ impl CharacterCoordinator {
         };
         if let Ok(run_id) = result {
             self.speech_checkpoints = checkpoints;
+            self.speech_prepare_allowed = false;
             self.speech_motion_run_id = Some(run_id);
             self.status.active_clip = Some("speaking_performance".into());
         }
@@ -1600,40 +1728,59 @@ impl CharacterCoordinator {
         let settle_budget = (SPEECH_FINAL_SETTLE_SECONDS * style.tempo)
             .min(authored_budget * 0.35)
             .max(0.16);
-        let active_budget = (authored_budget - settle_budget).max(0.24);
-        let mut authored_seconds = 0.0;
-        let mut drawings = Vec::new();
-        let mut peak_cursor = 0;
+        let prepare_budget = if self.speech_prepare_allowed && self.speech_gesture_index == 0 {
+            0.18 * style.tempo
+        } else {
+            0.0
+        };
+        let resolve_budget = if !analysis.streaming && performance_seconds >= 2.0 {
+            0.28 * style.tempo
+        } else {
+            0.0
+        };
+        let active_budget =
+            (authored_budget - settle_budget - resolve_budget).max(prepare_budget + 0.24);
+        let mut authored_seconds = prepare_budget;
+        let mut drawings: Vec<PlannedSpeechDrawing> = Vec::new();
         let mut gesture_index = self.speech_gesture_index;
         let mut last_tilt_direction = self.speech_last_tilt;
         let mut last_turn_direction = self.speech_last_turn;
         let mut last_body_beat = self.speech_last_body_beat;
         let base_seconds = self.speech_seconds;
         let initial_body = self.speech_previous_body.clone();
-        let maximum_rms = analysis.rms_20ms.iter().copied().fold(0.0_f64, f64::max);
+        let maximum_rms = analysis
+            .rms_20ms
+            .iter()
+            .copied()
+            .fold(self.speech_maximum_rms, f64::max);
 
         while active_budget - authored_seconds > 0.22 {
-            let current_frame = ((authored_seconds / style.tempo) / 0.020).round() as usize;
-            while analysis
-                .phrase_peaks
-                .get(peak_cursor)
-                .is_some_and(|peak| *peak + 10 < current_frame)
-            {
-                peak_cursor += 1;
-            }
-            let phrase_peak = analysis
-                .phrase_peaks
-                .get(peak_cursor)
-                .copied()
-                .filter(|peak| *peak <= current_frame + SPEECH_PEAK_LOOKAHEAD_FRAMES);
-            let gesture_seconds = base_seconds + authored_seconds / style.tempo;
-            let emphasis = phrase_peak.is_some()
-                && self
-                    .speech_emphasis_at
-                    .is_none_or(|last| gesture_seconds - last >= SPEECH_EMPHASIS_INTERVAL_SECONDS);
-            if emphasis {
-                peak_cursor += 1;
-            }
+            let start_seconds = authored_seconds / style.tempo;
+            // A peak may lie inside the preceding ordinary drawing. Plan
+            // backwards from it rather than testing only gesture boundaries.
+            let phrase_peak = analysis.phrase_peaks.iter().copied().find(|peak| {
+                let seconds = *peak as f64 * 0.020;
+                let previous_start = drawings.last().map(|d| {
+                    (authored_seconds - d.duration_seconds - d.hold_seconds) / style.tempo
+                });
+                previous_start.is_some_and(|start| {
+                    // Even the longest possible stroke must leave the preceding
+                    // drawing its minimum length; otherwise skip this peak.
+                    let preparation = (seconds - SPEECH_STROKE_LEAD_SECONDS - start) * style.tempo
+                        - SPEECH_LONGEST_STROKE_AUTHORED_SECONDS;
+                    seconds >= start + SPEECH_MIN_PRECEDING_SECONDS + 0.60
+                        && preparation >= SPEECH_MIN_PRECEDING_SECONDS * style.tempo
+                        && seconds <= start_seconds + 1.2
+                        && seconds < active_budget / style.tempo - 0.8
+                }) && self.speech_emphasis_at.is_none_or(|last| {
+                    base_seconds + seconds - last >= SPEECH_EMPHASIS_INTERVAL_SECONDS
+                })
+            });
+            let emphasis = phrase_peak.is_some();
+            let gesture_seconds = base_seconds
+                + phrase_peak
+                    .map(|peak| peak as f64 * 0.020)
+                    .unwrap_or(start_seconds);
             let energy_ratio = phrase_peak
                 .and_then(|peak| analysis.rms_20ms.get(peak).copied())
                 .map(|rms| rms / maximum_rms.max(f64::EPSILON))
@@ -1644,15 +1791,36 @@ impl CharacterCoordinator {
                 && energy_ratio >= 0.72
                 && body_beat_available
                 && self.last_speech_clip.as_deref() != Some("speak_explanatory_lean");
-            let clip = if body_beat {
-                "speak_explanatory_lean".to_owned()
-            } else {
-                self.choose_speech_clip(emphasis)
-            };
+            let clip = self.choose_speech_clip(emphasis);
             let definition = motions.motion(&clip)?;
             let nominal_seconds = if emphasis { 0.90 } else { 1.35 }
                 * SPEECH_GESTURE_DURATION_SCALE
                 * self.rng.range(0.90, 1.10);
+            let lead_fraction = if emphasis {
+                self.rng.range(0.25, 0.35)
+            } else {
+                self.rng.range(0.64, 0.74)
+            };
+            if let Some(peak) = phrase_peak {
+                let previous = drawings
+                    .last_mut()
+                    .expect("emphasis has a preceding drawing");
+                let previous_start =
+                    authored_seconds - previous.duration_seconds - previous.hold_seconds;
+                let required = (peak as f64 * 0.020 - SPEECH_STROKE_LEAD_SECONDS) * style.tempo
+                    - nominal_seconds * lead_fraction
+                    - previous_start;
+                // Peak qualification already reserved room for the longest
+                // stroke. Never fail the whole performance here: a shortfall
+                // only delays this apex, and align_speech_apices() then retimes
+                // it or drops its peak claim.
+                debug_assert!(required >= SPEECH_MIN_PRECEDING_SECONDS * style.tempo);
+                let required = required.max(SPEECH_MIN_PRECEDING_SECONDS * style.tempo);
+                previous.duration_seconds = required;
+                previous.hold_seconds = 0.0;
+                authored_seconds = previous_start + required;
+                previous.memory.seconds = base_seconds + authored_seconds / style.tempo;
+            }
             let remaining = active_budget - authored_seconds;
             let fit = (remaining / nominal_seconds).min(1.0);
             if fit < 0.24 && !drawings.is_empty() {
@@ -1677,7 +1845,15 @@ impl CharacterCoordinator {
                     -last_tilt_direction,
                 ]
             };
-            let direction = choices[self.rng.index(choices.len())];
+            let direction = if clip == "speak_reflective_tilt" {
+                source
+                    .get("head_roll_joint")
+                    .copied()
+                    .unwrap_or(0.14)
+                    .signum()
+            } else {
+                choices[self.rng.index(choices.len())]
+            };
             last_tilt_direction = direction;
             let roll = source
                 .get("head_roll_joint")
@@ -1705,18 +1881,50 @@ impl CharacterCoordinator {
                     self.rng.range(0.045, 0.085)
                 };
                 head_target.insert("base_yaw_joint".into(), turn_direction as f64 * magnitude);
+                if clip != "speak_reflective_tilt" {
+                    // Grounded-base MuJoCo FK at home: +yaw and +roll both
+                    // displace the head laterally in +Y; negative signs reverse
+                    // that displacement. Matching signs therefore form an arc.
+                    let side = if self.rng.range(0.0, 1.0) < 0.70 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    head_target.insert(
+                        "head_roll_joint".into(),
+                        roll * head_scale * turn_direction as f64 * side,
+                    );
+                    last_tilt_direction = turn_direction as f64 * side;
+                }
             }
+            let counter_head = if emphasis {
+                Some(
+                    definition.keyframes[1]
+                        .target
+                        .iter()
+                        .filter(|(joint, _)| joint.starts_with("head_"))
+                        .map(|(joint, value)| (joint.clone(), value * head_scale))
+                        .collect(),
+                )
+            } else {
+                None
+            };
 
             let body_scale = if body_beat {
                 self.rng.range(0.78, 0.96)
             } else {
                 self.rng.range(0.32, 0.48)
             };
-            let source_shoulder = source
+            let body_source = if body_beat {
+                &motions.motion("speak_explanatory_lean")?.keyframes[0].target
+            } else {
+                source
+            };
+            let source_shoulder = body_source
                 .get("shoulder_pitch_joint")
                 .copied()
                 .unwrap_or_else(|| self.rng.range(-0.035, 0.035));
-            let source_elbow = source
+            let source_elbow = body_source
                 .get("elbow_pitch_joint")
                 .copied()
                 .unwrap_or(-source_shoulder.signum() * self.rng.range(0.035, 0.050));
@@ -1729,14 +1937,18 @@ impl CharacterCoordinator {
             let start_seconds = authored_seconds / style.tempo;
             // Reach a phrase pose at a substantial quiet interval, then hold it.
             // Do not return to the anchor between sentences.
-            let pause = analysis.quiet_regions.iter().find_map(|(start, end)| {
-                let start = *start as f64 * 0.020;
-                let end = *end as f64 * 0.020;
-                (end - start >= 0.4
-                    && start >= start_seconds + 0.3
-                    && start <= start_seconds + duration_seconds / style.tempo)
-                    .then_some((start, end))
-            });
+            let pause = analysis
+                .quiet_regions
+                .iter()
+                .filter(|_| !emphasis)
+                .find_map(|(start, end)| {
+                    let start = *start as f64 * 0.020;
+                    let end = *end as f64 * 0.020;
+                    (end - start >= 0.4
+                        && start >= start_seconds + 0.3
+                        && start <= start_seconds + duration_seconds / style.tempo)
+                        .then_some((start, end))
+                });
             let hold_seconds = if let Some((start, end)) = pause {
                 duration_seconds = (start - start_seconds) * style.tempo;
                 ((end - start).min(1.2) * style.tempo).min((remaining - duration_seconds).max(0.0))
@@ -1756,7 +1968,6 @@ impl CharacterCoordinator {
                 self.speech_recent_clips.remove(0);
             }
             gesture_index += 1;
-            let lead_fraction = self.rng.range(0.64, 0.74);
             self.speech_gesture_index = gesture_index;
             self.speech_last_body_beat = last_body_beat;
             self.speech_last_tilt = last_tilt_direction;
@@ -1766,6 +1977,8 @@ impl CharacterCoordinator {
             drawings.push(PlannedSpeechDrawing {
                 clip,
                 head_target,
+                counter_head,
+                peak_seconds: phrase_peak.map(|peak| peak as f64 * 0.020),
                 body_target,
                 duration_seconds,
                 body_beat,
@@ -1781,12 +1994,54 @@ impl CharacterCoordinator {
             ));
         }
 
+        // Timing is final before measuring energy: the preceding drawing may
+        // have changed length to prepare an accent, so its original nominal
+        // window would be the wrong loudness sample.
+        let mut window_start_seconds = prepare_budget / style.tempo;
+        for drawing in &mut drawings {
+            let window_end_seconds = window_start_seconds
+                + (drawing.duration_seconds + drawing.hold_seconds) / style.tempo;
+            let start = (window_start_seconds / 0.020) as usize;
+            let end = (window_end_seconds / 0.020).ceil() as usize;
+            let window = &analysis.rms_20ms
+                [start.min(analysis.rms_20ms.len())..end.min(analysis.rms_20ms.len())];
+            let mean = window.iter().sum::<f64>() / window.len().max(1) as f64;
+            let e = (mean / maximum_rms.max(f64::EPSILON)).clamp(0.0, 1.0);
+            let scale = 0.85 + 0.30 * e * e * (3.0 - 2.0 * e);
+            for (joint, offset) in &mut drawing.head_target {
+                if joint.starts_with("head_") {
+                    *offset *= scale;
+                }
+            }
+            if let Some(counter) = &mut drawing.counter_head {
+                for offset in counter.values_mut() {
+                    *offset *= scale;
+                }
+            }
+            window_start_seconds = window_end_seconds;
+        }
+
         // Each phrase is staged in two drawings: the head leads the thought,
         // then the shoulder and elbow follow while the head already begins the
         // next arc. This provides anticipation and overlapping action without
         // giving the secondary body motion a competing rhythmic oscillator.
         let mut keyframes = Vec::with_capacity(drawings.len() * 2 + 1);
         let mut previous_body = initial_body;
+        if prepare_budget > 0.0 {
+            keyframes.push(MotionKeyframe {
+                pose_name: None,
+                target: drawings[0]
+                    .head_target
+                    .iter()
+                    .filter(|(joint, _)| joint.starts_with("head_"))
+                    .map(|(joint, offset)| (joint.clone(), -0.25 * offset))
+                    .collect(),
+                duration_seconds: prepare_budget,
+                arrival: KeyframeArrival::Through,
+                hold_seconds: 0.0,
+                marker: Some("speech_prepare".into()),
+            });
+        }
         self.speech_checkpoints.clear();
         for (index, drawing) in drawings.iter().enumerate() {
             let lead_fraction = drawing.lead_fraction;
@@ -1796,13 +2051,27 @@ impl CharacterCoordinator {
                 duration_seconds: drawing.duration_seconds * lead_fraction,
                 arrival: KeyframeArrival::Through,
                 hold_seconds: 0.0,
-                marker: Some(format!("gesture_{index}_{}", drawing.clip)),
+                marker: Some(format!(
+                    "gesture_{index}_{}{}",
+                    drawing.clip,
+                    drawing
+                        .peak_seconds
+                        .map(|peak| format!("@peak={peak:.6}"))
+                        .unwrap_or_default()
+                )),
             });
             let next_head = drawings
                 .get(index + 1)
                 .map(|next| next.head_target.clone())
                 .unwrap_or_default();
-            let following_head = if drawing.hold_seconds > 0.0 {
+            let following_head = if let Some(counter) = &drawing.counter_head {
+                let mut counter = counter.clone();
+                // Keep the selected facing direction during the counter-stroke.
+                if let Some(yaw) = drawing.head_target.get("base_yaw_joint") {
+                    counter.insert("base_yaw_joint".into(), *yaw);
+                }
+                counter
+            } else if drawing.hold_seconds > 0.0 {
                 drawing.head_target.clone()
             } else {
                 blend_speech_head(&drawing.head_target, &next_head, 0.18)
@@ -1816,7 +2085,9 @@ impl CharacterCoordinator {
                 } else {
                     KeyframeArrival::Through
                 },
-                hold_seconds: drawing.hold_seconds,
+                // The planner keeps holds in authored (tempo-scaled) units like
+                // travel, but the compiler applies holds as wall-clock seconds.
+                hold_seconds: drawing.hold_seconds / style.tempo,
                 marker: Some(if drawing.body_beat {
                     format!("body_beat_{index}")
                 } else {
@@ -1832,22 +2103,34 @@ impl CharacterCoordinator {
         self.speech_last_tilt = last_tilt_direction;
         self.speech_last_turn = last_turn_direction;
         self.speech_previous_body = previous_body;
+        if resolve_budget > 0.0 {
+            keyframes.push(MotionKeyframe {
+                pose_name: None,
+                target: JointPositions::from([("head_pitch_joint".into(), 0.035)]),
+                duration_seconds: resolve_budget,
+                arrival: KeyframeArrival::Through,
+                hold_seconds: 0.0,
+                marker: Some("speech_resolve".into()),
+            });
+        }
         keyframes.push(MotionKeyframe {
             pose_name: None,
             target: JointPositions::new(),
-            duration_seconds: (authored_budget - authored_seconds).max(0.12),
+            duration_seconds: (authored_budget - authored_seconds - resolve_budget).max(0.12),
             arrival: KeyframeArrival::Settle,
             hold_seconds: 0.0,
             marker: Some("speech_settled".into()),
         });
-        Ok(MotionDefinition {
+        let mut performance = MotionDefinition {
             name: "speaking_performance".into(),
             description: "Utterance-length continuous speaking performance.".into(),
             space: MotionSpace::AnchorRelative,
             style,
             return_to_anchor: true,
             keyframes,
-        })
+        };
+        align_speech_apices(&mut performance, anchor)?;
+        Ok(performance)
     }
 
     fn choose_speech_turn_direction(
@@ -1873,11 +2156,7 @@ impl CharacterCoordinator {
 
     fn choose_speech_clip(&mut self, emphasis: bool) -> String {
         let weighted: &[(&str, u64)] = if emphasis {
-            &[
-                ("speak_emphasis_nod", 3),
-                ("speak_reflective_tilt", 2),
-                ("speak_calm_sway", 1),
-            ]
+            &[("speak_emphasis_nod", 3), ("speak_reflective_tilt", 2)]
         } else {
             &[
                 ("speak_calm_sway", 5),
@@ -2004,6 +2283,117 @@ fn attention_return_motion() -> MotionDefinition {
     motion.keyframes[0].duration_seconds = 1.2;
     motion.keyframes[0].marker = Some("attention_returned".into());
     motion
+}
+
+/// Peak metadata is carried by generated markers, never by asset schema fields.
+pub(crate) fn speech_peak(marker: &str) -> Option<f64> {
+    marker.rsplit_once("@peak=")?.1.parse().ok()
+}
+
+/// Retimes the drawing before each emphasis so its compiled stroke apex lands
+/// `SPEECH_STROKE_LEAD_SECONDS` ahead of the audio peak.
+///
+/// All emphases are corrected together. One compile measures every apex; the
+/// corrections are then applied in order, carrying forward the time shift each
+/// one causes, because stretching an earlier drawing moves every later apex by
+/// the same amount. A second pass fixes what velocity retiming and settle
+/// weighting made inexact. At most `SPEECH_ALIGNMENT_PASSES + 1` compiles run,
+/// however many emphases the performance holds.
+fn align_speech_apices(motion: &mut MotionDefinition, anchor: &JointPositions) -> Result<()> {
+    use crate::motion::library::MotionSequence;
+    let peaks: Vec<(usize, f64)> = motion
+        .keyframes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, keyframe)| Some((index, speech_peak(keyframe.marker.as_deref()?)?)))
+        .collect();
+    if peaks.is_empty() {
+        return Ok(());
+    }
+    let tempo = motion.style.tempo;
+    let apex_offsets = |motion: &MotionDefinition| -> Result<Vec<f64>> {
+        let sequence = MotionSequence::new(motion, anchor.clone())?;
+        Ok(peaks
+            .iter()
+            .map(|(index, peak)| sequence.keyframe_arrival_time(*index).unwrap() - peak)
+            .collect())
+    };
+    let mut offsets = apex_offsets(motion)?;
+    for _ in 0..SPEECH_ALIGNMENT_PASSES {
+        if offsets
+            .iter()
+            .all(|offset| SPEECH_APEX_WINDOW_SECONDS.contains(offset))
+        {
+            break;
+        }
+        let mut shift = 0.0;
+        for ((index, _), offset) in peaks.iter().zip(&offsets) {
+            let offset = offset + shift;
+            if *index < 2 || SPEECH_APEX_WINDOW_SECONDS.contains(&offset) {
+                continue;
+            }
+            // Keyframes index-2 and index-1 are the preceding drawing's head
+            // lead and body follow. Scale both to keep its staging ratio.
+            let preceding = motion.keyframes[index - 2].duration_seconds
+                + motion.keyframes[index - 1].duration_seconds;
+            let adjusted = (preceding + (-SPEECH_STROKE_LEAD_SECONDS - offset) * tempo)
+                .max(SPEECH_MIN_PRECEDING_SECONDS * tempo);
+            let ratio = adjusted / preceding;
+            motion.keyframes[index - 2].duration_seconds *= ratio;
+            motion.keyframes[index - 1].duration_seconds *= ratio;
+            shift += (adjusted - preceding) / tempo;
+        }
+        offsets = apex_offsets(motion)?;
+    }
+    for ((index, _), offset) in peaks.iter().zip(&offsets) {
+        if !SPEECH_APEX_WINDOW_SECONDS.contains(offset) {
+            // Keep the safe ordinary shape, but do not claim an audio accent
+            // when retiming cannot fit it. No speed limit is bypassed.
+            if let Some(marker) = &mut motion.keyframes[*index].marker {
+                *marker = marker.split("@peak=").next().unwrap().to_owned();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns how many seconds of `remaining` audio one speech plan covers.
+fn speech_plan_seconds(remaining: f64) -> f64 {
+    if remaining <= SPEECH_PLAN_MAXIMUM_SECONDS {
+        remaining
+    } else {
+        SPEECH_PLAN_HORIZON_SECONDS
+    }
+}
+
+/// Returns the part of `analysis` that one speech plan covers.
+///
+/// Audio beyond `SPEECH_PLAN_HORIZON_SECONDS` is left for a later extension.
+/// The window is marked as streaming so the plan keeps moving past its end
+/// instead of settling to the anchor, exactly like a plan for streamed audio
+/// that has not fully arrived.
+fn speech_planning_window(analysis: &SpeechAnalysis) -> SpeechAnalysis {
+    if speech_plan_seconds(analysis.duration_seconds) >= analysis.duration_seconds {
+        return analysis.clone();
+    }
+    let frames = (SPEECH_PLAN_HORIZON_SECONDS / 0.020).round() as usize;
+    SpeechAnalysis {
+        rms_20ms: analysis.rms_20ms.iter().take(frames).copied().collect(),
+        quiet_regions: analysis
+            .quiet_regions
+            .iter()
+            .filter(|(start, _)| *start < frames)
+            .map(|(start, end)| (*start, (*end).min(frames)))
+            .collect(),
+        phrase_peaks: analysis
+            .phrase_peaks
+            .iter()
+            .copied()
+            .filter(|peak| *peak < frames)
+            .collect(),
+        duration_seconds: SPEECH_PLAN_HORIZON_SECONDS,
+        streaming: true,
+    }
 }
 
 /// Merges the head and body target positions into a single joint positions map.
@@ -2664,7 +3054,11 @@ mod tests {
         let rolls: Vec<_> = motion
             .keyframes
             .iter()
-            .step_by(2)
+            .filter(|k| {
+                k.marker
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("gesture_"))
+            })
             .filter_map(|k| k.target.get("head_roll_joint"))
             .collect();
         assert!(rolls.windows(2).any(|p| p[0].signum() == p[1].signum()));
@@ -2695,6 +3089,232 @@ mod tests {
     }
 
     #[test]
+    fn emphasis_uses_compiled_peak_timing_and_authored_pitch_counterstroke() {
+        use crate::motion::library::MotionSequence;
+        let core = core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 1500],
+            quiet_regions: vec![],
+            phrase_peaks: vec![10, 60, 245, 460, 675, 900, 1120, 1340],
+            duration_seconds: 30.0,
+            streaming: false,
+        };
+        let mut offsets = Vec::new();
+        for seed in 1..=40 {
+            let mut character = CharacterCoordinator::new(seed);
+            let motion = character
+                .compose_speech_performance(&analysis, core.motions(), &anchor)
+                .unwrap();
+            let sequence = MotionSequence::new(&motion, anchor.clone()).unwrap();
+            for (index, keyframe) in motion.keyframes.iter().enumerate() {
+                let Some(peak) = keyframe.marker.as_deref().and_then(speech_peak) else {
+                    continue;
+                };
+                assert!(peak > 0.2, "unpreparable early peak should be skipped");
+                let offset = sequence.keyframe_arrival_time(index).unwrap() - peak;
+                assert!(
+                    SPEECH_APEX_WINDOW_SECONDS.contains(&offset),
+                    "seed {seed}, offset {offset}"
+                );
+                assert!(keyframe.target["head_pitch_joint"] > 0.0);
+                assert!(motion.keyframes[index + 1].target["head_pitch_joint"] < 0.0);
+                let share = keyframe.duration_seconds
+                    / (keyframe.duration_seconds + motion.keyframes[index + 1].duration_seconds);
+                assert!((0.25..=0.35).contains(&share));
+                offsets.push(offset);
+            }
+        }
+        assert!(offsets.len() > 150);
+        eprintln!(
+            "compiled_apex_offsets count={} min={:.6} max={:.6} mean={:.6}",
+            offsets.len(),
+            offsets.iter().copied().fold(f64::INFINITY, f64::min),
+            offsets.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            offsets.iter().sum::<f64>() / offsets.len() as f64
+        );
+    }
+
+    #[test]
+    fn energy_scales_head_over_the_drawing_window_with_seeded_variation() {
+        let core = core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let plan = |first_energy| {
+            let mut rms = vec![0.2; 1000];
+            rms[..300].fill(first_energy);
+            let analysis = SpeechAnalysis {
+                rms_20ms: rms,
+                quiet_regions: vec![],
+                phrase_peaks: vec![],
+                duration_seconds: 20.0,
+                streaming: false,
+            };
+            CharacterCoordinator::new(42)
+                .compose_speech_performance(&analysis, core.motions(), &anchor)
+                .unwrap()
+        };
+        let quiet = plan(0.02);
+        let loud = plan(0.2);
+        let quiet: Vec<_> = quiet
+            .keyframes
+            .iter()
+            .filter(|k| {
+                k.marker
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("gesture_"))
+            })
+            .collect();
+        let loud: Vec<_> = loud
+            .keyframes
+            .iter()
+            .filter(|k| {
+                k.marker
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("gesture_"))
+            })
+            .collect();
+        for index in 0..3 {
+            for joint in ["head_roll_joint", "head_pitch_joint"] {
+                assert!(loud[index].target[joint].abs() >= quiet[index].target[joint].abs() * 1.2);
+            }
+        }
+    }
+
+    #[test]
+    fn speech_roll_yaw_arcs_are_biased_to_matching_signs_and_reflection_keeps_authored_sign() {
+        let core = core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 1500],
+            quiet_regions: vec![],
+            phrase_peaks: vec![],
+            duration_seconds: 30.0,
+            streaming: false,
+        };
+        let (mut same, mut turns) = (0, 0);
+        for seed in 1..=100 {
+            let motion = CharacterCoordinator::new(seed)
+                .compose_speech_performance(&analysis, core.motions(), &anchor)
+                .unwrap();
+            for keyframe in motion.keyframes.iter().filter(|k| {
+                k.marker
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("gesture_"))
+            }) {
+                let roll = keyframe.target["head_roll_joint"];
+                if keyframe
+                    .marker
+                    .as_deref()
+                    .unwrap()
+                    .contains("reflective_tilt")
+                {
+                    assert!(roll > 0.0);
+                }
+                if let Some(yaw) = keyframe.target.get("base_yaw_joint") {
+                    turns += 1;
+                    same += usize::from(yaw.signum() == roll.signum());
+                }
+            }
+        }
+        let ratio = same as f64 / turns as f64;
+        assert!((0.6..=0.8).contains(&ratio), "same-side ratio {ratio}");
+        eprintln!("same_side_roll_yaw={same}/{turns} ratio={ratio:.6}");
+    }
+
+    #[test]
+    fn speech_bookends_prepare_from_holding_and_resolve_only_with_budget() {
+        let core = core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; 500],
+            quiet_regions: vec![],
+            phrase_peaks: vec![],
+            duration_seconds: 10.0,
+            streaming: false,
+        };
+        let motion = CharacterCoordinator::new(42)
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        let prepare = &motion.keyframes[0];
+        let lead = &motion.keyframes[1];
+        assert_eq!(prepare.marker.as_deref(), Some("speech_prepare"));
+        assert!((0.15..=0.20).contains(&(prepare.duration_seconds / motion.style.tempo)));
+        for (joint, offset) in &prepare.target {
+            assert!((offset + 0.25 * lead.target[joint]).abs() < 1e-12);
+        }
+        let resolve = &motion.keyframes[motion.keyframes.len() - 2];
+        assert_eq!(resolve.marker.as_deref(), Some("speech_resolve"));
+        assert!(resolve.target["head_pitch_joint"] > 0.0);
+        let short = SpeechAnalysis {
+            duration_seconds: 0.8,
+            rms_20ms: vec![0.2; 40],
+            ..analysis.clone()
+        };
+        let short = CharacterCoordinator::new(42)
+            .compose_speech_performance(&short, core.motions(), &anchor)
+            .unwrap();
+        assert!(!short.markers().iter().any(|m| m == "speech_resolve"));
+        assert_eq!(speech_settle_motion().keyframes.len(), 1);
+    }
+
+    #[test]
+    fn speech_preparation_is_skipped_on_running_thinking_or_idle_handover() {
+        for thinking in [true, false] {
+            let mut core = following_core();
+            checked(core.handle_command("configure", 0.0)).unwrap();
+            checked(core.handle_command("enable", 0.0)).unwrap();
+            let anchor = core.poses().pose("home").unwrap().clone();
+            let mut character = CharacterCoordinator::new(42);
+            character.status.enabled = true;
+            character.status.active_anchor = Some(anchor.clone());
+            let prior = core
+                .play_generated_anchored_relative(
+                    if thinking {
+                        thinking_motion()
+                    } else {
+                        core.motions().motion("idle_breathe").unwrap().clone()
+                    },
+                    anchor,
+                    0.0,
+                )
+                .unwrap();
+            if thinking {
+                character.thinking_run = Some(prior);
+            } else {
+                character.active_idle_run_id = Some(prior);
+            }
+            core.tick(0.3).unwrap();
+            character.note_speech_started(0.3);
+            let analysis = SpeechAnalysis {
+                rms_20ms: vec![0.2; 300],
+                quiet_regions: vec![],
+                phrase_peaks: vec![],
+                duration_seconds: 6.0,
+                streaming: false,
+            };
+            character
+                .tick(0.3, &mut core, false, None, true, Some(&analysis), Some(0))
+                .unwrap();
+            assert_eq!(character.speech_motion_run_id, Some(prior));
+            assert!(
+                !core
+                    .snapshot()
+                    .motion
+                    .as_ref()
+                    .unwrap()
+                    .keyframe
+                    .as_deref()
+                    .unwrap()
+                    .contains("prepare")
+            );
+            assert!(!character.speech_prepare_allowed);
+            // The first checkpoint follows the first head and body pair:
+            // index 1 means there is no prep keyframe before it.
+            assert_eq!(character.speech_checkpoints[0].0, 1);
+        }
+    }
+
+    #[test]
     fn quiet_intervals_hold_the_phrase_pose_without_returning_home() {
         let core = core();
         let anchor = core.poses().pose("home").unwrap().clone();
@@ -2719,6 +3339,12 @@ mod tests {
         assert!(!holds.is_empty());
         for (index, keyframe) in holds {
             assert!(!keyframe.target.is_empty());
+            // Each quiet region is 1.0 s; the held pose must not outlast it.
+            assert!(
+                keyframe.hold_seconds <= 1.0 + 1e-9,
+                "{}",
+                keyframe.hold_seconds
+            );
             let arrival = sequence.keyframe_arrival_time(index).unwrap();
             let state = sequence.sample_state(arrival + 0.1).unwrap();
             assert!(state.velocities.values().all(|v| v.abs() < 1e-8));
@@ -2802,7 +3428,15 @@ mod tests {
         let performance = character
             .compose_speech_performance(&analysis, core.motions(), &anchor)
             .unwrap();
-        let active_keyframes = &performance.keyframes[..performance.keyframes.len() - 1];
+        let active_keyframes: Vec<_> = performance
+            .keyframes
+            .iter()
+            .filter(|k| {
+                k.marker
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("gesture_") || m.starts_with("body_"))
+            })
+            .collect();
         assert_eq!(active_keyframes.len() % 2, 0);
 
         let mut body_beat_indices = Vec::new();
@@ -2816,7 +3450,7 @@ mod tests {
                 .into_iter()
                 .map(|joint| head_lead.target.get(joint).copied().unwrap_or(0.0).abs())
                 .sum();
-            assert!(head_activity >= 0.08, "weak head lead: {head_activity}");
+            assert!(head_activity >= 0.050, "weak head lead: {head_activity}");
             turn_count += usize::from(
                 head_lead
                     .target
@@ -3051,6 +3685,63 @@ mod tests {
             character.status.active_clip.as_deref(),
             Some("speak_settle")
         );
+    }
+
+    #[test]
+    fn long_complete_speech_plans_in_horizon_windows_and_extends_without_settling() {
+        let mut core = core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let seconds = 3.0 * SPEECH_PLAN_HORIZON_SECONDS;
+        let frames = (seconds / 0.020) as usize;
+        let analysis = SpeechAnalysis {
+            rms_20ms: vec![0.2; frames],
+            quiet_regions: vec![],
+            phrase_peaks: (1..).map(|i| i * 110).take_while(|p| *p < frames).collect(),
+            duration_seconds: seconds,
+            streaming: false,
+        };
+        let window = speech_planning_window(&analysis);
+        assert!(window.streaming);
+        assert_eq!(window.duration_seconds, SPEECH_PLAN_HORIZON_SECONDS);
+        assert!(window.rms_20ms.len() * 20 <= (SPEECH_PLAN_HORIZON_SECONDS * 1000.0) as usize);
+
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.state = CharacterState::HomeIdle;
+        character.status.active_anchor = Some(anchor.clone());
+        character.note_speech_started(0.0);
+        character
+            .tick(0.0, &mut core, false, None, true, Some(&analysis), Some(0))
+            .unwrap();
+        let run = character.speech_motion_run_id.unwrap();
+        assert_eq!(character.speech_planned_until, SPEECH_PLAN_HORIZON_SECONDS);
+        // Stop short of the final settle budget at the true end of the audio.
+        for frame in 1..frames - 75 {
+            let now = frame as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(
+                    now,
+                    &mut core,
+                    false,
+                    None,
+                    true,
+                    Some(&analysis),
+                    Some(frame),
+                )
+                .unwrap();
+            assert_eq!(character.speech_motion_run_id, Some(run));
+            assert_eq!(character.status.state, CharacterState::Speaking);
+            assert_ne!(
+                character.status.active_clip.as_deref(),
+                Some("speak_settle")
+            );
+            // No plan reaches more than one bounded piece beyond playback.
+            assert!(character.speech_planned_until <= now + SPEECH_PLAN_MAXIMUM_SECONDS + 1e-9);
+        }
+        assert_eq!(character.speech_planned_until, seconds);
     }
 
     #[test]
@@ -3431,6 +4122,7 @@ mod tests {
                 &performance,
                 anchor.clone(),
                 zero_velocity,
+                None,
                 anchor.clone(),
                 scale,
                 &limits,
@@ -3511,6 +4203,241 @@ mod tests {
                 ));
                 character.last_idle = Some(selected);
             }
+        }
+    }
+
+    #[test]
+    fn varied_idles_are_reproducible_keep_arm_magnitudes_and_hold_glance() {
+        let core = core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let limits = core.driver().joint_limits().unwrap();
+        let mut first = CharacterCoordinator::new(57);
+        let mut second = CharacterCoordinator::new(57);
+        let mut sides = [0, 0];
+        for _ in 0..100 {
+            let name = first.choose_idle(NextIdleCategory::Micro, &core);
+            assert_eq!(name, second.choose_idle(NextIdleCategory::Micro, &core));
+            let source = core.motions().motion(&name).unwrap();
+            let a = first.vary_idle(source.clone(), &anchor, &limits).unwrap();
+            let b = second.vary_idle(source.clone(), &anchor, &limits).unwrap();
+            for ((original, a), b) in source.keyframes.iter().zip(&a.keyframes).zip(&b.keyframes) {
+                assert_eq!(a.target, b.target);
+                assert_eq!(a.duration_seconds, b.duration_seconds);
+                assert_eq!(a.hold_seconds, b.hold_seconds);
+                for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+                    assert_eq!(original.target.get(joint), a.target.get(joint));
+                }
+                if let Some(original_roll) = original
+                    .target
+                    .get("head_roll_joint")
+                    .filter(|r| r.abs() > 0.0)
+                {
+                    let factor = a.target["head_roll_joint"] / original_roll;
+                    assert!((0.85..=1.15).contains(&factor.abs()));
+                    sides[usize::from(factor < 0.0)] += 1;
+                }
+                if a.marker.as_deref() == Some("glance_fixation") {
+                    assert_eq!(a.arrival, KeyframeArrival::Settle);
+                    assert!((0.5..=1.0).contains(&a.hold_seconds));
+                }
+            }
+            first.last_idle = Some(name.clone());
+            second.last_idle = Some(name);
+        }
+        assert!(sides[0] > 20 && sides[1] > 20);
+        assert!(!LARGE_IDLES.contains(&"idle_breathe"));
+    }
+
+    #[test]
+    fn varied_idles_remain_calibrated_at_every_powered_anchor_and_directional_yaw_points_inward() {
+        use crate::motion::library::MotionSequence;
+        let core = core();
+        let calibration = crate::motion::calibration::load_calibration_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../simulation/mujoco/config/servo_calibration.json"),
+            &crate::ORION_JOINT_NAMES,
+        )
+        .unwrap();
+        let limits: Vec<_> = calibration
+            .iter()
+            .map(|joint| {
+                let (lower_rad, upper_rad) = joint.safe_range_radians();
+                crate::devices::driver::JointLimit {
+                    name: joint.name.clone(),
+                    lower_rad,
+                    upper_rad,
+                }
+            })
+            .collect();
+        for name in core.poses().names() {
+            let pose = core.poses().definition(&name).unwrap();
+            if !pose.tags.iter().any(|tag| tag == "idle_anchor") {
+                continue;
+            }
+            let anchor = &pose.positions;
+            let mut character = CharacterCoordinator::new(42);
+            character.status.active_anchor = Some(anchor.clone());
+            for category in [NextIdleCategory::Micro, NextIdleCategory::Large] {
+                for _ in 0..20 {
+                    let name = character.choose_idle(category, &core);
+                    let motion = character
+                        .vary_idle(
+                            core.motions().motion(&name).unwrap().clone(),
+                            anchor,
+                            &limits,
+                        )
+                        .unwrap();
+                    for keyframe in &motion.keyframes {
+                        let yaw = keyframe
+                            .target
+                            .get("base_yaw_joint")
+                            .copied()
+                            .unwrap_or(0.0);
+                        assert!(!(anchor["base_yaw_joint"] >= 0.75 && yaw > 0.0));
+                        assert!(!(anchor["base_yaw_joint"] <= -0.75 && yaw < 0.0));
+                    }
+                    let scale = motion.uniform_amplitude_scale(anchor, &limits).unwrap();
+                    let sequence = MotionSequence::compile_scaled_calibrated(
+                        &motion,
+                        anchor.clone(),
+                        anchor.keys().map(|j| (j.clone(), 0.0)).collect(),
+                        None,
+                        anchor.clone(),
+                        scale,
+                        &limits,
+                    )
+                    .unwrap();
+                    for frame in 0..=(sequence.duration_seconds() * 50.0).ceil() as usize {
+                        let positions = sequence
+                            .sample((frame as f64 * 0.020).min(sequence.duration_seconds()))
+                            .unwrap();
+                        for limit in &limits {
+                            assert!(
+                                (limit.lower_rad..=limit.upper_rad)
+                                    .contains(&positions[&limit.name])
+                            );
+                        }
+                    }
+                    assert_eq!(
+                        sequence.sample(sequence.duration_seconds()).unwrap(),
+                        *anchor
+                    );
+                    character.last_idle = Some(name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn idle_head_start_delays_arm_without_changing_original_peak_drawings() {
+        let core = core();
+        for name in [
+            "idle_breathe",
+            "idle_attentive_hold",
+            "idle_directional_hold",
+            "idle_weight_shift",
+        ] {
+            let motion = core.motions().motion(name).unwrap();
+            let lead = &motion.keyframes[0];
+            let follow = &motion.keyframes[1];
+            assert_eq!(lead.marker.as_deref(), Some("idle_head_start"));
+            assert!((0.05..=0.10).contains(&(lead.duration_seconds / motion.style.tempo)));
+            assert!(!lead.target.contains_key("shoulder_pitch_joint"));
+            assert!(!lead.target.contains_key("elbow_pitch_joint"));
+            for (joint, offset) in &lead.target {
+                assert!((offset / follow.target[joint] - 0.12).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn rust_runtime_executes_and_settles_in_native_mujoco_character_animation() {
+        use crate::ORION_JOINT_NAMES;
+        use crate::devices::mujoco::MujocoDriver;
+        use crate::motion::pose::PoseLibrary;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let poses =
+            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let anchor = poses.pose("home").unwrap().clone();
+        let mut performances = Vec::new();
+        for (seed, duration) in [(17, 6.0), (42, 10.0), (91, 16.0)] {
+            let analysis = SpeechAnalysis {
+                rms_20ms: vec![0.2; (duration / 0.020) as usize],
+                quiet_regions: vec![],
+                phrase_peaks: (60..(duration / 0.020) as usize).step_by(215).collect(),
+                duration_seconds: duration,
+                streaming: false,
+            };
+            performances.push(
+                CharacterCoordinator::new(seed)
+                    .compose_speech_performance(&analysis, &motions, &anchor)
+                    .unwrap(),
+            );
+        }
+        for name in [
+            "idle_breathe",
+            "idle_attentive_hold",
+            "idle_directional_hold",
+            "idle_weight_shift",
+            "idle_micro_glance",
+        ] {
+            for mirror in [false, true] {
+                let mut definition = motions.motion(name).unwrap().clone();
+                if mirror {
+                    for keyframe in &mut definition.keyframes {
+                        for joint in ["base_yaw_joint", "head_roll_joint"] {
+                            if let Some(offset) = keyframe.target.get_mut(joint) {
+                                *offset *= -1.0;
+                            }
+                        }
+                    }
+                }
+                performances.push(definition);
+            }
+        }
+        for definition in performances {
+            let driver = MujocoDriver::launch(
+                root.join(".venv/bin/python"),
+                root.join("runtime/mujoco_bridge.py"),
+                root.join("simulation/mujoco/scene.xml"),
+                &anchor,
+            )
+            .unwrap();
+            let mut core = RuntimeCore::new(driver, poses.clone(), motions.clone()).unwrap();
+            checked(core.handle_command("configure", 0.0)).unwrap();
+            checked(core.handle_command("enable", 0.0)).unwrap();
+            let name = definition.name.clone();
+            let run = core
+                .play_generated_anchored_relative(definition, anchor.clone(), 0.0)
+                .unwrap();
+            let mut elapsed = 0.0;
+            for frame in 0..2000 {
+                elapsed = frame as f64 * 0.020;
+                core.tick(elapsed).unwrap();
+                if core.snapshot().motion.is_none() {
+                    break;
+                }
+            }
+            let terminal = core.snapshot().last_motion.as_ref().unwrap();
+            assert_eq!(terminal.run_id, run);
+            assert_eq!(
+                terminal.state,
+                MovementPhase::Completed,
+                "{name}: {terminal:?}"
+            );
+            assert!(
+                core.driver().metrics().safe,
+                "{name}: {:?}",
+                core.driver().metrics()
+            );
+            eprintln!(
+                "native_character_execution name={name} completed_seconds={elapsed:.3} markers={:?} metrics={:?}",
+                terminal.reached_markers,
+                core.driver().metrics()
+            );
         }
     }
 

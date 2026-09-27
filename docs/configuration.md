@@ -156,10 +156,13 @@ the Pi’s local time and explicit UTC offsets; verify its timezone and clock be
 relying on a clock alarm.
 
 The managed listener uses the trained Rustpotter model
-`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80` and 25 dB
-capture gain. The reference `voice/models/wake/hey_orion_reference.rpw` at
-threshold `0.35` remains packaged for a source-controlled rollback. The
-standalone listener defaults to the trained model and `0.80`; the capture-routing script
+`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80`, the acoustic
+phrase verifier in `voice/models/verifier/`, and 25 dB capture gain. The
+reference `voice/models/wake/hey_orion_reference.rpw` at threshold `0.35`
+remains packaged for a source-controlled rollback. `--verifier-dir PATH` selects
+another verifier and `--no-verifier` restores the Qwen prefix check. The
+standalone listener defaults to the trained model, `0.80` and the packaged
+verifier; the capture-routing script
 defaults to 50 dB when no override is supplied. `ORION_CAPTURE_GAIN_DB` accepts
 0–50 dB. These separate defaults make the effective service configuration the
 relevant setting for a running Pi.

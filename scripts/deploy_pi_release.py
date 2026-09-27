@@ -58,7 +58,9 @@ def build_release(release, root):
     run(release / 'voice/.venv/bin/python', '-c',
         'from pathlib import Path; from orion_voice.rustpotter import RustpotterWakeDetector; '
         'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_trained_080.rpw"), .80).process(bytes(640)); '
-        'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_reference.rpw"), .35).process(bytes(640))', cwd=release)
+        'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_reference.rpw"), .35).process(bytes(640)); '
+        'import numpy as np; from orion_voice.verifier import AcousticVerifier; '
+        'AcousticVerifier(Path("voice/models/verifier")).feed(np.zeros(1280, dtype=np.int16))', cwd=release)
 
 
 def main():

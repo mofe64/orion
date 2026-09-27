@@ -24,6 +24,7 @@ pub(crate) struct Codex {
     pending: VecDeque<Value>,
     pub info: AgentInfo,
     config: AgentConfig,
+    pub reset_required: bool,
 }
 
 fn candidates(config: &AgentConfig) -> Vec<PathBuf> {
@@ -81,6 +82,7 @@ impl Codex {
         let output = BufReader::new(child.stdout.take().ok_or("Codex stdout unavailable")?);
         let mut client = Self {
             config: config.clone(),
+            reset_required: false,
             _child: child,
             input,
             output,
@@ -252,6 +254,10 @@ impl Codex {
             let message = self.read().await?;
             if message["id"] == id {
                 if let Some(error) = message.get("error") {
+                    // An explicit rejection acknowledges that no turn started.
+                    if method == "turn/start" {
+                        self.reset_required = false;
+                    }
                     return Err(format!("Codex {method}: {error}"));
                 }
                 return message
@@ -273,13 +279,16 @@ impl Codex {
         text: &str,
         events: Option<&tokio::sync::mpsc::Sender<crate::AgentEvent>>,
     ) -> Result<String, String> {
+        // Remains uncertain until the matching terminal event is read. Tool
+        // errors are ordinary results and do not change this protocol boundary.
+        self.reset_required = true;
         self.pending.clear();
         let start = self
             .rpc(
                 "turn/start",
                 json!({"threadId":self.info.conversation_id,
             "model":self.info.model, "effort":self.info.effort,
-            "input":[{"type":"text", "text":text}, {"type":"text", "text":format!("Current UTC date/time: {}", chrono::Utc::now().to_rfc3339())}]}),
+            "input":[{"type":"text", "text":text}, {"type":"text", "text":crate::tools::time_context()}]}),
             )
             .await?;
         let turn_id = start["turn"]["id"]
@@ -287,6 +296,8 @@ impl Codex {
             .ok_or("Codex returned no turn ID")?
             .to_owned();
         let mut final_text = String::new();
+        let mut legacy_text = String::new();
+        let mut completed_final = false;
         let mut searched = false;
         let mut calls = std::collections::HashSet::new();
         let mut final_item: Option<String> = None;
@@ -309,14 +320,15 @@ impl Codex {
                     return Err("Stale or invalid tool call".into());
                 }
                 let call = params["callId"].as_str().ok_or("Missing tool call ID")?;
-                if calls.len() >= 16 || !calls.insert(call.to_owned()) {
-                    return Err("Duplicate or excessive tool calls".into());
-                }
+                let rejected = calls.len() >= 16 || !calls.insert(call.to_owned());
                 let name = params["tool"].as_str().unwrap_or_default().to_owned();
                 let arguments = params["arguments"].clone();
                 let started = Instant::now();
-                let result =
-                    crate::tools::execute(&self.config, &name, arguments.clone(), events).await;
+                let result = if rejected {
+                    Err("Duplicate or excessive tool calls".into())
+                } else {
+                    crate::tools::execute(&self.config, &name, arguments.clone(), events).await
+                };
                 let success = result.is_ok();
                 let value = result.unwrap_or_else(|error| json!({"error":error}));
                 if let Some(events) = events {
@@ -385,22 +397,75 @@ impl Codex {
                 && params["turnId"] == turn_id
                 && let Some(text) = final_message(&params["item"])
             {
-                final_text = text.into();
+                if params["item"]["phase"] == "final_answer" {
+                    if let Some(id) = params["item"]["id"].as_str() {
+                        if final_item.as_deref().is_some_and(|previous| previous != id) {
+                            return Err("Multiple final answers".into());
+                        }
+                        final_item = Some(id.into());
+                    } else if completed_final {
+                        return Err("Multiple final answers without item IDs".into());
+                    }
+                    completed_final = true;
+                    final_text = text.into();
+                } else {
+                    legacy_text = text.into();
+                }
             }
             if message["method"] == "turn/completed" && params["turn"]["id"] == turn_id {
+                if matches!(
+                    params["turn"]["status"].as_str(),
+                    Some("completed" | "failed" | "interrupted")
+                ) {
+                    self.reset_required = false;
+                }
                 if params["turn"]["status"] != "completed" {
                     return Err(format!(
                         "Codex turn did not complete: {}",
                         params["turn"]["error"]
                     ));
                 }
-                for item in params["turn"]["items"].as_array().into_iter().flatten() {
-                    if let Some(text) = final_message(item) {
-                        final_text = text.into();
-                    }
+                let finals: Vec<_> = params["turn"]["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| item["phase"] == "final_answer" && final_message(item).is_some())
+                    .collect();
+                if finals
+                    .windows(2)
+                    .any(|pair| pair[0]["id"].is_null() || pair[0]["id"] != pair[1]["id"])
+                    || finals.first().is_some_and(|item| {
+                        item["id"].as_str().is_some_and(|id| {
+                            final_item.as_deref().is_some_and(|previous| previous != id)
+                        })
+                    })
+                {
+                    self.reset_required = true;
+                    return Err("Multiple final answers".into());
                 }
-                let response = spoken_response(&final_text)?;
+                if let Some(item) = finals.first() {
+                    final_text = final_message(item).unwrap().into();
+                } else if final_item.is_none() && !completed_final {
+                    final_text = params["turn"]["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|item| item["phase"].is_null())
+                        .filter_map(final_message)
+                        .next_back()
+                        .unwrap_or(&legacy_text)
+                        .into();
+                }
+                let response = spoken_response(&final_text).map_err(|error| {
+                    if !sentences.emitted.is_empty() {
+                        self.reset_required = true;
+                        "Final answer changed previously streamed speech".into()
+                    } else {
+                        error
+                    }
+                })?;
                 if !response.starts_with(&sentences.emitted) {
+                    self.reset_required = true;
                     return Err("Final answer changed previously streamed speech".into());
                 }
                 return Ok(response);

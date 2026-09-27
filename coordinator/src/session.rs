@@ -9,9 +9,13 @@ pub(crate) fn valid_session(id: &str) -> bool {
 }
 pub(crate) fn after_wake(text: &str) -> Option<String> {
     static WAKE: OnceLock<Regex> = OnceLock::new();
-    WAKE.get_or_init(|| Regex::new(r"(?i)^\s*hey[\s,.:;!?-]+orion\b[\s,.:;!?-]*(.*)$").unwrap())
-        .captures(text)
-        .map(|capture| capture[1].trim().to_owned())
+    // Qwen sometimes spells a spoken "Hey" as "Hay", "He", "Hei" or "Oi"; accept
+    // those spellings of the wake phrase, never other greetings.
+    WAKE.get_or_init(|| {
+        Regex::new(r"(?i)^\s*(?:hey|hay|he|hei|oi)[\s,.:;!?-]+orion\b[\s,.:;!?-]*(.*)$").unwrap()
+    })
+    .captures(text)
+    .map(|capture| capture[1].trim().to_owned())
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Phase {
@@ -39,6 +43,16 @@ impl Session {
             wake_verified: false,
             prefix_attempted: false,
         })
+    }
+    /// Record the listener's acoustic verdict. It replaces the ASR prefix pass,
+    /// so no prefix can follow; Qwen still checks the complete utterance.
+    pub fn acoustic_verdict(&mut self, id: &str, accepted: bool) -> Result<(), String> {
+        if self.id != id || self.phase != Phase::Wake || self.prefix_attempted {
+            return Err("Unexpected acoustic wake verdict".into());
+        }
+        self.prefix_attempted = true;
+        self.wake_verified = accepted;
+        Ok(())
     }
     pub fn accept(&mut self, id: &str, purpose: &str, size: u64) -> Result<(), String> {
         let expected = match purpose {
@@ -74,6 +88,35 @@ mod tests {
         for text in ["That is an onion", "I said Hey Orion", "Hey Orionized"] {
             assert_eq!(after_wake(text), None);
         }
+    }
+    #[test]
+    fn wake_accepts_asr_spellings_of_hey_but_not_other_greetings() {
+        for text in ["He Orion", "Oi Orion.", "Hay, Orion", "Hei Orion"] {
+            assert_eq!(after_wake(text), Some(String::new()), "{text}");
+        }
+        for text in [
+            "Hi Orion",
+            "Hello Orion",
+            "Okay Orion",
+            "Here, Orion",
+            "Hey Ryan",
+            "The Orion",
+        ] {
+            assert_eq!(after_wake(text), None, "{text}");
+        }
+    }
+    #[test]
+    fn acoustic_verdict_replaces_prefix_once() {
+        let id = "a".repeat(32);
+        let mut session = Session::new(&id, Phase::Wake).unwrap();
+        session.acoustic_verdict(&id, true).unwrap();
+        assert!(session.wake_verified);
+        assert!(session.acoustic_verdict(&id, false).is_err());
+        assert!(session.accept(&id, "wake_prefix", 64000).is_err());
+        session.accept(&id, "wake_and_command", 64000).unwrap();
+        let mut late = Session::new(&id, Phase::Wake).unwrap();
+        late.accept(&id, "wake_prefix", 64000).unwrap();
+        assert!(late.acoustic_verdict(&id, true).is_err());
     }
     #[test]
     fn prefix_cannot_overlap_full_audio_or_be_repeated() {
