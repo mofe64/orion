@@ -15,6 +15,9 @@ See [Pi installation](../docs/quickstart.md#pi-local-voice-and-agent).
 
 `ORION_SPEECH_BACKEND=pi` selects the CPU adapters. `ORION_LLAMA_SERVER` selects
 the native binary; the ASR model folder contains `model.gguf` and `mmproj.gguf`.
+The Pi adapter pre-fills Qwen's English transcription prefix, so the model
+decodes English speech without first guessing among its supported languages.
+Orion's agent speaks English unless asked explicitly to switch languages.
 The private Qwen HTTP endpoint binds a random loopback port and requires a
 per-process key. Linux kills that child if its Python owner exits.
 

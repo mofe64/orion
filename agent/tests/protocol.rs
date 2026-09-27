@@ -429,6 +429,8 @@ fn prompt_leaves_brevity_to_personality_and_specifies_listening_format() {
     assert!(instructions.contains("one short sentence"));
     assert!(instructions.contains("no length limit"));
     assert!(instructions.contains("no markdown, bullet symbols, tables or headings"));
+    assert!(instructions.contains("Speak English by default"));
+    assert!(instructions.contains("Switch languages only when the user explicitly asks"));
     assert!(!instructions.contains("18 words") && !instructions.contains("35 words"));
     let off = orion_agent::profile::Personality {
         traits: vec![],

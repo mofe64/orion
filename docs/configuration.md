@@ -34,6 +34,8 @@ Studio Settings saves preferences through the Pi gateway. The Pi defaults to
 `piper-alba-medium`. The Pi adapter loads Qwen GGUF files from the configured
 local folder. Piper Alba Medium is a fixed British English voice. Older saved
 voice selections are converted to Piper Alba when loaded.
+The Pi ASR adapter asks Qwen to transcribe in English rather than auto-detecting
+the language. Orion replies in English unless the user explicitly asks to switch.
 
 Studio turns listening off before speech or agent model changes, which restart
 the coordinator and speech workers. An idle restart can preserve the agent

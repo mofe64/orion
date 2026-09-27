@@ -22,6 +22,11 @@ from .providers import Transcript
 class QwenGgufTranscriber:
     provider = "qwen3-asr"
 
+    # Qwen otherwise guesses a language before transcribing. Orion's Pi voice
+    # interface is English by default; an incorrect guess can turn a valid
+    # command into unrelated foreign-language text.
+    language = "English"
+
     def __init__(self, model):
         root = Path(model)
         weights, projector = root / "model.gguf", root / "mmproj.gguf"
@@ -83,15 +88,19 @@ class QwenGgufTranscriber:
         result = self.request("/v1/chat/completions", {
             "messages": [{"role": "system", "content": os.environ.get("ORION_ASR_CONTEXT", "Orion")},
                          {"role": "user", "content": [{"type": "input_audio", "input_audio": {
-                "data": base64.b64encode(audio.getvalue()).decode(), "format": "wav"}}]}],
+                "data": base64.b64encode(audio.getvalue()).decode(), "format": "wav"}}]},
+                         {"role": "assistant", "content": "language English<asr_text>"}],
             "temperature": 0, "max_tokens": 1024, "cache_prompt": False,
         })["choices"][0]
         if result.get("finish_reason") == "length":
             raise ValueError("Qwen reached its output limit; transcript was not accepted")
         raw = result["message"]["content"]
         prefix, marker, text = raw.partition("<asr_text>")
-        language = prefix.removeprefix("language ").strip() if marker else None
-        return Transcript((text if marker else raw).strip(), language)
+        if marker and prefix.strip() != "language English":
+            raise ValueError("Qwen did not honor the English transcription prefix")
+        if not marker and raw.lstrip().startswith("language "):
+            raise ValueError("Qwen returned unparsed language metadata")
+        return Transcript((text if marker else raw).strip(), self.language)
 
     def close(self):
         self.process.terminate()
