@@ -175,6 +175,13 @@ gateway through loopback. `--local-processor` restricts processing ownership to 
 local connection. Private stdin/stdout pipes carry speech jobs and the Codex App
 Server protocol; bounded Rust channels connect the coordinator to the agent.
 
+Release activation keeps the listener, voice host and Studio gateway stopped
+during the physical smoke test so they cannot dispatch competing speech or
+movement. After the test, `character rest` establishes the runtime's `resting`
+state before those companions start. A confirmed wake can then return Orion
+home. Built-in YAML and service paths share the same rollback transaction; see
+[Pi deployment](quickstart.md#deploy-to-the-pi).
+
 Studio stores its pairing credentials on the desktop. It discovers the Pi service
 at `/api/v2/voice/status`, sends allowlisted commands to `/api/v2/voice/request`,
 and polls `/api/v2/voice/events`. Each snapshot contains at most 33 events with a

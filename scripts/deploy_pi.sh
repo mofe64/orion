@@ -5,19 +5,22 @@ usage() {
   cat <<'EOF'
 Usage: scripts/deploy_pi.sh [--host USER@HOST] [--root PATH] [--branch BRANCH] [--prepare-only] [--skip-studio-check]
 
-Build, test and activate the complete Orion Pi stack through SSH. Defaults:
+Build, test, activate and physically smoke-test the complete Orion Pi stack through SSH. Defaults:
   host:   mofe@orion.local
   root:   /home/mofe/dev/orion
   branch: main
 
 Commit and push the intended revision first. The Pi fetches it into an isolated
-release without merging, stashing, resetting or discarding its checkout edits.
+release without merging, stashing or resetting the checkout. Activation updates
+repository-owned pose, motion and scene YAML while preserving user assets and calibration.
 Runtime, gateway, Rustpotter/Silero listener, Qwen/Piper workers and the agent
 service are prepared before anything is stopped. --prepare-only prints the
 prepared release path without switching services. Activation preserves settings
-and confirms mechanical rest before switching the hardware runtime. Failure
-restores the immediately previous installation. No expression smoke motions
-are issued automatically. An SSH terminal remains available for sudo.
+and confirms mechanical rest before switching the hardware runtime. It runs the
+light/audio smoke check and both expressive acknowledgement arcs, then confirms
+mechanical rest with lights and torque off. Keep Orion's surroundings clear.
+Failure restores the immediately previous installation and built-in YAML.
+An SSH terminal remains available for sudo.
 
 The matching Studio v2 frontend is tested and production-built locally before
 SSH deployment. Use --skip-studio-check only if the exact revision was already

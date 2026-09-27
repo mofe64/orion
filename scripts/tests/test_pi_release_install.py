@@ -151,10 +151,11 @@ class ConfigurationTests(Fixture):
 
 
 class RestRuntimeTests(unittest.TestCase):
-    def exercise(self, failures=None, torque_after=False):
+    def exercise(self, failures=None, torque_after=False, initial_torque=True, initial_mode='holding', force=False,
+                 rest_state='disabled'):
         system = installer.System()
         self.calls = []
-        statuses = iter([True, torque_after])
+        statuses = iter([initial_torque, torque_after])
         failures = failures or {}
 
         def run(*args, **kwargs):
@@ -168,13 +169,26 @@ class RestRuntimeTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(code, args, output=output)
             if command == '--goto':
                 self.assertEqual(args[4:], ('rest', '--duration', '3.0', '--wait'))
-            output = json.dumps({'torque_enabled': next(statuses)}) if command == '--status' else ''
+            output = json.dumps({'torque_enabled': next(statuses), 'mode': initial_mode,
+                                 'rest': {'state': rest_state}}) if command == '--status' else ''
             return subprocess.CompletedProcess(args, 0, output)
 
         cmdline = b'oriond\0--serve\0--socket\0/tmp/custom.sock\0'
         with patch.object(system, 'run', side_effect=run), \
              patch.object(installer.Path, 'read_bytes', return_value=cmdline):
-            system.rest_runtime()
+            system.rest_runtime(force=force)
+
+    def test_a_torque_off_robot_in_another_pose_is_powered_and_rested_before_switching(self):
+        for mode in ('observe', 'configured'):
+            self.exercise(initial_torque=False, initial_mode=mode, force=True)
+            if mode == 'observe': self.assertIn('--configure', self.calls)
+            self.assertLess(self.calls.index('--enable'), self.calls.index('--goto'))
+            self.assertLess(self.calls.index('--goto'), self.calls.index('--disable'))
+
+    def test_forced_rest_remeasures_even_when_an_old_rest_state_is_still_latched(self):
+        self.exercise(initial_torque=False, initial_mode='configured', force=True, rest_state='resting')
+        self.assertIn('--enable', self.calls)
+        self.assertIn('--goto', self.calls)
 
     def test_active_and_already_inactive_playback_both_reach_confirmed_rest(self):
         for scene in (False, True):
@@ -217,6 +231,85 @@ class RestRuntimeTests(unittest.TestCase):
                     self.exercise(torque_after=value)
 
 
+class SmokeRuntimeTests(Fixture):
+    def exercise(self, failed_command=None):
+        system = installer.System()
+        client = ['/proc/42/exe', '--socket', '/tmp/custom.sock']
+        calls = []
+        run_id = 0
+        initial = True
+        def command(_, value):
+            nonlocal run_id
+            self.assertEqual(value, 'character rest')
+            run_id += 1
+            calls.append(('character rest', run_id))
+            return {'ok': True, 'run_id': run_id}
+        def run(*args, **kwargs):
+            nonlocal initial
+            self.assertEqual(list(args[:3]), client)
+            calls.append(tuple(args[3:]))
+            if args[3:5] == failed_command:
+                raise subprocess.CalledProcessError(6, args, output='smoke failed')
+            if args[3] == '--status':
+                if initial:
+                    initial = False
+                    value = dict(build_revision='new', mode='moving', torque_enabled=True)
+                else:
+                    value = dict(build_revision='new', mode='configured', torque_enabled=False,
+                        last_motion=dict(run_id=run_id, state='completed'),
+                        rest=dict(state='resting', light_on=False))
+                return subprocess.CompletedProcess(args, 0, json.dumps(value))
+            return subprocess.CompletedProcess(args, 0)
+        with patch.object(system, 'runtime_client', return_value=client), \
+             patch.object(system, 'run', side_effect=run), \
+             patch.object(system, 'daemon_command', side_effect=command):
+            if failed_command:
+                with self.assertRaises(subprocess.CalledProcessError): system.smoke_runtime(self.release)
+            else:
+                system.smoke_runtime(self.release)
+        return calls
+
+    def test_smoke_waits_for_each_scene_and_returns_to_the_wakeable_rest_lifecycle(self):
+        calls = self.exercise()
+        self.assertLess(calls.index(('character rest', 1)), calls.index(('--enable',)))
+        scenes = [c for c in calls if c[0] == '--run-scene']
+        self.assertEqual(scenes, [('--run-scene', scene, '--wait') for scene in
+            ('deployment_smoke', 'acknowledge_left', 'acknowledge_right', 'return_home')])
+        self.assertIn(('--goto', 'zero_reference', '--duration', '3.0', '--wait'), calls)
+        self.assertGreater(calls.index(('character rest', 2)), calls.index(scenes[-1]))
+        self.assertNotIn(('--disable',), calls)
+
+    def test_failed_pose_or_scene_still_attempts_measured_rest_and_fails_deployment(self):
+        for command in (('--goto', 'zero_reference'), ('--run-scene', 'deployment_smoke'),
+                        ('--run-scene', 'acknowledge_left'), ('--run-scene', 'acknowledge_right'),
+                        ('--run-scene', 'return_home')):
+            with self.subTest(command=command):
+                calls = self.exercise(command)
+                self.assertEqual([c for c in calls if c[0] == 'character rest'],
+                                 [('character rest', 1), ('character rest', 2)])
+
+    def test_rest_requires_the_matching_completed_run_torque_off_and_dark_lights(self):
+        for fault in (None, 'wrong-run', 'cancelled', 'timed_out', 'torque', 'light', 'state'):
+            with self.subTest(fault=fault):
+                status = dict(last_motion=dict(run_id=7, state='completed'), torque_enabled=False,
+                              rest=dict(state='resting', light_on=False))
+                if fault == 'wrong-run': status['last_motion']['run_id'] = 6
+                if fault in ('cancelled', 'timed_out'): status['last_motion']['state'] = fault
+                if fault == 'torque': status['torque_enabled'] = True
+                if fault == 'light': status['rest']['light_on'] = True
+                if fault == 'state': status['rest']['state'] = 'going_to_rest'
+                system = installer.System()
+                with patch.object(system, 'daemon_command', return_value=dict(ok=True, run_id=7)), \
+                     patch.object(system, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(status))) as run, \
+                     patch.object(installer.time, 'monotonic', side_effect=[0, 0, 31]), \
+                     patch.object(installer.time, 'sleep'):
+                    if fault:
+                        with self.assertRaises(RuntimeError): system.settle_runtime(['/proc/42/exe', '--socket', '/tmp/custom.sock'])
+                    else:
+                        system.settle_runtime(['/proc/42/exe', '--socket', '/tmp/custom.sock'])
+                    self.assertFalse(any('--disable' in call.args for call in run.call_args_list))
+
+
 class FakeSystem:
     """Model unit existence separately from enablement to catch dangling wants links."""
     def __init__(self, units, existing=True):
@@ -257,9 +350,13 @@ class FakeSystem:
             self.failure = None; raise RuntimeError('Injected write failure')
         path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data); path.chmod(mode)
     def remove(self, path): path.unlink(missing_ok=True)
-    def rest_runtime(self):
+    def rest_runtime(self, force=False):
         self.calls.append(('rest',))
         if self.failure == 'rest': raise RuntimeError('Unsafe rest')
+    def smoke_runtime(self, release):
+        self.calls.append(('smoke',))
+        if self.failure == 'smoke':
+            self.failure = None; raise RuntimeError('Injected smoke failure')
     def ready(self, release, home):
         self.calls.append(('ready',))
         if self.failure in ('ready', 'interrupt'):
@@ -292,11 +389,29 @@ class TransactionTests(Fixture):
         self.assertFalse((self.root / 'pending-installation.json').exists())
 
     def test_write_start_health_and_interrupt_failures_restore_immediate_install(self):
-        for failure in ('write', 'start', 'ready', 'interrupt'):
+        for failure in ('write', 'start', 'smoke', 'ready', 'interrupt'):
             with self.subTest(failure=failure):
                 self.system.failure = failure
                 with self.assertRaises((RuntimeError, KeyboardInterrupt)): self.activate()
                 self.assert_restored()
+
+    def test_smoke_runs_after_switching_and_before_companions_start(self):
+        self.activate()
+        calls = self.system.calls
+        smoke = calls.index(('smoke',))
+        self.assertLess(calls.index(('rest',)), calls.index(('stop', 'oriond')))
+        self.assertLess(calls.index(('stop', 'oriond')), calls.index(('write', str(self.env))))
+        self.assertLess(calls.index(('start', 'oriond')), smoke)
+        for name in SERVICES[1:]:
+            self.assertGreater(calls.index(('start', name)), smoke)
+        self.assertGreater(calls.index(('ready',)), smoke)
+
+    def test_an_inactive_installed_runtime_is_started_and_rested_before_switch(self):
+        self.system.states['oriond']['active'] = False
+        self.activate()
+        calls = self.system.calls
+        self.assertLess(calls.index(('start', 'oriond')), calls.index(('rest',)))
+        self.assertLess(calls.index(('rest',)), calls.index(('write', str(self.env))))
 
     def test_unsafe_rest_does_not_stop_runtime_or_change_config(self):
         self.system.failure = 'rest'
@@ -383,7 +498,7 @@ class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
         for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
                       'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
-                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier'):
+                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting'):
             with self.subTest(fault=fault):
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
                 event = dict(type='ready', asr=dict(provider='qwen3-asr'),
@@ -409,7 +524,8 @@ class ReadinessTests(Fixture):
                 def run(*args, **kwargs):
                     if args[0] == 'systemctl': return subprocess.CompletedProcess(args, 0, '100\n')
                     self.assertIn('/tmp/custom.sock', args)
-                    return subprocess.CompletedProcess(args, 0, json.dumps(dict(build_revision=revision)))
+                    return subprocess.CompletedProcess(args, 0, json.dumps(dict(build_revision=revision,
+                        torque_enabled=fault == 'not-resting', rest=dict(state='resting', light_on=False))))
                 def request(req, **kwargs):
                     self.assertEqual(req.full_url, 'http://127.0.0.1:7555/api/v2/voice/request')
                     self.assertEqual(req.headers['Authorization'], 'Bearer fixture-token')

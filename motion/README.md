@@ -19,6 +19,12 @@ The active Pi calibration is the hardware position authority. The tracked
 counterpart. Rust is the only trajectory compiler; Python code validates and
 consumes the exported 50 Hz sample document.
 
+Pi deployment updates built-in pose and motion YAML from the selected Git commit,
+including replacing local edits to built-ins. It preserves user-authored assets
+and calibration and backs up replaced or retired built-ins for rollback. See
+[Pi deployment](../docs/quickstart.md#deploy-to-the-pi) for the physical smoke test
+and release-switch sequence.
+
 ## Canonical documentation
 
 - [Motion asset reference](../docs/motion-assets.md) — pose and

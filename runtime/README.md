@@ -80,8 +80,9 @@ See [gain experiment procedure](../docs/servo-tracking.md#gain-experiments).
 
 Use the [Pi deployment procedure](../docs/quickstart.md#deploy-to-the-pi) from the
 workstation after committing and pushing the intended code. It prepares all four
-services in a separate release, then switches paths after confirmed mechanical
-rest. The [configuration reference](../docs/configuration.md#raspberry-pi-deployment)
+services in a separate release, updates built-in YAML after confirmed mechanical
+rest, and runs a physical smoke test before returning to rest with lights and
+torque off. The [configuration reference](../docs/configuration.md#raspberry-pi-deployment)
 explains saved settings, overrides and the existing asset catalog.
 
 For logs, readiness checks and rollback, follow

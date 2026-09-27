@@ -41,8 +41,9 @@ The workstation tests and builds Studio. The Pi fetches the chosen commit into
 a separate release directory, prepares locked Python environments, runs tests,
 and builds the runtime, trajectory compiler and voice host. The old services
 remain available during preparation. The installer then checks calibration,
-pairing, Codex login, saved settings and a compiled motion against the existing
-catalog.
+pairing, Codex login and saved settings. It compiles both expressive acknowledgement
+motions against a temporary copy of the planned YAML catalog and Pi calibration,
+before stopping services or changing live assets.
 
 Pi runtime checks skip native MuJoCo integration tests, which require the
 workstation's root simulation environment. All other runtime tests run during
@@ -50,23 +51,37 @@ release preparation.
 
 For activation, the installer stops the voice companions, cancels active scene
 and speech playback (already-inactive playback is accepted), returns Orion to rest
-and confirms torque is off before stopping the runtime. It switches service paths
-and starts all four services. Normal character startup may move Orion home; keep
-the robot clear during the switch.
+and confirms torque is off before stopping the runtime. An installed but inactive
+runtime is started for this rest sequence; a torque-off robot in another pose is
+configured and enabled to reach measured rest.
+
+With the runtime stopped, activation updates built-in YAML and service paths. It
+starts the new runtime and keeps voice/Studio companions stopped during the physical
+smoke test. The test establishes rest, moves to `zero_reference`, runs
+`deployment_smoke` for light/audio, then `acknowledge_left`, `acknowledge_right`
+and `return_home`. Each pose and scene waits for measured completion. The final
+`character rest` waits for its own movement run to complete, lights to fade off,
+and torque to be disabled. Keep Orion's surroundings clear during activation.
+Normal character startup may also move Orion home.
 
 Readiness requires the expected runtime revision, a running coordinator with
 Qwen, the selected TTS model and Codex ready, and a gateway connected to that
-same voice service.
-A failed activation restores the immediately previous configuration and service
-state. A failed mechanical rest leaves the runtime running. The deployment does
-not perform expression playback tests; complete a spoken turn afterward to check
-the physical microphone, speaker and movement.
+same voice service. It also requires the runtime to remain in its voice-wakeable
+`resting` state with lights and torque off after the smoke test.
+A failed activation or smoke test restores the immediately previous configuration,
+built-in YAML and service state. A failed mechanical rest leaves the runtime
+running for recovery. Complete a spoken turn afterward to check the microphone,
+generation and speech playback together.
 
 ### Settings preserved by an update
 
 The installer preserves voice preferences, microphone settings, calibration,
-pairing, Codex login, personality, memory and the existing motion/user-asset
-catalog. It changes release paths while retaining installed command arguments
+pairing, Codex login, personality, memory and user-authored poses, motions and
+scenes. Built-in `.yaml`/`.yml` files under `motion/config/`, `motion/motions/`
+(excluding `user/`) and `scenes/` (excluding `user/`) update from the selected
+commit. Local edits to those built-ins are replaced and backed up for rollback.
+Retired tracked built-ins are removed; untracked local files are preserved.
+It changes release paths while retaining installed command arguments
 and environment overrides, including sleep and microphone tuning. Existing
 service enablement is retained; missing services are enabled. Restarting the agent
 service begins a fresh conversation with its saved profile and memory available.
@@ -77,8 +92,9 @@ Release rollback preserves saved voice settings; an older release may require
 its own compatible settings.
 
 The Pi checkout is used to fetch Git objects and supply the asset catalog.
-Deployment neither merges the remote branch into that checkout nor publishes
-its local edits. Put intended code changes in the selected remote commit. See
+Deployment keeps the checkout's Git HEAD and index unchanged; it updates only
+the managed built-in YAML paths in its working tree. Put intended code and YAML
+changes in the selected remote commit. See
 [installed release boundaries](system-architecture.md#assets-and-installed-releases).
 
 ## Pi local voice and agent

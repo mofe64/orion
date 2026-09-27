@@ -127,14 +127,16 @@ Command-line flags override the deployment environment:
 
 The script validates these values before SSH and requires a trusted host key.
 It builds from the selected remote commit. The Pi checkout, including its local
-edits, remains the catalog and Git source for preparing releases.
+edits, remains the catalog and Git source for preparing releases. Activation
+replaces managed built-in YAML from that commit; user assets are preserved.
 
 Activation changes executable paths in the base units and overrides, the speech
 Python path, the release revision, and the voice service's project root. Existing
 environment values and command arguments are preserved; missing defaults are
 added. Saved preferences, calibration and token files stay outside that write set.
-Rollback restores the immediately previous service configuration and running
-state. See [Pi deployment](quickstart.md#deploy-to-the-pi).
+Rollback restores the immediately previous service configuration, built-in YAML
+and running state. Activation runs the physical smoke sequence and finishes at
+measured rest with lights and torque off. See [Pi deployment](quickstart.md#deploy-to-the-pi).
 
 ## Pi runtime and listener
 

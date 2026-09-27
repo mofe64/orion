@@ -111,10 +111,17 @@ release. Shared model files and native inference tools live under
 
 The runtime and gateway keep the existing catalog root, normally
 `/home/mofe/dev/orion`. It contains the calibrated pose library, motion definitions,
-scenes, audio cues and user assets. Updating executable paths therefore preserves
-the robot's saved rest pose and authored content. Catalog changes require an
-explicit asset edit or publication; they are not applied by the code release
-switch.
+scenes, audio cues and user assets. Activation updates built-in pose, motion and
+scene YAML from the same Git commit as the executables. Calibration remains in
+the Pi user's configuration directory, and user-authored assets remain in their
+separate catalog directories.
+
+The installer records managed built-in paths in
+`~/.local/share/orion/voice-stack/catalog-assets.json`. The first update derives
+retired paths from the checkout's tracked YAML; later updates use that inventory.
+It snapshots overwritten and removed files in the service-switch transaction so
+rollback restores both code configuration and YAML. Git HEAD and the index are
+unchanged. Local edits to built-ins are replaced; untracked local assets remain.
 
 User poses, motions and scenes live in `motion/user/poses/`,
 `motion/motions/user/` and `scenes/user/`. The gateway stages published changes,

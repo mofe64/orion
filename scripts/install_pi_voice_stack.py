@@ -18,6 +18,7 @@ import urllib.request
 import uuid
 
 from pi_service_config import SERVICES, STOP_ORDER, read_env, render_plan
+from pi_catalog import catalog_plan
 
 
 def atomic_json(path, value):
@@ -93,36 +94,116 @@ class System:
     def remove(self, path):
         self.run('sudo', 'rm', '-f', path)
 
-    def rest_runtime(self):
-        """Confirm torque is off before systemd can terminate the hardware owner."""
+    def runtime_client(self):
+        """Use the running hardware owner's binary and configured socket."""
         pid = self.run('systemctl', 'show', 'oriond', '--property=MainPID', '--value', capture_output=True, text=True).stdout.strip()
         if not pid.isdigit() or int(pid) == 0:
-            raise RuntimeError('Cannot identify the current runtime for a safe release switch')
-        binary = f'/proc/{pid}/exe'
+            raise RuntimeError('Cannot identify the current hardware runtime')
         arguments = Path(f'/proc/{pid}/cmdline').read_bytes().decode().split('\0')
-        client = [binary, '--socket', option(arguments, '--socket', '/tmp/oriond.sock')]
-        status = json.loads(self.run(*client, '--status', capture_output=True, text=True).stdout)
-        if status.get('torque_enabled'):
-            for command, inactive in (
-                ('--stop-scene', {'ok': False, 'error': 'No scene is active.'}),
-                ('--stop-speech', {'ok': False, 'error': 'No speech run is active.'}),
-                ('--stop', {'ok': False, 'command': 'stop', 'error': 'no movement is active'}),
-            ):
+        return [f'/proc/{pid}/exe', '--socket', option(arguments, '--socket', '/tmp/oriond.sock')]
+
+    def wait_runtime_client(self, revision=None, timeout=20):
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                client = self.runtime_client()
+                status = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
+                if revision is not None and status.get('build_revision') != revision:
+                    raise RuntimeError('The requested runtime has not started')
+                return client, status
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Runtime did not become available for deployment movement') from None
+                time.sleep(.1)
+
+    def stop_playback(self, client):
+        for command, inactive in (
+            ('--stop-scene', {'ok': False, 'error': 'No scene is active.'}),
+            ('--stop-speech', {'ok': False, 'error': 'No speech run is active.'}),
+            ('--stop', {'ok': False, 'command': 'stop', 'error': 'no movement is active'}),
+        ):
+            try:
+                self.run(*client, command, capture_output=True, text=True, timeout=10)
+            except subprocess.CalledProcessError as error:
+                # Only an exact already-stopped rejection is harmless.
                 try:
-                    self.run(*client, command, capture_output=True, text=True)
-                except subprocess.CalledProcessError as error:
-                    # Only an exact already-stopped rejection is harmless.
-                    try:
-                        response = json.loads(error.stdout or '')
-                    except (ValueError, TypeError):
-                        raise error
-                    if error.returncode != 3 or response != inactive:
-                        raise
-            self.run(*client, '--goto', 'rest', '--duration', '3.0', '--wait', capture_output=True)
+                    response = json.loads(error.stdout or '')
+                except (ValueError, TypeError):
+                    raise error
+                if error.returncode != 3 or response != inactive:
+                    raise
+
+    def rest_runtime(self, force=False):
+        """Confirm torque is off before systemd can terminate the hardware owner."""
+        if force:
+            client, status = self.wait_runtime_client()
+        else:
+            client = self.runtime_client()
+            status = json.loads(self.run(*client, '--status', capture_output=True, text=True).stdout)
+        # A powered-off robot can have been moved by hand since its last rest.
+        # Forced deployment rest always measures a fresh goto before release.
+        if status.get('torque_enabled') or force:
+            self.stop_playback(client)
+            if status.get('mode') == 'observe':
+                self.run(*client, '--configure', capture_output=True)
+            if status.get('mode') in ('observe', 'configured'):
+                self.run(*client, '--enable', capture_output=True)
+            self.run(*client, '--goto', 'rest', '--duration', '3.0', '--wait', capture_output=True, timeout=30)
             self.run(*client, '--disable', capture_output=True)
         status = json.loads(self.run(*client, '--status', capture_output=True, text=True).stdout)
         if status.get('torque_enabled') is not False:
             raise RuntimeError('Mechanical rest/torque-off was not confirmed; runtime was left running')
+
+    def daemon_command(self, client, command):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(3)
+            connection.connect(client[2])
+            connection.sendall(command.encode() + b'\n')
+            with connection.makefile('rb') as stream:
+                raw = stream.readline(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise RuntimeError('Oversized runtime response')
+        value = json.loads(raw)
+        if value.get('ok') is not True:
+            raise RuntimeError(f'Runtime rejected {command}: {value.get("error")}')
+        return value
+
+    def settle_runtime(self, client, timeout=30):
+        """Use the rest lifecycle so the completed deployment can wake by voice."""
+        result = self.daemon_command(client, 'character rest')
+        run = result['run_id']
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
+            last = status.get('last_motion') or {}
+            rest = status.get('rest') or {}
+            if rest.get('state') == 'fault' or (last.get('run_id') == run and last.get('state') in ('cancelled', 'timed_out')):
+                raise RuntimeError('Deployment rest movement failed; torque has not been forcibly released')
+            if (last.get('run_id') == run and last.get('state') == 'completed' and
+                    rest.get('state') == 'resting' and status.get('torque_enabled') is False and
+                    rest.get('light_on') is False):
+                return
+            time.sleep(.1)
+        raise RuntimeError('Deployment rest was not confirmed; runtime remains available for recovery')
+
+    def smoke_runtime(self, release, timeout=20):
+        metadata = json.loads((release / 'release.json').read_text())
+        client, status = self.wait_runtime_client(metadata['revision'], timeout)
+        try:
+            print('Running the physical deployment smoke test: lights, audio and both expressive arcs.', flush=True)
+            self.settle_runtime(client)
+            status = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
+            self.stop_playback(client)
+            if status.get('mode') == 'observe':
+                self.run(*client, '--configure', capture_output=True)
+            if status.get('mode') in ('observe', 'configured'):
+                self.run(*client, '--enable', capture_output=True)
+            self.run(*client, '--goto', 'zero_reference', '--duration', '3.0', '--wait', timeout=30)
+            for scene in ('deployment_smoke', 'acknowledge_left', 'acknowledge_right', 'return_home'):
+                self.run(*client, '--run-scene', scene, '--wait', timeout=60)
+        finally:
+            print('Returning Orion to measured rest, lights off and torque off.', flush=True)
+            self.settle_runtime(client)
 
     def ready(self, release, home, timeout=180):
         metadata = json.loads((release / 'release.json').read_text())
@@ -170,6 +251,10 @@ class System:
                 runtime = json.loads(self.run(release / 'runtime/target/release/oriond', '--socket', runtime_socket, '--status', capture_output=True, text=True, timeout=5).stdout)
                 if runtime.get('build_revision') != metadata['revision']:
                     raise RuntimeError('The old runtime is still active')
+                if (runtime.get('torque_enabled') is not False or
+                        runtime.get('rest', {}).get('state') != 'resting' or
+                        runtime.get('rest', {}).get('light_on') is not False):
+                    raise RuntimeError('The deployed runtime has not remained at rest after the smoke test')
                 # The gateway must reach the same authenticated voice host.
                 token = token_file.read_text().strip()
                 request = urllib.request.Request(f'http://127.0.0.1:{port}/api/v2/voice/request',
@@ -299,17 +384,34 @@ def activate(root, release, home, files, system):
         # Quiesce companions first. Failure to rest never forces termination of the runtime.
         for name in STOP_ORDER[:-1]:
             system.stop(name)
-        if data['services']['oriond']['active']:
-            system.rest_runtime()
+        if data['services']['oriond']['enabled'] != 'not-found':
+            if not data['services']['oriond']['active']:
+                system.start('oriond')
+                for name in STOP_ORDER[:-1]:
+                    system.stop(name)
+            print('Returning the current runtime to rest before updating code and YAML.', flush=True)
+            system.rest_runtime(force=True)
         switched = True
         data['status'] = 'switching'; atomic_json(folder / 'state.json', data)
         system.stop('oriond')
         for path, value in files.items():
-            system.write(path, value.encode(), 0o644 if str(path).startswith('/etc/') else 0o600)
+            if value is None:
+                system.remove(path)
+            else:
+                mode = (path.stat().st_mode & 0o777 if path.exists() else
+                        0o644 if str(path).startswith('/etc/') or path.suffix in ('.yaml', '.yml') else 0o600)
+                system.write(path, value.encode(), mode)
         system.reload()
         for name in SERVICES:
             if data['services'][name]['enabled'] == 'not-found':
                 system.enable(name, 'enabled')
+        system.start('oriond')
+        # oriond Wants= the listener. Keep all voice/Studio companions quiet
+        # until physical smoke playback has settled back to rest.
+        for name in STOP_ORDER[:-1]:
+            system.stop(name)
+        system.smoke_runtime(release)
+        for name in SERVICES[1:]:
             system.start(name)
         system.ready(release, home)
         atomic_json(installed, {'version': 2, 'release': str(release), 'rollback': str(folder)})
@@ -380,27 +482,40 @@ def preflight(release, home, files, system):
     system.run(release / 'orion-service/target/release/orion-service', 'check', env=environment)
 
 
-def validate_catalog(release, project, calibration, system):
-    # Compile against the operator's existing catalog without moving the robot or
-    # migrating assets. Incompatible assets must fail before service activation.
-    system.run(release / 'runtime/target/release/orion-trajectory',
-        '--motion', 'look_at_left_expressive', '--start-pose', 'attentive',
-        '--pose-file', project / 'motion/config/poses.yaml',
-        '--motions-directory', project / 'motion/motions', '--calibration', calibration,
-        stdout=subprocess.DEVNULL)
+def validate_catalog(release, project, calibration, system, assets):
+    # Compile the planned catalog before changing live files or stopping services.
+    with tempfile.TemporaryDirectory(prefix='orion-catalog-') as temporary:
+        preview = Path(temporary)
+        shutil.copytree(project / 'motion', preview / 'motion', symlinks=True)
+        for path, value in assets.items():
+            if path.is_relative_to(project) and path.relative_to(project).parts[0] == 'motion':
+                target = preview / path.relative_to(project)
+                if value is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(value)
+        for motion in ('look_at_left_expressive', 'look_at_right_expressive'):
+            system.run(release / 'runtime/target/release/orion-trajectory',
+                '--motion', motion, '--start-pose', 'attentive',
+                '--pose-file', preview / 'motion/config/poses.yaml',
+                '--motions-directory', preview / 'motion/motions', '--calibration', calibration,
+                stdout=subprocess.DEVNULL)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/orion/voice-stack')
     parser.add_argument('--release', type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument('--runtime-project', type=Path, default=Path.home() / 'dev/orion')
+    parser.add_argument('--runtime-project', type=Path, default=Path.home() / 'dev/orion',
+                        help='Live catalog; built-in YAML updates, user assets and calibration are preserved')
     parser.add_argument('--rollback', action='store_true')
     parser.add_argument('--plan', action='store_true', help='Show affected paths without modifying files or services')
     args = parser.parse_args()
     root, release, home = args.root.resolve(), args.release.resolve(), Path.home()
     if args.plan:
         files = render_plan(release, root, args.runtime_project.resolve(), home, pwd.getpwuid(os.getuid()).pw_name)
+        files.update(catalog_plan(release, args.runtime_project.resolve(), root))
         print(json.dumps({'release': str(release), 'files': [str(p) for p in files]}, indent=2))
         return
     if os.uname().machine != 'aarch64' or os.geteuid() == 0:
@@ -411,13 +526,15 @@ def main():
         if args.rollback:
             rollback(root, system); return
         files = render_plan(release, root, args.runtime_project.resolve(), home, pwd.getpwuid(os.getuid()).pw_name)
+        assets = catalog_plan(release, args.runtime_project.resolve(), root)
+        files.update(assets)
         preflight(release, home, files, system)
-        validate_catalog(release, args.runtime_project.resolve(), home / '.config/orion/servo_calibration.json', system)
+        validate_catalog(release, args.runtime_project.resolve(), home / '.config/orion/servo_calibration.json', system, assets)
         def interrupted(signum, frame):
             raise KeyboardInterrupt('Deployment interrupted')
         signal.signal(signal.SIGTERM, interrupted)
         folder = activate(root, release, home, files, system)
-        print(f'Complete Pi release is ready. Previous installation can be restored from {folder}.')
+        print(f'Complete Pi release is ready; physical smoke test passed and Orion is at rest with lights and torque off. Previous installation can be restored from {folder}.')
 
 
 if __name__ == '__main__':

@@ -70,7 +70,7 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--revision', required=True, help='Committed Git ref; working-tree edits are never discarded or deployed implicitly')
     parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/orion/voice-stack')
-    parser.add_argument('--runtime-project', type=Path, default=Path.home() / 'dev/orion', help='Existing motion/user-asset catalog; kept unchanged')
+    parser.add_argument('--runtime-project', type=Path, default=Path.home() / 'dev/orion', help='Live catalog; built-in YAML updates, user assets and calibration are preserved')
     parser.add_argument('--prepare-only', action='store_true')
     args = parser.parse_args()
     if os.uname().machine != 'aarch64' or os.geteuid() == 0:
