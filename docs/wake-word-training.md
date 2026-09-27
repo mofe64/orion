@@ -1,11 +1,11 @@
 # Train and evaluate “Hey Orion”
 
-Orion's managed listener uses the trained Rustpotter model
-`voice/models/wake/hey_orion_trained_080.rpw` at threshold `0.80`, followed by
-the openWakeWord phrase verifier in `voice/models/verifier/`. The six-example
-**reference**, `voice/models/wake/hey_orion_reference.rpw` at threshold `0.35`,
-stays in the release for rollback. Rustpotter can load either `.rpw` without changing the
-listener's audio path.
+Orion's managed listener uses the six-example Rustpotter reference model
+`voice/models/wake/hey_orion_reference.rpw` at threshold `0.35`, followed by
+the openWakeWord phrase verifier in `voice/models/verifier/`. The trained
+`voice/models/wake/hey_orion_trained_080.rpw` model remains in the release for
+comparison. Rustpotter can load either `.rpw` without changing the listener's
+audio path.
 
 The verifier's classifier was trained on screened Piper speech and reviewed
 original recordings. Its models inherit the non-commercial CC BY-NC-SA licence
@@ -13,9 +13,10 @@ of openWakeWord's training features.
 
 ## Record the baseline
 
-Measure the active trained model on the Pi with its normal ReSpeaker capture,
-25 dB capture gain, Rustpotter threshold `0.80`, and Qwen wake confirmation. Log each
-intended wake attempt, whether Rustpotter proposed it, whether Qwen confirmed it,
+Measure the active reference model on the Pi with its normal ReSpeaker capture,
+25 dB capture gain, Rustpotter threshold `0.35`, acoustic phrase verification,
+and Qwen's complete-recording wake check. Log each intended wake attempt,
+whether Rustpotter proposed it, whether the verifier accepted it, whether Qwen confirmed it,
 the time until confirmation, and the speaker's distance and room conditions.
 Also count Rustpotter candidates and confirmed false wakes per hour of ordinary
 non-wake audio. The listener does not save microphone audio by default; recording
@@ -58,27 +59,27 @@ or delayed detection in a live stream.
 Tune Rustpotter's threshold and minimum positive frames on validation audio,
 then freeze them before the held-out test. Compare wake misses, candidate and
 confirmed false wakes per hour, confirmation latency, and Pi CPU and memory use.
-Keep Qwen wake confirmation in the pipeline: Rustpotter must propose a phrase
-before Qwen can verify it, so Qwen cannot recover a missed candidate. Promote a
+Keep Qwen's complete-recording wake check in the pipeline: Rustpotter must propose a phrase
+before either verifier can check it, so neither can recover a missed candidate. Promote a
 trained `.rpw` only when the same test set shows a useful improvement without a
-material regression in the other measures. Keep the reference for rollback.
+material regression in the other measures. Keep the reference for comparison and rollback.
 
 ## Deploy and clean up
 
 The listener accepts `--wake-model PATH` and `--threshold VALUE`. Both the
-trained model and reference are present in every managed release. To roll back,
-select the reference and `0.35` together in `ACTIVE_WAKE_MODEL` and
-`ACTIVE_WAKE_THRESHOLD` in `scripts/pi_service_config.py` and in the listener
-service template, then
-commit, push, and run the [Pi deployment procedure](quickstart.md#deploy-to-the-pi)
-to switch back. Record model hash and threshold with each release. With the
+trained model and reference are present in every managed release. Select the
+model and its matching threshold together in `ACTIVE_WAKE_MODEL` and
+`ACTIVE_WAKE_THRESHOLD` in `scripts/pi_service_config.py`, the listener service
+template, and the standalone listener defaults. Then commit, push, and run the
+[Pi deployment procedure](quickstart.md#deploy-to-the-pi). Record model hash and
+threshold with each release. With the
 verifier active, the chime, light pulse and body waking wait for its acceptance;
 Qwen still checks the complete recording before any command runs.
 
 The experiment manifest should list all recordings, temporary WAVs, candidate
 models, logs and capture tools. Delete rejected models and raw recordings at the
 agreed retention date, and confirm the remaining files against that manifest.
-Keep the selected model and reference fallback, their reproducibility metadata and non-audio
+Keep both models, their reproducibility metadata and non-audio
 evaluation summary in the project.
 
 Rustpotter's [library overview](https://github.com/GiviMAD/rustpotter#overview)

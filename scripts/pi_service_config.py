@@ -8,10 +8,10 @@ SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-sta
 STOP_ORDER = tuple(reversed(SERVICES))
 TRAINED_WAKE_MODEL = 'hey_orion_trained_080.rpw'
 REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
-# The trained model proposes candidates for the packaged acoustic verifier
-# (voice/models/verifier); the reference stays packaged for rollback.
-ACTIVE_WAKE_MODEL = TRAINED_WAKE_MODEL
-ACTIVE_WAKE_THRESHOLD = '0.80'
+# The reference model proposes candidates for the packaged acoustic verifier
+# (voice/models/verifier); the trained model remains packaged for comparison.
+ACTIVE_WAKE_MODEL = REFERENCE_WAKE_MODEL
+ACTIVE_WAKE_THRESHOLD = '0.35'
 PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',

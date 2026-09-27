@@ -1,13 +1,28 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 import numpy as np
-from orion_voice.satellite import SatelliteSession, StereoCapture
+from orion_voice.satellite import SatelliteSession, StereoCapture, main
 from orion_voice.direction import DirectionEstimator
 
 
 def frame(value=2000):
     # Alternating samples represent AC energy; constant values are only DC offset.
     return np.tile([[value, value], [-value, -value]], (160, 1)).astype('<i2').tobytes()
+
+
+class ListenerDefaultsTests(unittest.TestCase):
+    def test_standalone_listener_uses_reference_wake_profile(self):
+        seen = []
+
+        async def capture(args):
+            seen.append(args)
+
+        with patch('sys.argv', ['orion-listener', '--token-file', '/tmp/unused']), \
+             patch('orion_voice.satellite.serve', capture):
+            main()
+        self.assertEqual(seen[0].wake_model.name, 'hey_orion_reference.rpw')
+        self.assertEqual(seen[0].threshold, 0.35)
 
 class Wake:
     next = False

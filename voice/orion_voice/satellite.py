@@ -685,8 +685,8 @@ def main():
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--mute-file", type=Path, default=Path.home() / ".config/orion/microphone.json")
     parser.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
-    parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_trained_080.rpw")
-    parser.add_argument("--threshold", type=float, default=0.80)
+    parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_reference.rpw")
+    parser.add_argument("--threshold", type=float, default=0.35)
     parser.add_argument("--verifier-dir", type=Path, default=Path(__file__).resolve().parents[1] / "models/verifier",
                         help="openWakeWord phrase verifier; pass --no-verifier to use the ASR prefix instead")
     parser.add_argument("--no-verifier", dest="verifier_dir", action="store_const", const=None)

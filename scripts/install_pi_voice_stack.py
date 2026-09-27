@@ -250,8 +250,8 @@ class System:
                     raise RuntimeError('Listener has no running process')
                 listener_args = Path(f'/proc/{listener_pid}/cmdline').read_bytes().decode().split('\0')
                 expected_wake_model = Path(option(listener_args, '--wake-model',
-                    str(release / 'voice/models/wake/hey_orion_trained_080.rpw'))).name
-                expected_wake_threshold = float(option(listener_args, '--threshold', '0.80'))
+                    str(release / 'voice/models/wake/hey_orion_reference.rpw'))).name
+                expected_wake_threshold = float(option(listener_args, '--threshold', '0.35'))
                 expected_verifier = '--no-verifier' not in listener_args
                 if not (status.get('coordinator_running') and not status.get('error') and
                         status.get('project_root') == str(release) and status.get('revision') == metadata['revision'] and

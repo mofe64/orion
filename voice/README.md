@@ -12,7 +12,7 @@ Use [Pi installation and deployment](../docs/quickstart.md#pi-local-voice-and-ag
 to prepare the listener with the complete voice stack. The Pi needs working
 [ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
 Deployment builds the native Rustpotter adapter and checks the active
-trained model, the retained reference and the packaged phrase verifier. See [wake-word training](../docs/wake-word-training.md)
+reference model, retained trained model and packaged phrase verifier. See [wake-word training](../docs/wake-word-training.md)
 for the evidence and rollback policy.
 
 The listener runs as `orion-listener` with a Python 3.12 environment inside the
@@ -28,9 +28,9 @@ coarse direction from stereo frames and downmixes to mono for Rustpotter and ASR
 It keeps pre-roll and the current recording in memory; recordings are cleared on
 mute, cancellation or disconnect.
 
-A wake candidate registers a runtime session and starts the chime and brief
-light pulse. With a compatible
-coordinator, a short wake prefix reaches Qwen while full command capture continues.
+A wake candidate registers a runtime session. The chime and brief light pulse
+wait for the acoustic verifier to accept it. If the verifier is unavailable,
+a short wake prefix reaches Qwen while full command capture continues.
 Prefix verification and transcription of the complete utterance run in order. Follow-up
 speech can remain buffered during confirmation. The coordinator rejects recordings
 that reach the capture limit before submitting a command to the agent.
