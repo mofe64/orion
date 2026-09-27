@@ -240,6 +240,8 @@ class SmokeRuntimeTests(Fixture):
         initial = True
         def command(_, value):
             nonlocal run_id
+            if value == 'character status':
+                return dict(ok=True, character={}, rest=dict(state='resting', light_on=False))
             self.assertEqual(value, 'character rest')
             run_id += 1
             calls.append(('character rest', run_id))
@@ -256,8 +258,7 @@ class SmokeRuntimeTests(Fixture):
                     value = dict(build_revision='new', mode='moving', torque_enabled=True)
                 else:
                     value = dict(build_revision='new', mode='configured', torque_enabled=False,
-                        last_motion=dict(run_id=run_id, state='completed'),
-                        rest=dict(state='resting', light_on=False))
+                        last_motion=dict(run_id=run_id, state='completed'))
                 return subprocess.CompletedProcess(args, 0, json.dumps(value))
             return subprocess.CompletedProcess(args, 0)
         with patch.object(system, 'runtime_client', return_value=client), \
@@ -289,17 +290,23 @@ class SmokeRuntimeTests(Fixture):
                                  [('character rest', 1), ('character rest', 2)])
 
     def test_rest_requires_the_matching_completed_run_torque_off_and_dark_lights(self):
-        for fault in (None, 'wrong-run', 'cancelled', 'timed_out', 'torque', 'light', 'state'):
+        for fault in (None, 'wrong-run', 'cancelled', 'timed_out', 'torque', 'light', 'state', 'fault', 'missing-rest'):
             with self.subTest(fault=fault):
-                status = dict(last_motion=dict(run_id=7, state='completed'), torque_enabled=False,
-                              rest=dict(state='resting', light_on=False))
+                # The real runtime exposes these through two separate commands.
+                status = dict(last_motion=dict(run_id=7, state='completed'), torque_enabled=False)
+                lifecycle = dict(ok=True, character={}, rest=dict(state='resting', light_on=False))
                 if fault == 'wrong-run': status['last_motion']['run_id'] = 6
                 if fault in ('cancelled', 'timed_out'): status['last_motion']['state'] = fault
                 if fault == 'torque': status['torque_enabled'] = True
-                if fault == 'light': status['rest']['light_on'] = True
-                if fault == 'state': status['rest']['state'] = 'going_to_rest'
+                if fault == 'light': lifecycle['rest']['light_on'] = True
+                if fault == 'state': lifecycle['rest']['state'] = 'going_to_rest'
+                if fault == 'fault': lifecycle['rest']['state'] = 'fault'
+                if fault == 'missing-rest': lifecycle.pop('rest')
+                def command(client, value):
+                    self.assertIn(value, ('character rest', 'character status'))
+                    return dict(ok=True, run_id=7) if value == 'character rest' else lifecycle
                 system = installer.System()
-                with patch.object(system, 'daemon_command', return_value=dict(ok=True, run_id=7)), \
+                with patch.object(system, 'daemon_command', side_effect=command) as daemon, \
                      patch.object(system, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(status))) as run, \
                      patch.object(installer.time, 'monotonic', side_effect=[0, 0, 31]), \
                      patch.object(installer.time, 'sleep'):
@@ -307,7 +314,58 @@ class SmokeRuntimeTests(Fixture):
                         with self.assertRaises(RuntimeError): system.settle_runtime(['/proc/42/exe', '--socket', '/tmp/custom.sock'])
                     else:
                         system.settle_runtime(['/proc/42/exe', '--socket', '/tmp/custom.sock'])
+                    self.assertEqual([call.args[1] for call in daemon.call_args_list],
+                                     ['character rest', 'character status'])
                     self.assertFalse(any('--disable' in call.args for call in run.call_args_list))
+
+    def test_rest_polls_movement_and_lifecycle_until_both_confirm_completion(self):
+        system = installer.System()
+        def command(client, value):
+            if value == 'character rest':
+                return dict(ok=True, run_id=7)
+            return dict(ok=True, rest=dict(state='resting', light_on=False))
+        # The rest lifecycle can finish between the two reads. A completed
+        # lifecycle alone cannot substitute for measured movement/torque status.
+        statuses = [dict(motion=dict(run_id=7, state='settling'), last_motion=None, torque_enabled=True),
+                    dict(motion=None, last_motion=dict(run_id=7, state='completed'), torque_enabled=False)]
+        with patch.object(system, 'daemon_command', side_effect=command), \
+             patch.object(system, 'run', side_effect=[subprocess.CompletedProcess([], 0, json.dumps(s)) for s in statuses]) as run, \
+             patch.object(installer.time, 'sleep'):
+            system.settle_runtime(['runtime', '--socket', 'socket'])
+            self.assertEqual(run.call_count, 2)
+
+    def test_initial_rest_failure_does_not_claim_smoke_started_or_retry_rest(self):
+        system = installer.System()
+        with patch.object(system, 'wait_runtime_client', return_value=(['runtime', '--socket', 'socket'], {})), \
+             patch.object(system, 'settle_runtime', side_effect=RuntimeError('initial rest failed')) as rest, \
+             patch.object(system, 'run') as run, patch('builtins.print') as output:
+            with self.assertRaisesRegex(RuntimeError, 'initial rest failed'):
+                system.smoke_runtime(self.release)
+            rest.assert_called_once()
+            run.assert_not_called()
+            self.assertFalse(any('Running the physical' in str(call) for call in output.call_args_list))
+
+    def test_smoke_failure_is_preserved_when_final_rest_also_fails(self):
+        system = installer.System()
+        failed = subprocess.CalledProcessError(6, ['runtime', '--run-scene', 'deployment_smoke'])
+        with patch.object(system, 'wait_runtime_client', return_value=(['runtime', '--socket', 'socket'], {})), \
+             patch.object(system, 'settle_runtime', side_effect=[None, RuntimeError('rest failed')]), \
+             patch.object(system, 'stop_playback'), \
+             patch.object(system, 'run', side_effect=[subprocess.CompletedProcess([], 0, '{"mode":"holding"}'),
+                                                     subprocess.CompletedProcess([], 0), failed]):
+            with self.assertRaisesRegex(RuntimeError, 'Physical smoke failed:.*deployment_smoke.*final rest also failed: rest failed'):
+                system.smoke_runtime(self.release)
+
+    def test_rest_timeout_reports_the_run_and_observed_runtime_states(self):
+        system = installer.System()
+        status = dict(last_motion=dict(run_id=7, state='completed'), torque_enabled=False)
+        def command(client, value):
+            return dict(ok=True, run_id=7) if value == 'character rest' else dict(ok=True, rest=dict(state='going_to_rest', light_on=True))
+        with patch.object(system, 'daemon_command', side_effect=command), \
+             patch.object(system, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(status))), \
+             patch.object(installer.time, 'monotonic', side_effect=[0, 0, 31]), patch.object(installer.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, r"rest run 7.*completed.*torque_enabled=False.*going_to_rest.*light_on.*True"):
+                system.settle_runtime(['runtime', '--socket', 'socket'])
 
 
 class FakeSystem:
@@ -498,7 +556,7 @@ class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
         for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
                       'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
-                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting'):
+                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting', 'lights-on', 'torque-on'):
             with self.subTest(fault=fault):
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
                 event = dict(type='ready', asr=dict(provider='qwen3-asr'),
@@ -525,13 +583,20 @@ class ReadinessTests(Fixture):
                     if args[0] == 'systemctl': return subprocess.CompletedProcess(args, 0, '100\n')
                     self.assertIn('/tmp/custom.sock', args)
                     return subprocess.CompletedProcess(args, 0, json.dumps(dict(build_revision=revision,
-                        torque_enabled=fault == 'not-resting', rest=dict(state='resting', light_on=False))))
+                        torque_enabled=fault == 'torque-on')))
+                def command(client, value):
+                    self.assertEqual(value, 'character status')
+                    self.assertEqual(str(client[0]), str(self.release / 'runtime/target/release/oriond'))
+                    self.assertEqual(client[1:], ['--socket', '/tmp/custom.sock'])
+                    return dict(ok=True, rest=dict(state='going_to_rest' if fault == 'not-resting' else 'resting',
+                                                  light_on=fault == 'lights-on'))
                 def request(req, **kwargs):
                     self.assertEqual(req.full_url, 'http://127.0.0.1:7555/api/v2/voice/request')
                     self.assertEqual(req.headers['Authorization'], 'Bearer fixture-token')
                     return io.BytesIO(json.dumps(dict(pid=gateway_pid)).encode())
                 with patch.object(system, 'state', return_value=dict(active=True)), \
                      patch.object(system, 'run', side_effect=run), \
+                     patch.object(system, 'daemon_command', side_effect=command), \
                      patch.object(installer.Path, 'read_bytes', return_value=cmdline), \
                      patch.object(installer, 'control', side_effect=[status, dict(events=[event])]), \
                      patch.object(installer.time, 'monotonic', side_effect=[0, 0, 2]), \

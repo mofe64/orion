@@ -61,7 +61,10 @@ smoke test. The test establishes rest, moves to `zero_reference`, runs
 `deployment_smoke` for light/audio, then `acknowledge_left`, `acknowledge_right`
 and `return_home`. Each pose and scene waits for measured completion. The final
 `character rest` waits for its own movement run to complete, lights to fade off,
-and torque to be disabled. Keep Orion's surroundings clear during activation.
+and torque to be disabled. Movement and torque come from runtime `status`;
+the resting lifecycle and light state come from `character status`. Deployment
+prints each smoke pose and scene and includes the observed states if rest times
+out. Keep Orion's surroundings clear during activation.
 Normal character startup may also move Orion home.
 
 Readiness requires the expected runtime revision, a running coordinator with

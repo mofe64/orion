@@ -173,37 +173,53 @@ class System:
         result = self.daemon_command(client, 'character rest')
         run = result['run_id']
         deadline = time.monotonic() + timeout
+        status = lifecycle = {}
         while time.monotonic() < deadline:
             status = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
             last = status.get('last_motion') or {}
-            rest = status.get('rest') or {}
+            lifecycle = self.daemon_command(client, 'character status')
+            rest = lifecycle.get('rest') or {}
             if rest.get('state') == 'fault' or (last.get('run_id') == run and last.get('state') in ('cancelled', 'timed_out')):
-                raise RuntimeError('Deployment rest movement failed; torque has not been forcibly released')
+                raise RuntimeError(f'Deployment rest run {run} failed: movement={last}, rest={rest}; torque has not been forcibly released')
             if (last.get('run_id') == run and last.get('state') == 'completed' and
                     rest.get('state') == 'resting' and status.get('torque_enabled') is False and
                     rest.get('light_on') is False):
                 return
             time.sleep(.1)
-        raise RuntimeError('Deployment rest was not confirmed; runtime remains available for recovery')
+        raise RuntimeError(f'Deployment rest run {run} was not confirmed: '
+                           f'movement={status.get("last_motion")}, torque_enabled={status.get("torque_enabled")}, '
+                           f'rest={lifecycle.get("rest")}; runtime remains available for recovery')
 
     def smoke_runtime(self, release, timeout=20):
         metadata = json.loads((release / 'release.json').read_text())
         client, status = self.wait_runtime_client(metadata['revision'], timeout)
+        print('Confirming the new runtime is at rest before physical smoke playback.', flush=True)
+        self.settle_runtime(client)
+        failure = None
         try:
             print('Running the physical deployment smoke test: lights, audio and both expressive arcs.', flush=True)
-            self.settle_runtime(client)
             status = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
             self.stop_playback(client)
             if status.get('mode') == 'observe':
                 self.run(*client, '--configure', capture_output=True)
             if status.get('mode') in ('observe', 'configured'):
                 self.run(*client, '--enable', capture_output=True)
+            print('Smoke pose: zero_reference', flush=True)
             self.run(*client, '--goto', 'zero_reference', '--duration', '3.0', '--wait', timeout=30)
             for scene in ('deployment_smoke', 'acknowledge_left', 'acknowledge_right', 'return_home'):
+                print(f'Smoke scene: {scene}', flush=True)
                 self.run(*client, '--run-scene', scene, '--wait', timeout=60)
+        except BaseException as error:
+            failure = error
+            raise
         finally:
             print('Returning Orion to measured rest, lights off and torque off.', flush=True)
-            self.settle_runtime(client)
+            try:
+                self.settle_runtime(client)
+            except BaseException as error:
+                if failure is not None:
+                    raise RuntimeError(f'Physical smoke failed: {failure}; final rest also failed: {error}') from failure
+                raise
 
     def ready(self, release, home, timeout=180):
         metadata = json.loads((release / 'release.json').read_text())
@@ -248,12 +264,13 @@ class System:
                         ready.get('wake', {}).get('threshold') == expected_wake_threshold and
                         bool((ready.get('wake', {}).get('verifier') or {}).get('active')) == expected_verifier):
                     raise RuntimeError('The requested release is not speech-ready')
-                runtime = json.loads(self.run(release / 'runtime/target/release/oriond', '--socket', runtime_socket, '--status', capture_output=True, text=True, timeout=5).stdout)
+                client = [release / 'runtime/target/release/oriond', '--socket', runtime_socket]
+                runtime = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
                 if runtime.get('build_revision') != metadata['revision']:
                     raise RuntimeError('The old runtime is still active')
+                rest = self.daemon_command(client, 'character status').get('rest') or {}
                 if (runtime.get('torque_enabled') is not False or
-                        runtime.get('rest', {}).get('state') != 'resting' or
-                        runtime.get('rest', {}).get('light_on') is not False):
+                        rest.get('state') != 'resting' or rest.get('light_on') is not False):
                     raise RuntimeError('The deployed runtime has not remained at rest after the smoke test')
                 # The gateway must reach the same authenticated voice host.
                 token = token_file.read_text().strip()
