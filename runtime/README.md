@@ -312,7 +312,8 @@ Direct warm-cue playback and the complete `acknowledge_left` and
 `acknowledge_right` motion/light/audio scenes use the same physical ReSpeaker
 path as the character coordinator.
 
-Portable scenes live under `scenes/`. The v2 format coordinates
+Portable scenes live under `scenes/v1/` or `scenes/v2/`, selected by `--hardware`.
+The `format_version: 2` schema coordinates
 non-overlapping motion clips with parallel spatial
 RGBW effects and queued audio. Events use seconds or Rust-compiled motion
 markers from one supplied monotonic clock. Scene files are validated against
@@ -352,9 +353,10 @@ reset when the daemon restarts. Scene states are `executing`,
 scene and its active movement. `--wait` exits `0`, `4`, `5`, or `6` for
 completed, timed out, cancelled, or failed respectively.
 
-The scene library is recursive, including `scenes/user/`. User-authored poses
-are loaded recursively from `motion/user/poses/`, and user motions live under
-`motion/motions/user/`. Built-in names cannot be shadowed. At startup and
+The selected scene library is recursive, including its `user/` subdirectory.
+User-authored poses load from `motion/user/poses/<version>/`, and user motions
+live under `motion/motions/<version>/user/`, where `version` is `v1` or `v2`.
+Built-in names cannot be shadowed. At startup and
 reload, `oriond` validates every pose against the active driver limits and
 validates every motion keyframe reference and timing value.
 

@@ -1,4 +1,4 @@
-# Orion v2 user scenes
+# Orion user scenes
 
 Studio publishes user-authored `format_version: 2` scenes here. Built-ins in
 the parent directory are immutable and cannot be shadowed.

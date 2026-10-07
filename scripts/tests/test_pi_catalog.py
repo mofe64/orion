@@ -15,10 +15,10 @@ from test_pi_release_install import Fixture, FakeSystem
 class CatalogTests(Fixture):
     def setUp(self):
         super().setUp()
-        self.pose = self.project / 'motion/config/poses.yaml'
-        self.motion = self.project / 'motion/motions/idle/idle_breathe.yaml'
-        self.retired = self.project / 'motion/motions/idle/retired.yaml'
-        self.scene = self.project / 'scenes/deployment_smoke.yaml'
+        self.pose = self.project / 'motion/config/v1/poses.yaml'
+        self.motion = self.project / 'motion/motions/v1/idle/idle_breathe.yaml'
+        self.retired = self.project / 'motion/motions/v1/idle/retired.yaml'
+        self.scene = self.project / 'scenes/v1/deployment_smoke.yaml'
         for path in (self.pose, self.motion, self.retired, self.scene):
             self.write(path, 'old YAML\n')
         self.git('init', '-q')
@@ -26,18 +26,18 @@ class CatalogTests(Fixture):
         self.git('config', 'user.name', 'Catalog test')
         self.git('add', '.'); self.git('commit', '-qm', 'Existing built-ins')
         self.write(self.motion, 'local edit backed up during activation\n')
-        self.preserved = [self.project / 'motion/user/poses/custom.yaml',
-                          self.project / 'motion/motions/user/custom.yaml',
-                          self.project / 'scenes/user/custom.yaml',
-                          self.project / 'motion/motions/local.yaml',
+        self.preserved = [self.project / 'motion/user/poses/v1/custom.yaml',
+                          self.project / 'motion/motions/v1/user/custom.yaml',
+                          self.project / 'scenes/v1/user/custom.yaml',
+                          self.project / 'motion/motions/v1/local.yaml',
                           self.home / '.config/orion/servo_calibration.json']
         for path in self.preserved:
             self.write(path, 'operator content\n')
         for path in (self.pose, self.motion, self.scene):
             self.write(self.release / path.relative_to(self.project), 'release YAML\n')
-        for relative in ('motion/motions/user/unwanted.yaml', 'scenes/user/unwanted.yaml'):
+        for relative in ('motion/motions/v1/user/unwanted.yaml', 'scenes/v1/user/unwanted.yaml'):
             self.write(self.release / relative, 'do not deploy user assets\n')
-        self.added = self.project / 'motion/motions/idle/added.yml'
+        self.added = self.project / 'motion/motions/v1/idle/added.yml'
         self.write(self.release / self.added.relative_to(self.project), 'added YAML\n')
 
     def git(self, *args):
@@ -69,9 +69,60 @@ class CatalogTests(Fixture):
         (self.release / self.added.relative_to(self.project)).unlink()
         self.assertIsNone(self.assets()[self.added])
 
+    def test_previous_unversioned_builtin_inventory_is_retired(self):
+        old_paths = ['motion/config/poses.yaml', 'motion/motions/functional/return_home.yaml',
+                     'scenes/return_home.yaml', 'hardware/v2/poses.yaml']
+        manifest = self.root / 'catalog-assets.json'
+        manifest.write_text(json.dumps({'project': str(self.project), 'paths': old_paths}))
+        for relative in old_paths:
+            self.write(self.project / relative, 'old built-in\n')
+        assets = self.assets()
+        for relative in old_paths:
+            self.assertIsNone(assets[self.project / relative])
+        self.assertEqual(assets[self.pose], 'release YAML\n')
+        self.assertFalse(set(old_paths) & set(json.loads(assets[manifest])['paths']))
+
+    def test_both_versions_are_deployed_without_publishing_user_assets(self):
+        for relative in ('motion/config/v2/poses.yaml', 'motion/motions/v2/nod.yaml',
+                         'scenes/v2/return_home.yaml'):
+            self.write(self.release / relative, 'V2 YAML\n')
+            self.assertEqual(self.assets()[self.project / relative], 'V2 YAML\n')
+        for relative in ('motion/motions/v2/user/custom.yaml', 'scenes/v2/user/custom.yaml'):
+            self.write(self.release / relative, 'user YAML\n')
+            self.assertNotIn(self.project / relative, self.assets())
+
+    def test_legacy_user_assets_move_to_their_version_and_rollback_restores_them(self):
+        moves = (('motion/user/poses/custom.yaml', 'motion/user/poses/v1/custom.yaml'),
+                 ('motion/motions/user/custom.yaml', 'motion/motions/v1/user/custom.yaml'),
+                 ('scenes/user/custom.yaml', 'scenes/v1/user/custom.yaml'),
+                 ('hardware/v2/user/poses/custom.yaml', 'motion/user/poses/v2/custom.yaml'),
+                 ('hardware/v2/motions/user/custom.yaml', 'motion/motions/v2/user/custom.yaml'),
+                 ('hardware/v2/scenes/user/custom.yaml', 'scenes/v2/user/custom.yaml'))
+        for old, new in moves:
+            self.write(self.project / old, 'operator content\n')
+            assets = self.assets()
+            self.assertIsNone(assets[self.project / old])
+            self.assertEqual(assets[self.project / new], 'operator content\n')
+            self.assertTrue((self.project / old).exists())
+        self.installed_units()
+        system = FakeSystem(self.units)
+        installer.activate(self.root, self.release, self.home,
+                           {**self.plan(), **self.assets()}, system)
+        for old, new in moves:
+            self.assertFalse((self.project / old).exists())
+            self.assertEqual((self.project / new).read_text(), 'operator content\n')
+        installer.rollback(self.root, system)
+        for old, _ in moves:
+            self.assertEqual((self.project / old).read_text(), 'operator content\n')
+
+    def test_user_asset_move_rejects_conflicting_destination(self):
+        self.write(self.project / 'scenes/user/custom.yaml', 'different legacy content\n')
+        with self.assertRaisesRegex(ValueError, 'already exists at versioned location'):
+            self.assets()
+
     def test_invalid_inventory_and_symlinked_destinations_are_rejected(self):
         manifest = self.root / 'catalog-assets.json'
-        for relative in ('../escape.yaml', 'motion/motions/user/custom.yaml', '/tmp/outside.yaml'):
+        for relative in ('../escape.yaml', 'motion/motions/v1/user/custom.yaml', '/tmp/outside.yaml'):
             manifest.write_text(json.dumps({'project': str(self.project), 'paths': [relative]}))
             with self.assertRaisesRegex(ValueError, 'Invalid built-in catalog inventory'):
                 self.assets()

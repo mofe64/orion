@@ -17,7 +17,7 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 archive="${archive_root}/user-assets-pre-v2-${stamp}"
 moved=0
 
-for relative_directory in scenes/user motion/user/poses motion/motions/user; do
+for relative_directory in scenes/v1/user scenes/v2/user motion/user/poses/v1 motion/user/poses/v2 motion/motions/v1/user motion/motions/v2/user; do
   source_directory="${project_root}/${relative_directory}"
   [[ -d "${source_directory}" ]] || continue
   while IFS= read -r -d '' asset; do

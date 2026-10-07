@@ -35,7 +35,7 @@ PROJECT_ROOT = MUJOCO_DIRECTORY.parents[1]
 MOTION_SOURCE = PROJECT_ROOT / "motion"
 CONFIG_DIRECTORY = MOTION_SOURCE / "config"
 DEFAULT_SCENE_PATH = MUJOCO_DIRECTORY / "scene.xml"
-DEFAULT_POSE_PATH = CONFIG_DIRECTORY / "poses.yaml"
+DEFAULT_POSE_PATH = CONFIG_DIRECTORY / "v1" / "poses.yaml"
 DEFAULT_POSE_NAMES = ("zero_reference", "home", "attentive")
 
 # Consume the backend-independent motion library, matching motion_player.py.
@@ -481,7 +481,7 @@ def load_motion_trajectory(
     motion_name: str,
     start_pose_name: str,
     *,
-    config_directory: Path = CONFIG_DIRECTORY,
+    config_directory: Path = CONFIG_DIRECTORY / "v1",
 ) -> CompiledTrajectory:
     """Load one authored motion from Orion's single Rust compiler."""
 
@@ -489,7 +489,7 @@ def load_motion_trajectory(
         motion_name,
         start_pose_name,
         pose_file=config_directory / "poses.yaml",
-        motions_directory=PROJECT_ROOT / "motion" / "motions",
+        motions_directory=PROJECT_ROOT / "motion" / "motions" / "v1",
         calibration_file=MUJOCO_DIRECTORY / "config" / "servo_calibration.json",
     )
 

@@ -13,7 +13,7 @@ from orion_motion.reporting import build_run_report, compare_run_reports
 
 PACKAGE_DIRECTORY = Path(__file__).parent.parent
 CONFIG_DIRECTORY = PACKAGE_DIRECTORY / "config"
-MOTION_PATH = PACKAGE_DIRECTORY / "motions/functional/look_at_left.yaml"
+MOTION_PATH = PACKAGE_DIRECTORY / "motions/v1/functional/look_at_left.yaml"
 CALIBRATION_PATH = (
     PACKAGE_DIRECTORY.parent / "simulation/mujoco/config/servo_calibration.json"
 )
@@ -23,8 +23,8 @@ def make_report(backend):
     trajectory = compile_trajectory(
         "look_at_left",
         "attentive",
-        pose_file=CONFIG_DIRECTORY / "poses.yaml",
-        motions_directory=PACKAGE_DIRECTORY / "motions",
+        pose_file=CONFIG_DIRECTORY / "v1" / "poses.yaml",
+        motions_directory=PACKAGE_DIRECTORY / "motions" / "v1",
         calibration_file=CALIBRATION_PATH,
     )
     start = trajectory.points[0].positions

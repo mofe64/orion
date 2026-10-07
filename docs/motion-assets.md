@@ -9,20 +9,31 @@ not rely on ignored compatibility fields.
 ```text
 motion/
 ├── config/
-│   ├── poses.yaml                  built-in complete poses
+│   ├── v1/poses.yaml               V1 built-in complete poses
+│   ├── v2/poses.yaml               V2 built-in complete poses
 │   └── stability_limits.yaml       MuJoCo reporting policy only
-├── user/poses/**/*.yaml            Studio-authored complete poses
+├── user/poses/
+│   ├── v1/**/*.yaml                V1 Studio-authored poses
+│   └── v2/**/*.yaml                V2 Studio-authored poses
 └── motions/
-    ├── expressive/*.yaml           character actions
-    ├── functional/*.yaml           direct utility actions
-    ├── idle/*.yaml                 anchor-relative ambient clips
-    ├── speaking/*.yaml             source drawings for generated speech
-    └── user/**/*.yaml              Studio-authored motions
+    ├── v1/
+    │   ├── expressive/*.yaml       character actions
+    │   ├── functional/*.yaml       direct utility actions
+    │   ├── idle/*.yaml             anchor-relative ambient clips
+    │   ├── speaking/*.yaml         source drawings for generated speech
+    │   └── user/**/*.yaml          V1 Studio-authored motions
+    └── v2/
+        ├── *.yaml                 V2 built-in motions
+        └── user/**/*.yaml          V2 Studio-authored motions
+scenes/
+├── v1/                            V1 built-in scenes and user/ scenes
+└── v2/                            V2 built-in scenes and user/ scenes
 ```
 
-The loaders traverse built-in and user files recursively in sorted path order.
-Semantic names are global within each asset type. A user asset cannot shadow a
-built-in or another user asset.
+The selected hardware profile supplies the version's pose, motion and scene paths.
+Loaders traverse only those directories, recursively in sorted path order.
+Semantic names are unique within each version and asset type. A user asset cannot
+shadow a built-in or another user asset in its version.
 
 ## Joint vocabulary
 

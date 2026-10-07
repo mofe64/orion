@@ -22,7 +22,7 @@ from .rest_capture import (
 
 DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
 ORION_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_POSES = ORION_ROOT / "motion" / "config" / "poses.yaml"
+DEFAULT_POSES = ORION_ROOT / "motion" / "config" / "v1" / "poses.yaml"
 SAMPLE_INTERVAL_SECONDS = 0.10
 
 
@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.calibration is None:
         args.calibration = Path("~/.config/orion/servo_calibration-v2.json") if args.hardware == "v2" else DEFAULT_CALIBRATION
     if args.poses is None:
-        args.poses = ORION_ROOT / "hardware/v2/poses.yaml" if args.hardware == "v2" else DEFAULT_POSES
+        args.poses = ORION_ROOT / "motion/config/v2/poses.yaml" if args.hardware == "v2" else DEFAULT_POSES
     if args.dry_run:
         print(f"Would capture rest on {args.port}; poses: {args.poses}")
         return 0

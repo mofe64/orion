@@ -132,7 +132,7 @@ def main():
     unguarded_request = request
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--socket', type=Path, default=Path('/tmp/oriond.sock'))
-    parser.add_argument('--motions', type=Path, default=Path('motion/motions/idle'))
+    parser.add_argument('--motions', type=Path, default=Path('motion/motions/v1/idle'))
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--idles-only', action='store_true')

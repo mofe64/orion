@@ -1,8 +1,8 @@
 # Orion hardware versions and V2 calibration
 
-Start V2 setup with Orion's existing servo calibration and rest capture. V1
-keeps its calibration and pose files. V2 selects its own files using
-`--hardware v2`.
+Start V2 setup with Orion's existing servo calibration and rest capture.
+`--hardware v1` and `--hardware v2` select separate repository resources and
+Pi calibration files. V1's asset values are unchanged.
 
 ## Calibrate V2 first
 
@@ -23,17 +23,22 @@ capture as V1, including its existing endpoint margins and backups. Rest capture
 uses the same unsupported stability check and writes the measured rest pose.
 
 V2 calibration writes `~/.config/orion/servo_calibration-v2.json`. V2 rest capture
-writes `rest` directly into the repository's `hardware/v2/poses.yaml`, matching
+writes `rest` directly into the repository's `motion/config/v2/poses.yaml`, matching
 V1's repository pose workflow. Home and rest in that file use the V2 lamp's
 captured physical calibration zero. Other poses and motions remain preview
 candidates until checked on the assembled lamp. The captured calibration supplies
 servo IDs, encoder zeros, directions and numerical limits to the V2 runtime.
 
 V2 hardware, simulation, Studio preview and release validation read the same
-repository resources: `hardware/v2/poses.yaml`, `hardware/v2/motions` and
-`hardware/v2/scenes`. Edit those resources locally, commit and push, then pull
+repository resources: `motion/config/v2/poses.yaml`, `motion/motions/v2` and
+`scenes/v2`. Edit those resources locally, commit and push, then pull
 on the Pi. Rest recapture changes the repository pose file; commit that measured
 change before pulling subsequent edits. Servo calibration stays on the Pi.
+
+The release installer relocates user YAML from the former unversioned directories
+into V1's user directories, and from `hardware/v2/` into V2's user directories.
+These moves use the existing deployment backup and rollback. Conflicting files
+at a destination are reported rather than overwritten.
 
 Encoder direction defaults to `+1`, as in the existing V1 capture. Check the
 fitted mechanism against the model's positive axes and set any reversed joint's
@@ -54,6 +59,10 @@ values from CAD.
 | LED driver | GPIO12, RP1 PWM, GRBW | Same GPIO12 driver |
 | Audio | ReSpeaker 2-Mics V2 HAT, `seeed2micvoicec` | XVF3800 USB, `Array` |
 | Calibration | `servo_calibration.json` | `servo_calibration-v2.json` |
+| Poses | `motion/config/v1/poses.yaml` | `motion/config/v2/poses.yaml` |
+| Motions | `motion/motions/v1/` | `motion/motions/v2/` |
+| User poses | `motion/user/poses/v1/` | `motion/user/poses/v2/` |
+| Scenes | `scenes/v1/` | `scenes/v2/` |
 | Simulation | `simulation/mujoco/scene.xml` | `simulation/mujoco/v2/scene.xml` |
 
 The V2 mechanical tree is base → shoulder → elbow → wrist → neck. Existing API

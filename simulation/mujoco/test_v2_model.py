@@ -32,7 +32,7 @@ class V2ModelTests(unittest.TestCase):
 
     def test_urdf_and_mujoco_forward_kinematics_match_in_metres_and_radians(self):
         robot = ET.parse(PROJECT / 'description/urdf/orion-v2.urdf').getroot()
-        poses = yaml.safe_load((PROJECT / 'hardware/v2/poses.yaml').read_text())['poses']
+        poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']
         bridge = Bridge(PROJECT / 'simulation/mujoco/v2/scene.xml', poses['home']['positions'], 'v2')
         for name in ('home', 'look_left', 'look_right', 'zero_reference'):
             angles = poses[name]['positions']
@@ -53,7 +53,7 @@ class V2ModelTests(unittest.TestCase):
             np.testing.assert_allclose(bridge.data.site_xpos[site], expected_face[:3], atol=1e-10)
 
     def test_bridge_rejects_wrong_hardware_and_never_claims_dynamic_safety(self):
-        poses = yaml.safe_load((PROJECT / 'hardware/v2/poses.yaml').read_text())['poses']['home']['positions']
+        poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']['home']['positions']
         scene = PROJECT / 'simulation/mujoco/v2/scene.xml'
         with self.assertRaises(ValueError): Bridge(scene, poses, 'v1')
         bridge = Bridge(scene, poses, 'v2')

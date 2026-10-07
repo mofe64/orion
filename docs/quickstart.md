@@ -85,9 +85,12 @@ generation and speech playback together.
 The installer preserves voice preferences, microphone settings, calibration,
 pairing, Codex login, personality, memory and user-authored poses, motions and
 scenes. Built-in `.yaml`/`.yml` files under `motion/config/`, `motion/motions/`
-(excluding `user/`) and `scenes/` (excluding `user/`) update from the selected
+and `scenes/` update from the selected
 commit. Local edits to those built-ins are replaced and backed up for rollback.
 Retired tracked built-ins are removed; untracked local files are preserved.
+Each hardware version has separate directories. User subdirectories are excluded
+from built-in replacement; the installer relocates assets from the former user
+paths into their version's directory as part of the rollback transaction.
 It changes release paths while retaining installed command arguments
 and environment overrides, including sleep and microphone tuning. Existing
 service enablement is retained; missing services are enabled. Restarting the agent

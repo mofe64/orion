@@ -492,15 +492,15 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-        let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes/v1"), &poses, &motions).unwrap();
         let reload = AssetReloadContext {
-            poses_file: root.join("motion/config/poses.yaml"),
-            user_poses_directory: root.join("motion/user/poses"),
-            motions_directory: root.join("motion/motions"),
-            scenes_directory: root.join("scenes"),
+            poses_file: root.join("motion/config/v1/poses.yaml"),
+            user_poses_directory: root.join("motion/user/poses/v1"),
+            motions_directory: root.join("motion/motions/v1"),
+            scenes_directory: root.join("scenes/v1"),
             cues: CueLibrary::load(root.join("audio/cues")).unwrap(),
         };
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
@@ -652,10 +652,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-        let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes/v1"), &poses, &motions).unwrap();
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
         let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
         let spool = tempfile::tempdir().unwrap();
@@ -689,10 +689,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-        let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes/v1"), &poses, &motions).unwrap();
         let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
         let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
         let spool = tempfile::tempdir().unwrap();
@@ -729,10 +729,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-        let library = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes/v1"), &poses, &motions).unwrap();
 
         let mut core = RuntimeCore::new(TestDriver, poses.clone(), motions.clone()).unwrap();
         let mut scenes = SceneCoordinator::new(library.clone(), Rgbw8::OFF);
@@ -845,8 +845,8 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
         let empty = tempfile::tempdir().unwrap();
         let error = MotionLibrary::load(empty.path(), &poses).unwrap_err();
         assert!(matches!(&error, crate::Error::Runtime(message)
@@ -891,10 +891,10 @@ mod tests {
                 .parent()
                 .unwrap();
             let poses =
-                PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES)
+                PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
                     .unwrap();
-            let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-            let scenes = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+            let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
+            let scenes = SceneLibrary::load(root.join("scenes/v1"), &poses, &motions).unwrap();
             let spool = tempfile::tempdir().unwrap();
             Self {
                 routines: crate::expression::routines::Routines::load(None, 0., 0.).unwrap(),
@@ -909,10 +909,10 @@ mod tests {
                 manual: None,
                 voice_run: None,
                 assets: AssetReloadContext {
-                    poses_file: root.join("motion/config/poses.yaml"),
-                    user_poses_directory: root.join("motion/user/poses"),
-                    motions_directory: root.join("motion/motions"),
-                    scenes_directory: root.join("scenes"),
+                    poses_file: root.join("motion/config/v1/poses.yaml"),
+                    user_poses_directory: root.join("motion/user/poses/v1"),
+                    motions_directory: root.join("motion/motions/v1"),
+                    scenes_directory: root.join("scenes/v1"),
                     cues: CueLibrary::load(root.join("audio/cues")).unwrap(),
                 },
                 _spool: spool,

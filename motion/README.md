@@ -5,12 +5,10 @@ directory. The Rust runtime parses those assets and compiles their trajectories.
 
 ## Ownership
 
-- `config/poses.yaml` contains built-in complete five-joint poses.
-- `user/poses/` contains Studio-authored poses.
-- `motions/expressive/` and `motions/functional/` contain absolute actions.
-- `motions/idle/` and `motions/speaking/` contain anchor-relative character
-  clips.
-- `motions/user/` contains Studio-authored motions.
+- `config/v1/poses.yaml` and `config/v2/poses.yaml` contain each hardware version's built-in complete five-joint poses.
+- `user/poses/v1/` and `user/poses/v2/` contain Studio-authored poses.
+- `motions/v1/` and `motions/v2/` contain each version's absolute actions and anchor-relative character clips.
+- `motions/v1/user/` and `motions/v2/user/` contain Studio-authored motions.
 - `config/stability_limits.yaml` contains MuJoCo reporting policy; it is not a
   physical command limit.
 
@@ -44,8 +42,8 @@ Generate a preview or diagnostic document with:
 runtime/target/release/orion-trajectory \
   --motion look_at_left_expressive \
   --start-pose attentive \
-  --pose-file motion/config/poses.yaml \
-  --motions-directory motion/motions \
+  --pose-file motion/config/v1/poses.yaml \
+  --motions-directory motion/motions/v1 \
   --calibration simulation/mujoco/config/servo_calibration.json
 ```
 

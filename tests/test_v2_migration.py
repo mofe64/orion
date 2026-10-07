@@ -10,9 +10,9 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "migrate_v2_user_asse
 def test_migration_archives_only_non_v2_user_assets(tmp_path: Path) -> None:
     project = tmp_path / "orion"
     archive_root = tmp_path / "backups"
-    scene_directory = project / "scenes" / "user"
-    pose_directory = project / "motion" / "user" / "poses"
-    motion_directory = project / "motion" / "motions" / "user"
+    scene_directory = project / "scenes/v1" / "user"
+    pose_directory = project / "motion" / "user" / "poses" / "v1"
+    motion_directory = project / "motion" / "motions" / "v1" / "user"
     for directory in (scene_directory, pose_directory, motion_directory):
         directory.mkdir(parents=True)
 
@@ -37,8 +37,8 @@ def test_migration_archives_only_non_v2_user_assets(tmp_path: Path) -> None:
     archives = list(archive_root.glob("user-assets-pre-v2-*"))
     assert len(archives) == 1
     archive = archives[0]
-    assert (archive / "scenes" / "user" / "legacy.yaml").exists()
-    assert (archive / "motion" / "user" / "poses" / "malformed.yml").exists()
+    assert (archive / "scenes/v1" / "user" / "legacy.yaml").exists()
+    assert (archive / "motion" / "user" / "poses" / "v1" / "malformed.yml").exists()
     manifest = (archive / "MANIFEST.txt").read_text(encoding="utf-8")
     assert "Orion v2 breaking-release user asset archive" in manifest
     assert "files=2" in manifest

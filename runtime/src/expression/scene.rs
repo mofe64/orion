@@ -1140,11 +1140,11 @@ mod tests {
     fn custom_effect_stages_render_and_validate() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let poses = PoseLibrary::load(
-            root.join("motion/config/poses.yaml"),
+            root.join("motion/config/v1/poses.yaml"),
             &crate::ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         for (effect, colors, time, expected) in [
             (
                 "constant",
@@ -1518,11 +1518,11 @@ mod tests {
     fn loads_and_validates_scene_references() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let poses = PoseLibrary::load(
-            root.join("motion/config/poses.yaml"),
+            root.join("motion/config/v1/poses.yaml"),
             &crate::ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let directory = tempdir().unwrap();
         fs::write(
             directory.path().join("acknowledge.yaml"),
@@ -1551,11 +1551,11 @@ scene:
     fn rejects_unknown_motion_and_unordered_events() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let poses = PoseLibrary::load(
-            root.join("motion/config/poses.yaml"),
+            root.join("motion/config/v1/poses.yaml"),
             &crate::ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let directory = tempdir().unwrap();
         fs::write(
             directory.path().join("bad.yaml"),
@@ -1576,11 +1576,11 @@ scene:
     fn rejects_v1_unknown_fields_and_overlapping_motion_tracks() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let poses = PoseLibrary::load(
-            root.join("motion/config/poses.yaml"),
+            root.join("motion/config/v1/poses.yaml"),
             &crate::ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
 
         let v1 = r#"format_version: 1
 scene: {name: old, motion: [], lighting: [], audio: []}
@@ -1630,12 +1630,12 @@ scene:
     fn loads_the_tracked_orion_scene_library() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let poses = PoseLibrary::load(
-            root.join("motion/config/poses.yaml"),
+            root.join("motion/config/v1/poses.yaml"),
             &crate::ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
-        let scenes = SceneLibrary::load(root.join("scenes"), &poses, &motions).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
+        let scenes = SceneLibrary::load(root.join("scenes/v1"), &poses, &motions).unwrap();
         let cues = CueLibrary::load(root.join("audio/cues")).unwrap();
         scenes.validate_audio_cues(&cues).unwrap();
 
@@ -1660,11 +1660,11 @@ scene:
     fn waits_for_the_real_runtime_movement_lifecycle() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let poses = PoseLibrary::load(
-            root.join("motion/config/poses.yaml"),
+            root.join("motion/config/v1/poses.yaml"),
             &crate::ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let mut core = RuntimeCore::with_completion_criteria(
             FollowingRuntimeDriver::new(),
             poses,

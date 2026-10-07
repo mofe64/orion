@@ -2703,9 +2703,9 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         RuntimeCore::new(CharacterTestDriver, poses, motions).unwrap()
     }
 
@@ -2753,7 +2753,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let positions = poses.pose("home").unwrap().clone();
         RuntimeCore::new(FollowingDriver { positions }, poses, motions).unwrap()
     }
@@ -4358,9 +4358,9 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let anchor = poses.pose("home").unwrap().clone();
         let mut performances = Vec::new();
         for (seed, duration) in [(17, 6.0), (42, 10.0), (91, 16.0)] {

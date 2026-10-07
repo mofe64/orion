@@ -1,6 +1,6 @@
 import { load } from "js-yaml";
 
-import posesYaml from "../../../motion/config/poses.yaml?raw";
+import posesYaml from "../../../motion/config/v1/poses.yaml?raw";
 import calibration from "../../../simulation/mujoco/config/servo_calibration.json";
 import modelReference from "../../../simulation/mujoco/config/model_reference.json";
 import orionUrdf from "../../../description/urdf/orion.urdf?raw";
@@ -21,13 +21,13 @@ import type {
   StoredSceneDocument,
 } from "../types";
 
-const userPoseFiles = import.meta.glob("../../../motion/user/poses/**/*.yaml", {
+const userPoseFiles = import.meta.glob("../../../motion/user/poses/v1/**/*.yaml", {
   eager: true, query: "?raw", import: "default",
 }) as Record<string, string>;
-const motionFiles = import.meta.glob("../../../motion/motions/**/*.yaml", {
+const motionFiles = import.meta.glob("../../../motion/motions/v1/**/*.yaml", {
   eager: true, query: "?raw", import: "default",
 }) as Record<string, string>;
-const sceneFiles = import.meta.glob("../../../scenes/**/*.yaml", {
+const sceneFiles = import.meta.glob("../../../scenes/v1/**/*.yaml", {
   eager: true, query: "?raw", import: "default",
 }) as Record<string, string>;
 const cueFiles = import.meta.glob("../../../audio/cues/*.wav", {
@@ -48,7 +48,7 @@ function requireVersionTwo(document: { format_version?: number }, path: string):
 function loadPoses(): Record<string, PoseDefinition> {
   const poses: Record<string, PoseDefinition> = {};
   const documents: Array<[string, StoredPoseDocument, PoseDefinition["source"]]> = [
-    ["motion/config/poses.yaml", load(posesYaml) as StoredPoseDocument, "built_in"],
+    ["motion/config/v1/poses.yaml", load(posesYaml) as StoredPoseDocument, "built_in"],
     ...Object.entries(userPoseFiles).filter(([path]) => !path.includes("/_scene_owned/")).map(([path, yaml]) => [path, load(yaml) as StoredPoseDocument, "user"] as [string, StoredPoseDocument, "user"]),
   ];
   for (const [path, document, source] of documents) {
@@ -119,7 +119,7 @@ function loadScenes(): Record<string, SceneDefinition> {
       custom_motions: document.studio?.motions,
       name: scene.name,
       description: scene.description ?? "",
-      source: path.includes("/scenes/user/") ? "user" : "built_in",
+      source: path.includes("/scenes/v1/user/") ? "user" : "built_in",
       motion: (scene.motion ?? []).map((event, index) => withId(event, `${scene.name}-motion-${index}`)) as SceneMotionClip[],
       lighting: (scene.lighting ?? []).map((event, index) => withId(event, `${scene.name}-light-${index}`)) as SceneLightingEvent[],
       audio: (scene.audio ?? []).map((event, index) => withId(event, `${scene.name}-audio-${index}`)) as SceneAudioEvent[],

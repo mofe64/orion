@@ -32,11 +32,12 @@ next character anchor, and the scene restores the nearest pose's
 
 The v2 effect vocabulary is `warm_idle_breathe`, `attentive_focus`,
 `thinking_drift`, `speaking_energy`, `acknowledge_pulse`, `curious_sweep`,
-`delight_spark`, `settle_glow`, and `off`. Every frame contains exactly 40
-RGBW pixels for Orion's 8×5 matrix. Cue names resolve to WAV stems under
+`delight_spark`, `settle_glow`, and `off`. Every frame contains 40 RGBW
+pixels for V1's 8×5 matrix or 24 for V2's ring, selected by the hardware profile. Cue names resolve to WAV stems under
 `audio/cues/`.
 
-Built-ins live directly in `scenes/`; user scenes live in `scenes/user/`.
+Built-ins live in `scenes/v1/` and `scenes/v2/`; user scenes live in the
+selected version's `user/` subdirectory.
 Studio publishes through the authenticated v2 gateway. The gateway writes
 transactionally, asks `oriond` to validate and reload the complete catalog,
 and rolls back a rejected update. Built-ins cannot be shadowed.

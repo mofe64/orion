@@ -68,7 +68,7 @@ class TunerState:
 def load_pose_configuration(pose_name: str) -> PoseConfiguration:
     """Load the v2 pose library and calibration-owned joint ranges."""
 
-    poses_data = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
+    poses_data = load_yaml_file(CONFIG_DIRECTORY / "v1" / "poses.yaml")
     if not isinstance(poses_data, dict) or poses_data.get("format_version") != 2:
         raise ValueError("Pose library must use format_version 2 (v2 required).")
     if poses_data.get("units") != "radians":

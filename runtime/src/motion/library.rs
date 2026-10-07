@@ -903,11 +903,11 @@ mod tests {
     fn loads_v2_absolute_and_relative_catalog() {
         let root = env!("CARGO_MANIFEST_DIR");
         let poses = PoseLibrary::load(
-            format!("{root}/../motion/config/poses.yaml"),
+            format!("{root}/../motion/config/v1/poses.yaml"),
             &ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(format!("{root}/../motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(format!("{root}/../motion/motions/v1"), &poses).unwrap();
         let turn = motions.motion("look_at_right_expressive").unwrap();
         assert_eq!(turn.space, MotionSpace::Absolute);
         assert_eq!(turn.keyframes[0].arrival, KeyframeArrival::Through);
@@ -929,7 +929,10 @@ mod tests {
         )
         .unwrap();
         let poses = PoseLibrary::load(
-            format!("{}/../motion/config/poses.yaml", env!("CARGO_MANIFEST_DIR")),
+            format!(
+                "{}/../motion/config/v1/poses.yaml",
+                env!("CARGO_MANIFEST_DIR")
+            ),
             &ORION_JOINT_NAMES,
         )
         .unwrap();
@@ -945,7 +948,10 @@ mod tests {
     fn rejects_unknown_fields_and_nonreturning_relative_motion() {
         let root = tempfile::tempdir().unwrap();
         let poses = PoseLibrary::load(
-            format!("{}/../motion/config/poses.yaml", env!("CARGO_MANIFEST_DIR")),
+            format!(
+                "{}/../motion/config/v1/poses.yaml",
+                env!("CARGO_MANIFEST_DIR")
+            ),
             &ORION_JOINT_NAMES,
         )
         .unwrap();
@@ -978,9 +984,9 @@ mod tests {
     #[test]
     fn expressive_turns_flow_through_every_internal_drawing_without_a_stop_plateau() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         for name in [
             "look_at_left_expressive",
             "look_at_right_expressive",
@@ -1016,9 +1022,9 @@ mod tests {
     #[test]
     fn every_relative_character_clip_uniformly_scales_and_returns_to_each_anchor() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let calibration = load_calibration_file(
             root.join("simulation/mujoco/config/servo_calibration.json"),
             &ORION_JOINT_NAMES,
@@ -1079,9 +1085,9 @@ mod tests {
     #[test]
     fn every_built_in_pose_and_motion_sample_stays_inside_calibration() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let calibration = load_calibration_file(
             root.join("simulation/mujoco/config/servo_calibration.json"),
             &ORION_JOINT_NAMES,

@@ -259,7 +259,7 @@ hands. The command observes all five encoders for five seconds, rejects more
 than 10 raw steps (about 0.88 degrees) of drift, checks the pose against both
 the measured hardware calibration and the shared operational ranges, then
 asks for a simple `y` confirmation. A successful capture atomically replaces
-`rest` in `motion/config/poses.yaml`. Servo EEPROM is never changed.
+`rest` in `motion/config/v1/poses.yaml`. Servo EEPROM is never changed.
 
 A supported rest may settle inside a measured endpoint but outside its normal
 20-count command margin. Accept only that observed endpoint before capturing:

@@ -272,7 +272,10 @@ mod tests {
 
     #[test]
     fn loads_orion_named_poses() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../motion/config/poses.yaml");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../motion/config/v1/poses.yaml"
+        );
         let poses = PoseLibrary::load(path, &ORION_JOINT_NAMES).unwrap();
 
         assert_eq!(poses.pose("rest").unwrap().len(), 5);
@@ -290,7 +293,10 @@ mod tests {
             user.join("studio_keyframe.yaml"),
         )
         .unwrap();
-        let built_in = concat!(env!("CARGO_MANIFEST_DIR"), "/../motion/config/poses.yaml");
+        let built_in = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../motion/config/v1/poses.yaml"
+        );
         let poses =
             PoseLibrary::load_with_user_directory(built_in, &user, &ORION_JOINT_NAMES).unwrap();
         assert!(poses.pose("studio_keyframe").is_ok());

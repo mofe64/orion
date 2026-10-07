@@ -119,9 +119,9 @@ impl Default for Options {
             baud_rate: DEFAULT_BAUD_RATE,
             calibration_file: PathBuf::new(),
             socket_path: DEFAULT_SOCKET_PATH.into(),
-            poses_file: "motion/config/poses.yaml".into(),
-            user_poses_directory: "motion/user/poses".into(),
-            motions_directory: "motion/motions".into(),
+            poses_file: "motion/config/v1/poses.yaml".into(),
+            user_poses_directory: "motion/user/poses/v1".into(),
+            motions_directory: "motion/motions/v1".into(),
             audio_cues_directory: "audio/cues".into(),
             audio_card: ORION_AUDIO_CARD.into(),
             audio_pcm_device: ORION_AUDIO_PCM_DEVICE.into(),
@@ -135,7 +135,7 @@ impl Default for Options {
             lighting_device: PI5_NEOPIXEL_DEVICE_PATH.into(),
             light_color: Rgbw8::OFF,
             light_pixel: 0,
-            scenes_directory: "scenes".into(),
+            scenes_directory: "scenes/v1".into(),
             scene_name: String::new(),
         }
     }
@@ -182,7 +182,7 @@ pub(super) fn usage() -> &'static str {
   --stop-scene       Cancel the active scene and its movement.\n\
   --speech-status    Show the active and most recent terminal speech run.\n\
   --stop-speech      Cancel the active speech run or playback.\n\
-  --scenes DIR       Scene library used by --serve (default: scenes).\n\
+  --scenes DIR       Scene library used by --serve (default: scenes/v1).\n\
   --cues DIR         WAV cue library used by --serve and --play-cue (default: audio/cues).\n\
   --audio-card CARD  ALSA mixer card (default: seeed2micvoicec).\n\
   --audio-device PCM ALSA playback PCM (default: plughw:CARD=seeed2micvoicec,DEV=0).\n\
@@ -508,7 +508,7 @@ mod hardware_tests {
         );
         assert_eq!(
             options.motions_directory,
-            PathBuf::from("hardware/v2/motions")
+            PathBuf::from("motion/motions/v2")
         );
         assert!(!options.character_on_start);
         let override_options = parse(&[
@@ -531,18 +531,24 @@ mod hardware_tests {
     fn hardware_and_simulation_read_the_same_repository_pose_file() {
         for backend in ["hardware", "mujoco"] {
             let options = parse(&["--serve", "--hardware", "v2", "--backend", backend]).unwrap();
-            assert_eq!(options.poses_file, PathBuf::from("hardware/v2/poses.yaml"));
+            assert_eq!(
+                options.poses_file,
+                PathBuf::from("motion/config/v2/poses.yaml")
+            );
             assert_eq!(
                 options.user_poses_directory,
-                PathBuf::from("hardware/v2/user/poses")
+                PathBuf::from("motion/user/poses/v2")
             );
-            assert_eq!(
-                options.scenes_directory,
-                PathBuf::from("hardware/v2/scenes")
-            );
+            assert_eq!(options.scenes_directory, PathBuf::from("scenes/v2"));
         }
         let v1 = parse(&["--serve", "--hardware", "v1"]).unwrap();
-        assert_eq!(v1.poses_file, PathBuf::from("motion/config/poses.yaml"));
+        assert_eq!(v1.poses_file, PathBuf::from("motion/config/v1/poses.yaml"));
+        assert_eq!(v1.motions_directory, PathBuf::from("motion/motions/v1"));
+        assert_eq!(
+            v1.user_poses_directory,
+            PathBuf::from("motion/user/poses/v1")
+        );
+        assert_eq!(v1.scenes_directory, PathBuf::from("scenes/v1"));
     }
     #[test]
     fn validates_pixel_index_against_selected_hardware_before_device_access() {

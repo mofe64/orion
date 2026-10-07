@@ -123,8 +123,9 @@ It snapshots overwritten and removed files in the service-switch transaction so
 rollback restores both code configuration and YAML. Git HEAD and the index are
 unchanged. Local edits to built-ins are replaced; untracked local assets remain.
 
-User poses, motions and scenes live in `motion/user/poses/`,
-`motion/motions/user/` and `scenes/user/`. The gateway stages published changes,
+User poses, motions and scenes live in `motion/user/poses/<version>/`,
+`motion/motions/<version>/user/` and `scenes/<version>/user/`, with `version`
+selected as `v1` or `v2`. The gateway stages published changes,
 asks `oriond` to validate and reload the catalog, and restores the previous files
 if reload fails. Built-in names cannot be shadowed. Standalone user poses and
 motions use a new name for changed content. Updating or deleting a user scene

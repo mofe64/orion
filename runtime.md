@@ -478,7 +478,7 @@ A body beat directly selects `speak_explanatory_lean`. Other cases call `choose_
 
 The composer loads the selected motion and reads **its first keyframe's target**. It does not concatenate every keyframe from that source clip. Source clips contribute a vocabulary of shapes; the generated performance supplies its own timing, staging, variation, and final return.
 
-For example, [speak_calm_sway.yaml](motion/motions/speaking/speak_calm_sway.yaml) begins with roll `+0.10`, shoulder `+0.06`, and elbow `-0.05` radians. The composer uses those source values while generating a drawing, but it does not automatically replay that clip's second sway and authored return.
+For example, [speak_calm_sway.yaml](motion/motions/v1/speaking/speak_calm_sway.yaml) begins with roll `+0.10`, shoulder `+0.06`, and elbow `-0.05` radians. The composer uses those source values while generating a drawing, but it does not automatically replay that clip's second sway and authored return.
 
 Nominal authored gesture duration is:
 
@@ -640,7 +640,7 @@ The body-beat path in the composer can directly select the explanatory lean with
 
 The selector advances the random generator but does not itself update `last_speech_clip` or recent history. The composer records the choice and captures it in the drawing's future memory. Only later checkpoint adoption makes that future history the coordinator's ordinary planning starting point.
 
-Source assets: [calm sway](motion/motions/speaking/speak_calm_sway.yaml), [explanatory lean](motion/motions/speaking/speak_explanatory_lean.yaml), [emphasis nod](motion/motions/speaking/speak_emphasis_nod.yaml), and [reflective tilt](motion/motions/speaking/speak_reflective_tilt.yaml).
+Source assets: [calm sway](motion/motions/v1/speaking/speak_calm_sway.yaml), [explanatory lean](motion/motions/v1/speaking/speak_explanatory_lean.yaml), [emphasis nod](motion/motions/v1/speaking/speak_emphasis_nod.yaml), and [reflective tilt](motion/motions/v1/speaking/speak_reflective_tilt.yaml).
 
 ## 12. How a plan becomes movement
 
@@ -849,7 +849,7 @@ Character tests live in [character.rs](runtime/src/expression/character.rs), han
 | [motion definitions](runtime/src/motion/library.rs) | Relative targets, return declarations, and amplitude scaling. |
 | [motion styles](runtime/src/motion/style.rs) | Exact tempo, amplitude, and interpolation settings. |
 | [trajectory compiler](runtime/src/motion/trajectory.rs) | Travel/hold timing, interpolation, segment indices, constraints, and retiming. |
-| [Authored speech motions](motion/motions/speaking) | Source gesture shapes from which the composer borrows its first targets. |
+| [Authored speech motions](motion/motions/v1/speaking) | Source gesture shapes from which the composer borrows its first targets. |
 | [Voice architecture](docs/voice-architecture.md) | The Pi, Studio, voice processing, and runtime application boundaries. |
 | [Motion and animation architecture](docs/motion-and-animation-architecture.md) | How authoring, character behavior, and motion execution fit together. |
 | [Trajectory and joint control reference](docs/trajectory-and-joint-control.md) | Broader movement terminology and control constraints. |

@@ -33,7 +33,7 @@ from stability_monitor import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MOTION_SOURCE = PROJECT_ROOT / "motion"
 CONFIG_DIRECTORY = MOTION_SOURCE / "config"
-MOTIONS_DIRECTORY = MOTION_SOURCE / "motions"
+MOTIONS_DIRECTORY = MOTION_SOURCE / "motions" / "v1"
 DEFAULT_SCENE = Path(__file__).resolve().parent / "scene.xml"
 
 # This simulator adapter consumes the backend-independent motion library
@@ -96,7 +96,7 @@ def load_playback_data(
     compiled = compile_trajectory(
         motion_name,
         start_pose_name,
-        pose_file=CONFIG_DIRECTORY / "poses.yaml",
+        pose_file=CONFIG_DIRECTORY / "v1" / "poses.yaml",
         motions_directory=MOTIONS_DIRECTORY,
     )
     return motion_path, compiled, compiled.samples[0].positions

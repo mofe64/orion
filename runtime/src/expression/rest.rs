@@ -495,9 +495,9 @@ mod tests {
                 .parent()
                 .unwrap();
             let poses =
-                PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES)
+                PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
                     .unwrap();
-            let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+            let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
             let stall = Rc::new(Cell::new(false));
             let release_fails = Rc::new(Cell::new(false));
             let releases = Rc::new(Cell::new(0));

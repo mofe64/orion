@@ -49,7 +49,7 @@ def make_simulation(trajectory, start_positions):
 
 
 def aggressive_trajectory():
-    poses = load_yaml_file(CONFIG_DIRECTORY / "poses.yaml")
+    poses = load_yaml_file(CONFIG_DIRECTORY / "v1" / "poses.yaml")
     poses["poses"]["aggressive_test"] = {
         "description": "Intentionally aggressive simulator test pose.",
         "tags": ["simulation_test"],

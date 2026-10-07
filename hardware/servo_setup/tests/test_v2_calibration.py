@@ -59,9 +59,9 @@ class V2CalibrationTests(unittest.TestCase):
             calibration = Path(directory) / 'v2.json'
             document = calibration_document(); document['hardware'] = 'v2'
             calibration.write_text(json.dumps(document))
-            poses = Path(directory) / 'hardware/v2/poses.yaml'
+            poses = Path(directory) / 'motion/config/v2/poses.yaml'
             poses.parent.mkdir(parents=True)
-            shutil.copyfile(ORION_ROOT / 'hardware/v2/poses.yaml', poses)
+            shutil.copyfile(ORION_ROOT / 'motion/config/v2/poses.yaml', poses)
             original_home = yaml.safe_load(poses.read_text())['poses']['home']
             bus = FakeRestBus()
             with patch('builtins.input', side_effect=['', '', 'y']), \

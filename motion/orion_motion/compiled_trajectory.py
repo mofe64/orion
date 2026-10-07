@@ -19,8 +19,8 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_MANIFEST = PROJECT_ROOT / "runtime" / "Cargo.toml"
-DEFAULT_POSE_FILE = PROJECT_ROOT / "motion" / "config" / "poses.yaml"
-DEFAULT_MOTIONS_DIRECTORY = PROJECT_ROOT / "motion" / "motions"
+DEFAULT_POSE_FILE = PROJECT_ROOT / "motion" / "config" / "v1" / "poses.yaml"
+DEFAULT_MOTIONS_DIRECTORY = PROJECT_ROOT / "motion" / "motions" / "v1"
 DEFAULT_CALIBRATION_FILE = (
     PROJECT_ROOT / "simulation" / "mujoco" / "config" / "servo_calibration.json"
 )

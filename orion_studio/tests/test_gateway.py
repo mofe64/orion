@@ -203,19 +203,19 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(result["compiler"], "orion-runtime")
         self.assertEqual(result["motion_name"], "studio_preview")
         self.assertEqual(result["control_rate_hz"], 50)
-        self.assertFalse((root / "motion/motions/studio_preview.yaml").exists())
+        self.assertFalse((root / "motion/motions/v1/studio_preview.yaml").exists())
 
     def test_publishes_immutable_v2_assets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory); (root / "motion").mkdir(); (root / "scenes").mkdir()
+            root = Path(directory); (root / "motion").mkdir(); (root / "scenes/v1").mkdir(parents=True)
             gateway = OrionGateway(self.client, root)
             self.assertEqual(gateway.publish_pose(pose_document())[0], HTTPStatus.CREATED)
             self.assertEqual(gateway.publish_motion(motion_document())[0], HTTPStatus.CREATED)
             self.assertEqual(gateway.publish_motion(relative_motion_document())[0], HTTPStatus.CREATED)
             self.assertEqual(gateway.publish_scene(scene_document())[0], HTTPStatus.CREATED)
-            self.assertTrue((root / "motion/user/poses/studio_pose.yaml").is_file())
-            self.assertTrue((root / "motion/motions/user/studio_motion.yaml").is_file())
-            self.assertTrue((root / "scenes/user/studio_scene.yaml").is_file())
+            self.assertTrue((root / "motion/user/poses/v1/studio_pose.yaml").is_file())
+            self.assertTrue((root / "motion/motions/v1/user/studio_motion.yaml").is_file())
+            self.assertTrue((root / "scenes/v1/user/studio_scene.yaml").is_file())
             self.assertEqual(gateway.publish_pose(pose_document())[0], HTTPStatus.OK)
             with self.assertRaisesRegex(GatewayError, "already exists"): gateway.publish_pose(pose_document(base=0.3))
 
@@ -229,15 +229,31 @@ class GatewayContractTests(unittest.TestCase):
                  patch('gateway.subprocess.run', return_value=completed) as run:
                 gateway.compile_trajectory_preview({'motion': 'return_home', 'start_pose': 'home'})
             args = run.call_args.args[0]
-            self.assertEqual(args[args.index('--pose-file') + 1], str(root / 'hardware/v2/poses.yaml'))
-            self.assertEqual(args[args.index('--motions-directory') + 1], str(root / 'hardware/v2/motions'))
+            self.assertEqual(args[args.index('--pose-file') + 1], str(root / 'motion/config/v2/poses.yaml'))
+            self.assertEqual(args[args.index('--motions-directory') + 1], str(root / 'motion/motions/v2'))
             self.assertEqual(args[args.index('--calibration') + 1], str(calibration))
+
+    def test_hardware_v2_publication_uses_only_v2_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gateway = OrionGateway(self.client, root, hardware='v2')
+            gateway.publish_pose(pose_document())
+            gateway.publish_motion(motion_document())
+            status, result = gateway.publish_scene(scene_document())
+            self.assertEqual(status, HTTPStatus.CREATED)
+            self.assertEqual(result['relative_path'], 'scenes/v2/user/studio_scene.yaml')
+            for relative in ('motion/user/poses/v2/studio_pose.yaml',
+                             'motion/motions/v2/user/studio_motion.yaml',
+                             'scenes/v2/user/studio_scene.yaml'):
+                self.assertTrue((root / relative).is_file())
+            self.assertFalse((root / 'scenes/v1').exists())
+            self.assertFalse((root / 'motion/motions/v1').exists())
 
     def test_pose_is_checked_against_live_joint_ranges_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / "motion").mkdir(); gateway = OrionGateway(self.client, root)
             with self.assertRaisesRegex(GatewayError, "must stay between"): gateway.publish_pose(pose_document("unsafe_pose", 2.0))
-            self.assertFalse((root / "motion/user/poses/unsafe_pose.yaml").exists())
+            self.assertFalse((root / "motion/user/poses/v1/unsafe_pose.yaml").exists())
 
     def test_voice_session_reaches_runtime_and_invalid_ids_are_not_spooled(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -288,7 +304,7 @@ class GatewayContractTests(unittest.TestCase):
 class HttpAuthenticationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fake = FakeOrionClient(); self.temporary = tempfile.TemporaryDirectory()
-        root = Path(self.temporary.name); (root / "scenes").mkdir()
+        root = Path(self.temporary.name); (root / "scenes/v1").mkdir(parents=True)
         self.server = GatewayHTTPServer(("127.0.0.1", 0), make_handler(
             OrionGateway(self.fake, root), "a" * 32, ["tauri://localhost"]))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
@@ -332,7 +348,7 @@ class HttpAuthenticationTests(unittest.TestCase):
 class DualStackHttpTests(unittest.TestCase):
     def test_both_families_share_status_authentication_and_cors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory); (root / "scenes").mkdir()
+            root = Path(directory); (root / "scenes/v1").mkdir(parents=True)
             server = GatewayHTTPServer(("::", 0), make_handler(
                 OrionGateway(FakeOrionClient(), root), "a" * 32, ["tauri://localhost"]))
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -433,7 +449,7 @@ class SceneDeletionTests(unittest.TestCase):
     def test_delete_restores_file_when_reload_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            user = root / "scenes" / "user"
+            user = root / "scenes/v1" / "user"
             user.mkdir(parents=True)
             path = user / "mine.yaml"
             original = b"scene: mine\n"
@@ -449,7 +465,7 @@ class SceneDeletionTests(unittest.TestCase):
     def test_delete_user_scene_checks_revision_and_reloads(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            user = root / "scenes" / "user"
+            user = root / "scenes/v1" / "user"
             user.mkdir(parents=True)
             path = user / "mine.yaml"
             path.write_text("scene: mine\n")
@@ -466,8 +482,8 @@ class SceneDeletionTests(unittest.TestCase):
     def test_delete_cannot_remove_system_scene(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "scenes").mkdir()
-            path = root / "scenes" / "system.yaml"
+            (root / "scenes/v1").mkdir(parents=True)
+            path = root / "scenes/v1" / "system.yaml"
             path.write_text("system")
             gateway = OrionGateway(FakeOrionClient(), project_root=root)
             with self.assertRaises(GatewayError):
@@ -506,7 +522,7 @@ class SceneOwnedAssetTests(unittest.TestCase):
             gateway = OrionGateway(client, project_root=Path(directory))
             document = self.bundle()
             with self.assertRaises(GatewayError): gateway.publish_scene(document)
-            self.assertFalse((Path(directory)/"scenes/user/private_scene.yaml").exists())
+            self.assertFalse((Path(directory)/"scenes/v1/user/private_scene.yaml").exists())
             self.assertTrue(all(not path.exists() for path in gateway._owned_scene_assets(document)))
 
     def test_invalid_ownership_and_light_stage_count_are_rejected(self):

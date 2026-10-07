@@ -522,23 +522,11 @@ def validate_catalog(release, project, calibration, system, assets, home=None):
                     target.write_text(value)
         hardware = release_hardware(release)
         selected = profile(hardware)
+        poses = preview / selected['poses']
+        motions = preview / selected['motions']
         if hardware == 'v2':
-            # Preview repository-owned V2 poses and motions from this release.
-            shutil.copytree(project / 'hardware/v2', preview / 'hardware/v2', symlinks=True)
-            for path, value in assets.items():
-                if path.is_relative_to(project) and path.relative_to(project).parts[:2] == ('hardware', 'v2'):
-                    target = preview / path.relative_to(project)
-                    if value is None:
-                        target.unlink(missing_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_text(value)
-            poses = preview / selected['poses']
-            motions = preview / selected['motions']
             names = sorted(p.stem for p in motions.rglob('*.yaml'))
         else:
-            poses = preview / selected['poses']
-            motions = preview / selected['motions']
             names = ('look_at_left_expressive', 'look_at_right_expressive')
         for motion in names:
             system.run(release / 'runtime/target/release/orion-trajectory',

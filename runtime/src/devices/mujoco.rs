@@ -312,9 +312,9 @@ mod tests {
     #[test]
     fn rust_runtime_executes_v2_motions_in_native_mujoco_preview() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let poses =
-            PoseLibrary::load(root.join("hardware/v2/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("hardware/v2/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
         let driver = MujocoDriver::launch_for_hardware(
             root.join(".venv/bin/python"),
             root.join("runtime/mujoco_bridge.py"),
@@ -350,9 +350,9 @@ mod tests {
     #[test]
     fn rust_runtime_executes_and_settles_in_native_mujoco() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let poses =
-            PoseLibrary::load(root.join("motion/config/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
-        let motions = MotionLibrary::load(root.join("motion/motions"), &poses).unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v1/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let python = root.join(".venv/bin/python");
         let bridge = Path::new(env!("CARGO_MANIFEST_DIR")).join("mujoco_bridge.py");
         let scene = root.join("simulation/mujoco/scene.xml");

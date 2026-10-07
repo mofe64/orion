@@ -84,7 +84,7 @@ accidental wake-ups would interfere, and restore it after the trial.
 
 ```bash
 python3 runtime/scripts/run_tracking_experiment.py \
-  --motions motion/motions/idle --repeats 3 \
+  --motions motion/motions/v1/idle --repeats 3 \
   --output /tmp/orion-tracking-trials \
   --speech-python /path/to/active-release/speech/.venv/bin/python \
   --speech-root /path/to/active-release/speech \

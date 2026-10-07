@@ -210,8 +210,8 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments>
         .expect("runtime has a repository parent");
     let mut hardware = orion_runtime::HardwareVersion::V1;
     let mut supplied = std::collections::BTreeSet::new();
-    let mut pose_file = root.join("motion/config/poses.yaml");
-    let mut motions_directory = root.join("motion/motions");
+    let mut pose_file = root.join("motion/config/v1/poses.yaml");
+    let mut motions_directory = root.join("motion/motions/v1");
     let mut calibration_file = root.join("simulation/mujoco/config/servo_calibration.json");
     let mut motion_name = None;
     let mut start_pose = None;

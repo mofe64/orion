@@ -965,11 +965,11 @@ mod tests {
     fn core_with_driver(driver: FakeDriver) -> RuntimeCore<FakeDriver> {
         let root = env!("CARGO_MANIFEST_DIR");
         let poses = PoseLibrary::load(
-            format!("{root}/../motion/config/poses.yaml"),
+            format!("{root}/../motion/config/v1/poses.yaml"),
             &ORION_JOINT_NAMES,
         )
         .unwrap();
-        let motions = MotionLibrary::load(format!("{root}/../motion/motions"), &poses).unwrap();
+        let motions = MotionLibrary::load(format!("{root}/../motion/motions/v1"), &poses).unwrap();
         RuntimeCore::new(driver, poses, motions).unwrap()
     }
 

@@ -35,7 +35,7 @@ class HardwareDeploymentTests(unittest.TestCase):
             override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234\n')
             plan = render_plan(release, base / 'stack', project, home, 'pi', units)
             start = plan[override]
-            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start off', 'servo_calibration-v2.json', 'hardware/v2/poses.yaml', 'hardware/v2/motions'):
+            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start off', 'servo_calibration-v2.json', 'motion/config/v2/poses.yaml', 'motion/motions/v2'):
                 self.assertIn(expected, start)
             self.assertNotIn('--hardware v1', start)
             listener = plan[units / 'orion-listener.service']
@@ -66,10 +66,10 @@ class HardwareDeploymentTests(unittest.TestCase):
             (release / 'release.json').write_text('{"hardware":"v2"}')
             project = base / 'project'
             (project / 'motion').mkdir(parents=True)
-            poses = project / 'hardware/v2/poses.yaml'
+            poses = project / 'motion/config/v2/poses.yaml'
             poses.parent.mkdir(parents=True)
             poses.write_text('old repository poses')
-            motions = poses.parent / 'motions'; motions.mkdir()
+            motions = project / 'motion/motions/v2'; motions.mkdir(parents=True)
             (motions / 'return_home.yaml').write_text('motion')
             calibration = base / 'servo_calibration-v2.json'
             seen = []
@@ -93,9 +93,9 @@ class HardwareDeploymentTests(unittest.TestCase):
             system.stop.assert_not_called(); system.start.assert_not_called()
 
     def test_user_assets_are_preserved_and_builtin_v2_paths_are_managed(self):
-        self.assertTrue(built_in_yaml('hardware/v2/motions/nod.yaml'))
-        self.assertFalse(built_in_yaml('hardware/v2/motions/user/my_motion.yaml'))
-        self.assertFalse(built_in_yaml('hardware/v2/user/poses/home.yaml'))
+        self.assertTrue(built_in_yaml('motion/motions/v2/nod.yaml'))
+        self.assertFalse(built_in_yaml('motion/motions/v2/user/my_motion.yaml'))
+        self.assertFalse(built_in_yaml('motion/user/poses/v2/home.yaml'))
 
 
 if __name__ == '__main__':
