@@ -69,6 +69,23 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
     profiles
 }
 
+/// V2 keeps the factory profile except on its two gravity-loaded arm joints.
+/// At P = 16 the V2 elbow held home 0.074 rad (124 mA) and the shoulder
+/// 0.048 rad short, timing out the 0.05 rad completion check. Supervised
+/// trials on 2026-10-08 at P = 32 held the elbow 0.032 rad and the shoulder
+/// 0.020 rad from home with no buzzing or hunting. Head pitch held within
+/// 0.005 rad at P = 16, so V1's higher head gain is not carried over.
+pub fn make_orion_v2_servo_profiles() -> ServoProfiles {
+    let mut profiles: ServoProfiles = crate::ORION_JOINT_NAMES
+        .iter()
+        .map(|name| ((*name).to_owned(), JointServoProfile::default()))
+        .collect();
+    for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+        profiles.get_mut(joint).unwrap().p_coefficient = 32;
+    }
+    profiles
+}
+
 pub struct Sts3215Driver<T: Sts3215Transport> {
     transport: T,
     servo_profiles: ServoProfiles,

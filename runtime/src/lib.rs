@@ -36,7 +36,7 @@ pub use character::{CharacterCoordinator, CharacterState, CharacterStatus, NextI
 pub use daemon::{CompletionCriteria, OBSERVE_FREQUENCY_HZ, RuntimeCore};
 pub use driver::{
     JointLimit, JointServoProfile, RuntimeDriver, ServoProfiles, Sts3215Driver,
-    make_orion_servo_profiles,
+    make_orion_servo_profiles, make_orion_v2_servo_profiles,
 };
 pub use error::{Error, Result};
 pub use lighting::{

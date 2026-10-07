@@ -43,10 +43,7 @@ pub(super) fn servo_profiles(options: &Options) -> crate::ServoProfiles {
     let mut profiles = if options.hardware == crate::HardwareVersion::V1 {
         crate::make_orion_servo_profiles()
     } else {
-        crate::ORION_JOINT_NAMES
-            .iter()
-            .map(|name| ((*name).to_owned(), crate::JointServoProfile::default()))
-            .collect()
+        crate::make_orion_v2_servo_profiles()
     };
     if let Some(selection) = &options.servo_gain_override {
         let profile = profiles

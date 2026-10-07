@@ -226,6 +226,25 @@ mod tests {
     }
 
     #[test]
+    fn v2_uses_its_measured_arm_gains_and_factory_defaults_elsewhere() {
+        let options = parse(&["--serve", "--hardware", "v2"]).unwrap();
+        let profiles = servo_profiles(&options);
+        let factory = crate::JointServoProfile::default();
+        for name in ORION_JOINT_NAMES {
+            let expected = match name {
+                "shoulder_pitch_joint" | "elbow_pitch_joint" => 32,
+                _ => factory.p_coefficient,
+            };
+            assert_eq!(profiles[name].p_coefficient, expected, "{name}");
+            assert_eq!(profiles[name].i_coefficient, 0, "{name}");
+            assert_eq!(
+                profiles[name].d_coefficient, factory.d_coefficient,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn experimental_gains_reject_invalid_or_untracked_uses() {
         for value in [
             "head_roll_joint:24:0",
