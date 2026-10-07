@@ -203,6 +203,10 @@ Rollback restores the service files and active/enabled states captured immediate
 before the update. Models, login credentials and saved preferences remain available.
 A pending deployment journal blocks another update until `--rollback` completes.
 Recovery does not force termination when mechanical rest cannot be confirmed.
+If activation and recovery both fail, the installer reports both errors and
+saves them as `activation_error` and `recovery_error` in the transaction's
+`state.json`. Captured runtime command output is included so the configuration
+or movement rejection remains available after the daemon exits.
 
 ## Retained files
 

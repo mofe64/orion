@@ -33,6 +33,18 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+def failure_details(error):
+    details = f'{type(error).__name__}: {error}'
+    if isinstance(error, subprocess.CalledProcessError):
+        for name in ('stdout', 'stderr'):
+            value = getattr(error, name)
+            if isinstance(value, bytes):
+                value = value.decode(errors='replace')
+            if value and value.strip():
+                details += f'\n{name}: {value.strip()}'
+    return details
+
+
 @contextlib.contextmanager
 def deployment_lock(root):
     root.mkdir(parents=True, exist_ok=True)
@@ -441,13 +453,20 @@ def activate(root, release, home, files, system):
         system.ready(release, home)
         atomic_json(installed, {'version': 2, 'release': str(release), 'hardware': release_hardware(release), 'rollback': str(folder)})
         data['status'] = 'committed'; atomic_json(folder / 'state.json', data)
-    except BaseException:
+    except BaseException as activation_error:
+        data['activation_error'] = failure_details(activation_error)
+        atomic_json(folder / 'state.json', data)
         if switched:
             try:
                 restore(folder, data, system)
-            except BaseException:
+            except BaseException as recovery_error:
+                data['recovery_error'] = failure_details(recovery_error)
                 data['status'] = 'rollback_failed'; atomic_json(folder / 'state.json', data)
-                raise RuntimeError(f'Recovery could not finish; preserve {folder} and run --rollback') from None
+                raise RuntimeError(
+                    f'Activation failed: {data["activation_error"]}\n'
+                    f'Recovery failed: {data["recovery_error"]}\n'
+                    f'Recovery could not finish; preserve {folder} and run --rollback'
+                ) from activation_error
         else:
             for name in SERVICES[1:]:
                 if data['services'][name]['active']:

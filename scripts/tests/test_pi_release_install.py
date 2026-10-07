@@ -520,14 +520,45 @@ class TransactionTests(Fixture):
         self.assertTrue(first.exists())
 
     def test_failed_recovery_keeps_journal_and_blocks_new_update(self):
-        self.system.failure = 'ready'; self.system.fail_restore = True
-        with self.assertRaisesRegex(RuntimeError, 'Recovery could not finish'): self.activate()
+        def fail_readiness(*args):
+            self.system.fail_restore = True
+            raise RuntimeError('Injected readiness failure')
+        with patch.object(self.system, 'ready', side_effect=fail_readiness):
+            with self.assertRaisesRegex(RuntimeError, 'Recovery could not finish') as failure: self.activate()
+        self.assertIn('Activation failed: RuntimeError: Injected readiness failure', str(failure.exception))
+        self.assertIn('Recovery failed: RuntimeError: Cannot restore', str(failure.exception))
         pending = self.root / 'pending-installation.json'
         self.assertTrue(pending.exists())
+        transaction = Path(json.loads(pending.read_text())['transaction'])
+        state = json.loads((transaction / 'state.json').read_text())
+        self.assertEqual(state['activation_error'], 'RuntimeError: Injected readiness failure')
+        self.assertEqual(state['recovery_error'], 'RuntimeError: Cannot restore')
         with self.assertRaisesRegex(RuntimeError, 'interrupted deployment'): self.activate()
         self.system.fail_restore = False
         installer.rollback(self.root, self.system)
         self.assert_restored()
+
+    def test_failed_smoke_and_rest_preserve_daemon_response_without_stopping_runtime(self):
+        # The primary configuration rejection must survive a subsequent failure
+        # to contact the hardware owner during recovery.
+        self.system.calls.clear()
+        activation_error = RuntimeError('Runtime rejected character rest: servo configuration failed')
+        recovery_error = subprocess.CalledProcessError(3, ['runtime', '--status'],
+            output=b'{"ok":false,"error":"driver disconnected"}', stderr=b'socket unavailable')
+        with patch.object(self.system, 'smoke_runtime', side_effect=activation_error), \
+             patch.object(self.system, 'rest_runtime', side_effect=[None, recovery_error]):
+            with self.assertRaises(RuntimeError) as failure:
+                self.activate()
+        self.assertIs(failure.exception.__cause__, activation_error)
+        self.assertIn('servo configuration failed', str(failure.exception))
+        self.assertIn('driver disconnected', str(failure.exception))
+        self.assertIn('socket unavailable', str(failure.exception))
+        self.assertEqual(self.system.calls.count(('stop', 'oriond')), 1)
+        self.assertTrue(self.system.states['oriond']['active'])
+        pending = json.loads((self.root / 'pending-installation.json').read_text())
+        state = json.loads((Path(pending['transaction']) / 'state.json').read_text())
+        self.assertEqual(state['status'], 'rollback_failed')
+        self.assertIn('driver disconnected', state['recovery_error'])
 
     def test_legacy_original_install_manifest_is_never_used_as_update_rollback(self):
         with self.assertRaisesRegex(RuntimeError, 'legacy pre-installation'): installer.rollback(self.root, self.system)
