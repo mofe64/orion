@@ -168,7 +168,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 if name in ('oriond', 'orion-studio-gateway'):
                     start = set_option(start, '--calibration', calibration)
                 if name == 'oriond':
-                    start = set_option(start, '--poses', home / '.config/orion/poses-v2.yaml' if hardware == 'v2' else runtime_project / selected['poses'])
+                    start = set_option(start, '--poses', runtime_project / selected['poses'])
                     for flag, field in (('--motions', 'motions'), ('--scenes', 'scenes'), ('--user-poses', 'user_poses')):
                         start = set_option(start, flag, runtime_project / selected[field])
                     start = set_option(start, '--audio-card', selected['audio']['card'])

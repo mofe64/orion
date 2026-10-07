@@ -1,6 +1,7 @@
 """V2 uses the existing calibration and stable-rest capture routines."""
 import io
 import json
+import shutil
 import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -12,6 +13,7 @@ from orion_servo_setup.calibration import initialize_captures, update_captures, 
 from orion_servo_setup.provisioning import assignments_for_hardware
 from orion_servo_setup.calibrate_cli import main
 from orion_servo_setup.rest_cli import main as capture_rest
+from orion_servo_setup.rest_cli import ORION_ROOT
 from test_calibrate_cli import FakeCalibrationBus
 from test_rest_cli import FakeRestBus, calibration_document
 
@@ -52,23 +54,29 @@ class V2CalibrationTests(unittest.TestCase):
             self.assertEqual(bus.disable_calls, [(None, 2)])
             self.assertEqual(bus.disconnect_calls, [True])
 
-    def test_v2_reuses_existing_rest_stability_check_and_seeds_its_own_pose_file(self):
+    def test_v2_rest_capture_updates_repository_poses_and_preserves_home(self):
         with tempfile.TemporaryDirectory() as directory:
             calibration = Path(directory) / 'v2.json'
             document = calibration_document(); document['hardware'] = 'v2'
             calibration.write_text(json.dumps(document))
-            poses = Path(directory) / 'poses-v2.yaml'; bus = FakeRestBus()
+            poses = Path(directory) / 'hardware/v2/poses.yaml'
+            poses.parent.mkdir(parents=True)
+            shutil.copyfile(ORION_ROOT / 'hardware/v2/poses.yaml', poses)
+            original_home = yaml.safe_load(poses.read_text())['poses']['home']
+            bus = FakeRestBus()
             with patch('builtins.input', side_effect=['', '', 'y']), \
+                 patch('orion_servo_setup.rest_cli.ORION_ROOT', Path(directory)), \
                  patch('orion_servo_setup.rest_cli.create_lerobot_bus', return_value=bus), \
                  patch('orion_servo_setup.rest_cli.read_preflight'), \
                  patch('orion_servo_setup.rest_cli.time.sleep'), \
                  patch('orion_servo_setup.rest_cli.time.monotonic', side_effect=[0.0, 0.0, 5.0]), \
                  redirect_stdout(io.StringIO()):
                 self.assertEqual(capture_rest(['--hardware', 'v2', '--port', 'fake',
-                    '--calibration', str(calibration), '--poses', str(poses)]), 0)
+                    '--calibration', str(calibration)]), 0)
             saved = yaml.load(poses.read_text(), Loader=yaml.BaseLoader)
             self.assertEqual(saved['poses']['rest']['default_lighting'], 'off')
             self.assertIn('mechanical_rest', saved['poses']['rest']['tags'])
             self.assertEqual({float(value) for value in saved['poses']['rest']['positions'].values()}, {0.0})
+            self.assertEqual(yaml.safe_load(poses.read_text())['poses']['home'], original_home)
             self.assertGreaterEqual(bus.disable_calls, 1)
             self.assertFalse(bus.is_connected)

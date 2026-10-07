@@ -13,7 +13,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 from pi_service_config import render_plan
 from pi_catalog import built_in_yaml
-from install_pi_voice_stack import System, activate
+from install_pi_voice_stack import System, activate, validate_catalog
 
 
 class HardwareDeploymentTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class HardwareDeploymentTests(unittest.TestCase):
             override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234\n')
             plan = render_plan(release, base / 'stack', project, home, 'pi', units)
             start = plan[override]
-            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start off', 'servo_calibration-v2.json', 'poses-v2.yaml', 'hardware/v2/motions'):
+            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start off', 'servo_calibration-v2.json', 'hardware/v2/poses.yaml', 'hardware/v2/motions'):
                 self.assertIn(expected, start)
             self.assertNotIn('--hardware v1', start)
             listener = plan[units / 'orion-listener.service']
@@ -58,6 +58,30 @@ class HardwareDeploymentTests(unittest.TestCase):
             system.smoke_runtime(release)
             self.assertEqual(events[0], ('client', '--run-scene', 'deployment_smoke', '--wait'))
             self.assertEqual(events[1], 'rest')
+
+    def test_v2_release_validation_reads_incoming_repository_pose_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            release = base / 'release'; release.mkdir()
+            (release / 'release.json').write_text('{"hardware":"v2"}')
+            project = base / 'project'
+            (project / 'motion').mkdir(parents=True)
+            poses = project / 'hardware/v2/poses.yaml'
+            poses.parent.mkdir(parents=True)
+            poses.write_text('old repository poses')
+            motions = poses.parent / 'motions'; motions.mkdir()
+            (motions / 'return_home.yaml').write_text('motion')
+            calibration = base / 'servo_calibration-v2.json'
+            seen = []
+            def run(*args, **kwargs):
+                pose_file = Path(args[args.index('--pose-file') + 1])
+                seen.append(pose_file.read_text())
+                self.assertEqual(args[args.index('--calibration') + 1], calibration)
+            system = Mock(); system.run.side_effect = run
+            validate_catalog(release, project, calibration, system,
+                             {poses: 'new repository poses'})
+            self.assertEqual(seen, ['new repository poses'])
+            self.assertEqual(poses.read_text(), 'old repository poses')
 
     def test_hardware_replacement_cannot_start_an_old_runtime_for_rest(self):
         with tempfile.TemporaryDirectory() as directory:

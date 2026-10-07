@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -59,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.calibration is None:
         args.calibration = Path("~/.config/orion/servo_calibration-v2.json") if args.hardware == "v2" else DEFAULT_CALIBRATION
     if args.poses is None:
-        args.poses = Path("~/.config/orion/poses-v2.yaml").expanduser() if args.hardware == "v2" else DEFAULT_POSES
+        args.poses = ORION_ROOT / "hardware/v2/poses.yaml" if args.hardware == "v2" else DEFAULT_POSES
     if args.dry_run:
         print(f"Would capture rest on {args.port}; poses: {args.poses}")
         return 0
@@ -108,9 +107,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         final_positions = _positions(bus)
         validate_rest_stability(reference, [final_positions])
         read_preflight(bus, assignments)
-        if args.hardware == "v2" and not args.poses.exists():
-            args.poses.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(ORION_ROOT / "hardware/v2/poses.yaml", args.poses)
         write_rest_pose(args.poses, angles, replace=True)
     except KeyboardInterrupt:
         print("\nCancelled; torque off.")

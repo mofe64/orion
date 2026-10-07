@@ -393,11 +393,6 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
         if !supplied.contains("--character-on-start") {
             options.character_on_start = false;
         }
-        if options.backend == Backend::Hardware && !supplied.contains("--poses") {
-            let home = env::var_os("HOME")
-                .ok_or_else(|| crate::Error::Runtime("HOME is required for v2 poses.".into()))?;
-            options.poses_file = PathBuf::from(home).join(".config/orion/poses-v2.yaml");
-        }
     }
     if options.backend == Backend::Mujoco && options.operation == Operation::Check {
         return Err(crate::Error::InvalidArgument(
@@ -531,6 +526,23 @@ mod hardware_tests {
         assert_eq!(override_options.audio_pcm_device, "custom");
         assert_eq!(override_options.poses_file, PathBuf::from("measured.yaml"));
         assert!(override_options.character_on_start);
+    }
+    #[test]
+    fn hardware_and_simulation_read_the_same_repository_pose_file() {
+        for backend in ["hardware", "mujoco"] {
+            let options = parse(&["--serve", "--hardware", "v2", "--backend", backend]).unwrap();
+            assert_eq!(options.poses_file, PathBuf::from("hardware/v2/poses.yaml"));
+            assert_eq!(
+                options.user_poses_directory,
+                PathBuf::from("hardware/v2/user/poses")
+            );
+            assert_eq!(
+                options.scenes_directory,
+                PathBuf::from("hardware/v2/scenes")
+            );
+        }
+        let v1 = parse(&["--serve", "--hardware", "v1"]).unwrap();
+        assert_eq!(v1.poses_file, PathBuf::from("motion/config/poses.yaml"));
     }
     #[test]
     fn validates_pixel_index_against_selected_hardware_before_device_access() {

@@ -53,9 +53,9 @@ def positions_to_rest_angles(
             )
         # The runtime uses the same circular delta and wraps commanded raw
         # positions modulo 4096, so crossing encoder zero is valid in range.
-        angle = delta / (STEPS_PER_RADIAN * joint.encoder_direction)
-        # Eight decimal places round-trips to the same encoder step.
-        result[name] = round(angle, 8)
+        # Match the runtime's limit calculation exactly. Decimal rounding can
+        # put an accepted supported-rest endpoint just outside its own limit.
+        result[name] = delta * (2.0 * math.pi / ENCODER_RESOLUTION) / joint.encoder_direction
     return result
 
 

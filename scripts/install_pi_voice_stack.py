@@ -523,9 +523,7 @@ def validate_catalog(release, project, calibration, system, assets, home=None):
         hardware = release_hardware(release)
         selected = profile(hardware)
         if hardware == 'v2':
-            if home is None:
-                raise RuntimeError('V2 validation needs the calibration user home')
-            # Preview the selected release catalog and the preserved physical poses.
+            # Preview repository-owned V2 poses and motions from this release.
             shutil.copytree(project / 'hardware/v2', preview / 'hardware/v2', symlinks=True)
             for path, value in assets.items():
                 if path.is_relative_to(project) and path.relative_to(project).parts[:2] == ('hardware', 'v2'):
@@ -535,7 +533,7 @@ def validate_catalog(release, project, calibration, system, assets, home=None):
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_text(value)
-            poses = home / '.config/orion/poses-v2.yaml'
+            poses = preview / selected['poses']
             motions = preview / selected['motions']
             names = sorted(p.stem for p in motions.rglob('*.yaml'))
         else:

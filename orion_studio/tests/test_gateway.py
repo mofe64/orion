@@ -13,6 +13,7 @@ import wave
 from http import HTTPStatus
 from http.client import HTTPConnection
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gateway import GatewayError, GatewayHTTPServer, OrionGateway, make_handler  # noqa: E402
@@ -217,6 +218,20 @@ class GatewayContractTests(unittest.TestCase):
             self.assertTrue((root / "scenes/user/studio_scene.yaml").is_file())
             self.assertEqual(gateway.publish_pose(pose_document())[0], HTTPStatus.OK)
             with self.assertRaisesRegex(GatewayError, "already exists"): gateway.publish_pose(pose_document(base=0.3))
+
+    def test_v2_preview_reads_repository_poses_separately_from_pi_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'project'
+            calibration = Path(directory) / 'config/servo_calibration-v2.json'
+            gateway = OrionGateway(self.client, root, hardware='v2', calibration_file=calibration)
+            completed = Mock(returncode=0, stdout='{"format_version":2,"compiler":"orion-runtime"}')
+            with patch.object(gateway, '_trajectory_compiler_path', return_value=Path('/compiler')), \
+                 patch('gateway.subprocess.run', return_value=completed) as run:
+                gateway.compile_trajectory_preview({'motion': 'return_home', 'start_pose': 'home'})
+            args = run.call_args.args[0]
+            self.assertEqual(args[args.index('--pose-file') + 1], str(root / 'hardware/v2/poses.yaml'))
+            self.assertEqual(args[args.index('--motions-directory') + 1], str(root / 'hardware/v2/motions'))
+            self.assertEqual(args[args.index('--calibration') + 1], str(calibration))
 
     def test_pose_is_checked_against_live_joint_ranges_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -131,6 +131,26 @@ class RestCaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(RestCaptureError, "outside calibrated"):
                 positions_to_rest_angles(positions, calibration)
 
+    def test_supported_rest_endpoints_remain_inside_runtime_angle_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = self._calibration(directory)
+            for direction in (-1, 1):
+                for endpoint in (-362, 818):
+                    with self.subTest(direction=direction, endpoint=endpoint):
+                        joint = replace(
+                            calibration['shoulder_pitch_joint'],
+                            neutral_raw=3415, encoder_direction=direction,
+                            safe_min_delta_raw=-362, safe_max_delta_raw=818,
+                        )
+                        calibration[joint.joint_name] = joint
+                        positions = dict(NEUTRALS)
+                        positions[joint.joint_name] = (joint.neutral_raw + endpoint) % 4096
+                        angle = positions_to_rest_angles(positions, calibration)[joint.joint_name]
+                        limits = sorted(delta * (2 * math.pi / 4096) / direction
+                                        for delta in (-362, 818))
+                        self.assertGreaterEqual(angle, limits[0])
+                        self.assertLessEqual(angle, limits[1])
+
     def test_stability_rejects_torque_off_drift(self) -> None:
         sample = dict(NEUTRALS)
         sample["shoulder_pitch_joint"] += 11

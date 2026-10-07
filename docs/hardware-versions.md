@@ -23,10 +23,17 @@ capture as V1, including its existing endpoint margins and backups. Rest capture
 uses the same unsupported stability check and writes the measured rest pose.
 
 V2 calibration writes `~/.config/orion/servo_calibration-v2.json`. V2 rest capture
-writes `~/.config/orion/poses-v2.yaml`, copying the V2 pose template on first use.
-That template's other poses remain simulation candidates until adapted to the
-assembled lamp. The captured calibration supplies servo IDs, encoder zeros,
-directions and numerical limits to the V2 runtime.
+writes `rest` directly into the repository's `hardware/v2/poses.yaml`, matching
+V1's repository pose workflow. Home and rest in that file use the V2 lamp's
+captured physical calibration zero. Other poses and motions remain preview
+candidates until checked on the assembled lamp. The captured calibration supplies
+servo IDs, encoder zeros, directions and numerical limits to the V2 runtime.
+
+V2 hardware, simulation, Studio preview and release validation read the same
+repository resources: `hardware/v2/poses.yaml`, `hardware/v2/motions` and
+`hardware/v2/scenes`. Edit those resources locally, commit and push, then pull
+on the Pi. Rest recapture changes the repository pose file; commit that measured
+change before pulling subsequent edits. Servo calibration stays on the Pi.
 
 Encoder direction defaults to `+1`, as in the existing V1 capture. Check the
 fitted mechanism against the model's positive axes and set any reversed joint's

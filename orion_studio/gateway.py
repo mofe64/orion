@@ -443,7 +443,7 @@ class OrionGateway:
                     json.dumps(document, separators=(",", ":"), ensure_ascii=False, allow_nan=False),
                     encoding="utf-8",
                 )
-            pose_file = (self.calibration_file.with_name("poses-v2.yaml") if self.hardware == "v2" else self.project_root / "motion/config/poses.yaml")
+            pose_file = self.project_root / ("hardware/v2/poses.yaml" if self.hardware == "v2" else "motion/config/poses.yaml")
             if poses_document is not None:
                 pose_file = Path(temporary.name) / "preview-poses.json"
                 pose_file.write_text(json.dumps(poses_document, allow_nan=False), encoding="utf-8")
