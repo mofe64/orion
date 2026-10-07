@@ -36,6 +36,11 @@ Use your Pi account, checkout path and branch if they differ. SSH must already
 trust the host. The script keeps terminal input available for sudo authentication.
 Unattended deployment requires the Pi account's existing sudo policy to allow
 service control without prompting.
+For a first installation, create the Pi user's Studio pairing token and complete
+the [Codex login](#pi-local-voice-and-agent) before deploying. These credentials
+are separate from servo calibration. If activation stops before switching
+services, fix the reported prerequisite and activate the printed prepared
+release directly; preparation does not need repeating.
 Use `--prepare-only` to build and test the immutable release while the installed
 services continue running. The script prints the release path; activate it later
 with that release's `scripts/install_pi_voice_stack.py --release PATH` after the

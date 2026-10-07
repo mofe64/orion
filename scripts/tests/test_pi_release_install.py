@@ -631,6 +631,45 @@ class ReadinessTests(Fixture):
         self.assertEqual(run.call_args.kwargs['env']['ORION_PROJECT_ROOT'], str(self.release))
         self.assertEqual(self.env.read_bytes(), before)
 
+    def test_preflight_reports_the_selected_missing_calibration_before_external_checks(self):
+        for hardware in ('v1', 'v2'):
+            with self.subTest(hardware=hardware):
+                (self.release / 'release.json').write_text(json.dumps({'hardware': hardware}))
+                for name in ('runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
+                             'orion-service/target/release/orion-service', 'speech/.venv/bin/python',
+                             'voice/.venv/bin/orion-listener'):
+                    self.write(self.release / name, 'fixture')
+                token = self.env.parent / 'studio-token'
+                self.write(token, 'existing pairing token')
+                system = installer.System()
+                with patch.object(system, 'run') as run:
+                    with self.assertRaises(RuntimeError) as error:
+                        installer.preflight(self.release, self.home, self.plan(), system)
+                expected = installer.calibration_path(self.home, hardware)
+                self.assertEqual(str(error.exception), f'Missing {hardware} servo calibration: {expected}')
+                run.assert_not_called()
+                self.assertEqual(token.read_text(), 'existing pairing token')
+
+    def test_preflight_reports_missing_token_without_misreporting_saved_v2_calibration(self):
+        (self.release / 'release.json').write_text('{"hardware":"v2"}')
+        for name in ('runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
+                     'orion-service/target/release/orion-service', 'speech/.venv/bin/python',
+                     'voice/.venv/bin/orion-listener'):
+            self.write(self.release / name, 'fixture')
+        calibration = installer.calibration_path(self.home, 'v2')
+        self.write(calibration, 'existing V2 calibration')
+        token = self.env.parent / 'studio-token'
+        system = installer.System()
+        with patch.object(system, 'run') as run:
+            with self.assertRaises(RuntimeError) as error:
+                installer.preflight(self.release, self.home, self.plan(), system)
+        self.assertIn(f'Missing Studio pairing token: {token}', str(error.exception))
+        self.assertIn(f'create-token --token-file {token}', str(error.exception))
+        self.assertNotIn('Missing v2 servo calibration', str(error.exception))
+        run.assert_not_called()
+        self.assertEqual(calibration.read_text(), 'existing V2 calibration')
+        self.assertFalse(token.exists())
+
     def test_standalone_listener_installer_refuses_installed_full_stack(self):
         (self.root / 'installation.json').write_text('{}')
         result = subprocess.run(['bash', SCRIPTS / 'install_pi_voice.sh', str(self.project), str(self.home)], capture_output=True, text=True)

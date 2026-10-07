@@ -499,8 +499,14 @@ def preflight(release, home, files, system):
     for name in required:
         if not (release / name).is_file():
             raise RuntimeError(f'Prepare the complete release first: {name}')
-    if not calibration_path(home, release_hardware(release)).is_file() or not (home / '.config/orion/studio-token').is_file():
-        raise RuntimeError('Install hardware calibration and pairing token before activating voice')
+    hardware = release_hardware(release)
+    calibration = calibration_path(home, hardware)
+    if not calibration.is_file():
+        raise RuntimeError(f'Missing {hardware} servo calibration: {calibration}')
+    token = home / '.config/orion/studio-token'
+    if not token.is_file():
+        raise RuntimeError(f'Missing Studio pairing token: {token}. Create it with: '
+                           f'python3 {release / "orion_studio/gateway.py"} create-token --token-file {token}')
     environment = {**os.environ, **read_env(files[home / '.config/orion/voice-stack.env']),
                    'ORION_PROJECT_ROOT': str(release), 'ORION_ONBOARD': '1', 'ORION_SPEECH_BACKEND': 'pi'}
     system.run(environment['ORION_STUDIO_CODEX_BIN'], 'login', 'status')
