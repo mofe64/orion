@@ -26,6 +26,12 @@ pub const COMPLETION_POSITION_TOLERANCE_RAD: f64 = 0.05;
 pub const COMPLETION_VELOCITY_TOLERANCE_RAD_S: f64 = 0.05;
 pub const COMPLETION_SETTLE_DURATION_SECONDS: f64 = 0.25;
 pub const COMPLETION_SETTLE_TIMEOUT_SECONDS: f64 = 2.0;
+/// Consecutive failed control cycles (100 ms at 50 Hz) tolerated before an
+/// active movement is cancelled. A single lost STS3215 reply must not end the
+/// daemon; servos keep holding their last goal while the bus recovers.
+pub const BUS_FAULT_TOLERANCE_CYCLES: u32 = 5;
+/// Repeat the log line for an ongoing bus fault every 5 s instead of 50 Hz.
+const BUS_FAULT_LOG_INTERVAL_CYCLES: u32 = 250;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CompletionCriteria {
@@ -69,6 +75,9 @@ pub struct RuntimeCore<D: RuntimeDriver> {
     last_movement: Option<MotionState>,
     sequence: u64,
     snapshot: StateSnapshot,
+    bus_failures: u32,
+    bus_error_count: u64,
+    bus_fault: Option<String>,
 }
 
 impl<D: RuntimeDriver> RuntimeCore<D> {
@@ -105,6 +114,9 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             last_movement: None,
             sequence: 1,
             snapshot,
+            bus_failures: 0,
+            bus_error_count: 0,
+            bus_fault: None,
         })
     }
 
@@ -128,7 +140,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         // Preserve C++ behavior: telemetry is sampled before this cycle's goal
         // is written, then published with the movement metadata for this tick.
         let tracking_tick = self.tracking.as_ref().map(|_| Instant::now());
-        let states = self.driver.read()?;
+        let states = match self.driver.read() {
+            Ok(states) => states,
+            Err(error) => return self.record_bus_failure("read", error),
+        };
         let feedback_read_seconds = tracking_tick
             .map(|at| at.elapsed().as_secs_f64())
             .unwrap_or(0.0);
@@ -136,9 +151,23 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let elapsed = now_seconds - self.movement_started_at;
         let mut entered_settling = false;
 
-        if let Some(sequence) = &self.motion_sequence {
-            let command = sequence.sample(elapsed)?;
-            self.driver.write(&command)?;
+        let command = if let Some(sequence) = &self.motion_sequence {
+            Some(sequence.sample(elapsed)?)
+        } else if let Some(trajectory) = &self.trajectory {
+            Some(trajectory.sample(elapsed)?)
+        } else {
+            None
+        };
+        if let Some(command) = &command
+            && let Err(error) = self.driver.write(command)
+        {
+            // The trajectory is sampled by time, so the next good cycle
+            // resumes at the correct point without replaying this one.
+            return self.record_bus_failure("write", error);
+        }
+        self.record_bus_success();
+
+        if let (Some(sequence), Some(command)) = (&self.motion_sequence, command.clone()) {
             command_written = true;
             let active = self.active_movement.as_mut().ok_or_else(|| {
                 Error::Runtime("Motion sequence has no active movement lifecycle.".into())
@@ -155,9 +184,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 self.motion_sequence = None;
                 entered_settling = true;
             }
-        } else if let Some(trajectory) = &self.trajectory {
-            let command = trajectory.sample(elapsed)?;
-            self.driver.write(&command)?;
+        } else if let (Some(trajectory), Some(command)) = (&self.trajectory, command) {
             command_written = true;
             let active = self.active_movement.as_mut().ok_or_else(|| {
                 Error::Runtime("Joint trajectory has no active movement lifecycle.".into())
@@ -196,6 +223,51 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         self.sequence += 1;
         self.publish_snapshot(states)?;
         Ok(())
+    }
+
+    /// Count one failed bus cycle and keep serving. After
+    /// `BUS_FAULT_TOLERANCE_CYCLES` consecutive failures the active movement
+    /// is cancelled with the error recorded; torque is left as it was, so the
+    /// servos hold their last goal rather than dropping the arm.
+    fn record_bus_failure(&mut self, operation: &str, error: Error) -> Result<()> {
+        self.bus_failures = self.bus_failures.saturating_add(1);
+        self.bus_error_count = self.bus_error_count.saturating_add(1);
+        let message = format!("servo bus {operation} failed: {error}");
+        if self.bus_failures == 1
+            || self.bus_failures == BUS_FAULT_TOLERANCE_CYCLES
+            || self.bus_failures % BUS_FAULT_LOG_INTERVAL_CYCLES == 0
+        {
+            eprintln!(
+                "oriond: {message} ({} consecutive, {} total)",
+                self.bus_failures, self.bus_error_count
+            );
+        }
+        self.bus_fault = Some(message.clone());
+        if self.bus_failures >= BUS_FAULT_TOLERANCE_CYCLES && self.active_movement.is_some() {
+            self.trajectory = None;
+            self.motion_sequence = None;
+            if let Some(movement) = self.active_movement.as_mut() {
+                movement.status.error = Some(message);
+            }
+            self.finish_active_movement(MovementPhase::Cancelled)?;
+            eprintln!(
+                "oriond: cancelled the active movement after {} consecutive servo bus failures; torque state unchanged",
+                self.bus_failures
+            );
+        }
+        self.sync_lifecycle_to_snapshot();
+        Ok(())
+    }
+
+    fn record_bus_success(&mut self) {
+        if self.bus_failures > 0 {
+            eprintln!(
+                "oriond: servo bus recovered after {} consecutive failures",
+                self.bus_failures
+            );
+            self.bus_failures = 0;
+            self.bus_fault = None;
+        }
     }
 
     pub fn handle_command(&mut self, command: &str, now_seconds: f64) -> String {
@@ -471,6 +543,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 progress: 0.0,
                 max_position_error_rad: None,
                 max_velocity_rad_s: None,
+                error: None,
             },
             target,
             settling_started_at: None,
@@ -581,6 +654,8 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .as_ref()
             .map(|movement| movement.status.clone());
         self.snapshot.last_motion = self.last_movement.clone();
+        self.snapshot.bus_error_count = self.bus_error_count;
+        self.snapshot.bus_fault = self.bus_fault.clone();
     }
 
     pub fn mode(&self) -> RuntimeMode {
@@ -864,6 +939,8 @@ mod tests {
         configured: bool,
         follow_writes: bool,
         velocity_rad_s: f64,
+        failing_reads: u32,
+        failing_writes: u32,
     }
 
     impl FakeDriver {
@@ -886,6 +963,8 @@ mod tests {
                 configured: false,
                 follow_writes,
                 velocity_rad_s: 0.0,
+                failing_reads: 0,
+                failing_writes: 0,
             }
         }
     }
@@ -907,6 +986,12 @@ mod tests {
             Ok(())
         }
         fn read(&mut self) -> Result<Vec<JointState>> {
+            if self.failing_reads > 0 {
+                self.failing_reads -= 1;
+                return Err(Error::Runtime(
+                    "Reading synchronized STS3215 states failed: Operation timed out".into(),
+                ));
+            }
             Ok(self
                 .positions
                 .iter()
@@ -924,6 +1009,10 @@ mod tests {
         fn write(&mut self, positions: &JointPositions) -> Result<()> {
             if !self.active {
                 return Err(Error::InvalidState("inactive".into()));
+            }
+            if self.failing_writes > 0 {
+                self.failing_writes -= 1;
+                return Err(Error::Runtime("write timed out".into()));
             }
             if self.follow_writes {
                 self.positions = positions.clone();
@@ -980,6 +1069,105 @@ mod tests {
     fn activate(core: &mut RuntimeCore<FakeDriver>) {
         core.handle_command("configure", 0.0);
         core.handle_command("enable", 0.0);
+    }
+
+    fn start_goto_home(core: &mut RuntimeCore<FakeDriver>) -> u64 {
+        activate(core);
+        let response: serde_json::Value =
+            serde_json::from_str(&core.handle_command("goto home 1.0", 0.0)).unwrap();
+        assert_eq!(response["ok"], true);
+        response["run_id"].as_u64().unwrap()
+    }
+
+    #[test]
+    fn brief_bus_failures_during_movement_are_tolerated_and_reported() {
+        let mut core = core();
+        let run_id = start_goto_home(&mut core);
+        core.driver.failing_reads = BUS_FAULT_TOLERANCE_CYCLES - 1;
+        for cycle in 1..BUS_FAULT_TOLERANCE_CYCLES {
+            core.tick(cycle as f64 * 0.02).unwrap();
+        }
+        let status: serde_json::Value =
+            serde_json::from_str(&core.handle_command("status", 0.1)).unwrap();
+        assert_eq!(status["motion"]["run_id"], run_id);
+        assert_eq!(status["motion"]["state"], "executing");
+        assert_eq!(status["bus_error_count"], BUS_FAULT_TOLERANCE_CYCLES - 1);
+        assert!(
+            status["bus_fault"]
+                .as_str()
+                .unwrap()
+                .contains("Operation timed out")
+        );
+
+        core.tick(0.1).unwrap();
+        let status: serde_json::Value =
+            serde_json::from_str(&core.handle_command("status", 0.1)).unwrap();
+        assert_eq!(status["motion"]["state"], "executing");
+        assert!(status["bus_fault"].is_null());
+        for step in 6..=200 {
+            core.tick(step as f64 * 0.02).unwrap();
+        }
+        assert_eq!(core.last_movement.as_ref().unwrap().run_id, run_id);
+        assert_eq!(
+            core.last_movement.as_ref().unwrap().state,
+            MovementPhase::Completed
+        );
+    }
+
+    #[test]
+    fn sustained_bus_failure_cancels_movement_but_keeps_runtime_and_torque() {
+        for (reads, writes) in [(u32::MAX, 0), (0, u32::MAX)] {
+            let mut core = core();
+            let run_id = start_goto_home(&mut core);
+            core.driver.failing_reads = reads;
+            core.driver.failing_writes = writes;
+            let writes_before = core.driver.writes.len();
+            for cycle in 1..=BUS_FAULT_TOLERANCE_CYCLES + 10 {
+                core.tick(cycle as f64 * 0.02).unwrap();
+            }
+            assert_eq!(core.driver.writes.len(), writes_before);
+            assert!(core.driver.active);
+            let status: serde_json::Value =
+                serde_json::from_str(&core.handle_command("status", 1.0)).unwrap();
+            assert!(status["motion"].is_null());
+            assert_eq!(status["mode"], "holding");
+            assert_eq!(status["torque_enabled"], true);
+            assert_eq!(status["last_motion"]["run_id"], run_id);
+            assert_eq!(status["last_motion"]["state"], "cancelled");
+            assert!(
+                status["last_motion"]["error"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("servo bus")
+            );
+            if reads > 0 {
+                assert!(status["bus_fault"].is_string());
+                assert_eq!(
+                    status["bus_error_count"],
+                    BUS_FAULT_TOLERANCE_CYCLES as u64 + 10
+                );
+            } else {
+                // Feedback still works and nothing is commanded after the
+                // cancellation, so the next cycle clears the live fault.
+                assert!(status["bus_fault"].is_null());
+                assert_eq!(status["bus_error_count"], BUS_FAULT_TOLERANCE_CYCLES);
+            }
+        }
+    }
+
+    #[test]
+    fn bus_failure_while_idle_never_ends_the_runtime() {
+        let mut core = core();
+        core.driver.failing_reads = 1_000;
+        for cycle in 0..1_000 {
+            core.tick(cycle as f64 * 0.02).unwrap();
+        }
+        core.tick(20.0).unwrap();
+        let status: serde_json::Value =
+            serde_json::from_str(&core.handle_command("status", 20.0)).unwrap();
+        assert_eq!(status["mode"], "observe");
+        assert!(status["bus_fault"].is_null());
+        assert_eq!(status["bus_error_count"], 1_000);
     }
 
     #[test]

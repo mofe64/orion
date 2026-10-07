@@ -173,11 +173,11 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 "STS3215 driver must be connected and inactive before applying its profile.".into(),
             ));
         }
-        let result = self.apply_servo_profile_inner();
-        if result.is_err() {
-            self.close();
-        }
-        result
+        // Torque is off here and EEPROM is relocked on failure, so the bus stays
+        // open for observation and a later `configure` retry. Closing it made
+        // the daemon's next feedback read fail with "not configured".
+        self.profile_applied = false;
+        self.apply_servo_profile_inner()
     }
 
     fn apply_servo_profile_inner(&mut self) -> Result<()> {
@@ -783,7 +783,8 @@ mod tests {
         assert!(message.contains("expected 254, read 50"));
         assert!(message.contains("write acknowledgement timed out"));
         assert!(!driver.profile_applied);
-        assert!(!driver.transport.is_open());
+        assert!(driver.transport.is_open());
+        assert!(driver.read().is_ok());
         assert!(driver.transport.calls.contains(&"eeprom_lock".to_owned()));
         assert!(driver.transport.position_writes.is_empty());
         assert!(

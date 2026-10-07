@@ -91,6 +91,9 @@ pub struct MotionState {
     pub max_position_error_rad: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_velocity_rad_s: Option<f64>,
+    /// Why the runtime ended this movement itself, such as a servo bus fault.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -106,6 +109,11 @@ pub struct StateSnapshot {
     pub update_hz: f64,
     pub motion: Option<MotionState>,
     pub last_motion: Option<MotionState>,
+    /// Servo bus read/write failures since the daemon started.
+    pub bus_error_count: u64,
+    /// The latest bus failure while feedback is unavailable; null once a
+    /// complete control cycle succeeds again.
+    pub bus_fault: Option<String>,
     pub joints: Vec<JointState>,
 }
 
@@ -134,6 +142,8 @@ impl StateSnapshot {
             update_hz,
             motion: None,
             last_motion: None,
+            bus_error_count: 0,
+            bus_fault: None,
             joints,
         })
     }
@@ -238,6 +248,8 @@ mod tests {
         assert!(json.contains("\"sampled_at_unix_ns\":123456789"));
         assert!(json.contains("\"motion\":null"));
         assert!(json.contains("\"last_motion\":null"));
+        assert!(json.contains("\"bus_error_count\":0"));
+        assert!(json.contains("\"bus_fault\":null"));
         assert!(json.contains("\"name\":\"head_\\\"pitch_joint\""));
         assert!(json.contains("\"position_rad\":-0.078"));
         assert!(json.contains("\"status\":2"));

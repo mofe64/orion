@@ -365,6 +365,81 @@ class SmokeRuntimeTests(Fixture):
                 system.settle_runtime(['runtime', '--socket', 'socket'])
 
 
+class RuntimeRestartTests(Fixture):
+    """A crashed oriond is restarted by systemd under a new PID."""
+
+    def client_for(self, link):
+        system = installer.System()
+        cmdline = b'oriond\0--serve\0--socket\0/tmp/custom.sock\0'
+        with patch.object(system, 'run', return_value=subprocess.CompletedProcess([], 0, '42\n')), \
+             patch.object(installer.Path, 'read_bytes', return_value=cmdline), \
+             patch.object(installer.os, 'readlink', side_effect=link):
+            return system.runtime_client()
+
+    def test_client_uses_the_release_binary_not_the_pid_link(self):
+        binary = '/home/pi/.local/share/orion/voice-stack/releases/r/runtime/target/release/oriond'
+        self.assertEqual(self.client_for(lambda path: binary), [binary, '--socket', '/tmp/custom.sock'])
+
+    def test_client_falls_back_to_the_pid_link_when_the_binary_cannot_be_resolved(self):
+        for link in (OSError('no /proc'), lambda path: '/old/oriond (deleted)', lambda path: 'relative/oriond'):
+            with self.subTest(link=link):
+                self.assertEqual(self.client_for(link), ['/proc/42/exe', '--socket', '/tmp/custom.sock'])
+
+    def test_failed_smoke_reconnects_before_the_final_rest(self):
+        system = installer.System()
+        old, new = ['old-runtime', '--socket', 's'], ['new-runtime', '--socket', 's']
+        failed = subprocess.CalledProcessError(1, old + ['--goto', 'zero_reference'])
+        with patch.object(system, 'wait_runtime_client', side_effect=[(old, {}), (new, {})]) as wait, \
+             patch.object(system, 'settle_runtime') as rest, \
+             patch.object(system, 'stop_playback'), \
+             patch.object(system, 'run', side_effect=[subprocess.CompletedProcess([], 0, '{"mode":"holding"}'), failed]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                system.smoke_runtime(self.release)
+        self.assertEqual([call.args[0] for call in rest.call_args_list], [old, new])
+        self.assertEqual([call.args[0] for call in wait.call_args_list], ['new', 'new'])
+
+    def test_successful_smoke_keeps_its_client(self):
+        system = installer.System()
+        client = ['runtime', '--socket', 's']
+        with patch.object(system, 'wait_runtime_client', return_value=(client, {})) as wait, \
+             patch.object(system, 'settle_runtime') as rest, \
+             patch.object(system, 'stop_playback'), \
+             patch.object(system, 'run', return_value=subprocess.CompletedProcess([], 0, '{"mode":"holding"}')):
+            system.smoke_runtime(self.release)
+        wait.assert_called_once()
+        self.assertEqual(rest.call_count, 2)
+
+    def test_v2_smoke_uses_the_measured_home_pose(self):
+        (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        calls = SmokeRuntimeTests.exercise(self)
+        self.assertIn(('--goto', 'home', '--duration', '3.0', '--wait'), calls)
+        self.assertFalse(any('zero_reference' in call for call in calls))
+
+    def systemctl(self, *states):
+        outputs = iter(states)
+        def run(args, **kwargs):
+            return subprocess.CompletedProcess(args, 0,
+                f'LoadState=loaded\nActiveState={next(outputs)}\nUnitFileState=enabled\n')
+        return run
+
+    def test_state_waits_for_a_restarting_unit_to_settle(self):
+        system = installer.System()
+        with patch.object(installer.subprocess, 'run', side_effect=self.systemctl('activating', 'activating', 'active')), \
+             patch.object(installer.time, 'monotonic', side_effect=[0, 1, 2]), \
+             patch.object(installer.time, 'sleep') as sleep:
+            self.assertEqual(system.state('oriond'), {'active': True, 'enabled': 'enabled'})
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_state_reports_a_unit_that_never_settles_with_its_journal(self):
+        system = installer.System()
+        with patch.object(installer.subprocess, 'run', side_effect=self.systemctl('activating', 'deactivating')), \
+             patch.object(installer.time, 'monotonic', side_effect=[0, 10, 31]), \
+             patch.object(installer.time, 'sleep'), \
+             patch.object(installer, 'journal_tail', return_value='\nRecent oriond log:\nbus timed out'):
+            with self.assertRaisesRegex(RuntimeError, r'(?s)oriond stayed deactivating for 30s.*crash-looping.*bus timed out'):
+                system.state('oriond')
+
+
 class FakeSystem:
     """Model unit existence separately from enablement to catch dangling wants links."""
     def __init__(self, units, existing=True):

@@ -60,20 +60,28 @@ class System:
     def run(self, *args, **kwargs):
         return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
-    def state(self, service):
-        result = subprocess.run(['systemctl', 'show', service, '--property=LoadState',
-            '--property=ActiveState', '--property=UnitFileState'], capture_output=True, text=True)
-        values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
-        if values.get('LoadState') == 'not-found':
-            return {'active': False, 'enabled': 'not-found'}
-        if result.returncode or values.get('LoadState') != 'loaded':
-            raise RuntimeError(f'Cannot inspect {service}; it may be masked or misconfigured')
-        enabled = values.get('UnitFileState', '')
-        if enabled not in ('enabled', 'enabled-runtime', 'disabled', 'static', 'indirect'):
-            raise RuntimeError(f'Unsupported {service} enablement: {enabled}')
-        if values.get('ActiveState') not in ('active', 'inactive', 'failed'):
-            raise RuntimeError(f'{service} is changing state; retry after it settles')
-        return {'active': values['ActiveState'] == 'active', 'enabled': enabled}
+    def state(self, service, settle_timeout=30):
+        # A crashed oriond spends RestartSec in "activating"; wait for systemd
+        # to finish that transition instead of abandoning recovery.
+        deadline = time.monotonic() + settle_timeout
+        while True:
+            result = subprocess.run(['systemctl', 'show', service, '--property=LoadState',
+                '--property=ActiveState', '--property=UnitFileState'], capture_output=True, text=True)
+            values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+            if values.get('LoadState') == 'not-found':
+                return {'active': False, 'enabled': 'not-found'}
+            if result.returncode or values.get('LoadState') != 'loaded':
+                raise RuntimeError(f'Cannot inspect {service}; it may be masked or misconfigured')
+            enabled = values.get('UnitFileState', '')
+            if enabled not in ('enabled', 'enabled-runtime', 'disabled', 'static', 'indirect'):
+                raise RuntimeError(f'Unsupported {service} enablement: {enabled}')
+            active = values.get('ActiveState')
+            if active in ('active', 'inactive', 'failed'):
+                return {'active': active == 'active', 'enabled': enabled}
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'{service} stayed {active} for {settle_timeout}s; it may be crash-looping.'
+                                   f'{journal_tail(service)}')
+            time.sleep(.5)
 
     def stop(self, name):
         if self.state(name)['enabled'] != 'not-found':
@@ -113,7 +121,16 @@ class System:
         if not pid.isdigit() or int(pid) == 0:
             raise RuntimeError('Cannot identify the current hardware runtime')
         arguments = Path(f'/proc/{pid}/cmdline').read_bytes().decode().split('\0')
-        return [f'/proc/{pid}/exe', '--socket', option(arguments, '--socket', '/tmp/oriond.sock')]
+        # Resolve the executable now: /proc/<pid>/exe disappears if systemd
+        # restarts oriond, while the release binary it points to remains.
+        binary = f'/proc/{pid}/exe'
+        try:
+            target = os.readlink(binary)
+        except OSError:
+            target = None
+        if target and os.path.isabs(target) and not target.endswith(' (deleted)'):
+            binary = target
+        return [binary, '--socket', option(arguments, '--socket', '/tmp/oriond.sock')]
 
     def wait_runtime_client(self, revision=None, timeout=20):
         deadline = time.monotonic() + timeout
@@ -221,8 +238,11 @@ class System:
                 self.run(*client, '--configure', capture_output=True)
             if status.get('mode') in ('observe', 'configured'):
                 self.run(*client, '--enable', capture_output=True)
-            print('Smoke pose: zero_reference', flush=True)
-            self.run(*client, '--goto', 'zero_reference', '--duration', '3.0', '--wait', timeout=30)
+            # V2's zero_reference is a CAD preview, not a measured pose; home was
+            # captured on the hardware and is a short move from rest.
+            pose = 'home' if metadata.get('hardware', 'v1') == 'v2' else 'zero_reference'
+            print(f'Smoke pose: {pose}', flush=True)
+            self.run(*client, '--goto', pose, '--duration', '3.0', '--wait', timeout=30)
             for scene in ('deployment_smoke', 'acknowledge_left', 'acknowledge_right', 'return_home'):
                 print(f'Smoke scene: {scene}', flush=True)
                 self.run(*client, '--run-scene', scene, '--wait', timeout=60)
@@ -232,6 +252,10 @@ class System:
         finally:
             print('Returning Orion to measured rest, lights off and torque off.', flush=True)
             try:
+                if failure is not None:
+                    # A failed step may have restarted oriond; reconnect to the
+                    # running runtime instead of reusing the old client.
+                    client, _ = self.wait_runtime_client(metadata['revision'], timeout)
                 self.settle_runtime(client)
             except BaseException as error:
                 if failure is not None:
@@ -320,6 +344,17 @@ def expected_tts(home):
     if model != 'piper-alba-medium' and not (Path(model) / 'en_GB-alba-medium.onnx').is_file():
         raise RuntimeError(f'Unsupported Pi speech model: {model}')
     return 'piper-tts', model
+
+
+def journal_tail(service, lines=20):
+    """Recent unit log lines for a failure message; empty when unreadable."""
+    try:
+        result = subprocess.run(['journalctl', '-u', service, '-n', str(lines), '--no-pager', '-o', 'cat'],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    output = result.stdout.strip()
+    return f'\nRecent {service} log:\n{output}' if result.returncode == 0 and output else ''
 
 
 def option(arguments, flag, default):
