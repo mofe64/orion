@@ -93,7 +93,21 @@ Install the exact headers for the running kernel and the remaining build
 requirements:
 
 ```bash
-sudo apt install linux-headers-$(uname -r) device-tree-compiler raspi-utils
+sudo apt install linux-headers-$(uname -r) device-tree-compiler
+```
+
+On Raspberry Pi OS, install `raspi-utils` for `/usr/bin/pinctrl`. On Ubuntu 24.04,
+build the [official Raspberry Pi utility](https://github.com/raspberrypi/utils/blob/master/pinctrl/README.md):
+
+```bash
+sudo apt install -y cmake build-essential git
+mkdir -p ~/dev
+git clone --depth 1 https://github.com/raspberrypi/utils.git ~/dev/orion-pi-utils
+cmake -S ~/dev/orion-pi-utils/pinctrl -B ~/dev/orion-pi-utils/build-pinctrl
+cmake --build ~/dev/orion-pi-utils/build-pinctrl -j 2
+sudo install -m 755 ~/dev/orion-pi-utils/build-pinctrl/pinctrl /usr/bin/pinctrl
+sudo groupadd -f gpio
+sudo usermod -aG gpio "$USER"
 ```
 
 Clone and build the official Pi 5 branch:
@@ -144,6 +158,10 @@ Run `id -nG` once to confirm the development user belongs to the `gpio` group.
 The verifier requires readable and writable `/dev/ws281x_pwm`, the loaded
 module with `pwm_channel=0`, BCM12 configured as `PWM0_CHAN0`, and an enabled
 and active pin service. It prints `PASS` only when the complete contract holds.
+Run the verifier as the Orion user. On systems where `pinctrl` needs root, the
+verifier retries only the GPIO12 state read with `sudo`; device permissions are
+still checked as the invoking user. A failed GPIO read prints its diagnostic
+instead of exiting silently.
 
 The module is compiled for one kernel ABI. After booting a newly installed
 kernel, rebuild `rp1_ws281x_pwm.ko` against that running kernel's headers and

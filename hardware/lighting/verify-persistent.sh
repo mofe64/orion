@@ -26,7 +26,15 @@ if [[ ! -r ${channel_parameter} ]] || [[ $(<"${channel_parameter}") != 0 ]]; the
     exit 1
 fi
 
-pin_state=$(pinctrl get 12)
+if ! pin_state=$(/usr/bin/pinctrl get 12 2>&1); then
+    # Ubuntu can require root for pinctrl even when the LED device is accessible.
+    # Keep the device permission checks above under the invoking Orion user.
+    echo "GPIO12 state read requires elevated access; retrying with sudo." >&2
+    if ! pin_state=$(sudo /usr/bin/pinctrl get 12 2>&1); then
+        echo "FAIL: could not read GPIO12 state: ${pin_state}" >&2
+        exit 1
+    fi
+fi
 if [[ ${pin_state} != *"a0"* || ${pin_state} != *"PWM0_CHAN0"* ]]; then
     echo "FAIL: BCM12 is not configured as RP1 PWM0 channel 0: ${pin_state}" >&2
     exit 1
