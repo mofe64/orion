@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import shlex
 
+from pi_hardware import profile, release_hardware
+
 SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack')
 STOP_ORDER = tuple(reversed(SERVICES))
 TRAINED_WAKE_MODEL = 'hey_orion_trained_080.rpw'
@@ -115,12 +117,33 @@ def listener_start(start, release):
     return start
 
 
+
+def set_option(start, flag, value):
+    """Replace a managed single-value argument without losing operator tuning."""
+    pattern = r'(?<!\S)' + re.escape(flag) + r'(?:\s+|=)(?:"[^"]*"|\'[^\']*\'|\S+)'
+    updated, count = re.subn(pattern, lambda _: f'{flag} {value}', start)
+    return updated if count else start + f' {flag} {value}'
+
+
+def change_effective_start(contents, transform):
+    start = effective_start(contents)
+    for i in range(len(contents) - 1, -1, -1):
+        p, value = contents[i]
+        if re.search(r'^ExecStart=.+', value, re.M):
+            contents[i] = (p, re.sub(r'^ExecStart=.+$',
+                lambda match: 'ExecStart=' + transform(start) if match.group()[10:] == start else match.group(), value, flags=re.M))
+            return
+    raise ValueError('Service has no effective ExecStart')
+
 def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/systemd/system')):
     for path in [release, root, runtime_project, home]:
         if not re.fullmatch(r'/[A-Za-z0-9._/-]+', str(path)) or '..' in path.parts:
             raise ValueError(f'Unsupported service path: {path}')
     if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9-]*', user):
         raise ValueError('Unsupported service user')
+    hardware = release_hardware(release)
+    selected = profile(hardware)
+    calibration = home / ".config/orion" / selected["calibration_file"]
     files = {}
     for name in SERVICES:
         path = unit_dir / f'{name}.service'
@@ -130,6 +153,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         text = path.read_text() if existing else (release / f'scripts/systemd/{name}.service.in').read_text()
         for key, value in {'PROJECT_ROOT': runtime_project, 'USER_HOME': home, 'ORION_USER': user}.items():
             text = text.replace('@' + key + '@', str(value))
+        if name == 'oriond' and 'Requires=orion-neopixel-pin.service' not in text:
+            text = text.replace('[Unit]', '[Unit]\nRequires=orion-neopixel-pin.service', 1)
         overrides = sorted((unit_dir / f'{name}.service.d').glob('*.conf'))
         contents = [(path, text)]
         for override in overrides:
@@ -137,6 +162,33 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 raise ValueError(f'Inspect symlinked override before deployment: {override}')
             contents.append((override, override.read_text()))
         combined = '\n'.join(value for _, value in contents)
+        if name in ('oriond', 'orion-studio-gateway', 'orion-listener'):
+            def hardware_start(start):
+                start = set_option(start, '--hardware', hardware)
+                if name in ('oriond', 'orion-studio-gateway'):
+                    start = set_option(start, '--calibration', calibration)
+                if name == 'oriond':
+                    start = set_option(start, '--poses', home / '.config/orion/poses-v2.yaml' if hardware == 'v2' else runtime_project / selected['poses'])
+                    for flag, field in (('--motions', 'motions'), ('--scenes', 'scenes'), ('--user-poses', 'user_poses')):
+                        start = set_option(start, flag, runtime_project / selected[field])
+                    start = set_option(start, '--audio-card', selected['audio']['card'])
+                    start = set_option(start, '--audio-device', selected['audio']['pcm'])
+                    if hardware == 'v2':
+                        start = set_option(start, '--character-on-start', 'off')
+                if name == 'orion-listener':
+                    start = set_option(start, '--device', selected['audio']['pcm'])
+                    if hardware == 'v2':
+                        audio = selected['audio']
+                        if '--capture-channels' not in start:
+                            start = set_option(start, '--capture-channels', audio['capture_channels'])
+                        if '--processed-channel' not in start:
+                            start = set_option(start, '--processed-channel', audio['processed_channel'])
+                    else:
+                        start = set_option(start, '--capture-channels', 2)
+                        start = set_option(start, '--processed-channel', 0)
+                return start
+            change_effective_start(contents, hardware_start)
+
         # A first onboard installation adds only missing defaults. Existing override values win.
         if name == 'orion-listener':
             start = effective_start(contents)
@@ -197,5 +249,6 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         if settings.get(field) == 'gpt-5.6-sol':
             settings[field] = 'gpt-6-luna'
             files[settings_path] = json.dumps(settings, indent=2) + '\n'
+    files[home / '.config/orion/hardware'] = hardware + '\n'
     files[home / '.local/share/orion/studio-service/installed'] = str(release) + '\n'
     return files

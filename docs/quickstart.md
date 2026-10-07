@@ -21,10 +21,14 @@ changes are sent to the Pi. The Pi services continue running when Studio closes.
 
 ## Deploy to the Pi
 
+Choose the lamp hardware explicitly. For V2.1, complete
+[V2 calibration and rest capture](hardware-versions.md) and prepare the release before activation.
+The existing v1 procedure is:
+
 Commit and push the intended branch, then run from the workstation:
 
 ```bash
-scripts/deploy_pi.sh --host mofe@orion.local \
+scripts/deploy_pi.sh --hardware v1 --host mofe@orion.local \
   --root /home/mofe/dev/orion --branch main
 ```
 
@@ -111,6 +115,9 @@ or later, and native build/audio dependencies must be installed. These include
 `python3-venv` and `ca-certificates`.
 
 Calibration and pairing belong to the Pi user under `~/.config/orion/`.
+Select the matching calibration and audio setup in the
+[hardware-version guide](hardware-versions.md). The ReSpeaker 2-Mics V2 HAT
+setup belongs to the v1 lamp; v2 uses USB audio.
 If the Pi has no pairing token, create one once and save the displayed value for
 Studio:
 
@@ -124,7 +131,7 @@ source on the Pi:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-python3 scripts/deploy_pi_release.py --source "$PWD" --revision HEAD --prepare-only
+python3 scripts/deploy_pi_release.py --hardware v1 --source "$PWD" --revision HEAD --prepare-only
 ```
 
 The command prints the release path. The preparer downloads pinned Qwen GGUF,
@@ -157,7 +164,7 @@ systemctl is-active oriond orion-studio-gateway orion-listener orion-voice-stack
 Use `--runtime-project` when the existing catalog root differs from
 `~/dev/orion`. Add `--plan` to list the proposed files without activation.
 Subsequent workstation updates use `scripts/deploy_pi.sh`. The compatibility entry
-point `scripts/install_pi_services.sh ROOT USER HOME` also builds a complete release
+point `scripts/install_pi_services.sh ROOT USER HOME v1` also builds a complete release
 from committed `HEAD`; the standalone listener installer is reserved for older
 listener-only installations.
 

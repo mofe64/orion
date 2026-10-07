@@ -19,6 +19,7 @@ import uuid
 
 from pi_service_config import SERVICES, STOP_ORDER, read_env, render_plan
 from pi_catalog import catalog_plan
+from pi_hardware import profile, release_hardware, calibration_path
 
 
 def atomic_json(path, value):
@@ -193,6 +194,10 @@ class System:
     def smoke_runtime(self, release, timeout=20):
         metadata = json.loads((release / 'release.json').read_text())
         client, status = self.wait_runtime_client(metadata['revision'], timeout)
+        if metadata.get('hardware', 'v1') == 'v2':
+            # No torque/configure/pose command precedes the light/audio-only scene.
+            print('V2 smoke: checking lights and audio before any calibrated motion.', flush=True)
+            self.run(*client, '--run-scene', 'deployment_smoke', '--wait', timeout=60)
         print('Confirming the new runtime is at rest before physical smoke playback.', flush=True)
         self.settle_runtime(client)
         failure = None
@@ -266,7 +271,7 @@ class System:
                     raise RuntimeError('The requested release is not speech-ready')
                 client = [release / 'runtime/target/release/oriond', '--socket', runtime_socket]
                 runtime = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
-                if runtime.get('build_revision') != metadata['revision']:
+                if runtime.get('build_revision') != metadata['revision'] or runtime.get('hardware', 'v1') != metadata.get('hardware', 'v1'):
                     raise RuntimeError('The old runtime is still active')
                 rest = self.daemon_command(client, 'character status').get('rest') or {}
                 if (runtime.get('torque_enabled') is not False or
@@ -392,6 +397,9 @@ def activate(root, release, home, files, system):
     previous = json.loads(installed.read_text()) if installed.exists() else None
     if previous and previous.get('version') == 2 and previous.get('release') == str(release):
         raise RuntimeError('Release is already installed; build a new release directory for an update')
+    replacing_hardware = previous and previous.get('hardware', 'v1') != release_hardware(release)
+    if replacing_hardware and any(system.state(name)['active'] for name in SERVICES):
+        raise RuntimeError('Stop the old hardware services before replacing the lamp; no services were changed')
     folder, data = snapshot(root, [*files, installed], system)
     data['release'] = str(release)
     atomic_json(folder / 'state.json', data)
@@ -401,7 +409,7 @@ def activate(root, release, home, files, system):
         # Quiesce companions first. Failure to rest never forces termination of the runtime.
         for name in STOP_ORDER[:-1]:
             system.stop(name)
-        if data['services']['oriond']['enabled'] != 'not-found':
+        if data['services']['oriond']['enabled'] != 'not-found' and not replacing_hardware:
             if not data['services']['oriond']['active']:
                 system.start('oriond')
                 for name in STOP_ORDER[:-1]:
@@ -431,7 +439,7 @@ def activate(root, release, home, files, system):
         for name in SERVICES[1:]:
             system.start(name)
         system.ready(release, home)
-        atomic_json(installed, {'version': 2, 'release': str(release), 'rollback': str(folder)})
+        atomic_json(installed, {'version': 2, 'release': str(release), 'hardware': release_hardware(release), 'rollback': str(folder)})
         data['status'] = 'committed'; atomic_json(folder / 'state.json', data)
     except BaseException:
         if switched:
@@ -491,7 +499,7 @@ def preflight(release, home, files, system):
     for name in required:
         if not (release / name).is_file():
             raise RuntimeError(f'Prepare the complete release first: {name}')
-    if not (home / '.config/orion/servo_calibration.json').is_file() or not (home / '.config/orion/studio-token').is_file():
+    if not calibration_path(home, release_hardware(release)).is_file() or not (home / '.config/orion/studio-token').is_file():
         raise RuntimeError('Install hardware calibration and pairing token before activating voice')
     environment = {**os.environ, **read_env(files[home / '.config/orion/voice-stack.env']),
                    'ORION_PROJECT_ROOT': str(release), 'ORION_ONBOARD': '1', 'ORION_SPEECH_BACKEND': 'pi'}
@@ -499,7 +507,7 @@ def preflight(release, home, files, system):
     system.run(release / 'orion-service/target/release/orion-service', 'check', env=environment)
 
 
-def validate_catalog(release, project, calibration, system, assets):
+def validate_catalog(release, project, calibration, system, assets, home=None):
     # Compile the planned catalog before changing live files or stopping services.
     with tempfile.TemporaryDirectory(prefix='orion-catalog-') as temporary:
         preview = Path(temporary)
@@ -512,11 +520,33 @@ def validate_catalog(release, project, calibration, system, assets):
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(value)
-        for motion in ('look_at_left_expressive', 'look_at_right_expressive'):
+        hardware = release_hardware(release)
+        selected = profile(hardware)
+        if hardware == 'v2':
+            if home is None:
+                raise RuntimeError('V2 validation needs the calibration user home')
+            # Preview the selected release catalog and the preserved physical poses.
+            shutil.copytree(project / 'hardware/v2', preview / 'hardware/v2', symlinks=True)
+            for path, value in assets.items():
+                if path.is_relative_to(project) and path.relative_to(project).parts[:2] == ('hardware', 'v2'):
+                    target = preview / path.relative_to(project)
+                    if value is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_text(value)
+            poses = home / '.config/orion/poses-v2.yaml'
+            motions = preview / selected['motions']
+            names = sorted(p.stem for p in motions.rglob('*.yaml'))
+        else:
+            poses = preview / selected['poses']
+            motions = preview / selected['motions']
+            names = ('look_at_left_expressive', 'look_at_right_expressive')
+        for motion in names:
             system.run(release / 'runtime/target/release/orion-trajectory',
-                '--motion', motion, '--start-pose', 'attentive',
-                '--pose-file', preview / 'motion/config/poses.yaml',
-                '--motions-directory', preview / 'motion/motions', '--calibration', calibration,
+                '--hardware', hardware, '--motion', motion, '--start-pose', 'attentive',
+                '--pose-file', poses,
+                '--motions-directory', motions, '--calibration', calibration,
                 stdout=subprocess.DEVNULL)
 
 
@@ -546,7 +576,13 @@ def main():
         assets = catalog_plan(release, args.runtime_project.resolve(), root)
         files.update(assets)
         preflight(release, home, files, system)
-        validate_catalog(release, args.runtime_project.resolve(), home / '.config/orion/servo_calibration.json', system, assets)
+        hardware = release_hardware(release)
+        # Check boot persistence before any motion or service switch.
+        system.run(release / 'hardware/lighting/verify-persistent.sh')
+        if hardware == 'v2':
+            system.run('arecord', '-l')
+            system.run('aplay', '-l')
+        validate_catalog(release, args.runtime_project.resolve(), calibration_path(home, hardware), system, assets, home)
         def interrupted(signum, frame):
             raise KeyboardInterrupt('Deployment interrupted')
         signal.signal(signal.SIGTERM, interrupted)

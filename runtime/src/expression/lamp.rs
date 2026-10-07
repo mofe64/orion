@@ -1,6 +1,6 @@
 use crate::{
     Error, Result,
-    lighting::{LIGHTING_EFFECT_NAMES, ORION_LIGHT_PIXEL_COUNT, Rgbw8, render_effect},
+    lighting::{LIGHTING_EFFECT_NAMES, ORION_LIGHT_PIXEL_COUNT, Rgbw8, render_effect_for_pixels},
 };
 use serde::Deserialize;
 
@@ -65,8 +65,11 @@ impl LampProgram {
             "colors":self.colors.iter().map(|c| [c.red,c.green,c.blue,c.white]).collect::<Vec<_>>()})
     }
     pub fn render(&self, now: f64) -> Result<Vec<Rgbw8>> {
+        self.render_for_pixels(now, ORION_LIGHT_PIXEL_COUNT)
+    }
+    pub fn render_for_pixels(&self, now: f64, pixel_count: usize) -> Result<Vec<Rgbw8>> {
         if self.brightness == 0.0 || self.effect == "off" {
-            return Ok(vec![Rgbw8::OFF; ORION_LIGHT_PIXEL_COUNT]);
+            return Ok(vec![Rgbw8::OFF; pixel_count]);
         }
         let scale = |color: Rgbw8, gain: f64| {
             Rgbw8::new(
@@ -81,10 +84,10 @@ impl LampProgram {
         if self.effect == "solid" {
             return Ok(vec![
                 scale(first.interpolate(second, 0.5)?, self.brightness);
-                ORION_LIGHT_PIXEL_COUNT
+                pixel_count
             ]);
         }
-        render_effect(&self.effect, now, 1.0)?
+        render_effect_for_pixels(&self.effect, now, 1.0, pixel_count)?
             .into_iter()
             .enumerate()
             .map(|(index, pixel)| {

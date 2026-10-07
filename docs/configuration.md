@@ -126,6 +126,7 @@ Command-line flags override the deployment environment:
 | `ORION_PI_HOST` | `mofe@orion.local` | `--host USER@HOST` |
 | `ORION_PI_ROOT` | `/home/mofe/dev/orion` | `--root PATH` |
 | `ORION_PI_BRANCH` | `main` | `--branch BRANCH` |
+| `ORION_PI_HARDWARE` | Required; no deployment default | `--hardware v1\|v2` |
 
 The script validates these values before SSH and requires a trusted host key.
 It builds from the selected remote commit. The Pi checkout, including its local
@@ -133,9 +134,10 @@ edits, remains the catalog and Git source for preparing releases. Activation
 replaces managed built-in YAML from that commit; user assets are preserved.
 
 Activation changes executable paths in the base units and overrides, the speech
-Python path, the release revision, and the voice service's project root. Existing
-environment values and command arguments are preserved; missing defaults are
-added. Saved preferences, calibration and token files stay outside that write set.
+Python path, the release revision, and the voice service's project root. It updates
+managed hardware, calibration, catalog and audio arguments for the selected lamp.
+Other environment values and command arguments are preserved; missing defaults
+are added. Saved preferences, calibration and token files stay outside that write set.
 Rollback restores the immediately previous service configuration, built-in YAML
 and running state. Activation runs the physical smoke sequence and finishes at
 measured rest with lights and torque off. See [Pi deployment](quickstart.md#deploy-to-the-pi).
@@ -144,6 +146,8 @@ measured rest with lights and torque off. See [Pi deployment](quickstart.md#depl
 
 `oriond` accepts options for its backend, socket, serial port, calibration, asset
 paths, Python executable and start pose. `--character-on-start` defaults to `on`.
+With `--hardware v2`, it defaults to `off` for maintenance. Select `on` explicitly
+for normal character startup. See [hardware profiles and calibration](hardware-versions.md).
 Use `off` for maintenance startup with torque disabled. `--rest-after-seconds`
 defaults to `1800`, or 30 minutes. Accepted wake confirmations reset inactivity;
 active conversations and foreground work can defer rest. Lamp mode disables

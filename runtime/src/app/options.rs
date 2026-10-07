@@ -70,6 +70,7 @@ impl ServoGainOverride {
 pub(super) struct Options {
     pub(super) operation: Operation,
     pub(super) backend: Backend,
+    pub(super) hardware: crate::HardwareVersion,
     pub(super) help: bool,
     pub(super) character_on_start: bool,
     pub(super) rest_after_seconds: f64,
@@ -106,6 +107,7 @@ impl Default for Options {
         Self {
             operation: Operation::None,
             backend: Backend::Hardware,
+            hardware: crate::HardwareVersion::V1,
             help: false,
             character_on_start: true,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
@@ -161,6 +163,7 @@ pub(super) fn usage() -> &'static str {
   oriond --stop-speech [--socket PATH]\n\n\
   --check             Print one direct hardware state snapshot and exit.\n\
   --serve             Sample the selected backend at 50 Hz and serve status JSON.\n\
+  --hardware v1|v2    Select hardware profile (default: v1).\n\
   --backend NAME      Use hardware (default) or the native MuJoCo bridge.\n\
   --status            Request the latest JSON snapshot from the daemon.\n\
   --configure         Apply and verify Orion's servo profile, torque off.\n\
@@ -170,9 +173,9 @@ pub(super) fn usage() -> &'static str {
   --play MOTION       Play an authored multi-keyframe Orion motion.\n\
   --play-cue CUE      Play one named local WAV cue and wait for completion.\n\
   --stop              Stop movement at the current commanded position.\n\
-  --light RGBW        Immediately set all 40 shield pixels (four values, 0-255).\n\
-  --light-pixel ...   Light one zero-based pixel and turn the other 39 off.\n\
-  --lights-off        Immediately turn all 40 shield pixels off.\n\
+  --light RGBW        Immediately set all selected pixels (four values, 0-255).\n\
+  --light-pixel ...   Light one zero-based pixel and turn the other pixels off.\n\
+  --lights-off        Immediately turn all selected pixels off.\n\
   --lighting-device   Pi 5 RP1 PWM device (default: /dev/ws281x_pwm).\n\
   --run-scene SCENE  Submit a named lighting/motion scene to the daemon.\n\
   --scene-status     Show the active and most recent terminal scene.\n\
@@ -207,7 +210,9 @@ Check never enables torque. Serve starts powered character mode unless --charact
 pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::Result<Options> {
     let mut options = Options::default();
     let mut arguments = arguments.peekable();
+    let mut supplied = std::collections::BTreeSet::new();
     while let Some(argument) = arguments.next() {
+        supplied.insert(argument.clone());
         match argument.as_str() {
             "--check" => select_operation(&mut options, Operation::Check, &argument)?,
             "--serve" => select_operation(&mut options, Operation::Serve, &argument)?,
@@ -271,6 +276,7 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                     }
                 }
             }
+            "--hardware" => options.hardware = require_value(&mut arguments, &argument)?.parse()?,
             "--port" => options.port = require_value(&mut arguments, &argument)?,
             "--baud-rate" => {
                 options.baud_rate =
@@ -361,6 +367,38 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
             }
         }
     }
+    let profile = options.hardware.profile();
+    if options.hardware == crate::HardwareVersion::V2 {
+        if !supplied.contains("--poses") {
+            options.poses_file = profile.poses.clone().into();
+        }
+        if !supplied.contains("--user-poses") {
+            options.user_poses_directory = profile.user_poses.clone().into();
+        }
+        if !supplied.contains("--motions") {
+            options.motions_directory = profile.motions.clone().into();
+        }
+        if !supplied.contains("--scenes") {
+            options.scenes_directory = profile.scenes.clone().into();
+        }
+        if !supplied.contains("--scene") {
+            options.scene_file = profile.scene.clone().into();
+        }
+        if !supplied.contains("--audio-card") {
+            options.audio_card = profile.audio.card.clone();
+        }
+        if !supplied.contains("--audio-device") {
+            options.audio_pcm_device = profile.audio.pcm.clone();
+        }
+        if !supplied.contains("--character-on-start") {
+            options.character_on_start = false;
+        }
+        if options.backend == Backend::Hardware && !supplied.contains("--poses") {
+            let home = env::var_os("HOME")
+                .ok_or_else(|| crate::Error::Runtime("HOME is required for v2 poses.".into()))?;
+            options.poses_file = PathBuf::from(home).join(".config/orion/poses-v2.yaml");
+        }
+    }
     if options.backend == Backend::Mujoco && options.operation == Operation::Check {
         return Err(crate::Error::InvalidArgument(
             "--check is a direct-hardware operation; use --serve --backend mujoco.".into(),
@@ -391,11 +429,11 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
         ));
     }
     if options.operation == Operation::LightPixel
-        && options.light_pixel >= crate::ORION_LIGHT_PIXEL_COUNT
+        && options.light_pixel >= profile.lighting.pixel_count
     {
         return Err(crate::Error::InvalidArgument(format!(
             "--light-pixel index must be between 0 and {}.",
-            crate::ORION_LIGHT_PIXEL_COUNT - 1
+            profile.lighting.pixel_count - 1
         )));
     }
     if options.backend == Backend::Hardware
@@ -409,7 +447,9 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                     "HOME is not set; pass --calibration with an absolute path.".into(),
                 )
             })?;
-        options.calibration_file = PathBuf::from(home).join(".config/orion/servo_calibration.json");
+        options.calibration_file = PathBuf::from(home)
+            .join(".config/orion")
+            .join(&profile.calibration_file);
     }
     Ok(options)
 }
@@ -455,4 +495,84 @@ pub(super) fn select_operation(
     }
     options.operation = operation;
     Ok(())
+}
+
+#[cfg(test)]
+mod hardware_tests {
+    use super::*;
+    fn parse(args: &[&str]) -> crate::Result<Options> {
+        parse_options(args.iter().map(|s| s.to_string()))
+    }
+    #[test]
+    fn v2_selects_isolated_assets_usb_audio_and_maintenance_startup() {
+        let options = parse(&["--serve", "--hardware", "v2", "--backend", "mujoco"]).unwrap();
+        assert_eq!(options.audio_card, "Array");
+        assert_eq!(
+            options.scene_file,
+            PathBuf::from("simulation/mujoco/v2/scene.xml")
+        );
+        assert_eq!(
+            options.motions_directory,
+            PathBuf::from("hardware/v2/motions")
+        );
+        assert!(!options.character_on_start);
+        let override_options = parse(&[
+            "--serve",
+            "--audio-device",
+            "custom",
+            "--hardware",
+            "v2",
+            "--poses",
+            "measured.yaml",
+            "--character-on-start",
+            "on",
+        ])
+        .unwrap();
+        assert_eq!(override_options.audio_pcm_device, "custom");
+        assert_eq!(override_options.poses_file, PathBuf::from("measured.yaml"));
+        assert!(override_options.character_on_start);
+    }
+    #[test]
+    fn validates_pixel_index_against_selected_hardware_before_device_access() {
+        assert!(
+            parse(&[
+                "--light-pixel",
+                "23",
+                "1",
+                "2",
+                "3",
+                "4",
+                "--hardware",
+                "v2"
+            ])
+            .is_ok()
+        );
+        assert!(
+            parse(&[
+                "--light-pixel",
+                "24",
+                "1",
+                "2",
+                "3",
+                "4",
+                "--hardware",
+                "v2"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "--light-pixel",
+                "39",
+                "1",
+                "2",
+                "3",
+                "4",
+                "--hardware",
+                "v1"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["--hardware", "unknown"]).is_err());
+    }
 }

@@ -44,10 +44,13 @@ def emit(value: dict[str, Any]) -> None:
 
 
 class Bridge:
-    def __init__(self, scene: Path, start_positions: dict[str, float]) -> None:
+    def __init__(self, scene: Path, start_positions: dict[str, float], hardware: str = "v1") -> None:
         if set(start_positions) != set(JOINT_NAMES):
             raise ValueError("Start state must contain exactly Orion's five joints")
         self.model = mujoco.MjModel.from_xml_path(str(scene))
+        self.preview = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "v21_face") >= 0
+        if self.preview != (hardware == "v2"):
+            raise ValueError("MuJoCo model does not match the selected hardware")
         self.data = mujoco.MjData(self.model)
         self.mapping = resolve_joint_mapping(self.model, JOINT_NAMES)
         set_joint_state(
@@ -55,6 +58,7 @@ class Bridge:
             self.data,
             self.mapping,
             tuple(float(start_positions[name]) for name in JOINT_NAMES),
+            anchor_body_name=None if self.preview else "scs215_v5",
         )
         self.policy = stability_policy_from_data(
             load_yaml_file(PROJECT_ROOT / "motion/config/stability_limits.yaml")
@@ -77,7 +81,7 @@ class Bridge:
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         command = request.get("command")
         if command == "activate":
-            self.monitor = StabilityMonitor(self.model, self.data, self.policy)
+            self.monitor = None if self.preview else StabilityMonitor(self.model, self.data, self.policy)
             self.latest_metrics = self._empty_metrics()
             return self.state()
         if command == "deactivate":
@@ -91,12 +95,18 @@ class Bridge:
             if not all(math.isfinite(value) for value in values):
                 raise ValueError("Position commands must be finite")
             set_actuator_targets(self.data, self.mapping, values)
+            if self.preview:
+                set_joint_state(self.model, self.data, self.mapping, values, anchor_body_name=None)
             return {"ok": True}
         if command == "read":
             if request.get("advance"):
                 steps = max(1, round(RUNTIME_PERIOD / self.model.opt.timestep))
                 for _ in range(steps):
-                    mujoco.mj_step(self.model, self.data)
+                    if self.preview:
+                        self.data.time += self.model.opt.timestep
+                        mujoco.mj_forward(self.model, self.data)
+                    else:
+                        mujoco.mj_step(self.model, self.data)
                     if self.monitor is not None:
                         snapshot = self.monitor.update()
                         self.latest_metrics = {
@@ -132,25 +142,26 @@ class Bridge:
             "metrics": self.latest_metrics,
         }
 
-    @staticmethod
-    def _empty_metrics() -> dict[str, Any]:
+    def _empty_metrics(self) -> dict[str, Any]:
         return {
             "maximum_translation": 0.0,
             "maximum_tilt": 0.0,
             "maximum_height_change": 0.0,
             "longest_contact_loss": 0.0,
-            "safe": True,
-            "unsafe_reasons": [],
+            "validation_scope": "kinematic_preview" if self.preview else "dynamic_diagnostic",
+            "safe": not self.preview,
+            "unsafe_reasons": ["V2 dynamic stability and collisions are not evaluated"] if self.preview else [],
         }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     parser.add_argument("--scene", type=Path, required=True)
     parser.add_argument("--start-json", required=True)
     args = parser.parse_args()
     try:
-        bridge = Bridge(args.scene, json.loads(args.start_json))
+        bridge = Bridge(args.scene, json.loads(args.start_json), args.hardware)
         emit({"ok": True, "joint_limits": bridge.joint_limits()})
         for line in sys.stdin:
             try:

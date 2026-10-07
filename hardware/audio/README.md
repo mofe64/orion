@@ -1,9 +1,14 @@
 # Orion audio hardware
 
-Orion's installed audio board is the Seeed Studio ReSpeaker 2-Mics Pi HAT V2,
+V1's commissioned audio board is the Seeed Studio ReSpeaker 2-Mics Pi HAT V2,
 a Raspberry Pi Hardware Attached on Top (HAT). Its TLV320AIC3104 codec uses
 Inter-Integrated Circuit (I2C) address `0x18`. The HAT provides two microphones
 plus playback through its 3.5 mm jack and JST 2.0 speaker output.
+
+V2 selects the XVF3800 USB interface (`Array`) and skips HAT mixer setup.
+Use [V2 audio setup](../../docs/hardware-versions.md#identify-usb-capture)
+to identify firmware channels and test recording/playback. The overlay and mixer
+commands below apply to the HAT on the v1 lamp.
 
 Orion uses Seeed's V2 device-tree overlay with the Raspberry Pi kernel's
 `snd_soc_tlv320aic3x`, `snd_soc_tlv320aic3x_i2c`, and

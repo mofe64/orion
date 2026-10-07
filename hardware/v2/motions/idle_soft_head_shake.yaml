@@ -1,0 +1,32 @@
+{
+  "format_version": 2,
+  "motion": {
+    "name": "idle_soft_head_shake",
+    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
+    "space": "anchor_relative",
+    "style": "attentive",
+    "keyframes": [
+      {
+        "offsets": {
+          "head_roll_joint": 0.015
+        },
+        "duration": 0.6,
+        "arrival": "through",
+        "marker": "acknowledge"
+      },
+      {
+        "offsets": {
+          "head_roll_joint": -0.006
+        },
+        "duration": 0.6,
+        "arrival": "through"
+      },
+      {
+        "offsets": {},
+        "duration": 0.8,
+        "arrival": "settle"
+      }
+    ],
+    "return_to_anchor": true
+  }
+}

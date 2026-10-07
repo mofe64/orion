@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Sequence
 
 from .bus import create_lerobot_bus
-from .provisioning import ORION_SERVO_ASSIGNMENTS
+from .provisioning import ORION_SERVO_ASSIGNMENTS, assignments_for_hardware
 from .verification import (
     REGISTER_GROUPS,
     ServoRegisterSnapshot,
@@ -19,6 +19,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Read Orion STS3215 configuration and telemetry without writing registers."
     )
+    parser.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
     parser.add_argument(
         "--joint",
@@ -77,7 +78,7 @@ def _print_register_matrix(snapshots: Sequence[ServoRegisterSnapshot]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    plan = verification_plan(selected_joint=args.joint)
+    plan = verification_plan(assignments_for_hardware(args.hardware), selected_joint=args.joint)
 
     if args.dry_run:
         ids = ", ".join(str(assignment.servo_id) for assignment in plan)

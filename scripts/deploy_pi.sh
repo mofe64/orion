@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy_pi.sh [--host USER@HOST] [--root PATH] [--branch BRANCH] [--prepare-only] [--skip-studio-check]
+Usage: scripts/deploy_pi.sh --hardware v1|v2 [--host USER@HOST] [--root PATH] [--branch BRANCH] [--prepare-only] [--skip-studio-check]
 
 Build, test, activate and physically smoke-test the complete Orion Pi stack through SSH. Defaults:
   host:   mofe@orion.local
@@ -33,9 +33,11 @@ project_root="${ORION_PI_ROOT:-/home/mofe/dev/orion}"
 branch="${ORION_PI_BRANCH:-main}"
 studio_check=true
 prepare_only=false
+hardware="${ORION_PI_HARDWARE:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --hardware) hardware="${2:?--hardware requires v1 or v2}"; shift 2 ;;
     --host) pi_host="${2:?--host requires USER@HOST}"; shift 2 ;;
     --root) project_root="${2:?--root requires PATH}"; shift 2 ;;
     --branch) branch="${2:?--branch requires BRANCH}"; shift 2 ;;
@@ -45,6 +47,11 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
+
+if [[ "${hardware}" != v1 && "${hardware}" != v2 ]]; then
+  echo "Select the target hardware with --hardware v1 or --hardware v2." >&2
+  exit 2
+fi
 
 if [[ ! "${project_root}" =~ ^/[A-Za-z0-9._/-]+$ || "${project_root}" == *".."* ]]; then
   echo "Refusing unsafe Pi project path: ${project_root}" >&2
@@ -70,7 +77,7 @@ if [[ "${studio_check}" == true ]]; then
   pnpm --dir "${project_checkout}/orion_studio" test
   pnpm --dir "${project_checkout}/orion_studio" build
 fi
-echo "Connecting to ${pi_host} to deploy Orion branch ${branch}..."
+echo "Connecting to ${pi_host} to deploy Orion branch ${branch} for ${hardware}..."
 # Keep stdin available for sudo. Feeding the script to bash -s prevents a
 # normal interactive SSH terminal, so copy it to a temporary file first.
 # A private control socket lets setup, transfer and the interactive command reuse
@@ -99,5 +106,5 @@ if [[ ! "${remote_script}" =~ ^/tmp/orion-deploy\.[A-Za-z0-9]+$ ]]; then
 fi
 scp "${ssh_options[@]}" "${script_directory}/pi_deploy_remote.sh" "${pi_host}:${remote_script}"
 ssh "${ssh_options[@]}" -t "${pi_host}" "trap 'rm -f -- ${remote_script}' EXIT
-bash '${remote_script}' '${project_root}' '${branch}' '${prepare_only}'"
+bash '${remote_script}' '${project_root}' '${branch}' '${prepare_only}' '${hardware}'"
 remote_script=""

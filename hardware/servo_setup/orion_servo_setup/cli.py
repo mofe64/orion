@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from .bus import create_lerobot_bus
 from .provisioning import (
     ORION_SERVO_ASSIGNMENTS,
+    assignments_for_hardware,
     ProvisioningCancelled,
     ServoAssignment,
     provision_servos,
@@ -19,6 +20,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Assign Orion's persistent IDs to five STS3215 servos, one servo at a time."
     )
+    parser.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     parser.add_argument("--port", required=True, help="Servo adapter serial port, for example /dev/ttyACM0")
     parser.add_argument(
         "--joint",
@@ -44,7 +46,8 @@ def _print_plan(plan: Sequence[ServoAssignment]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    plan = provisioning_plan(selected_joint=args.joint)
+    assignments = assignments_for_hardware(args.hardware)
+    plan = provisioning_plan(assignments, selected_joint=args.joint)
     _print_plan(plan)
 
     if args.dry_run:
@@ -57,7 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     bus = None
     try:
-        bus = create_lerobot_bus(args.port, ORION_SERVO_ASSIGNMENTS)
+        bus = create_lerobot_bus(args.port, assignments)
         provision_servos(bus, plan)
     except ProvisioningCancelled as exc:
         print(exc)

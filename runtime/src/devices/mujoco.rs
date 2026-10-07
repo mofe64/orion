@@ -13,6 +13,8 @@ use crate::{Error, ORION_JOINT_NAMES, Result};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SimulationMetrics {
+    #[serde(default)]
+    pub validation_scope: String,
     pub maximum_translation: f64,
     pub maximum_tilt: f64,
     pub maximum_height_change: f64,
@@ -39,12 +41,30 @@ impl MujocoDriver {
         scene: impl AsRef<Path>,
         start_positions: &JointPositions,
     ) -> Result<Self> {
+        Self::launch_for_hardware(
+            python,
+            bridge,
+            scene,
+            start_positions,
+            crate::HardwareVersion::V1,
+        )
+    }
+
+    pub fn launch_for_hardware(
+        python: impl AsRef<Path>,
+        bridge: impl AsRef<Path>,
+        scene: impl AsRef<Path>,
+        start_positions: &JointPositions,
+        hardware: crate::HardwareVersion,
+    ) -> Result<Self> {
         require_exact_joints(start_positions)?;
         let start_json = serde_json::to_string(start_positions)?;
         let mut child = Command::new(python.as_ref())
             .arg(bridge.as_ref())
             .arg("--scene")
             .arg(scene.as_ref())
+            .arg("--hardware")
+            .arg(&hardware.profile().hardware)
             .arg("--start-json")
             .arg(start_json)
             .stdin(Stdio::piped())
@@ -288,6 +308,44 @@ fn require_ok(response: &Value) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{MotionLibrary, PoseLibrary, RuntimeCore, RuntimeMode};
+
+    #[test]
+    fn rust_runtime_executes_v2_motions_in_native_mujoco_preview() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let poses =
+            PoseLibrary::load(root.join("hardware/v2/poses.yaml"), &ORION_JOINT_NAMES).unwrap();
+        let motions = MotionLibrary::load(root.join("hardware/v2/motions"), &poses).unwrap();
+        let driver = MujocoDriver::launch_for_hardware(
+            root.join(".venv/bin/python"),
+            root.join("runtime/mujoco_bridge.py"),
+            root.join("simulation/mujoco/v2/scene.xml"),
+            poses.pose("attentive").unwrap(),
+            crate::HardwareVersion::V2,
+        )
+        .unwrap();
+        let mut core = RuntimeCore::new(driver, poses.clone(), motions).unwrap();
+        assert!(
+            core.handle_command("configure", 0.0)
+                .contains("\"ok\":true")
+        );
+        assert!(core.handle_command("enable", 0.0).contains("\"ok\":true"));
+        assert!(
+            core.handle_command("play look_at_left_expressive", 0.0)
+                .contains("\"ok\":true")
+        );
+        for step in 0..=300 {
+            core.tick(step as f64 * 0.02).unwrap();
+        }
+        assert_eq!(core.mode(), RuntimeMode::Holding);
+        for joint in &core.snapshot().joints {
+            assert!((joint.position - poses.pose("look_left").unwrap()[&joint.name]).abs() < 0.01);
+        }
+        assert_eq!(
+            core.driver().metrics().validation_scope,
+            "kinematic_preview"
+        );
+        assert!(!core.driver().metrics().safe); // No inferred collision/stability approval.
+    }
 
     #[test]
     fn rust_runtime_executes_and_settles_in_native_mujoco() {

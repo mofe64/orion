@@ -33,7 +33,7 @@ if name == 'ssh' and '-t' in sys.argv:
             env = {**os.environ, 'PATH': str(binaries) + ':' + os.environ['PATH'],
                    'ORION_LAUNCH_LOG': str(log), 'ORION_TRANSFER': str(transferred),
                    'ORION_FAIL_SCP': str(int(fail_scp)), 'ORION_FAIL_REMOTE': str(int(fail_remote))}
-            result = subprocess.run(['bash', str(SCRIPTS / 'deploy_pi.sh'), '--skip-studio-check',
+            result = subprocess.run(['bash', str(SCRIPTS / 'deploy_pi.sh'), '--hardware', 'v1', '--skip-studio-check',
                                      '--host', 'pi@robot.local', '--root', '/home/pi/orion', '--branch', 'main'],
                                     env=env, input='', text=True, capture_output=True)
             calls = [json.loads(line) for line in log.read_text().splitlines()]

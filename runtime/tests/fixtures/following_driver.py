@@ -15,6 +15,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('bridge_script')
 parser.add_argument('--scene')
 parser.add_argument('--start-json')
+parser.add_argument('--hardware', choices=('v1', 'v2'), default='v1')
 args = parser.parse_args()
 positions = json.loads(args.start_json)
 names = ('base_yaw_joint', 'shoulder_pitch_joint', 'elbow_pitch_joint',

@@ -1,0 +1,7 @@
+{
+  "base_yaw_joint": null,
+  "shoulder_pitch_joint": null,
+  "elbow_pitch_joint": null,
+  "head_roll_joint": null,
+  "head_pitch_joint": null
+}

@@ -94,7 +94,7 @@ class CatalogTests(Fixture):
                 self.assertEqual((motions / 'user/custom.yaml').read_text(), 'operator content\n')
         compiler = Compiler()
         installer.validate_catalog(self.release, self.project, self.preserved[-1], compiler, self.assets())
-        self.assertEqual([call[2] for call in compiler.calls],
+        self.assertEqual([call[call.index("--motion") + 1] for call in compiler.calls],
                          ['look_at_left_expressive', 'look_at_right_expressive'])
         self.assertEqual(self.motion.read_text(), 'local edit backed up during activation\n')
         self.assertTrue(self.retired.exists())

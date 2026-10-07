@@ -7,6 +7,9 @@ animation. The hardware and MuJoCo backends use the same 50 Hz runtime loop.
 
 See the [system architecture](../docs/system-architecture.md) for
 workstation/Pi boundaries and device ownership.
+Select `--hardware v1` or `--hardware v2` for the lamp interfaces and asset paths.
+The [hardware-version guide](../docs/hardware-versions.md) defines the v2 joint
+mapping, maintenance defaults and calibration paths.
 
 For movement internals, use:
 
@@ -270,7 +273,7 @@ See [the speech runtime walkthrough](../runtime.md) for planning and execution.
 
 ## Lighting, audio, and local scenes
 
-The physical light adapter targets Orion's 40-pixel Adafruit RGBW shield on
+The physical light adapter selects the v1 40-pixel matrix or v2 24-pixel ring on
 Pi 5 BCM12. After installing and reboot-verifying the persistent RP1
 pulse-width modulation (PWM) setup described in `hardware/lighting/README.md`,
 direct output is available without starting the servo daemon:
@@ -287,7 +290,7 @@ symbol encoding. This
 path has been tested on the physical robot, including all four channels,
 the full matrix, and all-off output.
 
-The physical audio adapter uses the stable Advanced Linux Sound Architecture
+The v1 physical audio adapter uses the stable Advanced Linux Sound Architecture
 (ALSA) pulse-code modulation (PCM) device
 `plughw:CARD=seeed2micvoicec,DEV=0`. It applies the confirmed ReSpeaker V2 JST
 mixer route whenever the hardware daemon starts. Named, local, stereo WAV
@@ -297,6 +300,9 @@ servo daemon:
 ```bash
 runtime/target/release/oriond --play-cue acknowledge_warm
 ```
+
+V2 selects `plughw:CARD=Array,DEV=0` and skips the HAT mixer controls. Add
+`--hardware v2` to direct light or cue commands for that lamp.
 
 The direct command blocks until `aplay` exits and returns nonzero if playback
 fails. Do not run it concurrently with a hardware daemon that may also own the

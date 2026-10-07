@@ -1,0 +1,121 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="Orion v2 / V2.1 CAD kinematic preview">
+  <compiler angle="radian" inertiafromgeom="false" />
+  <option gravity="0 0 -9.81" />
+  <visual>
+    <global offwidth="1600" offheight="1000" />
+    <headlight ambient=".5 .5 .5" diffuse=".7 .7 .7" specular=".15 .15 .15" />
+  </visual>
+  <default>
+    <geom contype="0" conaffinity="0" />
+    <joint damping=".1" armature=".001" />
+  </default>
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient" rgb1=".94 .95 .93" rgb2=".85 .88 .87" width="256" height="1536" />
+    <mesh name="v21_0" file="meshes/v21_01_Base_shell.stl" maxhullvert="64" />
+    <mesh name="v21_1" file="meshes/v21_10_lower_straight_bridge.stl" maxhullvert="64" />
+    <mesh name="v21_2" file="meshes/v21_03_Electronics_tray.stl" maxhullvert="64" />
+    <mesh name="v21_3" file="meshes/v21_05_Power_inlet_panel.stl" maxhullvert="64" />
+    <mesh name="v21_4" file="meshes/v21_06_Ethernet_and_USB_panel.stl" maxhullvert="64" />
+    <mesh name="v21_5" file="meshes/v21_09_Shoulder_service_cover_1.stl" maxhullvert="64" />
+    <mesh name="v21_6" file="meshes/v21_04b_Servo_retaining_frame.stl" maxhullvert="64" />
+    <mesh name="v21_7" file="meshes/v21_02_Bottom_cover.stl" maxhullvert="64" />
+    <mesh name="v21_8" file="meshes/v21_19_Serviceable_gradual_bell_shell.stl" maxhullvert="64" />
+    <mesh name="v21_9" file="meshes/v21_20_Removable_front_camera_speaker_cassette.stl" maxhullvert="64" />
+    <mesh name="v21_10" file="meshes/v21_22_elbow_flush_horn_caps.stl" maxhullvert="64" />
+    <mesh name="v21_11" file="meshes/v21_04_Yaw_servo_carrier.stl" maxhullvert="64" />
+    <mesh name="v21_12" file="meshes/v21_18_Swivel_cartridge_front_retainer.stl" maxhullvert="64" />
+    <mesh name="v21_13" file="meshes/v21_22_Wrist_pitch_flush_caps.stl" maxhullvert="64" />
+    <mesh name="v21_14" file="meshes/v21_13_Upper_arm_-_111_mm_pitch_span.stl" maxhullvert="64" />
+    <mesh name="v21_15" file="meshes/v21_16_Pitch_fork_and_fixed_swivel_post.stl" maxhullvert="64" />
+    <mesh name="v21_16" file="meshes/v21_17_Removable_swivel_servo_cartridge.stl" maxhullvert="64" />
+    <mesh name="v21_17" file="meshes/v21_22_shoulder_flush_horn_caps.stl" maxhullvert="64" />
+    <mesh name="v21_18" file="meshes/v21_07_Yaw_horn_adapter_1.stl" maxhullvert="64" />
+    <mesh name="v21_19" file="meshes/v21_24_Removable_LED_retaining_ring.stl" maxhullvert="64" />
+    <mesh name="v21_20" file="meshes/v21_08_Shoulder_pitch_housing_1.stl" maxhullvert="64" />
+    <mesh name="v21_21" file="meshes/v21_21_Removable_annular_diffuser.stl" maxhullvert="64" />
+    <mesh name="v21_22" file="meshes/common_REF_Elbow_Feetech_STS3215_-_V1_CAD_1.stl" maxhullvert="64" />
+    <mesh name="v21_23" file="meshes/common_REF_Head_swivel_STS3215_-_supplier_geometry.stl" maxhullvert="64" />
+    <mesh name="v21_24" file="meshes/common_REF_Shoulder_horns_-_rotating_with_lower_arm_1.stl" maxhullvert="64" />
+    <mesh name="v21_25" file="meshes/common_REF_Fixed_neck_swivel_horn_-_supplier_geometry.stl" maxhullvert="64" />
+    <mesh name="v21_26" file="meshes/common_REF_Wrist_pitch_STS3215_-_supplier_geometry.stl" maxhullvert="64" />
+    <mesh name="v21_27" file="meshes/common_REF_Wrist_pitch_horns_-_supplier_geometry.stl" maxhullvert="64" />
+    <mesh name="v21_28" file="meshes/common_REF_Pi_Camera_Module_3_Wide_-_official_CAD.obj" maxhullvert="64" />
+    <mesh name="v21_29" file="meshes/common_REF_Shoulder_Feetech_STS3215_-_V1_CAD_1.stl" maxhullvert="64" />
+    <mesh name="v21_30" file="meshes/common_REF_Elbow_horns_-_rotating_with_upper_arm_1.stl" maxhullvert="64" />
+    <mesh name="v21_31" file="meshes/common_REF_LED_Adafruit_2863_-_reconstructed_from_specifications.stl" maxhullvert="64" />
+    <mesh name="v21_32" file="meshes/common_REF_Speaker_-_V1_63x24_adapted_supplier_CAD.stl" maxhullvert="64" />
+  </asset>
+  <worldbody>
+    <light pos="0 -1 2" dir="0 1 -2" />
+    <geom type="plane" size="2 2 .01" rgba=".9 .9 .87 1" />
+    <body name="v21_base" pos="0 0 0">
+      <body name="v21_base_yaw_link" pos="0.0 0.0 0.060000000000000005">
+        <joint name="base_yaw_joint" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966" />
+        <body name="v21_shoulder_pitch_link" pos="0.0 0.0 0.05299999999999999">
+          <joint name="shoulder_pitch_joint" type="hinge" axis="1 0 0" range="-1.5707963267948966 1.5707963267948966" />
+          <body name="v21_elbow_pitch_link" pos="0.0 0.0 0.15000000000000002">
+            <joint name="elbow_pitch_joint" type="hinge" axis="1 0 0" range="-2.705260340591211 2.705260340591211" />
+            <body name="v21_wrist_pitch_link" pos="0.0 0.0 0.131">
+              <joint name="head_pitch_joint" type="hinge" axis="1 0 0" range="-1.5707963267948966 1.5707963267948966" />
+              <body name="v21_neck_swivel_link" pos="0.0 -0.0175 0.04899999999999999">
+                <joint name="head_roll_joint" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966" />
+                <geom name="v21_8" type="mesh" mesh="v21_8" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
+                <geom name="v21_9" type="mesh" mesh="v21_9" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
+                <geom name="v21_12" type="mesh" mesh="v21_12" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
+                <geom name="v21_16" type="mesh" mesh="v21_16" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
+                <geom name="v21_19" type="mesh" mesh="v21_19" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
+                <geom name="v21_21" type="mesh" mesh="v21_21" pos="-0.0 0.0175 -0.453" rgba=".96 .91 .69 1" />
+                <geom name="v21_23" type="mesh" mesh="v21_23" pos="0.0 0.0175 -0.433" rgba=".16 .18 .18 1" />
+                <geom name="v21_28" type="mesh" mesh="v21_28" pos="0.0 0.0175 -0.433" rgba=".16 .18 .18 1" />
+                <geom name="v21_31" type="mesh" mesh="v21_31" pos="0.0 0.0175 -0.433" rgba=".96 .91 .69 1" />
+                <geom name="v21_32" type="mesh" mesh="v21_32" pos="0.0 0.0175 -0.433" rgba=".16 .18 .18 1" />
+                <site name="v21_face" pos="0 -.085 .020" size=".002" rgba="0 0 0 0" />
+                <inertial mass="0.29925124595845126" pos="-4.377315539681308e-05 -0.03902162685249138 0.02085453717818393" fullinertia="0.000480940372751178 0.00034629170794786557 0.0005082902884695034 1.956797464232746e-07 -2.432235430569997e-07 -6.5008799991696114e-06" />
+              </body>
+              <geom name="v21_13" type="mesh" mesh="v21_13" pos="-0.0 -0.0 -0.404" rgba=".37 .4 .41 1" />
+              <geom name="v21_15" type="mesh" mesh="v21_15" pos="-0.0 -0.0 -0.404" rgba=".27 .51 .61 1" />
+              <geom name="v21_25" type="mesh" mesh="v21_25" pos="0.0 0.0 -0.384" rgba=".16 .18 .18 1" />
+              <geom name="v21_27" type="mesh" mesh="v21_27" pos="0.0 0.0 -0.384" rgba=".16 .18 .18 1" />
+              <inertial mass="0.05054645843235149" pos="-4.7410191747457615e-05 -0.007809009277039256 0.02361771036186182" fullinertia="2.7294194380512073e-05 3.6040858304222604e-05 1.9610700131163098e-05 1.9396675193807425e-08 -5.862196805992195e-08 7.031601862819722e-06" />
+            </body>
+            <geom name="v21_10" type="mesh" mesh="v21_10" pos="-0.0 -0.0 -0.273" rgba=".37 .4 .41 1" />
+            <geom name="v21_14" type="mesh" mesh="v21_14" pos="-0.0 -0.0 -0.273" rgba=".27 .51 .61 1" />
+            <geom name="v21_26" type="mesh" mesh="v21_26" pos="0.0 0.0 -0.253" rgba=".16 .18 .18 1" />
+            <geom name="v21_30" type="mesh" mesh="v21_30" pos="0.0 0.0 -0.273" rgba=".16 .18 .18 1" />
+            <inertial mass="0.17659699753478608" pos="5.498822803899592e-05 3.9842554842618e-07 0.08752514705954868" fullinertia="0.00041348199254514166 0.000429122957593374 6.759141955828164e-05 1.4353766909343406e-11 -1.5743839917501853e-06 1.6599736570266405e-09" />
+          </body>
+          <geom name="v21_1" type="mesh" mesh="v21_1" pos="-0.0 -0.0 -0.123" rgba=".27 .51 .61 1" />
+          <geom name="v21_17" type="mesh" mesh="v21_17" pos="-0.0 -0.0 -0.123" rgba=".37 .4 .41 1" />
+          <geom name="v21_22" type="mesh" mesh="v21_22" pos="0.0 0.0 -0.123" rgba=".16 .18 .18 1" />
+          <geom name="v21_24" type="mesh" mesh="v21_24" pos="0.0 0.0 -0.123" rgba=".16 .18 .18 1" />
+          <inertial mass="0.22047429579639194" pos="0.0001027393582969521 1.775105797327372e-07 0.0943820574613771" fullinertia="0.0006913686284598785 0.0006818872745762026 8.984139765137122e-05 1.5085457399119755e-11 -1.9863348046637206e-06 3.6819484701147255e-09" />
+        </body>
+        <geom name="v21_5" type="mesh" mesh="v21_5" pos="-0.0 -0.0 -0.07" rgba=".27 .51 .61 1" />
+        <geom name="v21_18" type="mesh" mesh="v21_18" pos="-0.0 -0.0 -0.07" rgba=".27 .51 .61 1" />
+        <geom name="v21_20" type="mesh" mesh="v21_20" pos="-0.0 -0.0 -0.07" rgba=".27 .51 .61 1" />
+        <geom name="v21_29" type="mesh" mesh="v21_29" pos="0.0 0.0 -0.07" rgba=".16 .18 .18 1" />
+        <inertial mass="0.1371237843561927" pos="-0.00027937867087692334 -9.814873935977057e-05 0.03581569279787336" fullinertia="6.398285882003494e-05 6.155639055333263e-05 4.0573892052279666e-05 3.760426040265449e-09 -6.965294126243232e-07 -3.2052336243196926e-07" />
+      </body>
+      <geom name="v21_0" type="mesh" mesh="v21_0" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <geom name="v21_2" type="mesh" mesh="v21_2" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <geom name="v21_3" type="mesh" mesh="v21_3" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <geom name="v21_4" type="mesh" mesh="v21_4" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <geom name="v21_6" type="mesh" mesh="v21_6" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <geom name="v21_7" type="mesh" mesh="v21_7" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <geom name="v21_11" type="mesh" mesh="v21_11" pos="0.0 0.0 0.0" rgba=".27 .51 .61 1" />
+      <inertial mass="0.6947885981257919" pos="0.0005275892632188866 0.002492804132918842 0.029951699678330147" fullinertia="0.004152003694644456 0.003209637497721632 0.006596094987473318 -9.606526022039426e-06 -7.410274589255229e-06 -1.2223327535876776e-05" />
+    </body>
+  </worldbody>
+  <custom>
+    <text name="orion_hardware" data="v2" />
+    <text name="orion_simulation_scope" data="kinematic_preview" />
+  </custom>
+  <actuator>
+    <position name="base_yaw_joint" joint="base_yaw_joint" kp="50" kv="2" />
+    <position name="shoulder_pitch_joint" joint="shoulder_pitch_joint" kp="50" kv="2" />
+    <position name="elbow_pitch_joint" joint="elbow_pitch_joint" kp="50" kv="2" />
+    <position name="head_pitch_joint" joint="head_pitch_joint" kp="50" kv="2" />
+    <position name="head_roll_joint" joint="head_roll_joint" kp="50" kv="2" />
+  </actuator>
+</mujoco>

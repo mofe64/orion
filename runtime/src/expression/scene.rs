@@ -8,7 +8,7 @@ use crate::control::state::MovementPhase;
 use crate::daemon::RuntimeCore;
 use crate::devices::audio::{AudioDevice, CueLibrary};
 use crate::devices::driver::RuntimeDriver;
-use crate::devices::lighting::{LIGHTING_EFFECT_NAMES, LightingDevice, Rgbw8, render_effect};
+use crate::devices::lighting::{LIGHTING_EFFECT_NAMES, LightingDevice, Rgbw8};
 use crate::motion::library::MotionLibrary;
 use crate::motion::pose::{JointPositions, PoseLibrary};
 use crate::{Error, Result};
@@ -798,11 +798,7 @@ impl ScenePlayer {
         if let Some(effect) = &self.effect {
             let effect_elapsed = elapsed - effect.starts_at;
             if effect.colors.is_empty() {
-                lighting.render(&render_effect(
-                    &effect.name,
-                    effect_elapsed,
-                    effect.intensity,
-                )?)?;
+                lighting.render_effect(&effect.name, effect_elapsed, effect.intensity)?;
             } else {
                 let a = parse_color(&effect.colors[0]).expect("validated scene color");
                 let b = parse_color(effect.colors.get(1).unwrap_or(&effect.colors[0]))
@@ -852,7 +848,7 @@ impl ScenePlayer {
                 let effect = motion
                     .default_lighting_effect()
                     .unwrap_or_else(|| "settle_glow".to_owned());
-                lighting.render(&render_effect(&effect, 0.0, 0.55)?)?;
+                lighting.render_effect(&effect, 0.0, 0.55)?;
             }
             self.status.state = ScenePhase::Completed;
         }

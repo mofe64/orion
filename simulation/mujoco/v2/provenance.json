@@ -1,0 +1,143 @@
+{
+  "source": "orionV21CAD/simulation/references/v21/robot.xml",
+  "source_sha256": "bdcbb12e15312a847c870d3dbb876e393c7017ad982602380451fa306c30973c",
+  "mechanical_revision": "v2.1-r4-r2",
+  "scope": "kinematic_preview",
+  "contacts_enabled": false,
+  "inertias": "CAD-based unmeasured estimates",
+  "meshes": [
+    {
+      "file": "meshes/v21_01_Base_shell.stl",
+      "sha256": "e7a569a5454f4c83a2621a04f8d214f9edafe10a8f7ebe747ce4aec58d0ab242"
+    },
+    {
+      "file": "meshes/v21_10_lower_straight_bridge.stl",
+      "sha256": "124113159d72651b15899fa472ce205460038016b285e2fd1995ac9ab212bdc5"
+    },
+    {
+      "file": "meshes/v21_03_Electronics_tray.stl",
+      "sha256": "ef664b6bda9138e0a4356ccb7e1f9a2eb866b6c877ea8f9f41dc42b92927221d"
+    },
+    {
+      "file": "meshes/v21_05_Power_inlet_panel.stl",
+      "sha256": "d034b7644229f43de664f2540d8dcf1ee06a2c80e71f0ea37ece2f499fb72b60"
+    },
+    {
+      "file": "meshes/v21_06_Ethernet_and_USB_panel.stl",
+      "sha256": "4a5285c19c2447780fbcd1adc2bf5308fa6aa57b29e3a90e25e3f55f8a5ade6d"
+    },
+    {
+      "file": "meshes/v21_09_Shoulder_service_cover_1.stl",
+      "sha256": "398bf58091e05e9ad68f477f45f079cdd82e0c123bce548e62cbda459badc95c"
+    },
+    {
+      "file": "meshes/v21_04b_Servo_retaining_frame.stl",
+      "sha256": "f27b5f613a1bde76ca4f7c0f7e3537b69b58547af7ddf8c38dcb88248897d671"
+    },
+    {
+      "file": "meshes/v21_02_Bottom_cover.stl",
+      "sha256": "120405ff3f49a2961183b68c66c8108c1aee6fcbf27f0f925f3fe4b015b11d6d"
+    },
+    {
+      "file": "meshes/v21_19_Serviceable_gradual_bell_shell.stl",
+      "sha256": "e4c9d9b8347d1c97ab29834572f5e15a08020614e255b94926bd2c90bbe30ee4"
+    },
+    {
+      "file": "meshes/v21_20_Removable_front_camera_speaker_cassette.stl",
+      "sha256": "5ff99917f59cce678e7eeccd5a7c9b7c160dddd61f5e0790f7e62175c2bebabe"
+    },
+    {
+      "file": "meshes/v21_22_elbow_flush_horn_caps.stl",
+      "sha256": "a6fe23aef798bde6a847bd8ebe12bd3eec1dedf6bcdc603b96f44721b4e43de2"
+    },
+    {
+      "file": "meshes/v21_04_Yaw_servo_carrier.stl",
+      "sha256": "92dd9ba1ab63d1652760ff6dd98c92588f50469922900de79fdf88b15804072b"
+    },
+    {
+      "file": "meshes/v21_18_Swivel_cartridge_front_retainer.stl",
+      "sha256": "1359367fb0293358dc3b3eeb80b50818ffd7af1cd7a6e6b38860726b8cf47cdc"
+    },
+    {
+      "file": "meshes/v21_22_Wrist_pitch_flush_caps.stl",
+      "sha256": "7df2bbe5ad85fd3d97e33ff93fba803d560d777a94a73f4ae990b4b0ff7b3955"
+    },
+    {
+      "file": "meshes/v21_13_Upper_arm_-_111_mm_pitch_span.stl",
+      "sha256": "bd04009ccf0c0331953e1b348a19c02b25e4b62ad7b67ce966f93ebd27a7eaa4"
+    },
+    {
+      "file": "meshes/v21_16_Pitch_fork_and_fixed_swivel_post.stl",
+      "sha256": "dc8e2fc0d100d8b93eb8595ac0005d78f118a8db257aa1eda1a50e5067ae2e70"
+    },
+    {
+      "file": "meshes/v21_17_Removable_swivel_servo_cartridge.stl",
+      "sha256": "f8fea0fb58d6f50f50516fce796a0872414f664f798dc85bee4d545d34def280"
+    },
+    {
+      "file": "meshes/v21_22_shoulder_flush_horn_caps.stl",
+      "sha256": "63223a866456ec8456b80f4c4e6c354533b61944b9b061b56b5d2d50f28ad85f"
+    },
+    {
+      "file": "meshes/v21_07_Yaw_horn_adapter_1.stl",
+      "sha256": "2d2c83394a2c9f2d694b8ba6dfdafa7dcd49f55e7f47c93a8ed6449e637ff33e"
+    },
+    {
+      "file": "meshes/v21_24_Removable_LED_retaining_ring.stl",
+      "sha256": "8dda936894a6c476d7aeda036fc16cc7cf2c78b8d294365fcf387a01c8fd3bb5"
+    },
+    {
+      "file": "meshes/v21_08_Shoulder_pitch_housing_1.stl",
+      "sha256": "6d9cf44b337540c3d0cd4722af3b5eefdc649cd37eab9e93b63ddbc9753baee8"
+    },
+    {
+      "file": "meshes/v21_21_Removable_annular_diffuser.stl",
+      "sha256": "543f04d1a86447f11ddedc5bea5a2bf887e188e13a347fecc24165ba15828e5a"
+    },
+    {
+      "file": "meshes/common_REF_Elbow_Feetech_STS3215_-_V1_CAD_1.stl",
+      "sha256": "485fb04a7acdefd25a85d359f9a421d06ce2852d8346932b3cf2efeeb9b0a693"
+    },
+    {
+      "file": "meshes/common_REF_Head_swivel_STS3215_-_supplier_geometry.stl",
+      "sha256": "cad75a208411d1a9204c4a609d18346643ea43d2e23b983138cd6623fcd68605"
+    },
+    {
+      "file": "meshes/common_REF_Shoulder_horns_-_rotating_with_lower_arm_1.stl",
+      "sha256": "dd54f852cadcc6570fd95bc4809dd18b2a2c7a35213de9174e366a92dc8dda35"
+    },
+    {
+      "file": "meshes/common_REF_Fixed_neck_swivel_horn_-_supplier_geometry.stl",
+      "sha256": "722c1215586c9e0d0fdb27a35bb6c7b4c06cffb6060f835f3cef4f517c5fe7d6"
+    },
+    {
+      "file": "meshes/common_REF_Wrist_pitch_STS3215_-_supplier_geometry.stl",
+      "sha256": "f69314d4f1f3ff3a2d2ade8cdbd0bdd2691aa0ffde5d29387183a10b3f66d899"
+    },
+    {
+      "file": "meshes/common_REF_Wrist_pitch_horns_-_supplier_geometry.stl",
+      "sha256": "94fd8d7ced9e5fed366a04edb28f6ab7af28a9acbfa0e54c0f3f54da0d73cefe"
+    },
+    {
+      "file": "meshes/common_REF_Pi_Camera_Module_3_Wide_-_official_CAD.obj",
+      "sha256": "251f510d45107f4bb0a7b17d55ac8b48dabc6ba834f2f6e383a7b04d2405e49f"
+    },
+    {
+      "file": "meshes/common_REF_Shoulder_Feetech_STS3215_-_V1_CAD_1.stl",
+      "sha256": "ad6dd6b7d3832c9cda7de8b34764813602c2b0ab754e70a4fe493e2a22bc57e6"
+    },
+    {
+      "file": "meshes/common_REF_Elbow_horns_-_rotating_with_upper_arm_1.stl",
+      "sha256": "4926fd65b653b45486aee64b4385ffb9925bc4d773433c0fe85fb981e615589e"
+    },
+    {
+      "file": "meshes/common_REF_LED_Adafruit_2863_-_reconstructed_from_specifications.stl",
+      "sha256": "891bf5034c09a9291998b3a689c49af9be629cf8a4674a62d939f406bb7620bd"
+    },
+    {
+      "file": "meshes/common_REF_Speaker_-_V1_63x24_adapted_supplier_CAD.stl",
+      "sha256": "16f7d38fa5fa3fc789cb47761495f7178e2d2f5e2740d6d1460dfe8d9c4d1331"
+    }
+  ],
+  "mass_properties_sha256": "c508c2cfcfbdbfb00196c1c97a13a4cd11f5c5e440581ac5fde8c6b543324b7c"
+}

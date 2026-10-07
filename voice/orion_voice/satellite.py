@@ -316,14 +316,29 @@ class SatelliteSession:
 
 
 class StereoCapture(AlsaPcmCapture):
-    def __init__(self, device=DEFAULT_CAPTURE_DEVICE):
-        super().__init__(device)
-        self._chunk_bytes = FRAME_BYTES * 2
+    def __init__(self, device=DEFAULT_CAPTURE_DEVICE, *, hardware="v1", capture_channels=2, processed_channel=0):
+        if capture_channels not in (2, 6) or not 0 <= processed_channel < capture_channels:
+            raise ValueError("Capture needs 2 or 6 channels and a valid processed channel")
+        if hardware == "v1" and capture_channels != 2:
+            raise ValueError("V1 requires the two raw HAT microphone channels")
+        super().__init__(device, hardware=hardware)
+        self.capture_channels = capture_channels
+        self.processed_channel = processed_channel
+        self._chunk_bytes = FRAME_BYTES * capture_channels
 
     def command(self):
         command = super().command()
-        command[-1] = "2"
+        command[-1] = str(self.capture_channels)
         return command
+
+    def read(self):
+        pcm = super().read()
+        if self._hardware == "v1":
+            return pcm
+        # Feed the existing mono wake/ASR contract from one processed USB
+        # channel. Replication preserves framing without mixing in raw mics.
+        samples = np.frombuffer(pcm, dtype="<i2").reshape(-1, self.capture_channels)
+        return np.repeat(samples[:, self.processed_channel], 2).astype("<i2").tobytes()
 
 
 async def daemon_command(command, socket_path):
@@ -345,12 +360,15 @@ async def serve(args):
         raise ValueError("Voice token must contain at least 32 characters")
     wake = RustpotterWakeDetector(args.wake_model, args.threshold)
     verifier = AcousticVerifier(args.verifier_dir) if getattr(args, "verifier_dir", None) else None
-    capture = StereoCapture(args.device)
+    hardware = getattr(args, "hardware", "v1")
+    capture = (StereoCapture(args.device) if hardware == "v1" else
+        StereoCapture(args.device, hardware=hardware,
+            capture_channels=getattr(args, "capture_channels", 2), processed_channel=getattr(args, "processed_channel", 0)))
     endpoint_factory = EnergyEndpointDetector
     if getattr(args, "vad_model", None):
         from .vad import SileroModel
         endpoint_factory = SileroModel(args.vad_model).endpoint
-    session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing, args.channel_sign),
+    session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing if hardware == "v1" else 0, args.channel_sign if hardware == "v1" else 0),
                                endpoint_factory=endpoint_factory, verifier=verifier)
     lock = asyncio.Lock()
     capture_gate = asyncio.Lock()
@@ -684,7 +702,10 @@ def main():
     parser.add_argument("--port", type=int, default=7448)
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--mute-file", type=Path, default=Path.home() / ".config/orion/microphone.json")
-    parser.add_argument("--device", default=DEFAULT_CAPTURE_DEVICE)
+    parser.add_argument("--hardware", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--capture-channels", type=int, choices=(2, 6), default=2)
+    parser.add_argument("--processed-channel", type=int, default=0, help="Verified XVF3800 processed USB channel; never mix raw channels")
+    parser.add_argument("--device", default=None)
     parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_reference.rpw")
     parser.add_argument("--threshold", type=float, default=0.35)
     parser.add_argument("--verifier-dir", type=Path, default=Path(__file__).resolve().parents[1] / "models/verifier",
@@ -698,6 +719,12 @@ def main():
     args = parser.parse_args()
     if not 0 < args.threshold <= 1:
         parser.error("--threshold must be in (0, 1]")
+    if args.device is None:
+        args.device = "plughw:CARD=Array,DEV=0" if args.hardware == "v2" else DEFAULT_CAPTURE_DEVICE
+    if not 0 <= args.processed_channel < args.capture_channels:
+        parser.error("--processed-channel must be within --capture-channels")
+    if args.hardware == "v1" and args.capture_channels != 2:
+        parser.error("V1 requires two raw microphone channels")
     asyncio.run(serve(args))
 
 

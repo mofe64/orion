@@ -1,0 +1,262 @@
+format_version: 2
+units: radians
+poses:
+  home:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0
+      head_pitch_joint: -0.785398163
+    idle_profile: home
+  attentive:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0
+      head_pitch_joint: -0.785398163
+    idle_profile: attentive
+  thinking:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0
+      head_pitch_joint: -0.785398163
+  curious:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0
+      head_pitch_joint: -0.785398163
+  delight:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0
+      head_pitch_joint: -0.785398163
+  rest:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: 'off'
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0
+      head_pitch_joint: -0.785398163
+  zero_reference:
+    description: V2.1 CAD all-zero reference, not a captured physical zero.
+    tags:
+    - simulation_preview
+    - calibration_reference
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.0
+      elbow_pitch_joint: 0.0
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.0
+  look_left:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.35
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.042
+      head_pitch_joint: -0.785398163
+    idle_profile: directional
+  look_left_anticipation:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.03
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.0036
+      head_pitch_joint: -0.785398163
+  look_left_lean:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.22
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0264
+      head_pitch_joint: -0.785398163
+  look_left_overshoot:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.37
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0444
+      head_pitch_joint: -0.785398163
+  attention_left:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.35
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.042
+      head_pitch_joint: -0.785398163
+    idle_profile: directional
+  attention_left_anticipation:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.03
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.0036
+      head_pitch_joint: -0.785398163
+  attention_left_lean:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.22
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0264
+      head_pitch_joint: -0.785398163
+  attention_left_overshoot:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.37
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0444
+      head_pitch_joint: -0.785398163
+  look_right:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.35
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.042
+      head_pitch_joint: -0.785398163
+    idle_profile: directional
+  look_right_anticipation:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.03
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0036
+      head_pitch_joint: -0.785398163
+  look_right_lean:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.22
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.0264
+      head_pitch_joint: -0.785398163
+  look_right_overshoot:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.37
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.0444
+      head_pitch_joint: -0.785398163
+  attention_right:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.35
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.042
+      head_pitch_joint: -0.785398163
+    idle_profile: directional
+  attention_right_anticipation:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: -0.03
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: -0.0036
+      head_pitch_joint: -0.785398163
+  attention_right_lean:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.22
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.0264
+      head_pitch_joint: -0.785398163
+  attention_right_overshoot:
+    description: V2.1 CAD preview candidate; requires physical verification.
+    tags:
+    - simulation_preview
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.37
+      shoulder_pitch_joint: -0.610865238
+      elbow_pitch_joint: 1.396263402
+      head_roll_joint: 0.0444
+      head_pitch_joint: -0.785398163

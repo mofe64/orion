@@ -69,6 +69,15 @@ impl Rgbw8 {
 }
 
 pub fn render_effect(name: &str, elapsed_seconds: f64, intensity: f64) -> Result<Vec<Rgbw8>> {
+    render_effect_for_pixels(name, elapsed_seconds, intensity, ORION_LIGHT_PIXEL_COUNT)
+}
+
+pub fn render_effect_for_pixels(
+    name: &str,
+    elapsed_seconds: f64,
+    intensity: f64,
+    pixel_count: usize,
+) -> Result<Vec<Rgbw8>> {
     if !elapsed_seconds.is_finite() || !intensity.is_finite() || !(0.0..=1.0).contains(&intensity) {
         return Err(Error::InvalidArgument(
             "Lighting effects require finite time and intensity from zero to one.".into(),
@@ -80,7 +89,48 @@ pub fn render_effect(name: &str, elapsed_seconds: f64, intensity: f64) -> Result
         )));
     }
     if name == "off" {
-        return Ok(vec![Rgbw8::OFF; ORION_LIGHT_PIXEL_COUNT]);
+        return Ok(vec![Rgbw8::OFF; pixel_count]);
+    }
+    if pixel_count == 24 {
+        // Angles wrap around the ring; there is no matrix row boundary.
+        return Ok((0..24)
+            .map(|index| {
+                let angle = index as f64 * std::f64::consts::TAU / 24.0;
+                let level = match name {
+                    "warm_idle_breathe" => 0.42 + 0.16 * (elapsed_seconds * 0.9).sin(),
+                    "attentive_focus" => 0.28 + 0.62 * (0.5 + 0.5 * angle.cos()),
+                    "thinking_drift" => 0.22 + 0.58 * (0.5 + 0.5 * (angle - elapsed_seconds).cos()),
+                    "speaking_energy" => {
+                        0.18 + 0.78 * intensity * (0.68 + 0.32 * angle.sin().abs())
+                    }
+                    "acknowledge_pulse" => 0.20 + 0.75 * (-elapsed_seconds * 2.4).exp(),
+                    "curious_sweep" => {
+                        0.15 + 0.82 * (0.5 + 0.5 * (angle - elapsed_seconds * 2.0).cos()).powi(4)
+                    }
+                    "delight_spark" => {
+                        0.24 + if (angle * 5.0 + elapsed_seconds * 11.0).sin() > 0.72 {
+                            0.72
+                        } else {
+                            0.08
+                        }
+                    }
+                    "settle_glow" => 0.30 + 0.48 * (-elapsed_seconds * 1.5).exp(),
+                    _ => unreachable!(),
+                } * intensity.max(0.05);
+                let warm = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
+                Rgbw8::new(
+                    warm / 5,
+                    warm / 10,
+                    warm / 40,
+                    (u16::from(warm) * 3 / 4) as u8,
+                )
+            })
+            .collect());
+    }
+    if pixel_count != ORION_LIGHT_PIXEL_COUNT {
+        return Err(Error::InvalidArgument(
+            "Effects require the v1 matrix or v2 ring layout.".into(),
+        ));
     }
     let mut pixels = Vec::with_capacity(ORION_LIGHT_PIXEL_COUNT);
     for y in 0..ORION_LIGHT_HEIGHT {
@@ -131,6 +181,15 @@ fn interpolate_channel(start: u8, target: u8, progress: f64) -> u8 {
 pub trait LightingDevice {
     fn pixel_count(&self) -> usize;
     fn render(&mut self, pixels: &[Rgbw8]) -> Result<()>;
+
+    fn render_effect(&mut self, name: &str, elapsed: f64, intensity: f64) -> Result<()> {
+        self.render(&render_effect_for_pixels(
+            name,
+            elapsed,
+            intensity,
+            self.pixel_count(),
+        )?)
+    }
 
     fn render_uniform(&mut self, color: Rgbw8) -> Result<()> {
         self.render(&vec![color; self.pixel_count()])
@@ -338,6 +397,22 @@ mod tests {
             assert_eq!(frame.len(), ORION_LIGHT_PIXEL_COUNT, "{name}");
         }
         assert!(render_effect("rainbow_party", 0.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn every_named_effect_renders_the_ring_through_the_device_boundary() {
+        let mut ring = RecordingLightingDevice::new(24).unwrap();
+        for name in LIGHTING_EFFECT_NAMES {
+            ring.render_effect(name, 0.25, 0.8).unwrap();
+            assert_eq!(ring.last_frame().unwrap().len(), 24, "{name}");
+        }
+        assert!(ring.last_frame().unwrap().iter().all(|p| *p == Rgbw8::OFF));
+        assert_eq!(encode_pi5_grbw_frame(&vec![Rgbw8::OFF; 24]).len(), 312);
+        assert!(
+            encode_pi5_grbw_frame(&vec![Rgbw8::OFF; 24])[288..]
+                .iter()
+                .all(|v| *v == 0)
+        );
     }
 
     #[test]

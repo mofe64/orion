@@ -1,5 +1,10 @@
 # Orion STS3215 servo setup
 
+These tools accept `--hardware v1` or `--hardware v2` and reuse the same
+calibration and stable-rest capture with separate files. The
+[V2 calibration and rest capture procedure](../../docs/hardware-versions.md#calibrate-v2-first)
+defines its ID mapping, zero-pose convention and physical pose capture.
+
 The Orion servo setup tool assigns one persistent bus ID to each STS3215 servo
 before calibration and runtime use.
 

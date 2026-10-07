@@ -1,7 +1,7 @@
 {
   "provider": "openwakeword",
   "phrase": "Hey Orion",
-  "threshold": 0.2,
+  "threshold": 0.5,
   "lookback_seconds": 0.8,
   "deadline_seconds": 1.0,
   "warmup_frames": 26,
@@ -9,9 +9,5 @@
     "melspectrogram.onnx": "ba2b0e0f8b7b875369a2c89cb13360ff53bac436f2895cced9f479fa65eb176f",
     "embedding_model.onnx": "70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f",
     "hey_orion_verifier.onnx": "3369d306cce287b7feadc44aa5f207d72087247afd1aed68cf7d8eff947e620c"
-  },
-  "first_stage": {
-    "model": "hey_orion_trained_080.rpw",
-    "threshold": 0.8
   }
 }

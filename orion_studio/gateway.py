@@ -127,7 +127,12 @@ class OrionGateway:
         speech_spool: Path = DEFAULT_SPEECH_SPOOL,
         calibration_file: Path = DEFAULT_CALIBRATION,
         trajectory_compiler: Path | None = None,
+        hardware: str = "v1",
     ):
+        if hardware not in ("v1", "v2"):
+            raise ValueError("Hardware must be v1 or v2")
+        self.hardware = hardware
+        self.asset_prefix = "hardware/v2" if hardware == "v2" else ""
         self.client = client
         self.project_root = project_root
         self.speech_spool = speech_spool
@@ -429,7 +434,7 @@ class OrionGateway:
                 self._validate_pose_document({"format_version": 2, "units": "radians", "poses": {name: pose}})
         temporary: tempfile.TemporaryDirectory[str] | None = None
         try:
-            motions_directory = self.project_root / "motion/motions"
+            motions_directory = self.project_root / ("hardware/v2/motions" if self.hardware == "v2" else "motion/motions")
             if document is not None or poses_document is not None:
                 temporary = tempfile.TemporaryDirectory(prefix="orion-studio-motion-")
             if document is not None:
@@ -438,12 +443,13 @@ class OrionGateway:
                     json.dumps(document, separators=(",", ":"), ensure_ascii=False, allow_nan=False),
                     encoding="utf-8",
                 )
-            pose_file = self.project_root / "motion/config/poses.yaml"
+            pose_file = (self.calibration_file.with_name("poses-v2.yaml") if self.hardware == "v2" else self.project_root / "motion/config/poses.yaml")
             if poses_document is not None:
                 pose_file = Path(temporary.name) / "preview-poses.json"
                 pose_file.write_text(json.dumps(poses_document, allow_nan=False), encoding="utf-8")
             command = [
                 str(self._trajectory_compiler_path()),
+                "--hardware", self.hardware,
                 "--motion", motion,
                 "--start-pose", start_pose,
                 "--pose-file", str(pose_file),
@@ -551,7 +557,7 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene_assets", "Scene assets are invalid.")
         owner = document["scene"]["name"]
         result = {}
-        for kind, directory in (("poses", "motion/user/poses/_scene_owned"), ("motions", "motion/motions/user/_scene_owned")):
+        for kind, directory in (("poses", self._user_pose_directory() / "_scene_owned"), ("motions", self._user_motion_directory() / "_scene_owned")):
             entries = studio.get(kind, {})
             if not isinstance(entries, dict):
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_scene_assets", "Scene assets must be named objects.")
@@ -567,7 +573,7 @@ class OrionGateway:
                 else:
                     asset = {"format_version": 2, "motion": {key: value[key] for key in ("name", "description", "space", "style", "return_to_anchor", "keyframes") if key in value}}
                     self._validate_motion_document(asset)
-                result[self.project_root / directory / f"{name}.yaml"] = self._encode_scene_document(asset)
+                result[directory / f"{name}.yaml"] = self._encode_scene_document(asset)
         return result
 
     @contextmanager
@@ -602,7 +608,7 @@ class OrionGateway:
                 "The gateway was not configured with an Orion project root.",
             )
         name = self._validate_scene_document(document)
-        scenes_directory = self.project_root / "scenes"
+        scenes_directory = self.project_root / ("hardware/v2/scenes" if self.hardware == "v2" else "scenes")
         for extension in ("yaml", "yml"):
             if (scenes_directory / f"{name}.{extension}").exists():
                 raise GatewayError(
@@ -706,7 +712,7 @@ class OrionGateway:
                 "name": name,
                 "revision": self._revision(data),
                 "bytes": len(data),
-                "relative_path": f"scenes/user/{path.name}",
+                "relative_path": str(path.relative_to(self.project_root)),
             })
         return {"api_version": API_VERSION, "scenes": entries}
 
@@ -726,7 +732,7 @@ class OrionGateway:
             "api_version": API_VERSION,
             "name": name,
             "revision": self._revision(data),
-            "relative_path": f"scenes/user/{path.name}",
+            "relative_path": str(path.relative_to(self.project_root)),
             "yaml": yaml,
         }
 
@@ -801,7 +807,7 @@ class OrionGateway:
                 "updated": False,
                 "name": name,
                 "revision": actual,
-                "relative_path": f"scenes/user/{path.name}",
+                "relative_path": str(path.relative_to(self.project_root)),
             }
 
         try:
@@ -830,17 +836,17 @@ class OrionGateway:
             "updated": True,
             "name": name,
             "revision": self._revision(encoded),
-            "relative_path": f"scenes/user/{path.name}",
+            "relative_path": str(path.relative_to(self.project_root)),
             "reload": reload_result,
         }
 
     def list_user_poses(self) -> dict[str, Any]:
-        return self._list_user_assets(self._user_pose_directory(), "motion/user/poses")
+        return self._list_user_assets(self._user_pose_directory(), ("hardware/v2/user/poses" if self.hardware == "v2" else "motion/user/poses"))
 
     def read_user_pose(self, name: Any) -> dict[str, Any]:
         return self._read_user_asset(
             self._user_pose_directory(),
-            "motion/user/poses",
+            ("hardware/v2/user/poses" if self.hardware == "v2" else "motion/user/poses"),
             self._name(name, "pose"),
         )
 
@@ -853,17 +859,17 @@ class OrionGateway:
             name=name,
             document=document,
             directory=self._user_pose_directory(),
-            relative_directory="motion/user/poses",
+            relative_directory=("hardware/v2/user/poses" if self.hardware == "v2" else "motion/user/poses"),
             existing_names=self._checked("pose list").get("poses", []),
         )
 
     def list_user_motions(self) -> dict[str, Any]:
-        return self._list_user_assets(self._user_motion_directory(), "motion/motions/user")
+        return self._list_user_assets(self._user_motion_directory(), ("hardware/v2/motions/user" if self.hardware == "v2" else "motion/motions/user"))
 
     def read_user_motion(self, name: Any) -> dict[str, Any]:
         return self._read_user_asset(
             self._user_motion_directory(),
-            "motion/motions/user",
+            ("hardware/v2/motions/user" if self.hardware == "v2" else "motion/motions/user"),
             self._name(name, "motion"),
         )
 
@@ -874,7 +880,7 @@ class OrionGateway:
             name=name,
             document=document,
             directory=self._user_motion_directory(),
-            relative_directory="motion/motions/user",
+            relative_directory=("hardware/v2/motions/user" if self.hardware == "v2" else "motion/motions/user"),
             existing_names=self._checked("motion list").get("motions", []),
         )
 
@@ -1004,7 +1010,7 @@ class OrionGateway:
                 "scene_library_unavailable",
                 "The gateway was not configured with an Orion project root.",
             )
-        return self.project_root / "scenes" / "user"
+        return self.project_root / ("hardware/v2/scenes" if self.hardware == "v2" else "scenes") / "user"
 
     def _user_pose_directory(self) -> Path:
         if self.project_root is None:
@@ -1013,7 +1019,7 @@ class OrionGateway:
                 "pose_library_unavailable",
                 "The gateway was not configured with an Orion project root.",
             )
-        return self.project_root / "motion" / "user" / "poses"
+        return self.project_root / ("hardware/v2/user/poses" if self.hardware == "v2" else "motion/user/poses")
 
     def _user_motion_directory(self) -> Path:
         if self.project_root is None:
@@ -1022,7 +1028,7 @@ class OrionGateway:
                 "motion_library_unavailable",
                 "The gateway was not configured with an Orion project root.",
             )
-        return self.project_root / "motion" / "motions" / "user"
+        return self.project_root / ("hardware/v2/motions/user" if self.hardware == "v2" else "motion/motions/user")
 
     def _existing_user_scene_path(self, name: str) -> Path:
         return self._existing_named_yaml(self._user_scene_directory(), name, "user scene")
@@ -1573,6 +1579,7 @@ def parse_args() -> argparse.Namespace:
     token = commands.add_parser("create-token", help="Create a development bearer token.")
     token.add_argument("--token-file", type=Path, required=True)
     serve = commands.add_parser("serve", help="Run the source-tree Studio gateway.")
+    serve.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     serve.add_argument("--socket", default=DEFAULT_SOCKET)
     serve.add_argument("--bind", default="127.0.0.1", help="Listen address; :: accepts IPv4 and IPv6 (default: IPv4 loopback).")
     serve.add_argument("--port", type=int, default=7447)
@@ -1609,6 +1616,7 @@ def main() -> None:
         project_root,
         calibration_file=args.calibration,
         trajectory_compiler=args.trajectory_compiler,
+        hardware=args.hardware,
     )
     server = GatewayHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)

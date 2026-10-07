@@ -87,7 +87,7 @@ class HardwareJointCalibration:
     safe_max_delta_raw: int
 
 
-def load_hardware_calibration(path: Path) -> dict[str, HardwareJointCalibration]:
+def load_hardware_calibration(path: Path, hardware: str = "v1") -> dict[str, HardwareJointCalibration]:
     """Load the active Orion calibration without interpreting any pose format."""
 
     path = path.expanduser()
@@ -104,6 +104,8 @@ def load_hardware_calibration(path: Path) -> dict[str, HardwareJointCalibration]
     ):
         raise CalibrationError("Calibration is not an Orion STS3215 software calibration.")
 
+    if root.get("hardware", "v1") != hardware or root.get("simulation_only"):
+        raise CalibrationError("Calibration does not match the selected hardware.")
     raw_joints = root.get("joints")
     expected = {item.joint_name for item in ORION_SERVO_ASSIGNMENTS}
     if not isinstance(raw_joints, dict) or set(raw_joints) != expected:
@@ -389,9 +391,15 @@ def build_calibration_document(
     *,
     port: str,
     captured_at: datetime | None = None,
+    hardware: str = "v1",
+    directions: Mapping[str, int] | None = None,
 ) -> dict[str, object]:
     """Build Orion's versioned JSON document without writing servo EEPROM."""
 
+    if hardware not in ("v1", "v2"):
+        raise CalibrationError("Hardware must be v1 or v2")
+    if directions is not None and (set(directions) != set(captures) or any(type(v) is not int or v not in (-1, 1) for v in directions.values())):
+        raise CalibrationError("Directions must include every joint with +1 or -1")
     joints: dict[str, dict[str, object]] = {}
     for capture in validate_captures(captures):
         safe_min = capture.measured_min_delta_raw + SAFE_MARGIN_RAW
@@ -403,19 +411,21 @@ def build_calibration_document(
             safety_cap_applied = capped_min != safe_min or capped_max != safe_max
             safe_min, safe_max = capped_min, capped_max
         homing_offset = capture.neutral_raw - LELAMP_HOMING_TARGET_RAW
+        direction = directions[capture.assignment.joint_name] if directions else 1
+        degrees = sorted((safe_min * 360.0 / ENCODER_RESOLUTION / direction, safe_max * 360.0 / ENCODER_RESOLUTION / direction))
         calibration = JointCalibration(
             servo_id=capture.assignment.servo_id,
             joint_ref_name=capture.assignment.joint_ref_name,
             neutral_raw=capture.neutral_raw,
-            encoder_direction=1,
+            encoder_direction=direction,
             measured_min_delta_raw=capture.measured_min_delta_raw,
             measured_max_delta_raw=capture.measured_max_delta_raw,
             safe_min_delta_raw=safe_min,
             safe_max_delta_raw=safe_max,
-            safe_min_degrees=safe_min * 360.0 / ENCODER_RESOLUTION,
-            safe_max_degrees=safe_max * 360.0 / ENCODER_RESOLUTION,
+            safe_min_degrees=degrees[0],
+            safe_max_degrees=degrees[1],
             safety_cap_applied=safety_cap_applied,
-            lerobot_drive_mode=0,
+            lerobot_drive_mode=1 if directions and directions[capture.assignment.joint_name] == -1 else 0,
             lerobot_homing_offset=homing_offset,
             lerobot_safe_range_min=LELAMP_HOMING_TARGET_RAW + safe_min,
             lerobot_safe_range_max=LELAMP_HOMING_TARGET_RAW + safe_max,
@@ -426,12 +436,13 @@ def build_calibration_document(
     return {
         "schema_version": 1,
         "robot": "orion",
+        "hardware": hardware,
         "servo_model": "sts3215",
         "encoder_resolution": ENCODER_RESOLUTION,
         "captured_at": timestamp.isoformat(),
         "port_at_capture": port,
         "writes_servo_eeprom": False,
-        "direction_source": (
+        "direction_source": "Explicit encoder direction map" if directions else "Default +1 encoder direction; check against the fitted V2 joints" if hardware == "v2" else (
             "LeLamp follower reference uses drive_mode=0 for the same STS3215 mounting; "
             "validate against Orion URDF before trajectory control"
         ),

@@ -29,11 +29,15 @@ class AlsaPcmCapture:
         *,
         card_name: str = DEFAULT_CAPTURE_CARD,
         configurator: Path = DEFAULT_CAPTURE_CONFIGURATOR,
+        hardware: str = "v1",
     ) -> None:
         if not device.strip():
             raise ValueError("ALSA capture device cannot be empty")
         if not card_name.strip():
             raise ValueError("ALSA capture card cannot be empty")
+        if hardware not in ("v1", "v2"):
+            raise ValueError("Hardware must be v1 or v2")
+        self._hardware = hardware
         self._device = device
         self._card_name = card_name
         self._configurator = Path(configurator)
@@ -62,22 +66,20 @@ class AlsaPcmCapture:
     def open(self) -> None:
         if self._process is not None:
             raise RuntimeError("microphone capture is already open")
-        if not self._configurator.is_file():
+        if self._hardware == "v1" and not self._configurator.is_file():
             raise FileNotFoundError(
                 f"microphone configurator does not exist: {self._configurator}"
             )
-        subprocess.run(
-            self.configure_command(),
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
+        if self._hardware == "v1":
+            subprocess.run(self.configure_command(), check=True, stdout=subprocess.DEVNULL)
         self._process = subprocess.Popen(self.command(), stdout=subprocess.PIPE)
         try:
             # ADC startup can reset the codec's mixer state. Apply the selected
             # gain after frames arrive, then discard the settling audio.
             self._discard_startup(300)
-            subprocess.run(self.configure_command(), check=True, stdout=subprocess.DEVNULL)
-            self._discard_startup(300)
+            if self._hardware == "v1":
+                subprocess.run(self.configure_command(), check=True, stdout=subprocess.DEVNULL)
+                self._discard_startup(300)
         except BaseException:
             self.close()
             raise

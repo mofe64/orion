@@ -8,6 +8,7 @@ Studio closed; Codex inference and web search still require the internet.
 ## Start here
 
 - [Quickstart](docs/quickstart.md) — install, connect to or update Orion.
+- [V1/V2 hardware and calibration](docs/hardware-versions.md) — select the lamp, prepare a release and validate V2.1.
 - [System architecture](docs/system-architecture.md) — processes, data flow and device ownership.
 - [Voice architecture](docs/voice-architecture.md) — wake detection, complete command capture, agent turns and replies.
 - [Motion architecture](docs/motion-and-animation-architecture.md) — how character intent becomes joint movement.

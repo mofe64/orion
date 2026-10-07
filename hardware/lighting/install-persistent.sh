@@ -84,7 +84,7 @@ if ! grep -Eq '^[[:space:]]*dtoverlay=rp1_ws281x_pwm([[:space:]]|$)' "${boot_con
         cp -a "${boot_config}" "${boot_config}.orion-backup"
     fi
     {
-        printf '\n# Orion 40-pixel RGBW shield RP1 PWM device\n'
+        printf '\n# Orion GPIO12 RGBW matrix/ring RP1 PWM device\n'
         printf 'dtoverlay=rp1_ws281x_pwm\n'
     } >> "${boot_config}"
 fi

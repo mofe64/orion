@@ -47,6 +47,12 @@ during playback are not implemented.
 
 ## Settings and microphone startup
 
+`--hardware v1` uses HAT capture routing. `--hardware v2` uses USB capture
+without HAT mixer commands; `--capture-channels 2|6` and `--processed-channel N`
+select the verified XVF3800 stream. The processed channel feeds the listener
+without averaging raw microphone channels, and direction-based attention is
+disabled. See [USB profile setup](../docs/hardware-versions.md#identify-usb-capture).
+
 Microphone mute persists in `~/.config/orion/microphone.json`. The listener applies
 capture routing before opening ALSA, discards startup frames, reapplies gain after
 the ADC starts, and then reports readiness. Unmute can therefore take a short

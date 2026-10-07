@@ -1,0 +1,19 @@
+{
+  "hardware": "v2",
+  "mechanical_revision": "v2.1-r4-r2",
+  "lighting": {"layout": "ring", "pixel_count": 24, "width": 24, "height": 1, "white_temperature_k": 6000, "gpio_bcm": 12, "wire_order": "GRBW", "frequency_hz": 800000},
+  "audio": {"backend": "xvf3800_usb", "card": "Array", "pcm": "plughw:CARD=Array,DEV=0", "capture_channels": 2, "processed_channel": 0},
+  "calibration_file": "servo_calibration-v2.json",
+  "poses": "hardware/v2/poses.yaml",
+  "user_poses": "hardware/v2/user/poses",
+  "motions": "hardware/v2/motions",
+  "scenes": "hardware/v2/scenes",
+  "scene": "simulation/mujoco/v2/scene.xml",
+  "joints": {
+    "base_yaw_joint": {"servo_id": 1, "physical_joint": "base_yaw"},
+    "shoulder_pitch_joint": {"servo_id": 2, "physical_joint": "shoulder_pitch"},
+    "elbow_pitch_joint": {"servo_id": 3, "physical_joint": "elbow_pitch"},
+    "head_roll_joint": {"servo_id": 4, "physical_joint": "neck_swivel"},
+    "head_pitch_joint": {"servo_id": 5, "physical_joint": "wrist_pitch"}
+  }
+}

@@ -2,8 +2,10 @@ pub mod control;
 pub mod devices;
 pub mod error;
 pub mod expression;
+pub mod hardware;
 pub mod ipc;
 pub mod motion;
+pub use hardware::{HardwareProfile, HardwareVersion};
 
 pub const ORION_JOINT_NAMES: [&str; 5] = [
     "base_yaw_joint",

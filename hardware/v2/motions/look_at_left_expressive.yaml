@@ -1,0 +1,32 @@
+{
+  "format_version": 2,
+  "motion": {
+    "name": "look_at_left_expressive",
+    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
+    "space": "absolute",
+    "style": "attentive",
+    "keyframes": [
+      {
+        "pose": "look_left_anticipation",
+        "duration": 0.4,
+        "arrival": "through"
+      },
+      {
+        "pose": "look_left_lean",
+        "duration": 0.65,
+        "arrival": "through",
+        "marker": "notice"
+      },
+      {
+        "pose": "look_left_overshoot",
+        "duration": 0.5,
+        "arrival": "through"
+      },
+      {
+        "pose": "look_left",
+        "duration": 0.6,
+        "arrival": "settle"
+      }
+    ]
+  }
+}

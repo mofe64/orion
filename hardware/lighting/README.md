@@ -1,6 +1,6 @@
 # Orion lighting hardware
 
-Orion's installed light is an Adafruit NeoPixel Shield, product 2864:
+V1's commissioned light is an Adafruit NeoPixel Shield, product 2864:
 
 - 40 individually addressable SK6812-compatible red-green-blue-white (RGBW)
   pixels.
@@ -8,6 +8,10 @@ Orion's installed light is an Adafruit NeoPixel Shield, product 2864:
 - Dedicated approximately 3000 K warm-white channel.
 - 8-bit red, green, blue, and white channels.
 - 800 kHz single-wire NeoPixel protocol.
+
+V2 selects a 24-pixel RGBW ring with `--hardware v2`, retaining GPIO12, GRBW
+encoding and the persistent Pi 5 driver below. Its colour/order and reboot checks
+still require physical verification. See [V2 calibration and rest capture](../../docs/hardware-versions.md).
 
 The assembled robot reports this direct Raspberry Pi 5 wiring:
 
@@ -164,8 +168,9 @@ runtime/target/release/oriond --lights-off
 ```
 
 `Pi5NeoPixelDevice` is behind the portable `LightingDevice` interface. It
-encodes logical RGBW as the shield's GRBW wire order and writes the exact
-40-pixel RP1 PWM frame to `/dev/ws281x_pwm`. `--lighting-device PATH` can
+encodes logical RGBW as GRBW and writes the selected 40- or 24-pixel
+RP1 PWM frame to `/dev/ws281x_pwm`. Add `--hardware v2` to the commands above
+for the ring. `--lighting-device PATH` can
 override that path for diagnostics. These direct commands do not require the
 servo daemon and provide direct physical light checks. When the
 hardware daemon is active, it owns the device exclusively and scenes become

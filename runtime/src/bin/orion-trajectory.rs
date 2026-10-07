@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use orion_runtime::{
     Error, JointLimit, JointPositions, MotionLibrary, MotionSequence, MotionSpace,
-    ORION_JOINT_NAMES, PoseLibrary, Result, STS3215_MAX_SPEED_RAD_S, load_calibration_file,
+    ORION_JOINT_NAMES, PoseLibrary, Result, STS3215_MAX_SPEED_RAD_S,
 };
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ const DEFAULT_CONTROL_RATE_HZ: f64 = 50.0;
 
 #[derive(Debug)]
 struct Arguments {
+    hardware: orion_runtime::HardwareVersion,
     pose_file: PathBuf,
     motions_directory: PathBuf,
     calibration_file: PathBuf,
@@ -102,7 +103,9 @@ fn run() -> Result<()> {
     let poses = PoseLibrary::load(&arguments.pose_file, &ORION_JOINT_NAMES)?;
     let motions = MotionLibrary::load(&arguments.motions_directory, &poses)?;
     let motion = motions.motion(&arguments.motion_name)?;
-    let calibrations = load_calibration_file(&arguments.calibration_file, &ORION_JOINT_NAMES)?;
+    let calibrations = arguments
+        .hardware
+        .load_calibration(&arguments.calibration_file)?;
     let limits: Vec<JointLimit> = calibrations
         .iter()
         .map(|calibration| {
@@ -205,6 +208,8 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments>
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("runtime has a repository parent");
+    let mut hardware = orion_runtime::HardwareVersion::V1;
+    let mut supplied = std::collections::BTreeSet::new();
     let mut pose_file = root.join("motion/config/poses.yaml");
     let mut motions_directory = root.join("motion/motions");
     let mut calibration_file = root.join("simulation/mujoco/config/servo_calibration.json");
@@ -215,8 +220,10 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments>
     let mut control_rate_hz = DEFAULT_CONTROL_RATE_HZ;
     let mut arguments = arguments.peekable();
     while let Some(flag) = arguments.next() {
+        supplied.insert(flag.clone());
         let value = || Error::InvalidArgument(format!("{flag} requires a value."));
         match flag.as_str() {
+            "--hardware" => hardware = arguments.next().ok_or_else(value)?.parse()?,
             "--pose-file" => pose_file = PathBuf::from(arguments.next().ok_or_else(value)?),
             "--motions-directory" => {
                 motions_directory = PathBuf::from(arguments.next().ok_or_else(value)?)
@@ -244,6 +251,23 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments>
             }
         }
     }
+    if hardware == orion_runtime::HardwareVersion::V2 {
+        let profile = hardware.profile();
+        if !supplied.contains("--pose-file") {
+            pose_file = root.join(&profile.poses);
+        }
+        if !supplied.contains("--motions-directory") {
+            motions_directory = root.join(&profile.motions);
+        }
+        if !supplied.contains("--calibration") {
+            calibration_file = PathBuf::from(
+                env::var_os("HOME")
+                    .ok_or_else(|| Error::Runtime("HOME is required for V2 calibration".into()))?,
+            )
+            .join(".config/orion")
+            .join(&profile.calibration_file);
+        }
+    }
     if !control_rate_hz.is_finite() || control_rate_hz <= 0.0 || control_rate_hz > 1000.0 {
         return Err(Error::InvalidArgument(
             "Control rate must be finite and in 0..=1000 Hz.".into(),
@@ -261,6 +285,7 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments>
         ));
     }
     Ok(Arguments {
+        hardware,
         pose_file,
         motions_directory,
         calibration_file,

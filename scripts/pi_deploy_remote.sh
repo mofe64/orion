@@ -10,6 +10,10 @@ extract_revision_scripts() {
 project_root="${1:?Pi project root is required}"
 branch="${2:?Git branch is required}"
 prepare_only="${3:-false}"
+hardware="${4:?Select hardware v1 or v2}"
+if [[ "${hardware}" != v1 && "${hardware}" != v2 ]]; then
+  echo "Invalid hardware selection" >&2; exit 2
+fi
 if [[ ! "${project_root}" =~ ^/[A-Za-z0-9._/-]+$ || "${project_root}" == *".."* ]]; then
   echo "Refusing unsafe Pi project path" >&2; exit 2
 fi
@@ -28,7 +32,7 @@ bootstrap="$(mktemp -d /tmp/orion-release.XXXXXXXXXX)"
 cleanup() { rm -rf -- "${bootstrap}"; }
 trap cleanup EXIT
 extract_revision_scripts "${revision}" "${bootstrap}"
-release_args=(--source "${project_root}" --revision "${revision}" --runtime-project "${project_root}")
+release_args=(--hardware "${hardware}" --source "${project_root}" --revision "${revision}" --runtime-project "${project_root}")
 if [[ "${prepare_only}" == true ]]; then
   release_args+=(--prepare-only)
 fi

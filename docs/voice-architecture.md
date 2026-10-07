@@ -45,8 +45,9 @@ registers a silent runtime session before notifying the coordinator.
 The packaged verifier in `voice/models/verifier/` scores every captured frame
 with openWakeWord's frozen melspectrogram and embedding models and a small
 “Hey Orion” classifier. It streams 80 ms chunks and ignores its first 26
-chunks after capture opens. `config.json` holds the decision rule. A candidate
-is accepted when a score reaches 0.2 between 0.8 seconds before and 1 second
+chunks after capture opens. [The packaged configuration](../voice/models/verifier/config.json)
+holds the decision rule. A candidate is accepted when a score reaches the
+configured threshold between 0.8 seconds before and 1 second
 after the Rustpotter candidate; otherwise the verifier rejects it at the
 1-second deadline. A score from before the candidate accepts at the candidate,
 so a typical acceptance adds no delay.

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import time
 from collections.abc import Sequence
 from pathlib import Path
 
+from .provisioning import assignments_for_hardware
 from .bus import create_lerobot_bus
 from .preflight import commissioning_plan, read_preflight
 from .calibration import load_hardware_calibration
@@ -31,9 +33,10 @@ def _parser() -> argparse.ArgumentParser:
             "Capture a torque-off, mechanically stable Orion rest pose and add it to poses.yaml."
         )
     )
+    parser.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
-    parser.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION)
-    parser.add_argument("--poses", type=Path, default=DEFAULT_POSES)
+    parser.add_argument("--calibration", type=Path, default=None)
+    parser.add_argument("--poses", type=Path, default=None)
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -53,6 +56,10 @@ def _positions(bus) -> dict[str, int]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.calibration is None:
+        args.calibration = Path("~/.config/orion/servo_calibration-v2.json") if args.hardware == "v2" else DEFAULT_CALIBRATION
+    if args.poses is None:
+        args.poses = Path("~/.config/orion/poses-v2.yaml").expanduser() if args.hardware == "v2" else DEFAULT_POSES
     if args.dry_run:
         print(f"Would capture rest on {args.port}; poses: {args.poses}")
         return 0
@@ -60,7 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Orion rest capture: {args.port}")
 
     try:
-        calibration = load_hardware_calibration(args.calibration)
+        calibration = load_hardware_calibration(args.calibration, args.hardware)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Cannot prepare rest capture: {exc}")
         return 1
@@ -69,7 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     bus = None
     try:
-        assignments = commissioning_plan()
+        assignments = commissioning_plan(assignments_for_hardware(args.hardware))
         bus = create_lerobot_bus(args.port, assignments)
         bus.connect(handshake=True)
         read_preflight(bus, assignments)
@@ -101,6 +108,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         final_positions = _positions(bus)
         validate_rest_stability(reference, [final_positions])
         read_preflight(bus, assignments)
+        if args.hardware == "v2" and not args.poses.exists():
+            args.poses.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ORION_ROOT / "hardware/v2/poses.yaml", args.poses)
         write_rest_pose(args.poses, angles, replace=True)
     except KeyboardInterrupt:
         print("\nCancelled; torque off.")

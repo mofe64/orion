@@ -2,8 +2,9 @@
 
 MuJoCo implements Orion's simulation `RuntimeDriver`. It receives the same
 Rust-compiled joint targets, 50 Hz lifecycle, markers, cancellation, and
-measured-settling logic as the hardware runtime. It adds physics and diagnostic
-reporting; it does not own a second interpolation algorithm.
+measured-settling logic as the hardware runtime. V1 adds physics and diagnostic
+reporting. V2's fixed-base CAD model uses kinematic tracking and reports its
+unvalidated dynamic scope explicitly. Both consume the Rust trajectory.
 
 Read the [motion and animation architecture](../../docs/motion-and-animation-architecture.md)
 and [trajectory and joint-control reference](../../docs/trajectory-and-joint-control.md)
@@ -21,6 +22,15 @@ uv pip install --python .venv/bin/python \
 ```
 
 The runtime uses `.venv/bin/python` for the MuJoCo bridge by default.
+
+## V2.1 model
+
+Run `oriond --serve --backend mujoco --hardware v2` from the repository root
+after building the runtime. The model, portable meshes, provenance and estimated
+mass properties live in `simulation/mujoco/v2/`. Use the
+[hardware-version guide](../../docs/hardware-versions.md#cad-urdf-and-mujoco)
+for playback, CAD import and PLA mass overrides. The v1 calibrated editors below
+do not establish v2's physical zeros or travel limits.
 
 ## Calibrated pose editor
 

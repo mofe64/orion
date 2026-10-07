@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import select
 import sys
 import time
@@ -21,6 +22,7 @@ from .calibration import (
     validate_captures,
     write_calibration_file,
 )
+from .provisioning import assignments_for_hardware
 from .preflight import commissioning_plan, read_preflight
 
 
@@ -31,11 +33,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Capture Orion's torque-off zero and joint ranges."
     )
+    parser.add_argument("--hardware", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--directions", type=Path, help="Optional JSON map of all five encoder directions (+1 or -1)")
     parser.add_argument("--port", required=True, help="Servo adapter serial port.")
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT_PATH,
+        default=None,
         help=f"Calibration JSON path (default: {DEFAULT_OUTPUT_PATH}).",
     )
     parser.add_argument(
@@ -83,7 +87,9 @@ def _record_until_enter(bus, neutral_positions: Mapping[str, int]) -> dict[str, 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    plan = commissioning_plan()
+    plan = commissioning_plan(assignments_for_hardware(args.hardware))
+    if args.output is None:
+        args.output = Path("~/.config/orion/servo_calibration-v2.json") if args.hardware == "v2" else DEFAULT_OUTPUT_PATH
 
     if args.dry_run:
         ids = ",".join(str(item.servo_id) for item in plan)
@@ -93,7 +99,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    print(f"Orion STS3215 calibration: {args.port}")
+    directions = None
+    if args.directions:
+        directions = json.loads(args.directions.read_text())
+    if directions is not None and (not isinstance(directions, dict) or set(directions) != {a.joint_name for a in plan} or any(type(v) is not int or v not in (-1, 1) for v in directions.values())):
+        print("Direction map must name all five joints with +1 or -1; no serial port was opened.")
+        return 1
+    print(f"Orion {args.hardware} STS3215 calibration: {args.port}")
     bus = None
     try:
         bus = create_lerobot_bus(args.port, plan)
@@ -134,7 +146,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Repeat the same safety checks after handling the mechanism and before
         # accepting its measurements.
         read_preflight(bus, plan)
-        document = build_calibration_document(captures, port=args.port)
+        if args.hardware == "v2":
+            from dataclasses import replace
+            captures = {item.joint_name: replace(captures[item.joint_name], assignment=item) for item in plan}
+        document = build_calibration_document(captures, port=args.port, hardware=args.hardware, directions=directions)
         backup = write_calibration_file(document, args.output)
     except KeyboardInterrupt:
         print("\nCalibration cancelled; torque off.")

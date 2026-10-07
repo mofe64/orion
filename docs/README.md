@@ -13,6 +13,7 @@
 ## Reference
 
 - [Configuration and environment variables](configuration.md)
+- [Hardware versions and V2 calibration](hardware-versions.md)
 - [Motion asset schemas and catalog](motion-assets.md)
 - [Trajectory and joint-control internals](trajectory-and-joint-control.md)
 - [Servo tracking capture and analysis](servo-tracking.md)

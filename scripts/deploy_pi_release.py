@@ -17,7 +17,7 @@ def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
-def snapshot_commit(source, revision, releases):
+def snapshot_commit(source, revision, releases, hardware="v1"):
     commit = run('git', '-C', source, 'rev-parse', '--verify', f'{revision}^{{commit}}', capture_output=True, text=True).stdout.strip()
     release = releases / f'{commit[:12]}-{uuid.uuid4().hex[:8]}'
     release.mkdir(parents=True)
@@ -27,7 +27,7 @@ def snapshot_commit(source, revision, releases):
             archive.seek(0)
             with tarfile.open(fileobj=archive) as package:
                 package.extractall(release, filter='data')
-        (release / 'release.json').write_text(json.dumps({'revision': commit[:12], 'commit': commit, 'source': str(source)}, indent=2))
+        (release / 'release.json').write_text(json.dumps({'revision': commit[:12], 'commit': commit, 'source': str(source), 'hardware': hardware}, indent=2))
     except BaseException:
         shutil.rmtree(release)
         raise
@@ -67,6 +67,7 @@ def build_release(release, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--hardware', choices=('v1', 'v2'), required=True, help='Target lamp hardware; v2 uses the V2.1 mechanism')
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--revision', required=True, help='Committed Git ref; working-tree edits are never discarded or deployed implicitly')
     parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/orion/voice-stack')
@@ -82,7 +83,7 @@ def main():
     with deployment_lock(root):
         if (root / 'pending-installation.json').exists():
             raise RuntimeError('Recover the interrupted deployment with install_pi_voice_stack.py --rollback first')
-        release = snapshot_commit(source, args.revision, root / 'releases')
+        release = snapshot_commit(source, args.revision, root / 'releases', args.hardware)
         print(f'Preparing {release}. Existing services and the source checkout remain unchanged.', flush=True)
         try:
             build_release(release, root)

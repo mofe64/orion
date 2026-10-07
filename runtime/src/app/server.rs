@@ -12,14 +12,15 @@ use crate::{
     Pi5NeoPixelDevice, PoseLibrary, RecordingAudioDevice, RecordingLightingDevice, Rgbw8,
     RuntimeCore, RuntimeDriver, RustypotTransport, SceneCoordinator, SceneLibrary, ScenePhase,
     SpeechCoordinator, Sts3215Driver, UnixCommandServer, configure_respeaker_v2_mixer,
-    load_calibration_file, render_effect,
 };
 
 use super::OBSERVE_PERIOD;
 
 pub(super) fn render_light(options: &Options, pixel: Option<usize>) -> crate::Result<i32> {
-    let mut device =
-        Pi5NeoPixelDevice::open(&options.lighting_device, crate::ORION_LIGHT_PIXEL_COUNT)?;
+    let mut device = Pi5NeoPixelDevice::open(
+        &options.lighting_device,
+        options.hardware.profile().lighting.pixel_count,
+    )?;
     if let Some(index) = pixel {
         let mut frame = vec![Rgbw8::OFF; device.pixel_count()];
         frame[index] = options.light_color;
@@ -39,7 +40,14 @@ pub(super) fn render_light(options: &Options, pixel: Option<usize>) -> crate::Re
 }
 
 pub(super) fn servo_profiles(options: &Options) -> crate::ServoProfiles {
-    let mut profiles = crate::make_orion_servo_profiles();
+    let mut profiles = if options.hardware == crate::HardwareVersion::V1 {
+        crate::make_orion_servo_profiles()
+    } else {
+        crate::ORION_JOINT_NAMES
+            .iter()
+            .map(|name| ((*name).to_owned(), crate::JointServoProfile::default()))
+            .collect()
+    };
     if let Some(selection) = &options.servo_gain_override {
         let profile = profiles
             .get_mut(&selection.joint)
@@ -51,7 +59,9 @@ pub(super) fn servo_profiles(options: &Options) -> crate::ServoProfiles {
 }
 
 pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<RustypotTransport>> {
-    let calibrations = load_calibration_file(&options.calibration_file, &ORION_JOINT_NAMES)?;
+    let calibrations = options
+        .hardware
+        .load_calibration(&options.calibration_file)?;
     let profiles = servo_profiles(options);
     if let Some(selection) = &options.servo_gain_override {
         eprintln!(
@@ -70,7 +80,9 @@ pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<R
 
 pub(super) fn play_cue(options: &Options) -> crate::Result<i32> {
     let cues = CueLibrary::load(&options.audio_cues_directory)?;
-    configure_respeaker_v2_mixer(&options.audio_card)?;
+    if options.hardware == crate::HardwareVersion::V1 {
+        configure_respeaker_v2_mixer(&options.audio_card)?;
+    }
     let mut audio = AlsaAudioDevice::new(
         cues,
         &options.audio_pcm_device,
@@ -115,9 +127,11 @@ pub(super) fn serve(options: Options) -> crate::Result<i32> {
             let driver = connect_driver(&options)?;
             let lighting = Box::new(Pi5NeoPixelDevice::open(
                 &options.lighting_device,
-                crate::ORION_LIGHT_PIXEL_COUNT,
+                options.hardware.profile().lighting.pixel_count,
             )?);
-            configure_respeaker_v2_mixer(&options.audio_card)?;
+            if options.hardware == crate::HardwareVersion::V1 {
+                configure_respeaker_v2_mixer(&options.audio_card)?;
+            }
             let audio = Box::new(AlsaAudioDevice::new(
                 cues,
                 &options.audio_pcm_device,
@@ -138,8 +152,16 @@ pub(super) fn serve(options: Options) -> crate::Result<i32> {
         Backend::Mujoco => {
             let start = poses.pose(&options.start_pose)?;
             let bridge = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mujoco_bridge.py");
-            let driver = MujocoDriver::launch(&options.python, bridge, &options.scene_file, start)?;
-            let lighting = Box::new(RecordingLightingDevice::orion());
+            let driver = MujocoDriver::launch_for_hardware(
+                &options.python,
+                bridge,
+                &options.scene_file,
+                start,
+                options.hardware,
+            )?;
+            let lighting = Box::new(RecordingLightingDevice::new(
+                options.hardware.profile().lighting.pixel_count,
+            )?);
             let audio = Box::new(RecordingAudioDevice::default());
             serve_driver(
                 driver,
@@ -298,11 +320,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         playing_run = current_playing;
         if let Some(energy) = speech.active_energy() {
             speaking_light_intensity = smooth_speaking_light(speaking_light_intensity, energy);
-            lighting.render(&render_effect(
-                "speaking_energy",
-                now_seconds,
-                speaking_light_intensity,
-            )?)?;
+            lighting.render_effect("speaking_energy", now_seconds, speaking_light_intensity)?;
         } else {
             speaking_light_intensity = 0.0;
         }
@@ -340,11 +358,12 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             && manual_light.is_none()
             && let Some(effect) = character.background_lighting_effect(&core)
         {
-            lighting.render(&render_effect(&effect, now_seconds, 0.55)?)?;
+            lighting.render_effect(&effect, now_seconds, 0.55)?;
         }
         if !scenes.is_active() && !speech.is_active() {
             if let Some(program) = &manual_light {
-                lighting.render(&program.render(now_seconds)?)?;
+                lighting
+                    .render(&program.render_for_pixels(now_seconds, lighting.pixel_count())?)?;
             }
         }
         if feedback_was_lit
@@ -363,7 +382,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             }
         }
         server.serve_pending(|command| {
-            dispatch_command(
+            let response = dispatch_command(
                 command,
                 now_seconds,
                 &mut core,
@@ -377,7 +396,25 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
                 &mut voice_speech_run,
                 &mut rest,
                 &mut routines,
-            )
+            );
+            if command == "status" {
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&response).expect("runtime status JSON");
+                value["hardware"] = serde_json::json!(options.hardware.profile().hardware);
+                value["physical_joints"] = serde_json::json!(
+                    options
+                        .hardware
+                        .profile()
+                        .joints
+                        .iter()
+                        .map(|(name, joint)| (name, &joint.physical_joint))
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                );
+                value["lighting_pixels"] = serde_json::json!(lighting.pixel_count());
+                value.to_string()
+            } else {
+                response
+            }
         })?;
         rest.light_on = lighting.is_on();
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));

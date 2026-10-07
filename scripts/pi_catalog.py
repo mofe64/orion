@@ -9,7 +9,8 @@ def built_in_yaml(path):
     if path.is_absolute() or '..' in path.parts or path.suffix not in ('.yaml', '.yml'):
         return False
     parts = path.parts
-    return (parts[:2] == ('motion', 'config') or
+    return ((parts[:2] == ('hardware', 'v2') and 'user' not in parts) or
+            parts[:2] == ('motion', 'config') or
             (parts[:2] == ('motion', 'motions') and len(parts) > 2 and parts[2] != 'user') or
             (parts[:1] == ('scenes',) and len(parts) > 1 and parts[1] != 'user'))
 
@@ -27,8 +28,10 @@ def require_regular_target(project, path):
 def catalog_plan(release, project, root):
     """Replace built-ins and remove retired tracked YAML; leave user assets alone."""
     incoming = {}
-    for directory in ('motion/config', 'motion/motions', 'scenes'):
+    for directory in ('motion/config', 'motion/motions', 'scenes', 'hardware/v2'):
         source = release / directory
+        if directory == 'hardware/v2' and not source.exists():
+            continue  # Legacy v1 release.
         if not source.is_dir() or source.is_symlink():
             raise ValueError(f'Release is missing a regular built-in catalog: {source}')
         for path in sorted(source.rglob('*')):

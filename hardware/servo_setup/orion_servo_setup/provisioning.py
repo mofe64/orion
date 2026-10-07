@@ -33,6 +33,19 @@ ORION_SERVO_ASSIGNMENTS: tuple[ServoAssignment, ...] = (
 )
 
 
+def assignments_for_hardware(hardware: str) -> tuple[ServoAssignment, ...]:
+    if hardware == "v1":
+        return ORION_SERVO_ASSIGNMENTS
+    if hardware != "v2":
+        raise ValueError("Hardware must be v1 or v2")
+    import json
+    from pathlib import Path
+    profile = json.loads((Path(__file__).resolve().parents[2] / "profiles/v2.json").read_text())
+    return tuple(ServoAssignment(item.joint_name, profile["joints"][item.joint_name]["servo_id"],
+                                 profile["joints"][item.joint_name]["physical_joint"])
+                 for item in ORION_SERVO_ASSIGNMENTS)
+
+
 class ProvisioningBus(Protocol):
     """Small part of LeRobot's motor-bus API used by provisioning."""
 
