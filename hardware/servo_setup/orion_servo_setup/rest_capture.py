@@ -51,12 +51,8 @@ def positions_to_rest_angles(
                 f"{name} rest delta {delta:+d} is outside calibrated "
                 f"[{joint.safe_min_delta_raw}, {joint.safe_max_delta_raw}]."
             )
-        if joint.neutral_raw + delta != raw:
-            raise RestCaptureError(
-                f"{name} rest position crosses the raw 0/4095 boundary; choose a rest "
-                "position closer to calibrated zero."
-            )
-
+        # The runtime uses the same circular delta and wraps commanded raw
+        # positions modulo 4096, so crossing encoder zero is valid in range.
         angle = delta / (STEPS_PER_RADIAN * joint.encoder_direction)
         # Eight decimal places round-trips to the same encoder step.
         result[name] = round(angle, 8)

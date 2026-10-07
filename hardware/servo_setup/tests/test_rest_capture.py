@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -87,6 +89,44 @@ class RestCaptureTests(unittest.TestCase):
             calibration = self._calibration(directory)
             positions = dict(NEUTRALS)
             positions["elbow_pitch_joint"] += 1100
+
+            with self.assertRaisesRegex(RestCaptureError, "outside calibrated"):
+                positions_to_rest_angles(positions, calibration)
+
+    def test_wrapped_rest_round_trips_for_both_encoder_directions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = self._calibration(directory)
+            for neutral, raw, delta in ((46, 4090, -52), (3966, 100, 230)):
+                for direction in (-1, 1):
+                    with self.subTest(neutral=neutral, raw=raw, direction=direction):
+                        joint = replace(
+                            calibration["base_yaw_joint"],
+                            neutral_raw=neutral,
+                            encoder_direction=direction,
+                        )
+                        captured_calibration = dict(calibration)
+                        captured_calibration[joint.joint_name] = joint
+                        positions = dict(NEUTRALS)
+                        positions[joint.joint_name] = raw
+
+                        angle = positions_to_rest_angles(
+                            positions, captured_calibration
+                        )[joint.joint_name]
+
+                        self.assertAlmostEqual(
+                            angle, delta * 2 * math.pi / (4096 * direction), places=7
+                        )
+                        command_delta = round(angle * 4096 / (2 * math.pi)) * direction
+                        self.assertEqual((neutral + command_delta) % 4096, raw)
+
+    def test_wrapped_rest_outside_calibrated_range_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = self._calibration(directory)
+            calibration["base_yaw_joint"] = replace(
+                calibration["base_yaw_joint"], neutral_raw=46
+            )
+            positions = dict(NEUTRALS)
+            positions["base_yaw_joint"] = 3000
 
             with self.assertRaisesRegex(RestCaptureError, "outside calibrated"):
                 positions_to_rest_angles(positions, calibration)
