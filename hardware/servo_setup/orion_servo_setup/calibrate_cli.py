@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .bus import create_lerobot_bus
 from .calibration import (
+    crosses_encoder_boundary,
     CalibrationError,
     JointRangeCapture,
     YAW_JOINTS,
@@ -112,6 +113,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         bus.connect(handshake=True)
         read_preflight(bus, plan)
         print("Preflight: 5 servos healthy, torque off.")
+        # Raw readings are relative to each servo's persistent offset; record
+        # it so the runtime can refuse a calibration taken in another frame.
+        homing_offsets = {
+            item.joint_name: int(
+                bus.read("Homing_Offset", item.joint_name, normalize=False, num_retry=2)
+            )
+            for item in plan
+        }
 
         input("Set the zero pose, then press ENTER: ")
         neutral_positions = {
@@ -149,8 +158,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.hardware == "v2":
             from dataclasses import replace
             captures = {item.joint_name: replace(captures[item.joint_name], assignment=item) for item in plan}
-        document = build_calibration_document(captures, port=args.port, hardware=args.hardware, directions=directions)
+        document = build_calibration_document(
+            captures, port=args.port, hardware=args.hardware, directions=directions,
+            homing_offsets=homing_offsets,
+        )
         backup = write_calibration_file(document, args.output)
+        crossing = [
+            name for name, joint in document["joints"].items()  # type: ignore[union-attr]
+            if crosses_encoder_boundary(
+                joint["neutral_raw"], joint["safe_min_delta_raw"], joint["safe_max_delta_raw"]
+            )
+        ]
     except KeyboardInterrupt:
         print("\nCalibration cancelled; torque off.")
         return 130
@@ -167,6 +185,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Saved: {args.output.expanduser()}")
     if backup is not None:
         print(f"Backup: {backup}")
+    if crossing:
+        print(
+            "These ranges cross raw 0/4095 and oriond will refuse them: "
+            + ", ".join(crossing)
+            + f". Next run: orion-centre-servos --port {args.port} --hardware {args.hardware}"
+        )
     print("Torque: off")
     return 0
 

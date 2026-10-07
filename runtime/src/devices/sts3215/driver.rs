@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
 use crate::control::state::JointState;
-use crate::devices::sts3215::transport::{Register, Sts3215RawState, Sts3215Transport};
+use crate::devices::sts3215::transport::{
+    Register, Sts3215RawState, Sts3215Transport, decode_sign_magnitude,
+};
 use crate::error::{OrionRuntimeError as Error, Result};
 use crate::motion::calibration::{ENCODER_RESOLUTION, JointCalibration};
 use crate::motion::pose::JointPositions;
@@ -121,6 +123,7 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                     "Joint names and servo IDs must be unique.".into(),
                 ));
             }
+            validate_raw_range(joint)?;
         }
 
         self.close();
@@ -141,6 +144,18 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 if self.transport.read_register(id, Register::Status)? != 0 {
                     return Err(Error::Runtime(format!(
                         "Servo {id} reported a fault before configuration."
+                    )));
+                }
+                // Raw positions depend on the servo's offset. A calibration
+                // taken under a different offset maps every angle wrongly.
+                let offset = decode_sign_magnitude(
+                    self.transport.read_register(id, Register::HomingOffset)?,
+                    11,
+                );
+                if offset != joint.homing_offset_raw {
+                    return Err(Error::Runtime(format!(
+                        "Servo {id} ({}) has homing offset {offset}, but the calibration was taken with {}. Re-run servo centring or recalibrate.",
+                        joint.name, joint.homing_offset_raw
                     )));
                 }
                 let version = (
@@ -535,6 +550,21 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
     }
 }
 
+/// The STS3215 positions absolutely within 0..4095 and never wraps: a goal of
+/// 6 from 4090 drives almost a full turn the long way, into the opposite end
+/// stop. Every commandable position must therefore stay inside one raw span.
+fn validate_raw_range(joint: &JointCalibration) -> Result<()> {
+    let lowest = joint.neutral_raw + joint.safe_min_delta_raw;
+    let highest = joint.neutral_raw + joint.safe_max_delta_raw;
+    if lowest < 0 || highest >= ENCODER_RESOLUTION {
+        return Err(Error::InvalidArgument(format!(
+            "{} safe range covers raw {lowest}..{highest}, crossing the STS3215 0/4095 boundary; the servo would turn the long way. Centre the servos with orion-centre-servos before running hardware.",
+            joint.name
+        )));
+    }
+    Ok(())
+}
+
 impl<T: Sts3215Transport> Drop for Sts3215Driver<T> {
     fn drop(&mut self) {
         self.close();
@@ -613,6 +643,7 @@ mod tests {
                 (Register::TorqueLimit, 1000),
                 (Register::Status, 0),
                 (Register::MaximumAcceleration, 50),
+                (Register::HomingOffset, 0),
             ] {
                 self.registers.insert((id, register), value);
             }
@@ -710,13 +741,14 @@ mod tests {
             encoder_direction: 1,
             safe_min_delta_raw: min,
             safe_max_delta_raw: max,
+            homing_offset_raw: 0,
         }
     }
 
     fn calibrations() -> Vec<JointCalibration> {
         vec![
-            calibration("base_yaw_joint", 1, 942, -1004, 1004),
-            calibration("head_pitch_joint", 5, 3476, -385, 1145),
+            calibration("base_yaw_joint", 1, 1062, -1004, 1004),
+            calibration("head_pitch_joint", 5, 3476, -385, 600),
         ]
     }
 
@@ -738,7 +770,7 @@ mod tests {
                 .configure(
                     "/dev/fake",
                     1_000_000,
-                    vec![calibration("shoulder_pitch_joint", 2, 3415, -362, 818)],
+                    vec![calibration("shoulder_pitch_joint", 2, 3215, -362, 818)],
                 )
                 .unwrap();
             assert!(driver.profile_applied);
@@ -775,7 +807,7 @@ mod tests {
             .configure(
                 "/dev/fake",
                 1_000_000,
-                vec![calibration("shoulder_pitch_joint", 2, 3415, -362, 818)],
+                vec![calibration("shoulder_pitch_joint", 2, 3215, -362, 818)],
             )
             .unwrap_err();
         let message = error.to_string();
@@ -805,7 +837,7 @@ mod tests {
             .connect(
                 "/dev/fake",
                 1_000_000,
-                vec![calibration("shoulder_pitch_joint", 2, 3415, -362, 818)],
+                vec![calibration("shoulder_pitch_joint", 2, 3215, -362, 818)],
             )
             .unwrap();
         driver.transport.timed_out_write = Some((2, Register::MaximumAcceleration, true));
@@ -838,9 +870,9 @@ mod tests {
                 "/dev/fake",
                 1_000_000,
                 vec![
-                    calibration("base_yaw_joint", 1, 942, -1004, 1004),
+                    calibration("base_yaw_joint", 1, 1062, -1004, 1004),
                     calibration("elbow_pitch_joint", 3, 789, -739, 480),
-                    calibration("head_pitch_joint", 5, 3476, -385, 1145),
+                    calibration("head_pitch_joint", 5, 3476, -385, 600),
                 ],
             )
             .unwrap();
@@ -1059,28 +1091,75 @@ mod tests {
     }
 
     #[test]
-    fn converts_commands_across_encoder_wrap_and_rejects_range() {
+    fn refuses_a_safe_range_that_crosses_the_encoder_boundary() {
+        // Measured V2 base yaw: neutral 4066 with +1004 reaches raw 5070.
+        for joint in [
+            calibration("base_yaw_joint", 1, 4066, -938, 1004),
+            calibration("head_roll_joint", 4, 300, -438, 877),
+        ] {
+            let mut transport = FakeTransport::default();
+            transport.add_servo(joint.servo_id, joint.neutral_raw);
+            let mut driver = Sts3215Driver::new(transport);
+            let error = driver
+                .connect("/dev/fake", 1_000_000, vec![joint])
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("0/4095"), "{error}");
+            assert!(error.contains("orion-centre-servos"), "{error}");
+            assert!(driver.transport().calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn requires_the_servo_homing_offset_used_by_the_calibration() {
+        // Ofs is sign-magnitude with bit 11 as the sign: 0x800 | 1220 = -1220.
+        let cases = [
+            (0, 0, true),
+            (0x800 | 1220, -1220, true),
+            (0, -1220, false),
+            (2019, 0, false),
+        ];
+        for (register, expected, accepted) in cases {
+            let mut transport = FakeTransport::default();
+            transport.add_servo(4, 2047);
+            transport
+                .registers
+                .insert((4, Register::HomingOffset), register);
+            let mut joint = calibration("head_roll_joint", 4, 2047, -438, 877);
+            joint.homing_offset_raw = expected;
+            let mut driver = Sts3215Driver::new(transport);
+            let result = driver.connect("/dev/fake", 1_000_000, vec![joint]);
+            assert_eq!(result.is_ok(), accepted, "{result:?}");
+            if !accepted {
+                assert!(result.unwrap_err().to_string().contains("homing offset"));
+                assert!(!driver.transport().is_open());
+            }
+        }
+    }
+
+    #[test]
+    fn converts_commands_and_rejects_range() {
         let mut transport = FakeTransport::default();
-        transport.add_servo(1, 942);
-        transport.add_servo(5, 32);
+        transport.add_servo(1, 1062);
+        transport.add_servo(5, 4028);
         let mut driver = Sts3215Driver::new(transport);
         driver
             .configure("/dev/fake", 1_000_000, calibrations())
             .unwrap();
         let initial = driver.activate().unwrap();
-        assert!((initial[1].position - 1.0).abs() < 0.002);
+        assert!((initial[1].position - 0.847).abs() < 0.002);
         driver
             .write(&positions(&[
                 ("base_yaw_joint", 0.0),
-                ("head_pitch_joint", 1.0),
+                ("head_pitch_joint", 0.5),
             ]))
             .unwrap();
-        assert_eq!(driver.transport().position_writes.last().unwrap()[&5], 32);
+        assert_eq!(driver.transport().position_writes.last().unwrap()[&5], 3802);
         assert!(
             driver
                 .write(&positions(&[
                     ("base_yaw_joint", 0.0),
-                    ("head_pitch_joint", 2.0)
+                    ("head_pitch_joint", 1.0)
                 ]))
                 .is_err()
         );
@@ -1126,7 +1205,7 @@ mod tests {
             .connect(
                 "/dev/fake",
                 1_000_000,
-                vec![calibration("elbow_pitch_joint", 3, 573, -661, 666)],
+                vec![calibration("elbow_pitch_joint", 3, 773, -661, 666)],
             )
             .unwrap();
         let clamped = driver

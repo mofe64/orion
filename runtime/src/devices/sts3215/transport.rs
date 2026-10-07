@@ -31,6 +31,9 @@ pub enum Register {
     Status,
     MaximumVelocityLimit,
     MaximumAcceleration,
+    /// Persistent position correction (Ofs). Present and goal positions are
+    /// reported relative to it: present = encoder - offset (mod 4096).
+    HomingOffset,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -92,6 +95,12 @@ impl Register {
                 address: 28,
                 width: 2,
                 writable: true,
+            },
+            Self::HomingOffset => RegisterInfo {
+                address: 31,
+                width: 2,
+                // Written only by the servo-setup centring tool, never at runtime.
+                writable: false,
             },
             Self::OperatingMode => RegisterInfo {
                 address: 33,

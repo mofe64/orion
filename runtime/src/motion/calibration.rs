@@ -27,6 +27,9 @@ pub struct JointCalibration {
     pub safe_min_delta_raw: i32,
     /// the highest permitted encoder offset from neutral
     pub safe_max_delta_raw: i32,
+    /// The servo's persistent homing offset (Ofs register) when the raw
+    /// readings were taken; 0 for an uncentred servo.
+    pub homing_offset_raw: i32,
 }
 
 impl JointCalibration {
@@ -70,6 +73,8 @@ struct CalibrationEntry {
     encoder_direction: i32,
     safe_min_delta_raw: i32,
     safe_max_delta_raw: i32,
+    #[serde(default)]
+    servo_homing_offset_raw: i32,
 }
 
 /// Reads a calibration file from disk and validates it against the expected joint names
@@ -152,6 +157,11 @@ pub fn load_calibration_file(
                 "{name} safe range must contain zero and stay inside one half-turn."
             )));
         }
+        if joint.servo_homing_offset_raw.abs() > 2047 {
+            return Err(Error::Runtime(format!(
+                "{name} servo_homing_offset_raw must be within -2047..2047."
+            )));
+        }
         calibrations.push(JointCalibration {
             name: name.to_owned(),
             servo_id: joint.servo_id as u8,
@@ -159,6 +169,7 @@ pub fn load_calibration_file(
             encoder_direction: joint.encoder_direction,
             safe_min_delta_raw: joint.safe_min_delta_raw,
             safe_max_delta_raw: joint.safe_max_delta_raw,
+            homing_offset_raw: joint.servo_homing_offset_raw,
         });
     }
     Ok(calibrations)

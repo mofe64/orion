@@ -232,11 +232,45 @@ ranges, and writes the homing offset and min/max values persistently to each
 servo. It uses `drive_mode=0` for all five motors.
 
 Orion records the same measurements in a versioned JSON file without changing
-servo EEPROM. It calculates movement as a circular displacement from neutral,
-so a joint crossing raw encoder zero is not mistaken for an almost-complete
-turn. The stored `encoder_direction=1` preserves LeLamp's `drive_mode=0`
-convention for this mechanically compatible build. The native runtime and
-MuJoCo use the accepted captured zero and joint-positive convention.
+servo EEPROM during capture. It calculates movement as a circular displacement
+from neutral, so a joint crossing raw encoder zero is not mistaken for an
+almost-complete turn while measuring. The stored `encoder_direction=1`
+preserves LeLamp's `drive_mode=0` convention for this mechanically compatible
+build. The native runtime and MuJoCo use the accepted captured zero and
+joint-positive convention.
+
+Circular arithmetic does not make a range that spans raw 0/4095 commandable.
+The STS3215 positions absolutely within 0..4095 and never wraps, so a goal of
+6 sent from 4090 drives almost a full turn the long way, into the opposite end
+stop. `oriond` refuses to connect when any joint's safe range crosses that
+boundary, or when a servo's homing offset differs from the calibration's
+`servo_homing_offset_raw`. Calibration prints the crossing joints; centre them
+before running hardware.
+
+## Centre the servos when a range crosses raw 0/4095
+
+```bash
+uv run orion-centre-servos --port /dev/ttyACM0 --hardware v2
+```
+
+The command writes each servo's persistent homing offset (the `Ofs` register)
+so the calibrated zero reads raw 2047, then rewrites the calibration into that
+frame. Joint deltas and safe ranges do not change, so poses stored in radians
+stay valid and the lamp does not need to be re-swept. It:
+
+1. Runs the torque-off preflight and checks each servo's current offset against
+   the calibration. A different offset means the calibration describes another
+   frame; recalibrate instead.
+2. Asks for the exact confirmation word `CENTRE`.
+3. Writes the offsets with EEPROM unlocked, reads them back, then relocks.
+4. Checks that every live position moved by exactly the offset (the servo
+   reports `present = encoder - offset`). If not, it restores the previous
+   offsets and leaves the calibration file unchanged.
+5. Saves the centred calibration, keeping a timestamped backup.
+
+Torque stays off throughout and nothing moves; keep the lamp still while it
+runs. Preview the offsets without opening hardware with `--dry-run`. Re-running
+after an interruption finishes any servo that was not yet written.
 
 To preview the complete plan without opening hardware or writing a file:
 

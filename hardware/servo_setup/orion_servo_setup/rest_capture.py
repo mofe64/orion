@@ -51,8 +51,14 @@ def positions_to_rest_angles(
                 f"{name} rest delta {delta:+d} is outside calibrated "
                 f"[{joint.safe_min_delta_raw}, {joint.safe_max_delta_raw}]."
             )
-        # The runtime uses the same circular delta and wraps commanded raw
-        # positions modulo 4096, so crossing encoder zero is valid in range.
+        # The STS3215 positions absolutely in 0..4095 and never wraps: a goal
+        # across encoder zero drives the long way round, into the opposite
+        # end stop. Centre the servos with orion-centre-servos instead.
+        if joint.neutral_raw + delta != raw:
+            raise RestCaptureError(
+                f"{name} rest position crosses the raw 0/4095 boundary; centre the "
+                "servos with orion-centre-servos and recalibrate first."
+            )
         # Match the runtime's limit calculation exactly. Decimal rounding can
         # put an accepted supported-rest endpoint just outside its own limit.
         result[name] = delta * (2.0 * math.pi / ENCODER_RESOLUTION) / joint.encoder_direction

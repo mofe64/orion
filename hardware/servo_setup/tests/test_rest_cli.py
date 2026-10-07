@@ -12,12 +12,13 @@ from orion_servo_setup.provisioning import ORION_SERVO_ASSIGNMENTS
 from orion_servo_setup.rest_cli import main
 
 
+# Every +/-1004 range stays inside raw 0..4095 (see crosses_encoder_boundary).
 NEUTRALS = {
-    "base_yaw_joint": 942,
-    "shoulder_pitch_joint": 3400,
-    "elbow_pitch_joint": 789,
+    "base_yaw_joint": 1100,
+    "shoulder_pitch_joint": 2900,
+    "elbow_pitch_joint": 1050,
     "head_roll_joint": 2753,
-    "head_pitch_joint": 3476,
+    "head_pitch_joint": 3000,
 }
 
 

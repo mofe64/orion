@@ -73,6 +73,8 @@ class JointCalibration:
     lerobot_homing_offset: int
     lerobot_safe_range_min: int
     lerobot_safe_range_max: int
+    # Persistent Ofs register value while the raw readings were taken.
+    servo_homing_offset_raw: int = 0
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,11 @@ def load_hardware_calibration(path: Path, hardware: str = "v1") -> dict[str, Har
         if not -HALF_TURN_RAW < safe_min < 0 < safe_max < HALF_TURN_RAW:
             raise CalibrationError(
                 f"{assignment.joint_name} safe range must contain calibrated zero."
+            )
+        if crosses_encoder_boundary(neutral, safe_min, safe_max):
+            raise CalibrationError(
+                f"{assignment.joint_name} safe range crosses the raw 0/4095 boundary; "
+                "run orion-centre-servos first."
             )
         result[assignment.joint_name] = HardwareJointCalibration(
             joint_name=assignment.joint_name,
@@ -278,6 +285,17 @@ def accept_supported_rest_minimum(
     return updated
 
 
+def crosses_encoder_boundary(neutral_raw: int, safe_min: int, safe_max: int) -> bool:
+    """Whether a commandable range spans raw 0/4095.
+
+    The STS3215 never wraps its goal position: commanding 6 from 4090 drives
+    almost a full turn the long way. Such a joint must be centred with a
+    persistent homing offset before the runtime may move it.
+    """
+
+    return neutral_raw + safe_min < 0 or neutral_raw + safe_max >= ENCODER_RESOLUTION
+
+
 def circular_delta(raw_position: int, neutral_raw: int) -> int:
     """Return the shortest signed 12-bit encoder delta from ``neutral_raw``.
 
@@ -393,6 +411,7 @@ def build_calibration_document(
     captured_at: datetime | None = None,
     hardware: str = "v1",
     directions: Mapping[str, int] | None = None,
+    homing_offsets: Mapping[str, int] | None = None,
 ) -> dict[str, object]:
     """Build Orion's versioned JSON document without writing servo EEPROM."""
 
@@ -429,6 +448,7 @@ def build_calibration_document(
             lerobot_homing_offset=homing_offset,
             lerobot_safe_range_min=LELAMP_HOMING_TARGET_RAW + safe_min,
             lerobot_safe_range_max=LELAMP_HOMING_TARGET_RAW + safe_max,
+            servo_homing_offset_raw=(homing_offsets or {}).get(capture.assignment.joint_name, 0),
         )
         joints[capture.assignment.joint_name] = asdict(calibration)
 

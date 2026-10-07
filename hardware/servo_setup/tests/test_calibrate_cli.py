@@ -46,6 +46,7 @@ class FakeCalibrationBus:
             "Present_Voltage": 62,
             "Present_Temperature": 25,
             "Status": 0,
+            "Homing_Offset": 0,
         }[data_name]
 
     def sync_read(self, data_name: str, motors=None, *, normalize: bool = True, num_retry: int = 0):

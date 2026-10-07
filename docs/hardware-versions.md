@@ -14,9 +14,16 @@ uv run --project hardware/servo_setup orion-verify-servos --hardware v2 \
   --port /dev/ttyACM0
 uv run --project hardware/servo_setup orion-calibrate-servos --hardware v2 \
   --port /dev/ttyACM0
+uv run --project hardware/servo_setup orion-centre-servos --hardware v2 \
+  --port /dev/ttyACM0
 uv run --project hardware/servo_setup orion-capture-rest --hardware v2 \
   --port /dev/ttyACM0
 ```
+
+Centring writes each servo's persistent homing offset so no joint range crosses
+raw 0/4095, which the STS3215 cannot command across. `oriond` refuses a
+calibration that crosses it; see
+[centre the servos](../hardware/servo_setup/README.md#centre-the-servos-when-a-range-crosses-raw-04095).
 
 Use the actual serial port. Calibration uses the same torque-off zero and range
 capture as V1, including its existing endpoint margins and backups. Rest capture
