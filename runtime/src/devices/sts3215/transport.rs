@@ -269,7 +269,19 @@ impl Sts3215Transport for RustypotTransport {
         let bytes = encode_unsigned(value, info.width)?;
         self.controller()?
             .write_raw_data(servo_id, info.address, bytes)
-            .map_err(|error| Error::Runtime(format!("Writing servo {servo_id} failed: {error}")))
+            .map_err(|error| {
+                let message = format!(
+                    "Writing servo {servo_id} {register:?} (address {}, value {value}) failed: {error}",
+                    info.address
+                );
+                if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    error.kind() == std::io::ErrorKind::TimedOut
+                }) {
+                    Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, message))
+                } else {
+                    Error::Runtime(message)
+                }
+            })
     }
 
     fn set_eeprom_lock(&mut self, servo_ids: &[u8], locked: bool) -> Result<()> {

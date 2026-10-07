@@ -126,6 +126,13 @@ STS3215 bus. Managed deployment selects binaries from a release directory while
 keeping the existing catalog root for poses, motions, scenes and cues. Inspect
 `systemctl cat oriond` to find the installed executable and arguments.
 
+Servo configuration writes are checked by reading the register back. If a write
+acknowledgement times out, configuration continues only when that read confirms
+the exact requested value; it does not resend the write. A mismatched value or
+failed read-back aborts configuration before torque is enabled. Errors identify
+the servo and register. This recovery applies to profile settings, while torque
+and EEPROM lock commands still require their acknowledgements.
+
 The examples below use a runtime built in the development checkout. Stop the
 installed `oriond.service` before opening its serial, RGBW or audio devices with
 a direct diagnostic process. For a manual configure/enable sequence, start with

@@ -226,12 +226,12 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
             self.transport.set_eeprom_lock(&ids, false)?;
             let writes = (|| {
                 for (id, register, value) in &persistent_writes {
-                    self.transport.write_register(*id, *register, *value)?;
-                    if self.transport.read_register(*id, *register)? != *value {
-                        return Err(Error::Runtime(
-                            "STS3215 persistent configuration verification failed.".into(),
-                        ));
-                    }
+                    Self::write_configuration_register(
+                        &mut self.transport,
+                        *id,
+                        *register,
+                        *value,
+                    )?;
                 }
                 Ok(())
             })();
@@ -249,7 +249,8 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 .read_register(joint.servo_id, Register::Acceleration)?
                 != acceleration
             {
-                self.transport.write_register(
+                Self::write_configuration_register(
+                    &mut self.transport,
                     joint.servo_id,
                     Register::Acceleration,
                     acceleration,
@@ -266,6 +267,37 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
             }
         }
         self.profile_applied = true;
+        Ok(())
+    }
+
+    fn write_configuration_register(
+        transport: &mut T,
+        id: u8,
+        register: Register,
+        value: i32,
+    ) -> Result<()> {
+        // An EEPROM write can commit even when its acknowledgement is lost.
+        // Never resend that write: a fresh register read must prove its outcome.
+        let timeout = match transport.write_register(id, register, value) {
+            Ok(()) => None,
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut => Some(error),
+            Err(error) => return Err(error),
+        };
+        let observed = transport.read_register(id, register).map_err(|error| {
+            Error::Runtime(format!(
+                "STS3215 configuration verification failed for servo {id} {register:?}, expected {value}: {error}; write acknowledgement: {timeout:?}"
+            ))
+        })?;
+        if observed != value {
+            return Err(Error::Runtime(format!(
+                "STS3215 configuration verification failed for servo {id} {register:?}: expected {value}, read {observed}; write acknowledgement: {timeout:?}"
+            )));
+        }
+        if timeout.is_some() {
+            eprintln!(
+                "oriond: servo {id} {register:?} write acknowledgement timed out; read-back confirmed {value}"
+            );
+        }
         Ok(())
     }
 
@@ -558,6 +590,8 @@ mod tests {
         states: BTreeMap<u8, Sts3215RawState>,
         register_writes: Vec<(u8, Register, i32)>,
         position_writes: Vec<BTreeMap<u8, i32>>,
+        timed_out_write: Option<(u8, Register, bool)>,
+        failed_readback: Option<(u8, Register)>,
     }
 
     impl FakeTransport {
@@ -611,6 +645,9 @@ mod tests {
         }
         fn read_register(&mut self, id: u8, register: Register) -> Result<i32> {
             self.calls.push("read_register".into());
+            if self.failed_readback == Some((id, register)) {
+                return Err(Error::Runtime("read-back unavailable".into()));
+            }
             self.registers
                 .get(&(id, register))
                 .copied()
@@ -619,6 +656,18 @@ mod tests {
         fn write_register(&mut self, id: u8, register: Register, value: i32) -> Result<()> {
             self.calls.push("write_register".into());
             self.register_writes.push((id, register, value));
+            if let Some((failed_id, failed_register, committed)) = self.timed_out_write {
+                if (id, register) == (failed_id, failed_register) {
+                    if committed {
+                        self.registers.insert((id, register), value);
+                    }
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "write acknowledgement timed out",
+                    )
+                    .into());
+                }
+            }
             self.registers.insert((id, register), value);
             Ok(())
         }
@@ -676,6 +725,104 @@ mod tests {
             .iter()
             .map(|(name, value)| ((*name).into(), *value))
             .collect()
+    }
+
+    #[test]
+    fn confirms_committed_configuration_after_a_write_acknowledgement_timeout() {
+        for register in [Register::MaximumAcceleration, Register::Acceleration] {
+            let mut transport = FakeTransport::default();
+            transport.add_servo(2, 3053);
+            transport.timed_out_write = Some((2, register, true));
+            let mut driver = Sts3215Driver::new(transport);
+            driver
+                .configure(
+                    "/dev/fake",
+                    1_000_000,
+                    vec![calibration("shoulder_pitch_joint", 2, 3415, -362, 818)],
+                )
+                .unwrap();
+            assert!(driver.profile_applied);
+            assert!(driver.read().is_ok());
+            assert_eq!(driver.transport.registers[&(2, register)], 254);
+            assert_eq!(
+                driver
+                    .transport
+                    .register_writes
+                    .iter()
+                    .filter(|(id, written, _)| *id == 2 && *written == register)
+                    .count(),
+                1
+            );
+            assert!(driver.transport.position_writes.is_empty());
+            assert!(
+                !driver
+                    .transport
+                    .calls
+                    .iter()
+                    .any(|call| call == "torque_on")
+            );
+            assert!(driver.transport.calls.contains(&"eeprom_lock".to_owned()));
+        }
+    }
+
+    #[test]
+    fn rejects_uncommitted_configuration_after_a_write_timeout_and_relocks_eeprom() {
+        let mut transport = FakeTransport::default();
+        transport.add_servo(2, 3053);
+        transport.timed_out_write = Some((2, Register::MaximumAcceleration, false));
+        let mut driver = Sts3215Driver::new(transport);
+        let error = driver
+            .configure(
+                "/dev/fake",
+                1_000_000,
+                vec![calibration("shoulder_pitch_joint", 2, 3415, -362, 818)],
+            )
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("servo 2 MaximumAcceleration"));
+        assert!(message.contains("expected 254, read 50"));
+        assert!(message.contains("write acknowledgement timed out"));
+        assert!(!driver.profile_applied);
+        assert!(!driver.transport.is_open());
+        assert!(driver.transport.calls.contains(&"eeprom_lock".to_owned()));
+        assert!(driver.transport.position_writes.is_empty());
+        assert!(
+            !driver
+                .transport
+                .calls
+                .iter()
+                .any(|call| call == "torque_on")
+        );
+    }
+
+    #[test]
+    fn a_timed_out_configuration_write_requires_available_readback() {
+        let mut transport = FakeTransport::default();
+        transport.add_servo(2, 3053);
+        let mut driver = Sts3215Driver::new(transport);
+        driver
+            .connect(
+                "/dev/fake",
+                1_000_000,
+                vec![calibration("shoulder_pitch_joint", 2, 3415, -362, 818)],
+            )
+            .unwrap();
+        driver.transport.timed_out_write = Some((2, Register::MaximumAcceleration, true));
+        driver.transport.failed_readback = Some((2, Register::MaximumAcceleration));
+        let error = Sts3215Driver::write_configuration_register(
+            &mut driver.transport,
+            2,
+            Register::MaximumAcceleration,
+            254,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("read-back unavailable"));
+        assert!(
+            error
+                .to_string()
+                .contains("write acknowledgement timed out")
+        );
+        assert!(!driver.profile_applied);
     }
 
     #[test]
