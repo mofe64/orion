@@ -1,32 +1,11 @@
-{
-  "format_version": 2,
-  "motion": {
-    "name": "delight_lift",
-    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
-    "space": "anchor_relative",
-    "style": "attentive",
-    "keyframes": [
-      {
-        "offsets": {
-          "head_pitch_joint": 0.012
-        },
-        "duration": 0.6,
-        "arrival": "through",
-        "marker": "acknowledge"
-      },
-      {
-        "offsets": {
-          "head_pitch_joint": -0.0048000000000000004
-        },
-        "duration": 0.6,
-        "arrival": "through"
-      },
-      {
-        "offsets": {},
-        "duration": 0.8,
-        "arrival": "settle"
-      }
-    ],
-    "return_to_anchor": true
-  }
-}
+format_version: 2
+motion:
+  name: delight_lift
+  description: Lift with restrained delight and settle in the open pose.
+  space: absolute
+  style: quick_reaction
+  keyframes:
+    - pose: delight
+      duration: 0.75
+      arrival: settle
+      marker: delight

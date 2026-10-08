@@ -1,36 +1,21 @@
-{
-  "format_version": 2,
-  "motion": {
-    "name": "idle_weight_shift",
-    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
-    "space": "anchor_relative",
-    "style": "attentive",
-    "keyframes": [
-      {
-        "offsets": {
-          "shoulder_pitch_joint": -0.008,
-          "elbow_pitch_joint": 0.008,
-          "head_pitch_joint": 0.008
-        },
-        "duration": 0.6,
-        "arrival": "through",
-        "marker": "acknowledge"
-      },
-      {
-        "offsets": {
-          "shoulder_pitch_joint": 0.0032,
-          "elbow_pitch_joint": -0.0032,
-          "head_pitch_joint": -0.0032
-        },
-        "duration": 0.6,
-        "arrival": "through"
-      },
-      {
-        "offsets": {},
-        "duration": 0.8,
-        "arrival": "settle"
-      }
-    ],
-    "return_to_anchor": true
-  }
-}
+format_version: 2
+motion:
+  name: idle_weight_shift
+  description: Coordinated base, shoulder, and elbow weight change.
+  space: anchor_relative
+  style: living_idle
+  return_to_anchor: true
+  keyframes:
+    - offsets: {base_yaw_joint: -0.014400, head_roll_joint: 0.009600}
+      duration: 0.0656
+      arrival: through
+      marker: idle_head_start
+    - offsets: {base_yaw_joint: -0.12, shoulder_pitch_joint: -0.090, elbow_pitch_joint: 0.11, head_roll_joint: 0.080}
+      duration: 0.9344
+      arrival: through
+    - offsets: {base_yaw_joint: -0.050, shoulder_pitch_joint: -0.040, elbow_pitch_joint: 0.050, head_roll_joint: 0.025}
+      duration: 0.8
+      arrival: through
+    - offsets: {}
+      duration: 1.0
+      arrival: settle

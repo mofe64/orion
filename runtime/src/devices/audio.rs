@@ -144,12 +144,6 @@ fn validate_wav_header(path: &Path) -> Result<()> {
 }
 
 pub fn configure_respeaker_v2_mixer(card_name: &str) -> Result<()> {
-    if card_name.trim().is_empty() {
-        return Err(Error::InvalidArgument(
-            "ALSA audio card name cannot be empty.".into(),
-        ));
-    }
-
     let settings: &[&[&str]] = &[
         &["sset", "PCM", "0dB"],
         &["sset", "Right DAC Mux", "DAC_R1"],
@@ -157,6 +151,27 @@ pub fn configure_respeaker_v2_mixer(card_name: &str) -> Result<()> {
         &["sset", "Line DAC", "0dB"],
         &["sset", "Line", "0dB", "unmute"],
     ];
+    apply_mixer_settings(card_name, "ReSpeaker", settings)
+}
+
+/// The XVF3800's USB playback controls default to -20 dB (40 of 60) on V2,
+/// which leaves Orion's speaker barely audible. Both PCM controls (the
+/// stereo stream and its mono mirror) are set to unity gain and unmuted.
+pub const XVF3800_MIXER_SETTINGS: &[&[&str]] = &[
+    &["sset", "PCM,0", "0dB", "unmute"],
+    &["sset", "PCM,1", "0dB", "unmute"],
+];
+
+pub fn configure_xvf3800_mixer(card_name: &str) -> Result<()> {
+    apply_mixer_settings(card_name, "XVF3800", XVF3800_MIXER_SETTINGS)
+}
+
+fn apply_mixer_settings(card_name: &str, device: &str, settings: &[&[&str]]) -> Result<()> {
+    if card_name.trim().is_empty() {
+        return Err(Error::InvalidArgument(
+            "ALSA audio card name cannot be empty.".into(),
+        ));
+    }
     for setting in settings {
         let output = Command::new(ORION_AMIXER_PATH)
             .args(["-q", "-c", card_name, "--"])
@@ -164,14 +179,14 @@ pub fn configure_respeaker_v2_mixer(card_name: &str) -> Result<()> {
             .output()
             .map_err(|error| {
                 Error::Runtime(format!(
-                    "Could not run ReSpeaker mixer command '{}': {error}",
+                    "Could not run {device} mixer command '{}': {error}",
                     ORION_AMIXER_PATH
                 ))
             })?;
         if !output.status.success() {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             return Err(Error::Runtime(format!(
-                "ReSpeaker mixer configuration failed for '{}': {}",
+                "{device} mixer configuration failed for '{}': {}",
                 setting[1],
                 if detail.is_empty() {
                     output.status.to_string()
@@ -509,6 +524,18 @@ impl AudioDevice for RecordingAudioDevice {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn xvf3800_playback_is_set_to_unity_gain_on_both_pcm_controls() {
+        assert_eq!(
+            XVF3800_MIXER_SETTINGS,
+            &[
+                &["sset", "PCM,0", "0dB", "unmute"][..],
+                &["sset", "PCM,1", "0dB", "unmute"][..],
+            ]
+        );
+        assert!(configure_xvf3800_mixer(" ").is_err());
+    }
 
     fn write_minimal_wav(path: &Path) {
         fs::write(path, b"RIFF\x04\x00\x00\x00WAVE").unwrap();

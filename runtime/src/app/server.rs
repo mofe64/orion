@@ -12,6 +12,7 @@ use crate::{
     Pi5NeoPixelDevice, PoseLibrary, RecordingAudioDevice, RecordingLightingDevice, Rgbw8,
     RuntimeCore, RuntimeDriver, RustypotTransport, SceneCoordinator, SceneLibrary, ScenePhase,
     SpeechCoordinator, Sts3215Driver, UnixCommandServer, configure_respeaker_v2_mixer,
+    configure_xvf3800_mixer,
 };
 
 use super::OBSERVE_PERIOD;
@@ -75,11 +76,16 @@ pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<R
     Ok(driver)
 }
 
+fn configure_mixer(options: &Options) -> crate::Result<()> {
+    match options.hardware {
+        crate::HardwareVersion::V1 => configure_respeaker_v2_mixer(&options.audio_card),
+        crate::HardwareVersion::V2 => configure_xvf3800_mixer(&options.audio_card),
+    }
+}
+
 pub(super) fn play_cue(options: &Options) -> crate::Result<i32> {
     let cues = CueLibrary::load(&options.audio_cues_directory)?;
-    if options.hardware == crate::HardwareVersion::V1 {
-        configure_respeaker_v2_mixer(&options.audio_card)?;
-    }
+    configure_mixer(options)?;
     let mut audio = AlsaAudioDevice::new(
         cues,
         &options.audio_pcm_device,
@@ -126,9 +132,7 @@ pub(super) fn serve(options: Options) -> crate::Result<i32> {
                 &options.lighting_device,
                 options.hardware.profile().lighting.pixel_count,
             )?);
-            if options.hardware == crate::HardwareVersion::V1 {
-                configure_respeaker_v2_mixer(&options.audio_card)?;
-            }
+            configure_mixer(&options)?;
             let audio = Box::new(AlsaAudioDevice::new(
                 cues,
                 &options.audio_pcm_device,

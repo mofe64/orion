@@ -29,7 +29,7 @@ pub use motion::{calibration, pose, style, trajectory};
 pub use audio::{
     AlsaAudioDevice, AudioCommand, AudioDevice, CueLibrary, ORION_AMIXER_PATH, ORION_APLAY_PATH,
     ORION_AUDIO_CARD, ORION_AUDIO_PCM_DEVICE, RecordingAudioDevice, UnavailableAudioDevice,
-    configure_respeaker_v2_mixer,
+    XVF3800_MIXER_SETTINGS, configure_respeaker_v2_mixer, configure_xvf3800_mixer,
 };
 pub use calibration::{JointCalibration, load_calibration_file};
 pub use character::{CharacterCoordinator, CharacterState, CharacterStatus, NextIdleCategory};

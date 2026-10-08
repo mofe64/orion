@@ -1,34 +1,21 @@
-{
-  "format_version": 2,
-  "motion": {
-    "name": "attention_left",
-    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
-    "space": "anchor_relative",
-    "style": "attentive",
-    "keyframes": [
-      {
-        "offsets": {
-          "base_yaw_joint": -0.12,
-          "head_roll_joint": -0.02
-        },
-        "duration": 0.6,
-        "arrival": "through",
-        "marker": "acknowledge"
-      },
-      {
-        "offsets": {
-          "base_yaw_joint": 0.048,
-          "head_roll_joint": 0.008
-        },
-        "duration": 0.6,
-        "arrival": "through"
-      },
-      {
-        "offsets": {},
-        "duration": 0.8,
-        "arrival": "settle"
-      }
-    ],
-    "return_to_anchor": true
-  }
-}
+format_version: 2
+motion:
+  name: attention_left
+  description: A small grounded turn toward the confirmed speaker on the left.
+  space: absolute
+  style: expressive_turn
+  keyframes:
+    - pose: attention_left_anticipation
+      duration: 0.22
+      arrival: through
+    - pose: attention_left_lean
+      duration: 0.42
+      arrival: through
+      marker: notice
+    - pose: attention_left_overshoot
+      duration: 0.28
+      arrival: through
+    - pose: attention_left
+      duration: 0.38
+      arrival: settle
+      marker: settled

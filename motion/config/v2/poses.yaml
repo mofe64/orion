@@ -17,54 +17,54 @@ poses:
       head_pitch_joint: -0.01380583
     idle_profile: home
   attentive:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attentive offsets from home applied to the captured V2 home and kept 0.03
+      rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0475534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1196505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.252447
+      shoulder_pitch_joint: -0.029437
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: -0.53035
+      head_pitch_joint: 0.066194
     idle_profile: attentive
   thinking:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 thinking offsets from home applied to the captured V2 home and kept 0.03
+      rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0475534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1196505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.112447
+      shoulder_pitch_joint: -0.109437
+      elbow_pitch_joint: 0.072786
+      head_roll_joint: -0.26035
+      head_pitch_joint: 0.006194
   curious:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 curious offsets from home applied to the captured V2 home and kept 0.03
+      rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0475534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1196505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.227553
+      shoulder_pitch_joint: 0.030563
+      elbow_pitch_joint: -0.087214
+      head_roll_joint: 0.29965
+      head_pitch_joint: 0.146194
   delight:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 delight offsets from home applied to the captured V2 home and kept 0.03
+      rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0475534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1196505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.047553
+      shoulder_pitch_joint: 0.230563
+      elbow_pitch_joint: -0.167214
+      head_roll_joint: 0.119651
+      head_pitch_joint: 0.246194
   rest:
     description: Captured torque-free mechanical rest on 2026-10-07.
     tags:
@@ -89,198 +89,198 @@ poses:
       head_roll_joint: 0.0
       head_pitch_joint: 0.0
   look_left:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_left offsets from home applied to the captured V2 home and kept 0.03
+      rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.3024466
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.0776505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -1.180447
+      shoulder_pitch_joint: -0.029437
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: -0.53035
+      head_pitch_joint: 0.066194
     idle_profile: directional
   look_left_anticipation:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_left_anticipation offsets from home applied to the captured V2 home
+      and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0775534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1232505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.127553
+      shoulder_pitch_joint: 0.030563
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: -0.40035
+      head_pitch_joint: 0.086194
   look_left_lean:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_left_lean offsets from home applied to the captured V2 home and kept
+      0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.1724466
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.0932505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.830447
+      shoulder_pitch_joint: -0.109437
+      elbow_pitch_joint: 0.072786
+      head_roll_joint: -0.641884
+      head_pitch_joint: 0.026194
   look_left_overshoot:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_left_overshoot offsets from home applied to the captured V2 home
+      and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.3224466
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.0752505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -1.260447
+      shoulder_pitch_joint: -0.069437
+      elbow_pitch_joint: 0.022786
+      head_roll_joint: -0.590349
+      head_pitch_joint: 0.056194
   attention_left:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_left offsets from home applied to the captured V2 home and kept
+      0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.3024466
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.0776505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.302447
+      shoulder_pitch_joint: 0.055563
+      elbow_pitch_joint: -0.027214
+      head_roll_joint: 0.069651
+      head_pitch_joint: 0.026194
     idle_profile: directional
   attention_left_anticipation:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_left_anticipation offsets from home applied to the captured
+      V2 home and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0775534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1232505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.072553
+      shoulder_pitch_joint: 0.045563
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: 0.144651
+      head_pitch_joint: 0.006194
   attention_left_lean:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_left_lean offsets from home applied to the captured V2 home
+      and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.1724466
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.0932505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.222447
+      shoulder_pitch_joint: 0.025563
+      elbow_pitch_joint: 0.002786
+      head_roll_joint: 0.074651
+      head_pitch_joint: 0.036194
   attention_left_overshoot:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_left_overshoot offsets from home applied to the captured V2
+      home and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.3224466
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.0752505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.332447
+      shoulder_pitch_joint: 0.045563
+      elbow_pitch_joint: -0.017214
+      head_roll_joint: 0.054651
+      head_pitch_joint: 0.031194
   look_right:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_right offsets from home applied to the captured V2 home and kept
+      0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.3975534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1616505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 1.460117
+      shoulder_pitch_joint: -0.029437
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: -0.53035
+      head_pitch_joint: 0.066194
     idle_profile: directional
   look_right_anticipation:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_right_anticipation offsets from home applied to the captured V2 home
+      and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0175534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1160505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: -0.032447
+      shoulder_pitch_joint: 0.030563
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: -0.641884
+      head_pitch_joint: 0.086194
   look_right_lean:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_right_lean offsets from home applied to the captured V2 home and
+      kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.2675534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1460505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 1.237553
+      shoulder_pitch_joint: -0.109437
+      elbow_pitch_joint: 0.072786
+      head_roll_joint: -0.41035
+      head_pitch_joint: 0.026194
   look_right_overshoot:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 look_right_overshoot offsets from home applied to the captured V2 home
+      and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.4175534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1640505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 1.510117
+      shoulder_pitch_joint: -0.069437
+      elbow_pitch_joint: 0.022786
+      head_roll_joint: -0.470349
+      head_pitch_joint: 0.056194
   attention_right:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_right offsets from home applied to the captured V2 home and
+      kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.3975534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1616505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.397553
+      shoulder_pitch_joint: 0.055563
+      elbow_pitch_joint: -0.027214
+      head_roll_joint: 0.169651
+      head_pitch_joint: 0.026194
     idle_profile: directional
   attention_right_anticipation:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_right_anticipation offsets from home applied to the captured
+      V2 home and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0175534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1160505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.022553
+      shoulder_pitch_joint: 0.045563
+      elbow_pitch_joint: -0.007214
+      head_roll_joint: 0.09465
+      head_pitch_joint: 0.006194
   attention_right_lean:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_right_lean offsets from home applied to the captured V2 home
+      and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.2675534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1460505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.317553
+      shoulder_pitch_joint: 0.025563
+      elbow_pitch_joint: 0.002786
+      head_roll_joint: 0.164651
+      head_pitch_joint: 0.036194
   attention_right_overshoot:
-    description: V2 motion preview relative to captured physical home; hardware playback
-      unverified.
+    description: V1 attention_right_overshoot offsets from home applied to the captured V2
+      home and kept 0.03 rad inside the V2 calibrated range; hardware playback unverified.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.4175534
-      shoulder_pitch_joint: 0.07056312
-      elbow_pitch_joint: -0.0322136
-      head_roll_joint: 0.1640505
-      head_pitch_joint: -0.01380583
+      base_yaw_joint: 0.427553
+      shoulder_pitch_joint: 0.045563
+      elbow_pitch_joint: -0.017214
+      head_roll_joint: 0.18465
+      head_pitch_joint: 0.031194

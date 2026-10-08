@@ -1,32 +1,21 @@
-{
-  "format_version": 2,
-  "motion": {
-    "name": "disagree_soft",
-    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
-    "space": "anchor_relative",
-    "style": "attentive",
-    "keyframes": [
-      {
-        "offsets": {
-          "head_pitch_joint": 0.012
-        },
-        "duration": 0.6,
-        "arrival": "through",
-        "marker": "acknowledge"
-      },
-      {
-        "offsets": {
-          "head_pitch_joint": -0.0048000000000000004
-        },
-        "duration": 0.6,
-        "arrival": "through"
-      },
-      {
-        "offsets": {},
-        "duration": 0.8,
-        "arrival": "settle"
-      }
-    ],
-    "return_to_anchor": true
-  }
-}
+format_version: 2
+motion:
+  name: disagree_soft
+  description: A small asymmetric no gesture without agitation.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {base_yaw_joint: -0.065, head_roll_joint: 0.035}
+      duration: 0.22
+      arrival: through
+      marker: disagree
+    - offsets: {base_yaw_joint: 0.075, head_roll_joint: -0.028}
+      duration: 0.28
+      arrival: through
+    - offsets: {base_yaw_joint: -0.025}
+      duration: 0.22
+      arrival: through
+    - offsets: {}
+      duration: 0.28
+      arrival: settle

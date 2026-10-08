@@ -1,32 +1,17 @@
-{
-  "format_version": 2,
-  "motion": {
-    "name": "idle_head_curiosity",
-    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
-    "space": "anchor_relative",
-    "style": "attentive",
-    "keyframes": [
-      {
-        "offsets": {
-          "head_pitch_joint": 0.012
-        },
-        "duration": 0.6,
-        "arrival": "through",
-        "marker": "acknowledge"
-      },
-      {
-        "offsets": {
-          "head_pitch_joint": -0.0048000000000000004
-        },
-        "duration": 0.6,
-        "arrival": "through"
-      },
-      {
-        "offsets": {},
-        "duration": 0.8,
-        "arrival": "settle"
-      }
-    ],
-    "return_to_anchor": true
-  }
-}
+format_version: 2
+motion:
+  name: idle_head_curiosity
+  description: Gentle pitch and roll examination around the anchor.
+  space: anchor_relative
+  style: living_idle
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_roll_joint: 0.11, head_pitch_joint: 0.080}
+      duration: 0.75
+      arrival: through
+    - offsets: {head_roll_joint: 0.050, head_pitch_joint: -0.040}
+      duration: 0.65
+      arrival: through
+    - offsets: {}
+      duration: 0.85
+      arrival: settle

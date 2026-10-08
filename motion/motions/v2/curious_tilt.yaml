@@ -1,32 +1,11 @@
-{
-  "format_version": 2,
-  "motion": {
-    "name": "curious_tilt",
-    "description": "V2 initial motion candidate; adapt and test with the captured V2 calibration before hardware playback.",
-    "space": "anchor_relative",
-    "style": "attentive",
-    "keyframes": [
-      {
-        "offsets": {
-          "head_pitch_joint": 0.012
-        },
-        "duration": 0.6,
-        "arrival": "through",
-        "marker": "acknowledge"
-      },
-      {
-        "offsets": {
-          "head_pitch_joint": -0.0048000000000000004
-        },
-        "duration": 0.6,
-        "arrival": "through"
-      },
-      {
-        "offsets": {},
-        "duration": 0.8,
-        "arrival": "settle"
-      }
-    ],
-    "return_to_anchor": true
-  }
-}
+format_version: 2
+motion:
+  name: curious_tilt
+  description: Open into a curious examining silhouette.
+  space: absolute
+  style: thinking
+  keyframes:
+    - pose: curious
+      duration: 0.95
+      arrival: settle
+      marker: notice
