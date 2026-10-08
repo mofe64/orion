@@ -106,6 +106,78 @@ It works without a connected coordinator and does not send alarm audio to ASR.
 Microphone mute still closes capture. The runtime enforces the five-minute sound
 limit independently.
 
+## Measure the XVF3800 on V2
+
+`orion_voice.xvf_measure` records every USB capture channel while it polls the
+board's beam azimuths, per-beam speech energy and AEC convergence over the USB
+control interface (vendor `2886`, product `001a`). With `--play` it plays a WAV
+through the same card, so the board's echo canceller receives it as the far end,
+exactly as `oriond` playback does. It only reads board parameters; it never
+changes them.
+
+One-time access to the control interface for the service user (log out and in
+again if `plugdev` was just added):
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="001a", MODE="0660", GROUP="plugdev"' \
+  | sudo tee /etc/udev/rules.d/60-orion-xvf3800.rules
+sudo udevadm control --reload && sudo udevadm trigger
+groups | grep -w plugdev
+```
+
+The listener holds the capture device, so stop it for the session and start it
+again afterwards:
+
+```bash
+sudo systemctl stop orion-listener
+# ... trials ...
+sudo systemctl start orion-listener
+```
+
+Make a reply WAV in Orion's voice. Include “Orion” so self-triggers show up:
+
+```bash
+ORION_PIPER_MODEL_DIR=$HOME/.local/share/orion/voice-stack/models/piper-alba-medium \
+PYTHONPATH=speech speech/.venv/bin/python - <<'PY'
+import wave
+from orion_speech_worker.piper import PiperAlbaSynthesizer
+text = ("Orion here. The kettle takes about three minutes, so you have time to find a mug. "
+        "If you want, Orion can set a timer while you wait, and remind you when it is done.")
+pcm = b"".join(chunk.pcm for chunk in PiperAlbaSynthesizer("piper-alba-medium").stream(text))
+with wave.open("/tmp/orion-reply.wav", "wb") as out:
+    out.setnchannels(1); out.setsampwidth(2); out.setframerate(24000); out.writeframes(pcm)
+PY
+```
+
+The tool needs `pyusb`, which the voice environment gains on the next deploy.
+Run trials from the `voice` folder. Trials land in `~/orion-measurements/`:
+
+```bash
+cd voice
+M=".venv/bin/python -m orion_voice.xvf_measure"
+$M record --label echo-quiet --play /tmp/orion-reply.wav          # nobody speaks
+$M record --label echo-moving --play /tmp/orion-reply.wav                       # run a motion from Studio meanwhile
+$M record --label barge-1m --play /tmp/orion-reply.wav --expected-azimuth 0     # say “Hey Orion” twice over the reply from 1 m
+$M record --label barge-2m-moving --play /tmp/orion-reply.wav --expected-azimuth 0
+$M record --label dir-090 --seconds 8 --expected-azimuth 90                     # say “Hey Orion” three times from that position
+```
+
+`--expected-azimuth` is the speaker's position in degrees, counter-clockwise from
+the lamp's front seen from above. Repeat the direction trial every 45° (0, 45, …,
+315) at about 1.5 m. Then summarise everything:
+
+```bash
+$M analyze ~/orion-measurements/* --json ~/orion-measurements/summary.json
+```
+
+The summary reports, per trial, the level of channel 0 (conference) and channel
+1 (ASR) before, during and after playback, how quickly `AEC_AECCONVERGED` reached
+1, Rustpotter hits per channel (marked when they fall inside playback) at the
+service threshold of 0.35, and the auto-select beam's azimuth while the board
+reports speech. Across direction trials it fits the board's mounting offset and
+rotation sense, and prints the worst error after that fit. With the six-channel
+firmware it also reports echo reduction against the raw microphones.
+
 ## Validation
 
 With a prepared listener environment, run from the repository root:

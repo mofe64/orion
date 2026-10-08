@@ -56,6 +56,7 @@ dependencies = [
     { name = "numpy" },
     { name = "onnxruntime", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "orion-rustpotter" },
+    { name = "pyusb" },
     { name = "websockets" },
 ]
 
@@ -64,6 +65,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "onnxruntime", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = "==1.30.0" },
     { name = "orion-rustpotter", editable = "rustpotter_native" },
+    { name = "pyusb", specifier = ">=1.2,<2" },
     { name = "websockets", specifier = ">=14.2,<16" },
 ]
 
@@ -84,6 +86,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/86/73/f66c748df06e7fe24
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6e/08/9f9548793c771095245c0eeaf0c84b76b16a5ef26158043d456f551344a0/protobuf-7.36.1-cp310-abi3-manylinux2014_aarch64.whl", hash = "sha256:43d3d37b1eb24c113b9b7d02008cac44e423f00b611b7781ae998d7623972969", size = 344226, upload-time = "2026-08-31T22:39:58.263Z" },
     { url = "https://files.pythonhosted.org/packages/39/ca/c47f91d3cab175b01fd8c4f0d80fdf8613be876cc616e66ad281a59c5ddf/protobuf-7.36.1-py3-none-any.whl", hash = "sha256:7d951e46b3f963d6c264c367c437921de9d5aedd9c3f9612b9077736b4e3ad5c", size = 179813, upload-time = "2026-08-31T22:40:03.54Z" },
+]
+
+[[package]]
+name = "pyusb"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/6b/ce3727395e52b7b76dfcf0c665e37d223b680b9becc60710d4bc08b7b7cb/pyusb-1.3.1.tar.gz", hash = "sha256:3af070b607467c1c164f49d5b0caabe8ac78dbed9298d703a8dbf9df4052d17e", size = 77281, upload-time = "2025-01-08T23:45:01.866Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/b8/27e6312e86408a44fe16bd28ee12dd98608b39f7e7e57884a24e8f29b573/pyusb-1.3.1-py3-none-any.whl", hash = "sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430", size = 58465, upload-time = "2025-01-08T23:45:00.029Z" },
 ]
 
 [[package]]
