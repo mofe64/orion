@@ -49,7 +49,9 @@ class HardwareDeploymentTests(unittest.TestCase):
             self.assertIn('Requires=orion-neopixel-pin.service', plan[units / 'oriond.service'])
             self.assertNotIn('ExecStartPre=', plan[units / 'oriond.service'])
 
-    def test_v2_smoke_checks_lights_and_audio_before_settling_or_torque(self):
+    def test_v2_smoke_rests_before_any_scene_because_character_mode_starts_at_boot(self):
+        # The runtime rejects scenes while character startup is moving home, so
+        # the first smoke action must be the character rest.
         with tempfile.TemporaryDirectory() as directory:
             release = Path(directory); (release / 'release.json').write_text('{"revision":"test","hardware":"v2"}')
             system = System(); system.wait_runtime_client = Mock(return_value=(['client'], {}))
@@ -58,8 +60,9 @@ class HardwareDeploymentTests(unittest.TestCase):
             system.run = Mock(side_effect=lambda *args, **kwargs: events.append(args) or Mock(stdout='{"mode":"configured"}'))
             system.stop_playback = Mock()
             system.smoke_runtime(release)
-            self.assertEqual(events[0], ('client', '--run-scene', 'deployment_smoke', '--wait'))
-            self.assertEqual(events[1], 'rest')
+            self.assertEqual(events[0], 'rest')
+            self.assertIn(('client', '--goto', 'home', '--duration', '3.0', '--wait'), events)
+            self.assertIn(('client', '--run-scene', 'deployment_smoke', '--wait'), events)
 
     def test_v2_release_validation_reads_incoming_repository_pose_file(self):
         with tempfile.TemporaryDirectory() as directory:

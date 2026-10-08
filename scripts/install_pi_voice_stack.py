@@ -228,10 +228,6 @@ class System:
     def smoke_runtime(self, release, timeout=20):
         metadata = json.loads((release / 'release.json').read_text())
         client, status = self.wait_runtime_client(metadata['revision'], timeout)
-        if metadata.get('hardware', 'v1') == 'v2':
-            # No torque/configure/pose command precedes the light/audio-only scene.
-            print('V2 smoke: checking lights and audio before any calibrated motion.', flush=True)
-            self.run(*client, '--run-scene', 'deployment_smoke', '--wait', timeout=60)
         print('Confirming the new runtime is at rest before physical smoke playback.', flush=True)
         self.settle_runtime(client)
         failure = None

@@ -104,9 +104,9 @@ What the deploy does:
 4. Stops the voice services, moves the arm to rest and confirms torque is off,
    then stops the runtime.
 5. Updates service files and built-in YAML, starts the new runtime and runs the
-   physical smoke test: lights and audio, `home` (V2) or `zero_reference` (V1),
-   `acknowledge_left`, `acknowledge_right`, `return_home`, then rest with lights
-   and torque off. Each step waits for measured completion.
+   physical smoke test: rest, `home` (V2) or `zero_reference` (V1), the
+   `deployment_smoke` light and audio check, `acknowledge_left`,
+   `acknowledge_right`, `return_home`, then rest with lights and torque off. Each step waits for measured completion.
 6. Starts the voice and Studio services and waits up to three minutes for them
    to report ready.
 
