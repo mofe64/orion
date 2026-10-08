@@ -112,15 +112,13 @@ sudo groupadd -f gpio
 sudo usermod -aG gpio "$USER"
 ```
 
-Clone the official Pi 5 branch and build its device-tree overlay. DKMS builds
-the driver itself:
+Clone the official Pi 5 branch. The installer builds the driver through DKMS
+and compiles the device-tree overlay itself:
 
 ```bash
 cd ~/dev
 git clone --branch pi5 --single-branch \
   https://github.com/jgarff/rpi_ws281x.git
-cd ~/dev/rpi_ws281x/rp1_ws281x_pwm
-./dts.sh
 ```
 
 Install Orion's persistent configuration from the Orion checkout:
@@ -136,9 +134,15 @@ The installer performs six persistent operations:
 1. Registers the driver source with DKMS as `rp1_ws281x_pwm/orion1` under
    `/usr/src/rp1_ws281x_pwm-orion1/`, then builds and installs it for the
    running kernel. When the package manager installs a new kernel, DKMS
-   builds the driver for it before that kernel boots.
-2. Installs `rp1_ws281x_pwm.dtbo` into the Pi boot overlay directory and adds
-   `dtoverlay=rp1_ws281x_pwm` to `config.txt`.
+   builds the driver for it before that kernel boots. The registered copy
+   selects the platform driver's `remove` field by kernel version, because
+   upstream targets kernel 6.11 and later and Ubuntu's 6.8 kernel rejects it.
+2. Compiles `rp1_ws281x_pwm.dtbo` from the upstream overlay source, installs it
+   into the Pi boot overlay directory, and adds `dtoverlay=rp1_ws281x_pwm` to
+   `config.txt`. The overlay targets the RP1 node found in the running device
+   tree, by its `rp1` label when the base tree provides one. Kernel releases
+   name that node differently, and the firmware skips an overlay whose target
+   is missing, leaving the module loaded without `/dev/ws281x_pwm`.
 3. Configures `rp1_ws281x_pwm` to use PWM channel 0 through
    `/etc/modprobe.d/orion-neopixel.conf`.
 4. Loads the module at boot through
