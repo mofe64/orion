@@ -190,7 +190,9 @@ Playback never uses the ASR-prefix fallback to authorize an interruption. Withou
 a healthy verifier, and on V1, playback wake detection stays off. Alarm dismissal
 runs first and consumes its wake phrase without starting a command.
 
-The coordinator reads the interruption reason. Barge-in signals a per-response
+The coordinator reads the interruption reason. Barge-in during an active session
+outside the responding phase is logged and ignored, preserving the session and
+Pi connection. Accepted barge-in signals a per-response
 stop token: final TTS, uploads, playback polling and search acknowledgement speech
 stop, and the gateway cancels the active speech run. Remaining speech text is
 consumed without synthesis. The response job keeps its agent reply channel open

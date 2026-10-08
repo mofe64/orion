@@ -390,8 +390,13 @@ async fn connected(
                             let reason = message["reason"].as_str().ok_or("Interruption needs a reason")?;
                             match reason {
                                 "barge_in" => {
-                                    if session.as_ref().is_some_and(|s| s.phase != Phase::Responding) {
-                                        return Err("Barge-in requires a responding session".into());
+                                    if let Some(current) = session.as_ref()
+                                        && current.phase != Phase::Responding
+                                    {
+                                        eprintln!("{}", json!({"event":"voice.barge_in_ignored",
+                                            "session_id":sid, "phase":format!("{:?}", current.phase),
+                                            "reason":"session_not_responding"}));
+                                        continue;
                                     }
                                     if let Some(interrupt) = response_stop.take() { let _ = interrupt.send(true); }
                                     let mut interrupted_jobs = std::mem::take(&mut jobs);

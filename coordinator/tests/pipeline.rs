@@ -843,6 +843,42 @@ async fn alarm_interrupt_retires_playback_and_accepts_a_later_wake() {
 }
 
 #[tokio::test]
+async fn barge_in_outside_responding_preserves_the_pi_connection_and_session() {
+    let mut h = Harness::new().await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    until(&mut h.observer, "wake.candidate").await;
+    // A late interruption during wake capture must leave the session usable.
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
+    )
+    .await;
+    h.utterance(SID, "wake_and_command", "Hey Orion").await;
+    let confirmed = until(&mut h.pi, "wake.confirmed").await;
+    assert_eq!(confirmed["sessionId"], SID);
+    assert_eq!(confirmed["followup"], true);
+    until(&mut h.observer, "command.started").await;
+    // The same rule applies while capturing the command after a bare wake.
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
+    )
+    .await;
+    h.utterance(SID, "command", "hello after ignored interruption")
+        .await;
+    let answer = until(&mut h.observer, "agent.response").await;
+    assert_eq!(answer["sessionId"], SID);
+    assert_eq!(answer["text"], "Reply 1: hello after ignored interruption");
+    assert_eq!(until(&mut h.pi, "session.finish").await["sessionId"], SID);
+    assert!(h.gateway.lock().await.cancellations.is_empty());
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn barge_in_stops_speech_preserves_the_running_agent_and_queues_the_next_command() {
     let mut h = Harness::new().await;
     let conversation = h.agent.handle().info().await.unwrap().conversation_id;
