@@ -8,7 +8,6 @@ from pi_hardware import profile, release_hardware
 
 SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack')
 STOP_ORDER = tuple(reversed(SERVICES))
-TRAINED_WAKE_MODEL = 'hey_orion_trained_080.rpw'
 REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 # The reference model proposes candidates for the packaged acoustic verifier
 # (voice/models/verifier); the trained model remains packaged for comparison.
@@ -97,8 +96,7 @@ def listener_start(start, release):
     except ValueError:
         threshold = None
     managed = ((model is None and (threshold == 0.35 or threshold_flag is None)) or
-               (model == REFERENCE_WAKE_MODEL and threshold == 0.35) or
-               (model == TRAINED_WAKE_MODEL and threshold == 0.80))
+               (model == REFERENCE_WAKE_MODEL and threshold == 0.35))
     if managed:
         wanted_model = f'{release}/voice/models/wake/{ACTIVE_WAKE_MODEL}'
         if threshold_flag:
@@ -174,7 +172,9 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                     start = set_option(start, '--audio-card', selected['audio']['card'])
                     start = set_option(start, '--audio-device', selected['audio']['pcm'])
                     if hardware == 'v2':
-                        start = set_option(start, '--character-on-start', 'off')
+                        # Commissioned V2 boots into character mode like V1. Earlier
+                        # releases wrote 'off' into the unit, so replace it explicitly.
+                        start = set_option(start, '--character-on-start', 'on')
                 if name == 'orion-listener':
                     start = set_option(start, '--device', selected['audio']['pcm'])
                     if hardware == 'v2':
@@ -233,22 +233,9 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         'ORION_STUDIO_VOICE_PYTHON': str(release / 'speech/.venv/bin/python'),
         'ORION_RELEASE_REVISION': metadata.get('revision', release.name),
         'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
-        **({'ORION_STUDIO_CODEX_BIN': defaults['ORION_STUDIO_CODEX_BIN']}
-           if previous_env.get('ORION_STUDIO_CODEX_BIN') == str(root / 'codex-0.154.0/bin/codex') else {}),
         # This override may already be present in a customized EnvironmentFile.
         **({'ORION_PROJECT_ROOT': str(release)} if 'ORION_PROJECT_ROOT' in previous_env else {}),
     })
-    settings_path = home / '.config/orion/voice-settings.json'
-    if settings_path.is_symlink():
-        raise ValueError(f'Inspect symlinked voice settings before deployment: {settings_path}')
-    if settings_path.exists():
-        settings = json.loads(settings_path.read_text())
-        if not isinstance(settings, dict):
-            raise ValueError('Voice settings must be a JSON object')
-        field = 'model' if 'model' in settings else 'agent_model'
-        if settings.get(field) == 'gpt-5.6-sol':
-            settings[field] = 'gpt-6-luna'
-            files[settings_path] = json.dumps(settings, indent=2) + '\n'
     files[home / '.config/orion/hardware'] = hardware + '\n'
     files[home / '.local/share/orion/studio-service/installed'] = str(release) + '\n'
     return files

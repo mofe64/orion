@@ -85,21 +85,6 @@ rest lifecycle. If a recording
 ends early, inspect the VAD configuration, capture gain and endpoint reason before
 changing the ASR model.
 
-## Upgrade from legacy Pi voice
-
-Older checkouts may contain Sherpa or Moonshine workers. The retirement
-helper stops matching legacy workers and archives recognized models while keeping
-the Rustpotter reference. Run it only when migrating one of those installations:
-
-```bash
-python3 scripts/retire_pi_voice.py "$PWD" \
-  --backup "$HOME/.local/share/orion/backups/legacy-voice-$(date +%Y%m%d-%H%M%S)"
-```
-
-The standalone `scripts/install_pi_voice.sh` supports older listener-only setups.
-It refuses to update an installed onboard voice stack. Ordinary full-stack
-updates use the release deployment path.
-
 ## Intermediate tool speech
 
 The listener advertises `toolFeedback: true`. After search acknowledgement plays,

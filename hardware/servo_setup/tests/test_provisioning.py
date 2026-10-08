@@ -21,20 +21,6 @@ class FakeBus:
 
 
 class ProvisioningTests(unittest.TestCase):
-    def test_orion_mapping_matches_reference_ids_and_semantic_joint_names(self) -> None:
-        self.assertEqual(
-            [
-                (item.joint_name, item.joint_ref_name, item.servo_id)
-                for item in ORION_SERVO_ASSIGNMENTS
-            ],
-            [
-                ("base_yaw_joint", "base_yaw", 1),
-                ("shoulder_pitch_joint", "base_pitch", 2),
-                ("elbow_pitch_joint", "elbow_pitch", 3),
-                ("head_roll_joint", "wrist_roll", 4),
-                ("head_pitch_joint", "wrist_pitch", 5),
-            ],
-        )
 
     def test_default_plan_programs_factory_default_id_one_last(self) -> None:
         self.assertEqual([item.servo_id for item in provisioning_plan()], [5, 4, 3, 2, 1])

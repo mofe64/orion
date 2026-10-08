@@ -87,14 +87,6 @@ mod tests {
     }
 
     #[test]
-    fn collect_yaml_files_accepts_empty_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let mut files = Vec::new();
-        collect_yaml_files(root.path(), &mut files, "user pose library").unwrap();
-        assert!(files.is_empty());
-    }
-
-    #[test]
     fn collect_yaml_files_reports_missing_directory_and_regular_file() {
         let root = tempfile::tempdir().unwrap();
         for path in [

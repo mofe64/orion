@@ -69,19 +69,6 @@ class CatalogTests(Fixture):
         (self.release / self.added.relative_to(self.project)).unlink()
         self.assertIsNone(self.assets()[self.added])
 
-    def test_previous_unversioned_builtin_inventory_is_retired(self):
-        old_paths = ['motion/config/poses.yaml', 'motion/motions/functional/return_home.yaml',
-                     'scenes/return_home.yaml', 'hardware/v2/poses.yaml']
-        manifest = self.root / 'catalog-assets.json'
-        manifest.write_text(json.dumps({'project': str(self.project), 'paths': old_paths}))
-        for relative in old_paths:
-            self.write(self.project / relative, 'old built-in\n')
-        assets = self.assets()
-        for relative in old_paths:
-            self.assertIsNone(assets[self.project / relative])
-        self.assertEqual(assets[self.pose], 'release YAML\n')
-        self.assertFalse(set(old_paths) & set(json.loads(assets[manifest])['paths']))
-
     def test_both_versions_are_deployed_without_publishing_user_assets(self):
         for relative in ('motion/config/v2/poses.yaml', 'motion/motions/v2/nod.yaml',
                          'scenes/v2/return_home.yaml'):
@@ -90,35 +77,6 @@ class CatalogTests(Fixture):
         for relative in ('motion/motions/v2/user/custom.yaml', 'scenes/v2/user/custom.yaml'):
             self.write(self.release / relative, 'user YAML\n')
             self.assertNotIn(self.project / relative, self.assets())
-
-    def test_legacy_user_assets_move_to_their_version_and_rollback_restores_them(self):
-        moves = (('motion/user/poses/custom.yaml', 'motion/user/poses/v1/custom.yaml'),
-                 ('motion/motions/user/custom.yaml', 'motion/motions/v1/user/custom.yaml'),
-                 ('scenes/user/custom.yaml', 'scenes/v1/user/custom.yaml'),
-                 ('hardware/v2/user/poses/custom.yaml', 'motion/user/poses/v2/custom.yaml'),
-                 ('hardware/v2/motions/user/custom.yaml', 'motion/motions/v2/user/custom.yaml'),
-                 ('hardware/v2/scenes/user/custom.yaml', 'scenes/v2/user/custom.yaml'))
-        for old, new in moves:
-            self.write(self.project / old, 'operator content\n')
-            assets = self.assets()
-            self.assertIsNone(assets[self.project / old])
-            self.assertEqual(assets[self.project / new], 'operator content\n')
-            self.assertTrue((self.project / old).exists())
-        self.installed_units()
-        system = FakeSystem(self.units)
-        installer.activate(self.root, self.release, self.home,
-                           {**self.plan(), **self.assets()}, system)
-        for old, new in moves:
-            self.assertFalse((self.project / old).exists())
-            self.assertEqual((self.project / new).read_text(), 'operator content\n')
-        installer.rollback(self.root, system)
-        for old, _ in moves:
-            self.assertEqual((self.project / old).read_text(), 'operator content\n')
-
-    def test_user_asset_move_rejects_conflicting_destination(self):
-        self.write(self.project / 'scenes/user/custom.yaml', 'different legacy content\n')
-        with self.assertRaisesRegex(ValueError, 'already exists at versioned location'):
-            self.assets()
 
     def test_invalid_inventory_and_symlinked_destinations_are_rejected(self):
         manifest = self.root / 'catalog-assets.json'

@@ -100,15 +100,6 @@ class ConfigurationTests(Fixture):
         self.assertIn(str(self.release / 'voice/models/wake/hey_orion_reference.rpw'), result)
         self.assertNotIn('--no-verifier', result)
 
-    def test_managed_listener_migrates_trained_profile_to_reference(self):
-        self.installed_units()
-        path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
-        self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --wake-model /old/release/voice/models/wake/hey_orion_trained_080.rpw --threshold 0.80 --host 0.0.0.0\n')
-        result = self.plan()[path]
-        self.assertIn('--threshold 0.35', result)
-        self.assertIn(str(self.release / 'voice/models/wake/hey_orion_reference.rpw'), result)
-        self.assertNotIn('hey_orion_trained_080.rpw', result)
-
     def test_non_numeric_operator_threshold_is_preserved(self):
         self.installed_units()
         path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
@@ -116,16 +107,6 @@ class ConfigurationTests(Fixture):
         result = self.plan()[path]
         self.assertIn('--threshold ${ORION_THRESHOLD}', result)
         self.assertIn('hey_orion_reference.rpw', result)
-
-    def test_saved_default_agent_and_codex_runtime_migrate_transactionally(self):
-        self.env.write_text(f'ORION_STUDIO_CODEX_BIN="{self.root}/codex-0.154.0/bin/codex"\n')
-        settings = self.env.parent / 'voice-settings.json'
-        self.write(settings, '{"model":"gpt-5.6-sol","effort":"medium","ttsModel":"piper-alba-medium"}')
-        plan = self.plan()
-        self.assertEqual(json.loads(plan[settings])['model'], 'gpt-6-luna')
-        self.assertEqual(json.loads(plan[settings])['effort'], 'medium')
-        self.assertEqual(read_env(plan[self.env])['ORION_STUDIO_CODEX_BIN'], str(self.root / 'codex-0.157.0/bin/codex'))
-        self.assertEqual(json.loads(settings.read_text())['model'], 'gpt-5.6-sol')
 
     def test_saved_preferences_and_audio_calibration_are_outside_write_set(self):
         for name in ('voice-settings.json', 'microphone.json', 'servo_calibration.json', 'voice.env', 'studio-token'):
@@ -797,12 +778,6 @@ class ReadinessTests(Fixture):
         run.assert_not_called()
         self.assertEqual(calibration.read_text(), 'existing V2 calibration')
         self.assertFalse(token.exists())
-
-    def test_standalone_listener_installer_refuses_installed_full_stack(self):
-        (self.root / 'installation.json').write_text('{}')
-        result = subprocess.run(['bash', SCRIPTS / 'install_pi_voice.sh', str(self.project), str(self.home)], capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('complete update', result.stderr)
 
 
 if __name__ == '__main__':

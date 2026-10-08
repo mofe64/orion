@@ -10,8 +10,8 @@ V1's commissioned light is an Adafruit NeoPixel Shield, product 2864:
 - 800 kHz single-wire NeoPixel protocol.
 
 V2 selects a 24-pixel RGBW ring with `--hardware v2`, retaining GPIO12, GRBW
-encoding and the persistent Pi 5 driver below. Its colour/order and reboot checks
-still require physical verification. See [V2 calibration and rest capture](../../docs/hardware-versions.md).
+encoding and the persistent Pi 5 driver below. The V1 wiring and matrix layout in
+the next sections do not apply to the ring. See [V2 calibration and rest capture](../../docs/hardware-versions.md).
 
 The assembled robot reports this direct Raspberry Pi 5 wiring:
 
@@ -21,9 +21,8 @@ Pi physical pin 30 / ground -> shield ground
 Pi physical pin 32 / BCM12 -> shield D6 / DIN
 ```
 
-The 2026-08-28 assembly record reports the head cable allocation below. These
-colours describe that prototype; verify continuity before reconnecting a
-modified or replacement cable.
+V1 head cable allocation. Verify continuity before reconnecting a modified or
+replacement cable.
 
 | Conductors | Reported connection |
 | --- | --- |

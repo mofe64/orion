@@ -16,9 +16,8 @@
 - [Hardware versions and V2 calibration](hardware-versions.md)
 - [Motion asset schemas and catalog](motion-assets.md)
 - [Trajectory and joint-control internals](trajectory-and-joint-control.md)
-- [Servo tracking capture and analysis](servo-tracking.md)
 - [Runtime command and lifecycle reference](../runtime/README.md)
-- [Runtime code walkthrough](../runtime.md)
+- [Speech animation runtime](speech-animation-runtime.md)
 - [Scene format and lifecycle](../scenes/README.md)
 - [Motion asset rules](../motion/README.md)
 - [Local audio cue rules](../audio/README.md)
@@ -41,6 +40,10 @@
 - [Set up and calibrate the STS3215 servos](../hardware/servo_setup/README.md)
 - [Set up ReSpeaker audio](../hardware/audio/README.md)
 - [Set up the RGBW light](../hardware/lighting/README.md)
+
+## Experiment tooling
+
+- [Servo tracking capture, trials and gain experiments](servo-tracking.md)
 
 ## Learning notes
 

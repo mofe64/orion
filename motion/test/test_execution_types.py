@@ -8,27 +8,7 @@ from orion_motion.execution_types import (
     ExecutionStatus,
     JointExecutionState,
     execution_metrics_from_feedback,
-    execution_result_data,
 )
-
-
-def test_only_succeeded_status_reports_success():
-    successful = ExecutionResult(
-        motion_name="look_at_left",
-        backend="test",
-        status=ExecutionStatus.SUCCEEDED,
-        message="done",
-    )
-    timed_out = ExecutionResult(
-        motion_name="look_at_left",
-        backend="test",
-        status=ExecutionStatus.TIMED_OUT,
-        message="deadline",
-        cancel_requested=True,
-    )
-
-    assert successful.succeeded
-    assert not timed_out.succeeded
 
 
 def test_cancel_result_distinguishes_request_from_confirmed_stop():
@@ -79,14 +59,3 @@ def test_feedback_metrics_preserve_per_joint_tracking_and_final_state():
     assert metrics.maximum_position_errors == pytest.approx((0.15, 0.20))
     assert metrics.final_position_errors == pytest.approx((-0.15, 0.05))
     assert metrics.final_velocities == pytest.approx((0.01, -0.02))
-
-
-def test_execution_result_data_converts_enum_for_json():
-    result = ExecutionResult(
-        motion_name="look_at_left",
-        backend="native_test",
-        status=ExecutionStatus.SUCCEEDED,
-        message="done",
-    )
-
-    assert execution_result_data(result)["status"] == "succeeded"

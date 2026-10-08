@@ -42,11 +42,6 @@ repository resources: `motion/config/v2/poses.yaml`, `motion/motions/v2` and
 on the Pi. Rest recapture changes the repository pose file; commit that measured
 change before pulling subsequent edits. Servo calibration stays on the Pi.
 
-The release installer relocates user YAML from the former unversioned directories
-into V1's user directories, and from `hardware/v2/` into V2's user directories.
-These moves use the existing deployment backup and rollback. Conflicting files
-at a destination are reported rather than overwritten.
-
 Encoder direction defaults to `+1`, as in the existing V1 capture. Check the
 fitted mechanism against the model's positive axes and set any reversed joint's
 `encoder_direction` to `-1`. The optional `--directions FILE` argument supplies
@@ -89,8 +84,7 @@ calibration whose servo IDs differ from this map. The zero-pose model rotates
 yaw and swivel about +Z and pitch about +X, using the right-hand rule. Angles
 use radians and model geometry uses metres.
 
-Torque-off readings on the fitted lamp (2026-10-08) give these positive
-directions with `encoder_direction: 1`:
+With `encoder_direction: 1`, the fitted V2 joints move as follows:
 
 | API key | Negative | Positive |
 | --- | --- | --- |
@@ -121,15 +115,20 @@ for the ring. Verify it after reboot with `hardware/lighting/verify-persistent.s
 The module must match the running kernel. Add `--hardware v2` to Orion's direct
 light/audio checks for the 24-pixel ring and USB playback.
 
-### Identify USB capture
+### USB capture and playback
 
-The XVF3800 capture profile has not been checked on the Pi. Inspect `arecord -l`,
-`aplay -l` and ALSA hardware parameters, then select the installed two- or
-six-channel stream and its processed voice channel. The listener accepts
-`--hardware v2 --capture-channels 2|6 --processed-channel N`; these are ordinary
-capture settings. V2 skips HAT mixer commands and raw-microphone direction
-estimation. See the [Seeed USB guide](https://wiki.seeedstudio.com/respeaker_xvf3800_introduction/)
-for firmware-specific channel layouts.
+The V2 profile captures the XVF3800's two-channel stream and uses processed
+channel 0. The listener accepts `--capture-channels 2|6 --processed-channel N`
+for other firmware layouts; see the
+[Seeed USB guide](https://wiki.seeedstudio.com/respeaker_xvf3800_introduction/).
+V2 skips HAT mixer commands and raw-microphone direction estimation.
+
+The XVF3800 playback controls `PCM,0` and `PCM,1` default to -20 dB. `oriond`
+sets both to 0 dB at startup. To set them by hand:
+
+```bash
+amixer -c Array sset PCM,0 0dB unmute; amixer -c Array sset PCM,1 0dB unmute
+```
 
 ## CAD, URDF and MuJoCo
 
@@ -162,18 +161,9 @@ remain additional modelling work.
 
 ## Deploy the selected version
 
-After calibration and motion validation, commit and push the intended revision.
-Prepare the release from the workstation:
-
-```bash
-scripts/deploy_pi.sh --hardware v2 --host mofe@orion.local \
-  --root /home/mofe/dev/orion --branch main --prepare-only
-```
-
-Use `--hardware v1` for V1. Follow the existing
-[release installation](quickstart.md#deploy-to-the-pi) using the printed release
-path. The installer validates calibration and compiles motions against its limits
-before switching services. V2 startup defaults to maintenance mode; automatic
-character startup is an explicit setting. Physical microphone, wake, transcription,
-spoken-reply and Studio checks follow installation. The camera pipeline remains
-separate work.
+After calibration, centring and motion validation, deploy with
+`--hardware v2` using the [Pi deployment procedure](quickstart.md#deploy-to-the-pi).
+The installer validates calibration and compiles motions against its limits
+before switching services. V2, like V1, starts in character mode; pass
+`--character-on-start off` to a manually started `oriond` for maintenance.
+The camera pipeline is not implemented.

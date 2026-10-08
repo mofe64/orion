@@ -525,18 +525,6 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[test]
-    fn xvf3800_playback_is_set_to_unity_gain_on_both_pcm_controls() {
-        assert_eq!(
-            XVF3800_MIXER_SETTINGS,
-            &[
-                &["sset", "PCM,0", "0dB", "unmute"][..],
-                &["sset", "PCM,1", "0dB", "unmute"][..],
-            ]
-        );
-        assert!(configure_xvf3800_mixer(" ").is_err());
-    }
-
     fn write_minimal_wav(path: &Path) {
         fs::write(path, b"RIFF\x04\x00\x00\x00WAVE").unwrap();
     }

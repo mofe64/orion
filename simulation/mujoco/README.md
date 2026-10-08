@@ -60,7 +60,7 @@ pose (or press Ctrl+S) to update the selected pose. Alt+Left and Alt+Right also
 cycle through poses. Unsaved edits trigger a save/discard prompt when changing
 poses.
 
-The default calibration is the accepted 2026-08-29 snapshot in
+The default calibration is the V1 snapshot in
 `simulation/mujoco/config/servo_calibration.json`. Slider endpoints are computed
 from each joint's `safe_min_delta_raw`,
 `safe_max_delta_raw`, `encoder_direction`, and the 4096-count encoder

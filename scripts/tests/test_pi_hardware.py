@@ -32,12 +32,14 @@ class HardwareDeploymentTests(unittest.TestCase):
             shutil.copytree(SCRIPTS / 'systemd', release / 'scripts/systemd')
             (release / 'release.json').write_text('{"revision":"test","hardware":"v2"}')
             override = units / 'oriond.service.d/99-local.conf'; override.parent.mkdir()
-            override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234\n')
+            override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234 --character-on-start off\n')
             plan = render_plan(release, base / 'stack', project, home, 'pi', units)
             start = plan[override]
-            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start off', 'servo_calibration-v2.json', 'motion/config/v2/poses.yaml', 'motion/motions/v2'):
+            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start on', 'servo_calibration-v2.json', 'motion/config/v2/poses.yaml', 'motion/motions/v2'):
                 self.assertIn(expected, start)
             self.assertNotIn('--hardware v1', start)
+            # Earlier V2 releases wrote maintenance startup into the unit.
+            self.assertNotIn('--character-on-start off', start)
             listener = plan[units / 'orion-listener.service']
             self.assertIn('--device plughw:CARD=Array,DEV=0', listener)
             self.assertIn('--hardware v2', listener)

@@ -58,10 +58,7 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
     // so its commissioned gain is higher than the elbow's.
     profiles.get_mut("elbow_pitch_joint").unwrap().p_coefficient = 32;
     profiles.get_mut("head_pitch_joint").unwrap().p_coefficient = 48;
-    // At P = 16 the shoulder ignored small animation offsets (-0.02 rad moved
-    // 0%). P = 32 moved 65% of -0.02 rad and 92% of -0.04 rad, returned within
-    // 7 mrad, and held at 28 °C with no hunting or noise in hardware trials on
-    // 2026-09-27.
+    // At P = 16 the shoulder does not follow small animation offsets.
     profiles
         .get_mut("shoulder_pitch_joint")
         .unwrap()
@@ -69,12 +66,9 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
     profiles
 }
 
-/// V2 keeps the factory profile except on its two gravity-loaded arm joints.
-/// At P = 16 the V2 elbow held home 0.074 rad (124 mA) and the shoulder
-/// 0.048 rad short, timing out the 0.05 rad completion check. Supervised
-/// trials on 2026-10-08 at P = 32 held the elbow 0.032 rad and the shoulder
-/// 0.020 rad from home with no buzzing or hunting. Head pitch held within
-/// 0.005 rad at P = 16, so V1's higher head gain is not carried over.
+/// V2 keeps the factory profile except on its two gravity-loaded arm joints:
+/// at P = 16 they settle outside the completion tolerance under load, so they
+/// use P = 32. V2's head pitch holds its poses at the factory gain.
 pub fn make_orion_v2_servo_profiles() -> ServoProfiles {
     let mut profiles: ServoProfiles = crate::ORION_JOINT_NAMES
         .iter()

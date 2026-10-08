@@ -37,6 +37,8 @@ impl Process {
         let child = Command::new(env!("CARGO_BIN_EXE_orion-service"))
             .args(["serve", "--no-autostart"])
             .env("ORION_STUDIO_SERVICE_HOME", &directory)
+            // Keep the developer's real ~/.config/orion out of the test.
+            .env("HOME", root.path())
             .env("ORION_PROJECT_ROOT", root.path())
             .env("ORION_STUDIO_VOICE_PYTHON", "python3")
             .env(

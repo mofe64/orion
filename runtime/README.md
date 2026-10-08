@@ -276,7 +276,7 @@ trials.
 `CharacterCoordinator::preempt_idle_or_thinking()` interrupts either tracked
 background movement. Generic movement code uses the shared device interface,
 while the STS3215 and MuJoCo implementations provide their own I/O.
-See [the speech runtime walkthrough](../runtime.md) for planning and execution.
+See [the speech animation runtime](../docs/speech-animation-runtime.md) for planning and execution.
 
 ## Lighting, audio, and local scenes
 
@@ -308,15 +308,16 @@ servo daemon:
 runtime/target/release/oriond --play-cue acknowledge_warm
 ```
 
-V2 selects `plughw:CARD=Array,DEV=0` and skips the HAT mixer controls. Add
-`--hardware v2` to direct light or cue commands for that lamp.
+V2 selects `plughw:CARD=Array,DEV=0`, skips the HAT mixer route and sets the
+XVF3800 playback controls to 0 dB instead. Add `--hardware v2` to direct light
+or cue commands for that lamp.
 
 The direct command blocks until `aplay` exits and returns nonzero if playback
 fails. Do not run it concurrently with a hardware daemon that may also own the
 ALSA PCM.
 
 Direct warm-cue playback and the complete `acknowledge_left` and
-`acknowledge_right` motion/light/audio scenes use the same physical ReSpeaker
+`acknowledge_right` motion/light/audio scenes use the same audio
 path as the character coordinator.
 
 Portable scenes live under `scenes/v1/` or `scenes/v2/`, selected by `--hardware`.
@@ -334,7 +335,7 @@ progress. It propagates movement timeout, cancellation, and failed WAV player
 exit status.
 
 Hardware `--serve` opens `/dev/ws281x_pwm`, clears it to establish a known
-initial state, configures the ReSpeaker mixer, and owns both devices until the
+initial state, configures the selected hardware's mixer, and owns both devices until the
 process exits. Direct lighting and cue commands therefore should
 not run concurrently with the daemon. MuJoCo uses recording lighting and audio
 backends with the identical scene clock and lifecycle.
@@ -402,7 +403,7 @@ selected by `oriond.service`.
 The Pi's Piper Alba worker generates response audio. The onboard
 coordinator buffers and uploads mono PCM16 24 kHz WAV through the local
 authenticated gateway. `oriond` accepts a validated spool identifier through its private
-`speech file` operation and owns ReSpeaker playback. Streaming uses `speech stream`,
+`speech file` operation and owns speaker playback. Streaming uses `speech stream`,
 ordered `speech append` commands and an explicit `speech end`, all under one run
 ID and one player process. See [streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)
 for buffering, limits and timing semantics.
@@ -431,7 +432,7 @@ the daemon drives the `speaking_energy` light. See
 [Character animation design](../docs/character-animation.md#speech-driven-animation)
 for the animation policy.
 
-The Pi listener captures stereo ReSpeaker audio and runs Rustpotter, then
+The Pi listener captures stereo audio (ReSpeaker HAT on V1, XVF3800 on V2) and runs Rustpotter, then
 uses Silero to find speech boundaries and sends complete mono utterances to the
 onboard coordinator for Qwen confirmation and transcription. See [Pi voice setup](../voice/README.md).
 

@@ -11,8 +11,7 @@ def built_in_yaml(path):
     parts = path.parts
     if 'user' in parts:
         return False
-    return ((parts[:2] == ('hardware', 'v2') and 'user' not in parts) or
-            parts[:2] == ('motion', 'config') or
+    return (parts[:2] == ('motion', 'config') or
             (parts[:2] == ('motion', 'motions') and len(parts) > 2 and parts[2] != 'user') or
             (parts[:1] == ('scenes',) and len(parts) > 1 and parts[1] != 'user'))
 
@@ -27,35 +26,8 @@ def require_regular_target(project, path):
         raise ValueError(f'Catalog asset is not a file: {path}')
 
 
-def user_asset_moves(project):
-    """Plan versioned locations for existing user YAML without overwriting it."""
-    files = {}
-    for old, new in (
-        ('motion/user/poses', 'motion/user/poses/v1'),
-        ('motion/motions/user', 'motion/motions/v1/user'),
-        ('scenes/user', 'scenes/v1/user'),
-        ('hardware/v2/user/poses', 'motion/user/poses/v2'),
-        ('hardware/v2/motions/user', 'motion/motions/v2/user'),
-        ('hardware/v2/scenes/user', 'scenes/v2/user'),
-    ):
-        source = project / old
-        for path in sorted(source.rglob('*')):
-            relative = path.relative_to(source)
-            if relative.parts[0] in ('v1', 'v2') or path.suffix not in ('.yaml', '.yml'):
-                continue
-            destination = project / new / relative
-            require_regular_target(project, path)
-            require_regular_target(project, destination)
-            content = path.read_text()
-            if destination.exists() and destination.read_text() != content:
-                raise ValueError(f'User asset already exists at versioned location: {destination}')
-            files[path] = None
-            files[destination] = content
-    return files
-
-
 def catalog_plan(release, project, root):
-    """Replace built-ins and relocate user YAML using the rollback transaction."""
+    """Replace built-in YAML using the rollback transaction; user assets are never touched."""
     incoming = {}
     for directory in ('motion/config', 'motion/motions', 'scenes'):
         source = release / directory
@@ -83,7 +55,7 @@ def catalog_plan(release, project, root):
         tracked = subprocess.run(['git', '-C', str(project), 'ls-files', '-z'],
                                  capture_output=True, text=True)
         old = [p for p in tracked.stdout.split('\0') if built_in_yaml(p)] if tracked.returncode == 0 else []
-    files = user_asset_moves(project)
+    files = {}
     for relative in sorted(set(old) | incoming.keys()):
         path = project / relative
         require_regular_target(project, path)

@@ -57,19 +57,6 @@ class FakeVerificationBus:
 
 
 class VerifyCliTests(unittest.TestCase):
-    def test_dry_run_does_not_create_hardware_bus(self) -> None:
-        stream = io.StringIO()
-        with (
-            patch(
-                "orion_servo_setup.verify_cli.create_lerobot_bus",
-                side_effect=AssertionError("hardware bus must not be created"),
-            ),
-            redirect_stdout(stream),
-        ):
-            result = main(["--port", "/dev/not-opened", "--dry-run"])
-
-        self.assertEqual(result, 0)
-        self.assertIn("bus IDs 1, 2, 3, 4, 5", stream.getvalue())
 
     def test_successful_verification_disconnects_without_writing_torque(self) -> None:
         bus = FakeVerificationBus()

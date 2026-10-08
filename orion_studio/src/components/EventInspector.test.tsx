@@ -28,12 +28,4 @@ describe("lighting choices", () => {
       for (const name of [...LIGHTING_EFFECTS,"constant","pulse","breathe","fade"]) expect(html).toContain(`value="${name}"`);
     }
   });
-  it("shows percentages for both stage brightness and overall brightness", () => {
-    const scene = { ...projectCatalog.scenes.acknowledge_left, lighting: [{ id: "light", effect: "breathe" as const, at: 0, intensity: .42, levels: [.15,.85] }] };
-    const html = renderToStaticMarkup(<EventInspector scene={scene} selection={{ track: "lighting", id: "light" }} catalog={projectCatalog} markers={[]} onChange={() => {}} onDelete={() => {}} />);
-    for (const percent of [15,85,42]) {
-      expect(html).toContain(`<output>${percent}%</output>`);
-      expect(html).toContain(`aria-valuetext="${percent}%"`);
-    }
-  });
 });

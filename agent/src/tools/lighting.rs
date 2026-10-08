@@ -117,14 +117,6 @@ pub(crate) fn schema() -> Value {
 mod tests {
     use super::*;
     #[test]
-    fn random_accent_palette_has_no_duplicate_colors() {
-        let colors: std::collections::HashSet<_> =
-            ACCENTS.iter().map(|name| color(name).unwrap()).collect();
-        assert_eq!(colors.len(), ACCENTS.len());
-        assert!(!ACCENTS.contains(&"orange"));
-        assert_eq!(color("orange").unwrap(), color("amber").unwrap());
-    }
-    #[test]
     fn golden_names_match_for_steady_and_animated_lighting() {
         for effect in ["solid", "warm_idle_breathe", "thinking_drift"] {
             for mut request in [

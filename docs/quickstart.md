@@ -21,18 +21,20 @@ changes are sent to the Pi. The Pi services continue running when Studio closes.
 
 ## Deploy to the Pi
 
-Choose the lamp hardware explicitly. For V2.1, complete
-[V2 calibration and rest capture](hardware-versions.md) and prepare the release before activation.
-The existing v1 procedure is:
+Choose the lamp hardware explicitly. On a new V2 lamp, first complete
+[V2 calibration and centring](hardware-versions.md).
 
 Commit and push the intended branch, then run from the workstation:
 
 ```bash
-scripts/deploy_pi.sh --hardware v1 --host mofe@orion.local \
-  --root /home/mofe/dev/orion --branch main
+scripts/deploy_pi.sh --hardware v2 --host mofe@ariadne-robot.local \
+  --root /home/mofe/orion --branch main
 ```
 
-Use your Pi account, checkout path and branch if they differ. SSH must already
+Use `--hardware v1` for V1. The script's defaults are `mofe@orion.local` and
+`/home/mofe/dev/orion`, so pass your Pi account and checkout path when they differ.
+Stop any `oriond` started by hand before deploying; it holds the servo port and
+the runtime socket. SSH must already
 trust the host. The script keeps terminal input available for sudo authentication.
 Unattended deployment requires the Pi account's existing sudo policy to allow
 service control without prompting.
@@ -94,8 +96,7 @@ and `scenes/` update from the selected
 commit. Local edits to those built-ins are replaced and backed up for rollback.
 Retired tracked built-ins are removed; untracked local files are preserved.
 Each hardware version has separate directories. User subdirectories are excluded
-from built-in replacement; the installer relocates assets from the former user
-paths into their version's directory as part of the rollback transaction.
+from built-in replacement.
 It changes release paths while retaining installed command arguments
 and environment overrides, including sleep and microphone tuning. Existing
 service enablement is retained; missing services are enabled. Restarting the agent
@@ -171,10 +172,7 @@ systemctl is-active oriond orion-studio-gateway orion-listener orion-voice-stack
 
 Use `--runtime-project` when the existing catalog root differs from
 `~/dev/orion`. Add `--plan` to list the proposed files without activation.
-Subsequent workstation updates use `scripts/deploy_pi.sh`. The compatibility entry
-point `scripts/install_pi_services.sh ROOT USER HOME v1` also builds a complete release
-from committed `HEAD`; the standalone listener installer is reserved for older
-listener-only installations.
+Subsequent workstation updates use `scripts/deploy_pi.sh`.
 
 ## Logs and recovery
 

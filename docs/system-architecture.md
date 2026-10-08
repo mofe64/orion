@@ -50,7 +50,7 @@ compiler. Each backend supplies its own joint feedback. See the
 
 ### Hardware runtime
 
-`oriond` owns the servo bus, RGBW device and ReSpeaker playback. It applies
+`oriond` owns the servo bus, RGBW device and audio playback (the ReSpeaker HAT on V1, the XVF3800 on V2). It applies
 calibration, compiles trajectories, checks measured movement completion, and
 coordinates scenes, speech animation, idle behavior, rest and scheduled alerts. Clients
 submit named poses, motions, scenes or other supported operations. Every movement

@@ -19,3 +19,6 @@ runtime_archive/
 
 orion-service/target/
 artifacts/
+
+# Local agent handover notes
+.scratch/

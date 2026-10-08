@@ -94,35 +94,16 @@ fn read(path: &Path) -> Result<VoiceSettings, String> {
             cache_path: std::env::var("HF_HOME").unwrap_or_default(),
             ..VoiceSettings::default()
         };
-        migrate_legacy_tts(&mut settings);
         return Ok(settings);
     }
     let mut value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    if value.get("agent_model").is_some() {
-        return Ok(VoiceSettings {
-            model: value["agent_model"]
-                .as_str()
-                .unwrap_or(orion_agent::DEFAULT_MODEL)
-                .into(),
-            effort: value["agent_effort"].as_str().unwrap_or("medium").into(),
-            ..VoiceSettings::default()
-        });
-    }
     // A saved preset is harmless but no longer part of the settings protocol.
     if let Some(object) = value.as_object_mut() {
         object.remove("ttsVoice");
     }
-    let mut settings: VoiceSettings = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    migrate_legacy_tts(&mut settings);
-    Ok(settings)
-}
-fn migrate_legacy_tts(settings: &mut VoiceSettings) {
-    if settings.tts_model.starts_with("pocket-") {
-        settings.tts_model = VoiceSettings::default().tts_model;
-        settings.tts_path.clear();
-    }
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 pub fn load_voice_settings() -> Result<VoiceSettings, String> {
     read(&config_path()?)
@@ -229,33 +210,6 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert_eq!(read(&path).unwrap(), value);
         std::fs::remove_file(path).unwrap();
-    }
-    #[test]
-    fn old_reply_settings_migrate_without_losing_model_choice() {
-        let path =
-            std::env::temp_dir().join(format!("orion-settings-{}.json", uuid::Uuid::new_v4()));
-        std::fs::write(
-            &path,
-            r#"{"agent_model":"chosen-model","agent_effort":"high"}"#,
-        )
-        .unwrap();
-        let value = read(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        assert_eq!(value.model, "chosen-model");
-        assert_eq!(value.effort, "high");
-        assert_eq!(value.asr_model, "Qwen/Qwen3-ASR-0.6B");
-    }
-    #[test]
-    fn saved_pocket_choice_migrates_without_losing_agent_or_asr() {
-        let path =
-            std::env::temp_dir().join(format!("orion-settings-{}.json", uuid::Uuid::new_v4()));
-        std::fs::write(&path, r#"{"model":"chosen-model","asrModel":"chosen-asr","ttsModel":"pocket-int8","ttsVoice":"jane","ttsPath":"/old/model"}"#).unwrap();
-        let value = read(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        assert_eq!(value.model, "chosen-model");
-        assert_eq!(value.asr_model, "chosen-asr");
-        assert_eq!(value.tts_model, VoiceSettings::default().tts_model);
-        assert!(value.tts_path.is_empty());
     }
 }
 

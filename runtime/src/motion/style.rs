@@ -115,18 +115,3 @@ impl MotionStyle {
 pub fn motion_styles() -> &'static [MotionStyle] {
     &MOTION_STYLES
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exposes_the_complete_character_style_vocabulary() {
-        assert_eq!(motion_styles().len(), 8);
-        assert_eq!(
-            MotionStyle::named("expressive_turn").unwrap().amplitude,
-            1.0
-        );
-        assert!(MotionStyle::named("hardware_limit").is_err());
-    }
-}

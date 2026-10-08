@@ -321,13 +321,10 @@ class HttpAuthenticationTests(unittest.TestCase):
             data = json.dumps(document).encode(); headers["Content-Type"] = "application/json"
         return urllib.request.Request(f"{self.base_url}{path}", data=data, headers=headers)
 
-    def test_authentication_precedes_routing_and_v1_routes_are_gone(self) -> None:
+    def test_status_requires_authentication(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:
             urllib.request.urlopen(self.request("/api/v2/status", authorized=False))
         self.assertEqual(context.exception.code, HTTPStatus.UNAUTHORIZED)
-        with self.assertRaises(urllib.error.HTTPError) as context:
-            urllib.request.urlopen(self.request("/api/v1/status"))
-        self.assertEqual(context.exception.code, HTTPStatus.NOT_FOUND)
 
     def test_debug_logs_require_authentication(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:
