@@ -843,6 +843,103 @@ async fn alarm_interrupt_retires_playback_and_accepts_a_later_wake() {
 }
 
 #[tokio::test]
+async fn barge_in_stops_speech_preserves_the_running_agent_and_queues_the_next_command() {
+    let mut h = Harness::new().await;
+    let conversation = h.agent.handle().info().await.unwrap().conversation_id;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, barge-in-fixture").await;
+    until(&mut h.pi, "session.playing").await;
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
+    )
+    .await;
+    let interrupted = until(&mut h.observer, "session.interrupted").await;
+    assert_eq!(interrupted["reason"], "barge_in");
+    assert_eq!(h.gateway.lock().await.cancellations, [1]);
+    let old_uploads = h.gateway.lock().await.uploads.len();
+    // The first agent turn is still generating when the new capture arrives.
+    send(&mut h.pi, json!({"type":"wake.candidate","sessionId":NEXT,"name":"hey_orion","score":0.8,"acousticVerification":true})).await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.verified","sessionId":NEXT,"accepted":true,"source":"acoustic"}),
+    )
+    .await;
+    h.utterance(NEXT, "wake_and_command", "Hey Orion, what were you saying?")
+        .await;
+    let processing = until(&mut h.pi, "session.processing").await;
+    assert_eq!(processing["sessionId"], NEXT);
+    let first = until(&mut h.observer, "agent.response").await;
+    assert_eq!(first["sessionId"], SID);
+    assert!(first["text"].as_str().unwrap().ends_with("Unspoken tail."));
+    let second = until(&mut h.observer, "agent.response").await;
+    assert_eq!(second["sessionId"], NEXT);
+    let answer = second["text"].as_str().unwrap();
+    assert!(answer.starts_with("Reply 2:"), "{answer}");
+    assert!(answer.contains("The previous reply was interrupted before it finished."));
+    assert!(answer.contains("User request: what were you saying?"));
+    h.gateway.lock().await.allow_complete = true;
+    let finish = until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        finish["sessionId"], NEXT,
+        "Retired completion must not finish the newer session"
+    );
+    let state = h.gateway.lock().await;
+    assert_eq!(
+        state
+            .uploads
+            .iter()
+            .filter(|(_, source, _)| source == &format!("voice:{SID}"))
+            .count(),
+        old_uploads
+    );
+    drop(state);
+    assert_eq!(
+        h.agent.handle().info().await.unwrap().conversation_id,
+        conversation
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn barge_in_during_search_acknowledgement_preserves_the_turn() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, search-fixture").await;
+    until(&mut h.pi, "session.playing").await;
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
+    )
+    .await;
+    // Draining the old turn and cancelling the gateway run are independent;
+    // either observer event may arrive first.
+    let (mut interrupted, mut completed) = (false, false);
+    while !interrupted || !completed {
+        let value = next(&mut h.observer).await;
+        match value["type"].as_str() {
+            Some("session.interrupted") => {
+                assert_eq!(value["reason"], "barge_in");
+                interrupted = true;
+            }
+            Some("agent.response") => {
+                assert_eq!(value["sessionId"], SID);
+                completed = true;
+            }
+            Some("worker.error") => panic!("{value}"),
+            _ => {}
+        }
+    }
+    assert!(!h.gateway.lock().await.cancellations.is_empty());
+    h.gateway.lock().await.allow_complete = true;
+    h.wake("Hey Orion, hello again").await;
+    let answer = until(&mut h.observer, "agent.response").await;
+    assert!(answer["text"].as_str().unwrap().starts_with("Reply 2:"));
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn runtime_alarm_reason_reaches_the_agent_tool_result_unchanged() {
     let mut h = Harness::new().await;
     h.gateway.lock().await.reject_robot = Some("Alarm must be in the next 366 days".into());

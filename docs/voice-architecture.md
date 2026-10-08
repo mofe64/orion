@@ -143,8 +143,9 @@ timeouts still apply while it waits. See [automatic rest and waking](system-arch
 
 ## Follow-up conversation
 
-Processing and playback suppress additional wake triggers. After the runtime
-reports successful playback completion, the coordinator acknowledges it to the
+Processing suppresses additional wake triggers; V2 playback accepts only
+acoustically verified wake-phrase barge-in. After successful runtime playback,
+the coordinator acknowledges completion to the
 listener and requests a follow-up window. Failed or cancelled playback returns
 to wake detection.
 
@@ -170,10 +171,48 @@ coordinator reconnects automatically. Protocol capabilities allow older peers to
 confirm the complete utterance or receive a single response without a follow-up
 window.
 
-Acoustic echo cancellation and interruption during playback are not implemented.
-Speak after the teal invitation appears. Sustained noise or delayed echo can
-still trigger an unwanted follow-up, so microphone and speaker behavior require
+V2 hardware echo cancellation supports wake-phrase barge-in during playback. V1
+requires speaking after the teal invitation appears. Sustained noise or delayed
+echo can still trigger an unwanted follow-up, so microphone and speaker behavior require
 physical checks.
+
+## Wake-phrase barge-in
+
+On V2, Rustpotter runs during `playing` while a healthy acoustic verifier is
+loaded. The listener keeps three seconds of pre-roll and verifies each candidate
+without stopping playback. Rejection emits nothing. Acceptance emits
+`session.interrupted` with `reason: "barge_in"` for the old session, then
+`wake.candidate` and accepted `wake.verified` for a fresh ID. Capture starts from
+the pre-roll, including speech during verification, and uses normal endpointing
+and full-utterance Qwen validation. The listener sends `voice OLD cancel` before
+new-session feedback and suppresses attention throughout that interruption turn.
+Playback never uses the ASR-prefix fallback to authorize an interruption. Without
+a healthy verifier, and on V1, playback wake detection stays off. Alarm dismissal
+runs first and consumes its wake phrase without starting a command.
+
+The coordinator reads the interruption reason. Barge-in signals a per-response
+stop token: final TTS, uploads, playback polling and search acknowledgement speech
+stop, and the gateway cancels the active speech run. Remaining speech text is
+consumed without synthesis. The response job keeps its agent reply channel open
+until the turn finishes, outside the active voice session. Its completion cannot
+finish or cancel the replacement session. Later physical tool requests from the
+interrupted turn receive an interruption error. Alarm interruption still aborts
+inference jobs and cancels playback.
+
+`AgentService` dequeues requests one at a time in its dedicated runtime. A new
+voice command can be captured and transcribed immediately, but its agent request
+waits for the interrupted turn's terminal result. Keeping that result receiver
+open preserves the ephemeral Codex conversation; dropping it would cancel the
+turn and retire the conversation. The next command carries “The previous reply
+was interrupted before it finished.” once, using the agent's pending delivery
+notice. Direct sleep detection still uses the user's original command.
+
+Runtime status and uploaded PCM do not identify the exact spoken text: buffered
+audio may not have played. The notice therefore makes no claim about which words
+were heard. The agent still retains its complete previous reply. Turn timeout,
+protocol failure, mute, disconnect and alarms retain their existing cancellation
+rules; a failed interrupted turn can still reset the conversation. See
+[physical acceptance checks](../voice/README.md#check-v2-barge-in-on-the-lamp).
 
 ## Transport and deployment
 
@@ -252,8 +291,9 @@ do not identify the agent conversation. Pi transport reconnects and idle
 coordinator reloads can retain that conversation.
 
 Changing the agent model, effort or executable, stopping the host, or cancelling
-an active request retires the conversation. Protocol uncertainty also retires it:
-process exit, unreadable events, mid-turn timeout, stale/invalid calls, multiple
+an active request retires the conversation. Wake-phrase barge-in stops delivery
+while letting the agent request finish, preserving the conversation. Protocol
+uncertainty also retires it: process exit, unreadable events, mid-turn timeout, stale/invalid calls, multiple
 final answers, changed streamed speech or unsupported server requests. The next
 request starts a fresh thread. Matching terminal turns retain the conversation,
 including failed turns and empty final answers without streamed speech; explicit
@@ -311,10 +351,12 @@ software measurement; acoustic timing requires a recording at the speaker.
 
 ## Direction evidence
 
-The listener keeps at most 30 accepted stereo observations from the preceding
-three seconds. A known side requires at least five votes and 75% agreement.
+On V1 the listener keeps at most 30 accepted stereo observations; on V2 the
+optional USB poller keeps at most 64 beam samples from the preceding three
+seconds. A known side requires at least five votes and 75% agreement.
 Confidence describes agreement between those observations. Microphone spacing
-and channel orientation default to zero, which disables directional attention.
+and channel orientation default to zero on V1. V2 direction defaults off and
+requires a measured mounting offset and sign. Barge-in sessions never turn.
 
 The age of the oldest supporting vote travels with the side after confirmation.
 Time spent waiting in the command queue and homing also counts. The runtime checks

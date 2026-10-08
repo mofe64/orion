@@ -236,12 +236,21 @@ async fn connected(
     let mut session: Option<Session> = None;
     let mut followup: Option<String> = None;
     let mut jobs = JoinSet::<Result<Completed, String>>::new();
-    let active: ActiveRun = Arc::new(Mutex::new(None));
+    // Interrupted responses finish their agent calls outside the current voice
+    // session. Their completion must never finish/cancel a newer session.
+    let mut retiring = JoinSet::<Result<(), String>>::new();
+    let mut response_stop: Option<watch::Sender<bool>> = None;
+    let mut active: ActiveRun = Arc::new(Mutex::new(None));
     let result = async {
         loop {
             tokio::select! {
                 biased;
                 _ = stop.changed() => return Ok(()),
+                Some(result) = retiring.join_next(), if !retiring.is_empty() => {
+                    if let Err(message) = result.map_err(|e| e.to_string()).and_then(|r| r) {
+                        hub.publish(error("interrupted_agent_failed", &message, true));
+                    }
+                },
                 Some(result) = jobs.join_next(), if !jobs.is_empty() => {
                     let current = session.as_mut().ok_or("A job completed without an active session")?;
                     let sid = current.id.clone();
@@ -251,6 +260,7 @@ async fn connected(
                             pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
                             event(hub, &sid, error("voice_request_failed", &message, true));
                             session = None; followup = None;
+                            response_stop = None;
                         },
                         Ok(Completed::Transcript { sid: job_sid, purpose, transcript, elapsed }) => {
                             let expected = if purpose == "wake_prefix" { Phase::VerifyingWake } else { Phase::Transcribing };
@@ -301,9 +311,12 @@ async fn connected(
                             pi.send(json!({"type":"session.processing", "sessionId":sid})).await?;
                             let agent = agent.clone(); let speech = speech.clone(); let gateway = gateway.clone();
                             let hub = hub.clone(); let pi = pi.clone(); let active = active.clone(); let request = *next_request;
-                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback).await.map(|sleep| Completed::Response {sleep}) });
+                            let (interrupt, interrupted) = watch::channel(false);
+                            response_stop = Some(interrupt);
+                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback, interrupted).await.map(|sleep| Completed::Response {sleep}) });
                         },
                         Ok(Completed::Response {sleep}) => {
+                            response_stop = None;
                             let window = window && !sleep;
                             let request = *next_request;
                             followup = window.then_some(sid.clone()); session = None;
@@ -374,14 +387,39 @@ async fn connected(
                         },
                         "session.interrupted" => {
                             if session.as_ref().map(|session| session.id.as_str()) != Some(sid) && followup.as_deref() != Some(sid) { continue; }
-                            jobs.abort_all(); while jobs.join_next().await.is_some() {}
+                            let reason = message["reason"].as_str().ok_or("Interruption needs a reason")?;
+                            match reason {
+                                "barge_in" => {
+                                    if session.as_ref().is_some_and(|s| s.phase != Phase::Responding) {
+                                        return Err("Barge-in requires a responding session".into());
+                                    }
+                                    if let Some(interrupt) = response_stop.take() { let _ = interrupt.send(true); }
+                                    let mut interrupted_jobs = std::mem::take(&mut jobs);
+                                    retiring.spawn(async move {
+                                        while let Some(result) = interrupted_jobs.join_next().await {
+                                            result.map_err(|e| e.to_string())??;
+                                        }
+                                        Ok(())
+                                    });
+                                    agent.report_interruption();
+                                },
+                                "alarm" => {
+                                    jobs.abort_all(); while jobs.join_next().await.is_some() {}
+                                    retiring.abort_all(); while retiring.join_next().await.is_some() {}
+                                    response_stop = None;
+                                },
+                                _ => return Err("Unknown interruption reason".into()),
+                            }
                             gateway.cancel(&active).await;
-                            event(hub, sid, json!({"type":"session.interrupted","reason":"alarm"}));
+                            active = Arc::new(Mutex::new(None));
+                            event(hub, sid, json!({"type":"session.interrupted","reason":reason}));
                             session = None; followup = None;
                         },
                         "session.expired" => {
                             if session.as_ref().map(|session| session.id.as_str()) != Some(sid) { return Err("Stale Pi expiry".into()); }
                             jobs.abort_all(); while jobs.join_next().await.is_some() {}
+                            retiring.abort_all(); while retiring.join_next().await.is_some() {}
+                            response_stop = None;
                             gateway.cancel(&active).await;
                             event(hub, sid, error("session_expired", "Orion voice session timed out or was muted.", true));
                             session = None; followup = None;
@@ -394,6 +432,8 @@ async fn connected(
     }.await;
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
+    retiring.abort_all();
+    while retiring.join_next().await.is_some() {}
     gateway.cancel(&active).await;
     if let Some(session) = session {
         let _ = pi
@@ -415,6 +455,7 @@ async fn response(
     command: &str,
     active: ActiveRun,
     tool_feedback: bool,
+    interrupted: watch::Receiver<bool>,
 ) -> Result<bool, String> {
     event(
         hub,
@@ -452,9 +493,11 @@ async fn response(
                         prefix.push(' ');
                     }
                     prefix.push_str(&text);
-                    text_send
-                        .send(text)
-                        .map_err(|_| "Speech renderer stopped")?;
+                    if !*interrupted.borrow() {
+                        text_send
+                            .send(text)
+                            .map_err(|_| "Speech renderer stopped")?;
+                    }
                 }
                 orion_agent::AgentEvent::SearchStarted => {
                     event(
@@ -462,24 +505,34 @@ async fn response(
                         sid,
                         json!({"type":"agent.progress","requestId":request,"message":"Searching the web"}),
                     );
-                    if tool_feedback {
-                        speak(
-                            speech,
-                            gateway,
-                            pi,
-                            hub,
-                            sid,
-                            request,
-                            "I’ll search for that now.".into(),
-                            active.clone(),
-                            true,
-                        )
-                        .await?;
-                        pi.send(json!({"type":"session.processing","sessionId":sid}))
-                            .await?;
+                    if tool_feedback && !*interrupted.borrow() {
+                        let mut stopped = interrupted.clone();
+                        tokio::select! {
+                            biased;
+                            _ = stopped.wait_for(|stopped| *stopped) => {},
+                            result = speak(
+                                speech,
+                                gateway,
+                                pi,
+                                hub,
+                                sid,
+                                request,
+                                "I’ll search for that now.".into(),
+                                active.clone(),
+                                true,
+                            ) => result?,
+                        }
+                        if !*interrupted.borrow() {
+                            pi.send(json!({"type":"session.processing","sessionId":sid}))
+                                .await?;
+                        }
                     }
                 }
                 orion_agent::AgentEvent::RobotOperation { parameters, reply } => {
+                    if *interrupted.borrow() {
+                        let _ = reply.send(Err("The previous voice reply was interrupted".into()));
+                        continue;
+                    }
                     if reply.is_closed() {
                         continue;
                     }
@@ -496,6 +549,10 @@ async fn response(
                     let _ = reply.send(result);
                 }
                 orion_agent::AgentEvent::SetLighting { parameters, reply } => {
+                    if *interrupted.borrow() {
+                        let _ = reply.send(Err("The previous voice reply was interrupted".into()));
+                        continue;
+                    }
                     if reply.is_closed() {
                         continue;
                     }
@@ -513,7 +570,7 @@ async fn response(
             .strip_prefix(&prefix)
             .ok_or("Final answer changed streamed speech")?
             .trim();
-        if !remaining.is_empty() {
+        if !remaining.is_empty() && !*interrupted.borrow() {
             text_send
                 .send(remaining.into())
                 .map_err(|_| "Speech renderer stopped")?;
@@ -526,17 +583,24 @@ async fn response(
         );
         Ok::<(), String>(())
     };
-    let spoken = speak_sequence(
-        speech,
-        gateway,
-        pi,
-        hub,
-        sid,
-        request,
-        text_receive,
-        active.clone(),
-        false,
-    );
+    let spoken = async {
+        let mut stopped = interrupted.clone();
+        tokio::select! {
+            biased;
+            _ = stopped.wait_for(|stopped| *stopped) => Ok(()),
+            result = speak_sequence(
+                speech,
+                gateway,
+                pi,
+                hub,
+                sid,
+                request,
+                text_receive,
+                active.clone(),
+                false,
+            ) => result,
+        }
+    };
     let result = tokio::try_join!(agent_turn, spoken);
     if let Err(reason) = &result
         && reason.contains("30-minute audio sanity limit")

@@ -498,3 +498,25 @@ async fn delivery_limit_failure_is_visible_to_the_next_model_turn_once() {
         "Reply 2: Try a shorter answer"
     );
 }
+
+#[tokio::test]
+async fn interruption_notice_is_delivered_once_and_preserves_direct_sleep_detection() {
+    let service = service();
+    let agent = service.handle();
+    let conversation = agent.info().await.unwrap().conversation_id;
+    agent.report_interruption();
+    let answer = agent.respond("What were you saying?").await.unwrap();
+    assert!(answer.contains("The previous reply was interrupted before it finished."));
+    assert!(answer.contains("User request: What were you saying?"));
+    assert_eq!(
+        agent.respond("Continue").await.unwrap(),
+        "Reply 2: Continue"
+    );
+    assert_eq!(agent.info().await.unwrap().conversation_id, conversation);
+    agent.report_interruption();
+    // A notice must not hide the explicit sleep request from the local classifier.
+    assert_eq!(
+        agent.respond("go to sleep").await.unwrap_err(),
+        "No robot coordinator is attached"
+    );
+}

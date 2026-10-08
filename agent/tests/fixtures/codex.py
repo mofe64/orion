@@ -143,6 +143,16 @@ for line in sys.stdin:
             emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,'item':{'type':'agentMessage','id':'final','phase':'final_answer'}}})
             emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,'itemId':'final','delta':prefix + ' '}})
             response = prefix + ' This ending survives.'
+        if text == 'barge-in-fixture':
+            prefix = 'First spoken sentence. Another spoken sentence. A third spoken sentence.'
+            emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,
+                  'item':{'type':'agentMessage','id':'final','phase':'final_answer'}}})
+            emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,
+                  'itemId':'final','delta':prefix + ' '}})
+            time.sleep(2)
+            emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,
+                  'itemId':'final','delta':'Unspoken tail. '}})
+            response = prefix + ' Unspoken tail.'
         if text == 'stream-fixture':
             for item, phase, tid, uid, value in [('comment', 'commentary', thread_id, turn_id, 'Never speak this. '), ('unknown', None, thread_id, turn_id, 'Unknown phase. '), ('stale', 'final_answer', thread_id, 'old', 'Wrong turn. '), ('final', 'final_answer', thread_id, turn_id, 'Let us begin. ')]:
                 emit({'method':'item/started','params':{'threadId':tid,'turnId':uid,'item':{'type':'agentMessage','id':item,'phase':phase,'text':''}}})

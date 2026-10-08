@@ -36,11 +36,12 @@ WAKE_PREFIX_TAIL_MS = 200
 class SatelliteSession:
     """One capture owner, one active turn. Audio is never retained on disk."""
     def __init__(self, wake, direction=None, clock=time.monotonic, endpoint_factory=EnergyEndpointDetector,
-                 early_wake=False, verifier=None):
+                 early_wake=False, verifier=None, barge_in=False):
         self.wake = wake
         # The verifier hears every captured frame, across sessions, so its
         # score history already covers the phrase when Rustpotter fires.
         self.verifier = verifier
+        self.barge_in = barge_in
         self.direction = direction or DirectionEstimator(clock=clock)
         self.clock = clock
         self.endpoint_factory = endpoint_factory
@@ -62,6 +63,8 @@ class SatelliteSession:
         self.acoustic_pending = False
         self.acoustic_verdict = None
         self.verifier_candidate = None
+        self.barge_candidate = None
+        self.barge_in_session = False
         self.pending_utterance = []
         self.noise = ListeningNoise()
         self.endpoint = self.endpoint_factory(EndpointConfig())
@@ -105,14 +108,31 @@ class SatelliteSession:
         if self.verifier is not None:
             self.verifier.feed(mono.astype(np.int16))
         messages = self._accept_frame(stereo, mono.astype("<i2").tobytes())
-        if self.acoustic_pending:
+        if self.acoustic_pending or self.barge_candidate is not None:
             messages.extend(self.acoustic_decision())
         return messages
 
     def acoustic_decision(self):
+        if self.barge_candidate is not None and not self.verifier_active():
+            self.barge_candidate = None
+            self.verifier.cancel()
+            return []
         verdict = self.verifier.verdict()
         if verdict is None:
             return []
+        interrupted = []
+        if self.barge_candidate is not None:
+            detection, self.barge_candidate = self.barge_candidate, None
+            if not verdict.accepted:
+                return []
+            interrupted = [self.message("session.interrupted", reason="barge_in")]
+            pre_roll, noise = self.pre_roll, self.noise
+            candidate = self.verifier_candidate
+            self.reset()
+            self.pre_roll, self.noise = pre_roll, noise
+            self.barge_in_session = True
+            interrupted.extend(self.start_wake(detection, already_verified=True))
+            self.verifier_candidate = candidate
         self.acoustic_pending = False
         self.acoustic_verdict = verdict.accepted
         latency_ms = round((verdict.decided_sample - self.verifier_candidate) / 16)
@@ -125,7 +145,30 @@ class SatelliteSession:
         # An endpoint that arrived during verification was held back, like a
         # pending ASR prefix; release it after the verdict so ordering holds.
         pending, self.pending_utterance = self.pending_utterance, []
-        return [message, *pending]
+        return [*interrupted, message, *pending]
+
+    def start_wake(self, detection, already_verified=False):
+        self.session_id = uuid.uuid4().hex
+        self.phase = "wake"
+        config = EndpointConfig(speech_rms=self.noise.threshold())
+        self.endpoint = self.endpoint_factory(config)
+        self.followup_endpoint = self.endpoint_factory(config)
+        self.expires_at = self.clock() + 120
+        if not self.barge_in_session:
+            self.update_direction()
+        self.utterance = bytearray(self.pre_roll)
+        verifying = already_verified or self.verifier_active()
+        if verifying and not already_verified:
+            self.verifier.begin()
+            self.verifier_candidate = self.verifier.candidate
+            self.acoustic_pending = True
+        elif not verifying and self.early_wake:
+            self.prefix = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
+            self.prefix_pending = True
+        self.pre_roll.clear()
+        self.endpoint.prime_detected_speech()
+        return [self.message("wake.candidate", name=detection.name, score=detection.score,
+                             direction=self.observation, acousticVerification=verifying)]
 
     def _accept_frame(self, stereo, audio):
         if self.alarm_active:
@@ -141,6 +184,17 @@ class SatelliteSession:
             event = self.message("session.expired")
             self.reset()
             return [event]
+        if self.phase == "playing":
+            if self.barge_in and self.verifier_active():
+                self.pre_roll.extend(audio)
+                del self.pre_roll[:-3 * 32000]
+                if self.barge_candidate is None:
+                    detection = self.wake.process(audio)
+                    if detection is not None:
+                        self.barge_candidate = detection
+                        self.verifier.begin()
+                        self.verifier_candidate = self.verifier.candidate
+            return []
         if self.phase == "listening":
             self.noise.accept(audio)
             self.direction.accept(stereo)
@@ -149,29 +203,9 @@ class SatelliteSession:
             detection = self.wake.process(audio)
             if detection is None:
                 return []
-            self.session_id = uuid.uuid4().hex
-            self.phase = "wake"
-            config = EndpointConfig(speech_rms=self.noise.threshold())
-            self.endpoint = self.endpoint_factory(config)
-            self.followup_endpoint = self.endpoint_factory(config)
-            self.expires_at = self.clock() + 120
-            self.update_direction()
-            self.utterance = bytearray(self.pre_roll)
-            verifying = self.verifier_active()
-            if verifying:
-                # The acoustic verifier replaces the ASR prefix pass.
-                self.verifier.begin()
-                self.verifier_candidate = self.verifier.candidate
-                self.acoustic_pending = True
-            elif self.early_wake:
-                self.prefix = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
-                self.prefix_pending = True
-            self.pre_roll.clear()
-            self.endpoint.prime_detected_speech()
-            return [self.message("wake.candidate", name=detection.name, score=detection.score,
-                                 direction=self.observation, acousticVerification=verifying)]
+            return self.start_wake(detection)
         if self.phase in {"wake", "command"}:
-            if self.phase == "wake":
+            if self.phase == "wake" and not self.barge_in_session:
                 self.direction.accept(stereo)
             self.utterance.extend(audio)
             messages = []
@@ -237,7 +271,7 @@ class SatelliteSession:
         return 0 <= self.clock() - self.observed_at < 3.0
 
     def finish_utterance(self):
-        if self.phase == "wake":
+        if self.phase == "wake" and not self.barge_in_session:
             self.update_direction()
         purpose = "wake_and_command" if self.phase == "wake" else "command"
         print(json.dumps({"event": "voice.endpoint", "session_id": self.session_id,
@@ -273,6 +307,9 @@ class SatelliteSession:
         if kind == "session.reject" and self.phase != "confirming":
             raise ValueError("No wake confirmation is pending")
         if kind == "session.finish" and message.get("conversationWindow") is True:
+            self.barge_candidate = None
+            if self.verifier is not None:
+                self.verifier.cancel()
             self.phase = "echo_guard"
             self.guard_started = self.clock()
             self.quiet_ms = self.onset_ms = 0
@@ -305,10 +342,16 @@ class SatelliteSession:
             self.expires_at = self.clock() + 180
             return []
         if kind == "session.processing" and self.phase in {"processing", "playing"}:
+            self.barge_candidate = None
+            if self.verifier is not None: self.verifier.cancel()
+            self.pre_roll.clear()
             self.phase = "processing"
             self.expires_at = self.clock() + 180
             return []
         if kind == "session.playing" and self.phase in {"processing", "playing"}:
+            if self.phase != "playing":
+                self.pre_roll.clear()
+                self.wake.reset()
             self.phase = "playing"
             self.expires_at = self.clock() + 180
             return []
@@ -374,7 +417,7 @@ async def serve(args):
             getattr(args, "xvf_azimuth_sign", None), getattr(args, "xvf_front_half_width_deg", 30),
             getattr(args, "xvf_min_energy", 0))
     session = SatelliteSession(wake, direction,
-                               endpoint_factory=endpoint_factory, verifier=verifier)
+                               endpoint_factory=endpoint_factory, verifier=verifier, barge_in=hardware == "v2")
     lock = asyncio.Lock()
     capture_gate = asyncio.Lock()
     capture_ready = asyncio.Event()
@@ -431,18 +474,18 @@ async def serve(args):
         if result.get("ok") is not True:
             raise ValueError("Runtime did not accept wake confirmation")
 
-    async def confirmed_feedback(identity, observation, observed_at, followup=False):
+    async def confirmed_feedback(identity, observation, observed_at, followup=False, skip_attention=False):
         await confirm_activity(identity)
         side, confidence = observation["side"], observation["confidence"]
         direction_age = session.clock() - observed_at
-        if 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
+        if not skip_attention and 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
             expression(f"attend_{side} {direction_age * 1000:.3f}", identity)
         if followup: expression("followup", identity)
 
-    async def acoustic_confirmation(identity, observation, observed_at):
+    async def acoustic_confirmation(identity, observation, observed_at, skip_attention=False):
         # Runs beside capture so waiting for oriond never delays microphone reads.
         try:
-            await confirmed_feedback(identity, observation, observed_at)
+            await confirmed_feedback(identity, observation, observed_at, skip_attention=skip_attention)
         except (OSError, ValueError, asyncio.TimeoutError):
             if session.session_id == identity:
                 cancel_turn()
@@ -476,7 +519,8 @@ async def serve(args):
                     expression("wake")
                     expression("verify")
                     background.add(asyncio.create_task(acoustic_confirmation(
-                        message["sessionId"], session.observation.copy(), session.observed_at)))
+                        message["sessionId"], session.observation.copy(), session.observed_at,
+                        session.barge_in_session)))
                     for task in list(background):
                         if task.done(): background.discard(task)
                 elif kind == "command.candidate":
@@ -488,6 +532,7 @@ async def serve(args):
                     expression(("verify" if message["purpose"] == "wake_prefix" else "endpoint")
                                if owner is not None else "unavailable")
                 elif kind == "session.expired": expression("cancel", message["sessionId"])
+                elif kind == "session.interrupted": expression("cancel", message["sessionId"])
             if outgoing is not None:
                 try:
                     outgoing.put_nowait(message)
@@ -633,6 +678,7 @@ async def serve(args):
                     identity = session.session_id
                     observation = session.observation.copy()
                     observed_at = session.observed_at
+                    skip_attention = session.barge_in_session
                     late_cue = message["type"] == "wake.confirmed" and session.acoustic_verdict is False
                     result = session.control(message)
                     if message["type"] == "session.playing":
@@ -650,7 +696,7 @@ async def serve(args):
                             # open the session, mark the endpoint, then confirm.
                             expression("wake", identity)
                             expression("endpoint", identity)
-                        await confirmed_feedback(identity, observation, observed_at, message.get("followup"))
+                        await confirmed_feedback(identity, observation, observed_at, message.get("followup"), skip_attention)
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
                         expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
                                    else message["type"].split(".")[1], identity)

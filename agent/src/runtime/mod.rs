@@ -70,7 +70,17 @@ impl AgentHandle {
     /// Preserve an explicit delivery failure for the next model turn without
     /// starting an unsolicited inference request after playback fails.
     pub fn report_delivery_failure(&self, reason: &str) {
-        *self.1.lock().unwrap() = Some(reason.chars().take(2048).collect());
+        *self.1.lock().unwrap() = Some(format!(
+            "Previous speech delivery failed: {}",
+            reason.chars().take(2048).collect::<String>()
+        ));
+    }
+
+    /// Keep the interruption notice until the next command, without cancelling
+    /// the current turn or treating a deliberate interruption as a failure.
+    pub fn report_interruption(&self) {
+        *self.1.lock().unwrap() =
+            Some("The previous reply was interrupted before it finished.".into());
     }
 
     pub async fn respond(&self, text: &str) -> Result<String, String> {
@@ -88,10 +98,7 @@ impl AgentHandle {
         let direct_sleep = is_direct_sleep_request(text);
         let notice = self.1.lock().unwrap().take();
         let input = match notice {
-            Some(reason) => format!(
-                "Previous speech delivery failed: {reason}\nUser request: {}",
-                text.trim()
-            ),
+            Some(notice) => format!("{notice}\nUser request: {}", text.trim()),
             None => text.trim().into(),
         };
         match self.request(Some(input), events, direct_sleep).await? {

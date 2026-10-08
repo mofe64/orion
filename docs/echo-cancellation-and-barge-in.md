@@ -1,12 +1,13 @@
 # Echo cancellation and barge-in design
 
-Status: proposed. Nothing on this page is implemented. The implemented voice
-behaviour is in [voice architecture](voice-architecture.md).
+V2 uses XVF3800 hardware AEC and implements acoustically verified wake-phrase
+barge-in; see [the implemented lifecycle](voice-architecture.md#wake-phrase-barge-in).
+The software-AEC choices and shorter follow-up guard below remain proposals for
+the V1 HAT. Their baseline observations describe the system before V2 barge-in.
 
-Orion cannot hear a person while it speaks. The listener ignores microphone
-audio during processing and playback, then waits for an echo guard before the
-follow-up window opens. Acoustic echo cancellation (AEC) would remove Orion's
-own voice from the microphone signal. Barge-in would let a person stop a reply
+V1 ignores microphone audio during processing and playback, then waits for an
+echo guard before the follow-up window opens. Acoustic echo cancellation (AEC)
+would remove Orion's own voice from the microphone signal. Barge-in would let a person stop a reply
 by speaking over it.
 
 This design recommends a staged path: measure the echo on the assembled robot,

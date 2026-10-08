@@ -9,7 +9,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 from websockets.asyncio.client import connect
@@ -26,7 +26,7 @@ class FakeWake:
 
 class FakeCapture:
     instances=[]
-    def __init__(self,*args): self.opened=False; self.frames=0; self.instances.append(self)
+    def __init__(self,*args,**kwargs): self.opened=False; self.frames=0; self.instances.append(self)
     def open(self): self.opened=True;self.frames=0
     def close(self): self.opened=False
     def read(self):
@@ -104,7 +104,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
-    async def acoustic_session(self, scores):
+    async def acoustic_session(self, scores, hardware="v1"):
         """Run the listener with a scripted verifier; return client, sid and expressions."""
         from orion_voice.verifier import AcousticVerifier
         from test_verifier import MODELS, ScriptedScorer
@@ -114,7 +114,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
             reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
         args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
             wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
-            daemon_socket=str(Path(directory.name) / 'no-robot.sock'), verifier_dir=MODELS)
+            daemon_socket=str(Path(directory.name) / 'no-robot.sock'), verifier_dir=MODELS, hardware=hardware)
         expressions = []
         async def daemon(command, path):
             expressions.append(command)
@@ -188,6 +188,34 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(expressions.count(f'voice {sid} playing'), 1)
         self.assertNotIn(f'voice {sid} processing', expressions)
         await client.send(json.dumps({'type':'session.finish','sessionId':sid}))
+
+    async def test_barge_in_cancels_old_runtime_before_new_wake_and_never_attends(self):
+        direction = Mock()
+        direction.observation.side_effect = lambda: {
+            "side": "left", "confidence": 1, "observed_at": time.monotonic()}
+        with patch('orion_voice.satellite.DirectionEstimator', return_value=direction):
+            client, old, expressions = await self.acoustic_session(
+                {chunk: .9 for chunk in range(1, 1000)}, hardware="v2")
+            self.assertEqual(json.loads(await client.recv())['type'], 'wake.verified')
+            full = json.loads(await client.recv()); await client.recv()
+            self.assertEqual(full['purpose'], 'wake_and_command')
+            await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': old, 'followup': False}))
+            await client.send(json.dumps({'type': 'session.playing', 'sessionId': old}))
+            interrupted = json.loads(await asyncio.wait_for(client.recv(), 2))
+            candidate = json.loads(await client.recv())
+            verified = json.loads(await client.recv())
+            self.assertEqual(interrupted, {'type': 'session.interrupted', 'sessionId': old, 'reason': 'barge_in'})
+            self.assertEqual(candidate['type'], 'wake.candidate')
+            self.assertEqual(verified['type'], 'wake.verified')
+            new = candidate['sessionId']
+            self.assertNotEqual(old, new)
+            await self.wait_for(expressions, f'voice {new} confirmed')
+            self.assertLess(expressions.index(f'voice {old} cancel'), expressions.index(f'voice {new} wake'))
+            full = json.loads(await client.recv()); await client.recv()
+            await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': new, 'followup': False}))
+            await client.send(json.dumps({'type': 'session.processing', 'sessionId': new}))
+            await self.wait_for(expressions, f'voice {new} processing')
+            self.assertFalse(any(e.startswith(f'voice {new} attend_') for e in expressions))
 
     async def test_acoustic_acceptance_cues_after_verdict_and_skips_prefix(self):
         client, sid, expressions = await self.acoustic_session({1: 0.9})

@@ -21,7 +21,7 @@ Read these in order when you are new to Orion:
 - [Audio cues](../audio/README.md)
 - [Robot description](../description/README.md)
 - [Train and evaluate “Hey Orion”](wake-word-training.md)
-- [Echo cancellation and barge-in design](echo-cancellation-and-barge-in.md) (planned, not implemented)
+- [Echo cancellation and barge-in design](echo-cancellation-and-barge-in.md) (software AEC proposals; V2 uses hardware AEC)
 
 ## Hardware setup
 

@@ -40,10 +40,19 @@ capture time. These log entries contain no audio or transcript. See
 [capture and session behavior](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle)
 for timing, limits and the Silero classifier.
 
-Processing and playback suppress new wake detections. After the coordinator
-acknowledges successful playback, the listener establishes a quiet baseline and
-opens the teal follow-up invitation. Acoustic echo cancellation and interruption
-during playback are not implemented.
+Processing suppresses wake detections. On V2, playback keeps three seconds of
+pre-roll and runs Rustpotter only while the acoustic phrase verifier is healthy.
+A candidate leaves playback running until the verifier accepts it. Acceptance
+stops the reply and starts a fresh verified wake session from that pre-roll;
+rejection leaves the speaking session unchanged. A missing or unhealthy verifier
+disables barge-in. V1 retains playback wake suppression.
+
+Barge-in uses processed channel 0 and the XVF3800's hardware echo cancellation;
+Orion does not add software AEC or raise the wake threshold during playback.
+Only “Hey Orion” interrupts, and interruption sessions never request an attention
+turn because Orion's voice can steer the board's beam. Alarm dismissal takes
+precedence. After successful playback, the listener still establishes a quiet
+baseline and opens the teal follow-up invitation.
 
 ## Settings and microphone startup
 
@@ -88,9 +97,10 @@ changing the ASR model.
 ## Intermediate tool speech
 
 The listener advertises `toolFeedback: true`. After search acknowledgement plays,
-`session.processing` restores thinking feedback in the same session. Wake detection
-and command dispatch stay suppressed while the agent works, except for alarm
-dismissal. During synthesis and playback, `session.keepalive` renews the
+`session.processing` restores thinking feedback in the same session. Wake
+detection stays suppressed during processing. V2 playback accepts verified
+barge-in, and alarm dismissal takes precedence. During synthesis and playback,
+`session.keepalive` renews the
 180-second lease and forwards `voice SESSION keepalive` to the runtime without
 changing the phase or triggering feedback. Unknown and expired sessions cannot
 renew. `session.processing` and `session.playing` mark actual phase transitions. A long response can continue while the
@@ -177,6 +187,15 @@ service threshold of 0.35, and the auto-select beam's azimuth while the board
 reports speech. Across direction trials it fits the board's mounting offset and
 rotation sense, and prints the worst error after that fit. With the six-channel
 firmware it also reports echo reduction against the raw microphones.
+
+## Check V2 barge-in on the lamp
+
+From 1–2 m, interrupt ten long replies with “Hey Orion” and a new command: at
+least nine must stop and capture the command. Play fifty uninterrupted replies,
+including replies saying “Orion”: none may interrupt themselves. After an
+interruption, ask “what were you saying?” to check retained conversation context.
+The [coordinator lifecycle](../docs/voice-architecture.md#wake-phrase-barge-in)
+explains why the new command can wait for the old agent turn to finish.
 
 ## Calibrate V2 attention
 
