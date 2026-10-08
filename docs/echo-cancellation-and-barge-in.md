@@ -44,7 +44,7 @@ These facts come from the code and hardware notes. Each one changes the design.
 | During `processing` and `playing` the listener drops capture frames. | `SatelliteSession.accept_stereo` | Barge-in needs a new listener phase that keeps Rustpotter running during `playing`. |
 | Cancelling an active agent request retires the Codex conversation. | [voice architecture](voice-architecture.md#agent-conversation-and-memory) | Barge-in must stop speech without cancelling a Codex turn that is still streaming, or the person loses context by interrupting. |
 | Qwen wake confirmation often arrives only after the full utterance is transcribed. | [voice architecture](voice-architecture.md#confirmed-waking) | Waiting for Qwen before stopping playback would make barge-in feel broken. The stop decision needs a faster signal. |
-| Servos move during speech animation. | [character animation](character-animation.md#speech-driven-animation) | Motor noise is near-end noise. It can hold a voice activity detector (VAD) open or look like speech. |
+| Servos move during speech animation. | [speech performance policy](motion-reference.md#speech-performance-policy) | Motor noise is near-end noise. It can hold a voice activity detector (VAD) open or look like speech. |
 | Replies can contain the word “Orion”. | agent replies | Orion saying its own name can trigger Rustpotter through the speaker. |
 
 Unmeasured facts that also shape the choice:

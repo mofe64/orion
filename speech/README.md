@@ -11,7 +11,7 @@ Use 64-bit Linux on the Pi 5 with 8 GB RAM. The speech environment uses Python
 3.11, the pinned Sherpa ONNX/Piper model, and the native
 Qwen GGUF server. The listener uses a separate Python 3.12 environment with
 Silero ONNX and Rustpotter.
-See [Pi installation](../docs/quickstart.md#pi-local-voice-and-agent).
+See [Pi installation](../docs/quickstart.md#prepare-a-new-pi).
 
 `ORION_SPEECH_BACKEND=pi` selects the CPU adapters. `ORION_LLAMA_SERVER` selects
 the native binary; the ASR model folder contains `model.gguf` and `mmproj.gguf`.

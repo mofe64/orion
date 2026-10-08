@@ -36,7 +36,7 @@ the JSONL alone does not identify those inputs.
 Hardware `measured_velocity_rad_s` uses `2π / 4096` rad/s per signed Present
 Speed count/s, followed by the calibrated encoder direction. This requires
 Phase register 18 bit 2 set, as verified on all five Orion servos. See the
-[control reference](trajectory-and-joint-control.md#calibration-and-radians-conversion)
+[servo control reference](motion-reference.md#calibration-and-radians-conversion)
 for the register source and conversion contract.
 
 Captures from builds that predate the count/s conversion report hardware speed

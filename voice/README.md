@@ -8,7 +8,7 @@ waking and character feedback.
 
 ## Setup
 
-Use [Pi installation and deployment](../docs/quickstart.md#pi-local-voice-and-agent)
+Use [Pi installation and deployment](../docs/quickstart.md#prepare-a-new-pi)
 to prepare the listener with the complete voice stack. The Pi needs working
 [ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
 Deployment builds the native Rustpotter adapter and checks the active
@@ -51,7 +51,7 @@ during playback are not implemented.
 without HAT mixer commands; `--capture-channels 2|6` and `--processed-channel N`
 select the verified XVF3800 stream. The processed channel feeds the listener
 without averaging raw microphone channels, and direction-based attention is
-disabled. See [USB profile setup](../docs/hardware-versions.md#identify-usb-capture).
+disabled. See [USB profile setup](../docs/hardware-versions.md#usb-capture-and-playback).
 
 Microphone mute persists in `~/.config/orion/microphone.json`. The listener applies
 capture routing before opening ALSA, discards startup frames, reapplies gain after

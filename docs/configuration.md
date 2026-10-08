@@ -83,7 +83,7 @@ An explicit Codex executable disables discovery fallback. Without one, the agent
 checks supported installed app runtimes and then the CLI on `PATH`. It verifies
 login and the advertised model/effort combinations. Studio uses that advertised
 catalog for its choices. The Pi login procedure is in the
-[quickstart](quickstart.md#pi-local-voice-and-agent).
+[quickstart](quickstart.md#prepare-a-new-pi).
 
 ## Pi service control
 
@@ -101,7 +101,7 @@ gateway. Keep `owner.lock` in place while a service can own it.
 Models and native tools are shared under `~/.local/share/orion/voice-stack/`.
 Each release has its own Python environments and runtime binaries. Those
 environments also depend on the managed Python interpreters used to create them.
-The [retention guidance](quickstart.md#retained-files) explains what a working
+The [retention guidance](quickstart.md#files-the-installer-keeps) explains what a working
 release and rollback need.
 
 ## Saved pairing

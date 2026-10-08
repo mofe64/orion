@@ -7,28 +7,28 @@ Studio closed; Codex inference and web search still require the internet.
 
 ## Start here
 
-- [Quickstart](docs/quickstart.md) — install, connect to or update Orion.
-- [V1/V2 hardware and calibration](docs/hardware-versions.md) — select the lamp, prepare a release and validate V2.1.
-- [System architecture](docs/system-architecture.md) — processes, data flow and device ownership.
-- [Voice architecture](docs/voice-architecture.md) — wake detection, complete command capture, agent turns and replies.
-- [Motion architecture](docs/motion-and-animation-architecture.md) — how character intent becomes joint movement.
-- [Documentation index](docs/README.md) — component guides, configuration, hardware and learning notes.
+1. [Quickstart](docs/quickstart.md): set up a Pi, connect Studio and deploy updates.
+2. [System architecture](docs/system-architecture.md): the processes on the Pi and how they talk.
+3. [How Orion moves](docs/motion-architecture.md): from a request to servo movement.
+4. [Voice architecture](docs/voice-architecture.md): wake word, transcription, agent and reply.
+5. [Hardware versions](docs/hardware-versions.md): V1 and V2 lamps, V2 calibration and centring.
 
-## System at a glance
+Everything else is in the [documentation index](docs/README.md).
 
-The Pi listener uses Rustpotter for wake detection and Silero to find the end of
-speech. The onboard coordinator verifies and transcribes the recording with Qwen,
-passes the command to Codex, and synthesizes the reply with Piper Alba Medium.
-Codex App Server runs on the Pi and
-connects to online inference through the user's account.
+## How a conversation flows
 
-The coordinator sends reply audio through the local gateway to `oriond`, which
-owns speaker playback, speech animation, servos and RGBW output. The runtime's
-calibration and movement-completion rules apply to every physical action.
+```text
+microphone ─▶ wake word ─▶ record command ─▶ transcribe ─▶ Codex agent
+                (Rustpotter)  (Silero)         (Qwen)          │
+speaker + movement ◀─ oriond ◀─ gateway ◀─ synthesize reply ◀──┘
+                                             (Piper)
+```
 
-Studio connects through the authenticated gateway. It offers scene authoring,
-robot controls, saved voice presets and diagnostics. The Pi service keeps the
-conversation and speech models alive independently of the desktop connection.
+Everything above runs on the Pi. Only Codex inference and web search go to the
+internet. `oriond` plays the reply, animates the lamp to match the speech, and
+owns the servos and the RGBW light. Studio connects to the Pi's authenticated
+gateway for authoring, controls and settings; closing Studio does not stop the
+lamp.
 
 ## Repository map
 

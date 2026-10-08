@@ -192,7 +192,7 @@ and timings; audio uploads and playback acknowledgement remain on the Pi.
 
 Remote Studio access uses HTTP with a bearer token on a trusted local network.
 The service's private control and observer credentials remain local. See the
-[Pi quickstart](quickstart.md#pi-local-voice-and-agent) for installation and the
+[Pi quickstart](quickstart.md#prepare-a-new-pi) for installation and the
 [speech worker](../speech/README.md#inference-protocol) for inference framing.
 
 ## Orion service lifecycle
@@ -426,7 +426,7 @@ The runtime analyzes received audio and extends the character's existing motion
 run at gesture boundaries. Extension preserves commanded position and velocity,
 the anchor and performed gesture history. The stream end marker revises the
 remaining plan, and terminal playback starts or continues a final settle. See
-[character animation](character-animation.md#speech-driven-animation) for the
+[speech performance policy](motion-reference.md#speech-performance-policy) for the
 motion policy.
 
 Coordinator logs include `speech.buffer_ready` and `speech.chunk`; runtime logs

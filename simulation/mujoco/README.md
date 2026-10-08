@@ -6,8 +6,8 @@ measured-settling logic as the hardware runtime. V1 adds physics and diagnostic
 reporting. V2's fixed-base CAD model uses kinematic tracking and reports its
 unvalidated dynamic scope explicitly. Both consume the Rust trajectory.
 
-Read the [motion and animation architecture](../../docs/motion-and-animation-architecture.md)
-and [trajectory and joint-control reference](../../docs/trajectory-and-joint-control.md)
+Read the [how Orion moves](../../docs/motion-architecture.md)
+and [motion reference](../../docs/motion-reference.md)
 before changing the backend or motion-player contract.
 
 ## Python environment

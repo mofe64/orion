@@ -35,7 +35,7 @@ flowchart TD
 The core calls the compiler while preparing a movement. The diagram shows that
 call sequence within the runtime process.
 
-Sources: [voice architecture](voice-architecture.md), [daemon loop](../runtime/src/app/server.rs), [runtime core](../runtime/src/control/core.rs), and [motion architecture](motion-and-animation-architecture.md).
+Sources: [voice architecture](voice-architecture.md), [daemon loop](../runtime/src/app/server.rs), [runtime core](../runtime/src/control/core.rs), and [motion architecture](motion-architecture.md).
 
 ### The runtime's application layout
 
@@ -851,8 +851,8 @@ Character tests live in [character.rs](../runtime/src/expression/character.rs), 
 | [trajectory compiler](../runtime/src/motion/trajectory.rs) | Travel/hold timing, interpolation, segment indices, constraints, and retiming. |
 | [Authored speech motions](../motion/motions/v1/speaking) | Source gesture shapes from which the composer borrows its first targets. |
 | [Voice architecture](voice-architecture.md) | The Pi, Studio, voice processing, and runtime application boundaries. |
-| [Motion and animation architecture](motion-and-animation-architecture.md) | How authoring, character behavior, and motion execution fit together. |
-| [Trajectory and joint control reference](trajectory-and-joint-control.md) | Broader movement terminology and control constraints. |
+| [How Orion moves](motion-architecture.md) | How authoring, character behavior, and motion execution fit together. |
+| [Motion reference](motion-reference.md) | Broader movement terminology and control constraints. |
 
 Use symbol names to locate the implementation. Changes to gesture formulas or
 streaming behavior should update the corresponding examples and tests together.

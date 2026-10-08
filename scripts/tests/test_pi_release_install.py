@@ -156,6 +156,15 @@ class RestRuntimeTests(unittest.TestCase):
              patch.object(installer.Path, 'read_bytes', return_value=cmdline):
             system.rest_runtime(force=force)
 
+    def assert_rests_safely(self):
+        """Playback stops before rest, torque goes off only after rest, then is re-checked."""
+        calls = self.calls
+        for stop in ('--stop-scene', '--stop-speech', '--stop'):
+            self.assertLess(calls.index(stop), calls.index('--goto'))
+        self.assertLess(calls.index('--goto'), calls.index('--disable'))
+        self.assertEqual(calls.count('--disable'), 1)
+        self.assertEqual(calls[-1], '--status')
+
     def test_a_torque_off_robot_in_another_pose_is_powered_and_rested_before_switching(self):
         for mode in ('observe', 'configured'):
             self.exercise(initial_torque=False, initial_mode=mode, force=True)
@@ -176,7 +185,7 @@ class RestRuntimeTests(unittest.TestCase):
                     if scene: failures['--stop-scene'] = (3, '{"ok":false,"error":"No scene is active."}')
                     if speech: failures['--stop-speech'] = (3, '{"ok":false,"error":"No speech run is active."}')
                     self.exercise(failures)
-                    self.assertEqual(self.calls, ['--status', '--stop-scene', '--stop-speech', '--stop', '--goto', '--disable', '--status'])
+                    self.assert_rests_safely()
 
     def test_other_stop_failures_abort_before_moving_or_disabling(self):
         for command in ('--stop-scene', '--stop-speech', '--stop'):
@@ -191,7 +200,7 @@ class RestRuntimeTests(unittest.TestCase):
 
     def test_already_stationary_motion_still_requires_rest_and_torque_off(self):
         self.exercise({'--stop': (3, '{"ok":false,"command":"stop","error":"no movement is active"}')})
-        self.assertEqual(self.calls, ['--status', '--stop-scene', '--stop-speech', '--stop', '--goto', '--disable', '--status'])
+        self.assert_rests_safely()
         with self.assertRaisesRegex(RuntimeError, 'torque-off was not confirmed'):
             self.exercise({'--stop': (3, '{"ok":false,"command":"stop","error":"no movement is active"}')}, torque_after=True)
 

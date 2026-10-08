@@ -13,10 +13,8 @@ mapping, maintenance defaults and calibration paths.
 
 For movement internals, use:
 
-- [Motion and animation architecture](../docs/motion-and-animation-architecture.md)
-- [Character animation design](../docs/character-animation.md)
-- [Trajectory and joint-control reference](../docs/trajectory-and-joint-control.md)
-- [Motion asset reference](../docs/motion-assets.md)
+- [How Orion moves](../docs/motion-architecture.md)
+- [Motion reference](../docs/motion-reference.md)
 
 The physical transport uses
 [`rustypot`](https://github.com/pollen-robotics/rustypot) for the STS3215
@@ -429,7 +427,7 @@ without changing phase, history or feedback; stale and expired IDs are rejected.
 `SpeechCoordinator` validates and analyzes the waveform, while
 `CharacterCoordinator` composes one anchor-relative utterance performance and
 the daemon drives the `speaking_energy` light. See
-[Character animation design](../docs/character-animation.md#speech-driven-animation)
+[Speech performance policy](../docs/motion-reference.md#speech-performance-policy)
 for the animation policy.
 
 The Pi listener captures stereo audio (ReSpeaker HAT on V1, XVF3800 on V2) and runs Rustpotter, then
@@ -459,7 +457,7 @@ require confidence in [0.75, 1], a powered available character, and a bounded ya
 transition. The character holds the completed attention anchor, then returns to
 the prior anchor 15 seconds after neutral inactivity. Explicit foreground work
 discards that pending return. See the
-[animation catalogue](../docs/orion-animation-catalogue.md#motion-review).
+[animation catalogue](../docs/motion-reference.md#animation-catalogue).
 
 ## Agent lighting commands
 

@@ -1,51 +1,51 @@
 # Orion documentation
 
-## Architecture and animation
+## Start here
 
-- [System architecture](system-architecture.md)
-- [Voice architecture](voice-architecture.md)
-- [Train and evaluate “Hey Orion”](wake-word-training.md)
-- [Motion and animation architecture](motion-and-animation-architecture.md)
-- [Character animation design](character-animation.md)
-- [ELEGNT expression model](elegnt.md)
-- [Orion animation catalogue](orion-animation-catalogue.md)
+Read these in order when you are new to Orion:
+
+1. [Quickstart](quickstart.md): set up a Pi, connect Studio and deploy updates.
+2. [System architecture](system-architecture.md): the processes on the Pi and how they talk.
+3. [How Orion moves](motion-architecture.md): from a request to servo movement.
+4. [Voice architecture](voice-architecture.md): wake word, transcription, agent and reply.
+5. [Hardware versions](hardware-versions.md): V1 and V2 differences, V2 calibration and centring.
 
 ## Reference
 
-- [Configuration and environment variables](configuration.md)
-- [Hardware versions and V2 calibration](hardware-versions.md)
-- [Motion asset schemas and catalog](motion-assets.md)
-- [Trajectory and joint-control internals](trajectory-and-joint-control.md)
-- [Runtime command and lifecycle reference](../runtime/README.md)
-- [Speech animation runtime](speech-animation-runtime.md)
-- [Scene format and lifecycle](../scenes/README.md)
-- [Motion asset rules](../motion/README.md)
-- [Local audio cue rules](../audio/README.md)
+- [Motion reference](motion-reference.md): pose and motion schemas, styles, animation catalogue, trajectory compiler and servo control
+- [Speech animation runtime](speech-animation-runtime.md): how reply audio becomes head and body gestures
+- [Configuration](configuration.md): settings files, environment variables and deploy options
+- [Runtime commands and lifecycle](../runtime/README.md)
+- [Scene format](../scenes/README.md)
+- [Motion asset folders](../motion/README.md)
+- [Audio cues](../audio/README.md)
 - [Robot description](../description/README.md)
+- [Train and evaluate “Hey Orion”](wake-word-training.md)
+- [Echo cancellation and barge-in design](echo-cancellation-and-barge-in.md) (planned, not implemented)
 
-## Setup and validation
+## Hardware setup
 
-- [Quickstart: connect Studio and deploy the Pi stack](quickstart.md)
-- [Orion service development and validation](../orion-service/README.md)
-- [Build and test the runtime](../runtime/README.md#build-and-test)
-- [Run the runtime in MuJoCo](../runtime/README.md#mujoco-daemon)
+- [STS3215 servo setup, calibration and centring](../hardware/servo_setup/README.md)
+- [V1 ReSpeaker HAT audio](../hardware/audio/README.md); V2 USB audio is in [hardware versions](hardware-versions.md#usb-capture-and-playback)
+- [RGBW light](../hardware/lighting/README.md)
+
+## Component development
+
+- [Studio](../orion_studio/README.md#development)
+- [Runtime build and tests](../runtime/README.md#build-and-test)
+- [Runtime in MuJoCo](../runtime/README.md#mujoco-daemon)
 - [MuJoCo pose editor](../simulation/mujoco/README.md#calibrated-pose-editor)
-- [Run Orion Studio](../orion_studio/README.md#development)
-- [Run the entire voice and agent stack on the Pi](quickstart.md#pi-local-voice-and-agent)
+- [Orion service](../orion-service/README.md)
+- [Voice coordinator](../coordinator/README.md)
+- [Agent runtime, memory and tools](../agent/README.md)
 - [Pi speech workers and models](../speech/README.md#setup-on-the-pi)
-- [Set up Pi voice capture](../voice/README.md#setup)
-- [Voice coordinator setup and validation](../coordinator/README.md)
-- [Agent runtime, memory, and tools](../agent/README.md)
-- [Deploy the complete Pi stack](../runtime/README.md#deploy-an-update-to-the-raspberry-pi)
-- [Set up and calibrate the STS3215 servos](../hardware/servo_setup/README.md)
-- [Set up ReSpeaker audio](../hardware/audio/README.md)
-- [Set up the RGBW light](../hardware/lighting/README.md)
+- [Pi voice capture](../voice/README.md#setup)
 
 ## Experiment tooling
 
 - [Servo tracking capture, trials and gain experiments](servo-tracking.md)
 
-## Learning notes
+## Learning notes (V1 model)
 
 - [Joint structure](learning_notes/orion_joints.md)
 - [MuJoCo model](learning_notes/orion_mujoco_model_basics.md)

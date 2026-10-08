@@ -5,7 +5,7 @@ The Pi's `orion-voice-stack` systemd unit runs the executable without a UI.
 The same crate supplies Studio's `Backend`, a client that stores desktop pairing
 and forwards requests to the Pi gateway.
 
-Use the [Pi quickstart](../docs/quickstart.md#pi-local-voice-and-agent) for setup.
+Use the [Pi quickstart](../docs/quickstart.md#prepare-a-new-pi) for setup.
 `ORION_ONBOARD=1` starts saved settings against the loopback listener and gateway.
 The listener grants processing ownership to the local coordinator. Studio
 observes events and changes settings through the gateway. The host continues

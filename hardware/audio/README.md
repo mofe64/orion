@@ -6,7 +6,7 @@ Inter-Integrated Circuit (I2C) address `0x18`. The HAT provides two microphones
 plus playback through its 3.5 mm jack and JST 2.0 speaker output.
 
 V2 selects the XVF3800 USB interface (`Array`) and skips HAT mixer setup.
-Use [V2 audio setup](../../docs/hardware-versions.md#identify-usb-capture)
+Use [V2 audio setup](../../docs/hardware-versions.md#usb-capture-and-playback)
 to identify firmware channels and test recording/playback. The overlay and mixer
 commands below apply to the HAT on the v1 lamp.
 

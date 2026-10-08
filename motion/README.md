@@ -23,31 +23,8 @@ and calibration and backs up replaced or retired built-ins for rollback. See
 [Pi deployment](../docs/quickstart.md#deploy-to-the-pi) for the physical smoke test
 and release-switch sequence.
 
-## Canonical documentation
+## Documentation
 
-- [Motion asset reference](../docs/motion-assets.md) — pose and
-  motion schemas, styles, catalog, and validation invariants.
-- [Motion and animation architecture](../docs/motion-and-animation-architecture.md)
-  — how intent becomes a physical action.
-- [Character animation design](../docs/character-animation.md) —
-  the 12 principles, idle behavior, and speech performance.
-- [Trajectory and joint-control reference](../docs/trajectory-and-joint-control.md)
-  — compiler, runtime, calibration, and servo details.
-
-## Compile a portable trajectory
-
-Generate a preview or diagnostic document with:
-
-```bash
-runtime/target/release/orion-trajectory \
-  --motion look_at_left_expressive \
-  --start-pose attentive \
-  --pose-file motion/config/v1/poses.yaml \
-  --motions-directory motion/motions/v1 \
-  --calibration simulation/mujoco/config/servo_calibration.json
-```
-
-For an anchor-relative motion, add `--anchor-pose POSE_NAME`. The exporter
-loads the same assets and calibration used by the runtime, invokes the same
-Rust compiler, and emits positions, velocities, accelerations, markers,
-calibration ranges, and hardware-profile metadata.
+- [How Orion moves](../docs/motion-architecture.md): how a request becomes servo movement.
+- [Motion reference](../docs/motion-reference.md): schemas, styles, catalogue,
+  trajectory compiler and servo control, including how to export a trajectory.

@@ -1,226 +1,163 @@
 # Orion quickstart
 
-Orion runs voice and agent processing on its Raspberry Pi. Studio connects for
-controls, authoring and settings. Run repository commands from the Orion source
-root unless a step specifies another directory.
+Orion has two halves:
+
+- **The Pi in the lamp** runs everything the lamp needs: the servo runtime
+  (`oriond`), wake word and speech recognition, the Codex agent and speech
+  synthesis. It keeps working when no computer is connected.
+- **Studio on your computer** pairs with the Pi to author scenes, control the
+  lamp and change voice settings.
+
+Run repository commands from the Orion source root unless a step says otherwise.
+
+## Prepare a new Pi
+
+Skip this section when the Pi already runs Orion.
+
+You need a Pi 5 with 8 GB RAM and 64-bit Linux, plus Git, Rust/Cargo, uv,
+Python 3.11 or later and these packages: `build-essential`, `pkg-config`,
+`libssl-dev`, `libdbus-1-dev`, `alsa-utils`, `python3-venv`, `ca-certificates`.
+
+1. **Set up the hardware.** Calibrate the servos and set up audio and lighting.
+   For V2 follow [V2 calibration and centring](hardware-versions.md); for V1 use
+   the [servo](../hardware/servo_setup/README.md),
+   [audio](../hardware/audio/README.md) and
+   [lighting](../hardware/lighting/README.md) guides.
+2. **Create the Studio pairing token** and keep the printed value for Studio:
+
+   ```bash
+   python3 orion_studio/gateway.py create-token --token-file ~/.config/orion/studio-token
+   ```
+
+3. **Prepare the first release** on the Pi from committed source:
+
+   ```bash
+   export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+   python3 scripts/deploy_pi_release.py --hardware v2 --source "$PWD" --revision HEAD --prepare-only
+   ```
+
+   Use `--hardware v1` for a V1 lamp. Preparation downloads the pinned Qwen,
+   Piper, llama-server, Codex and Silero assets, checks their SHA-256 hashes,
+   and prints the release path. Models live under
+   `~/.local/share/orion/voice-stack/`.
+4. **Sign in to Codex** as the Pi user and complete the device code in a browser:
+
+   ```bash
+   ~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login --device-auth
+   ```
+
+5. **Activate the release**, replacing the path with the one printed in step 3:
+
+   ```bash
+   python3 /path/to/prepared-release/scripts/install_pi_voice_stack.py \
+     --release /path/to/prepared-release --runtime-project "$PWD"
+   systemctl is-active oriond orion-studio-gateway orion-listener orion-voice-stack
+   ```
+
+   All four services should report `active`. Add `--plan` to list the files the
+   installer would change without activating anything.
+
+Later updates use the [deploy script](#deploy-to-the-pi).
 
 ## Connect Studio
 
-The desktop needs pnpm, a supported Node.js version, Rust and the Tauri
-prerequisites listed in [Studio development](../orion_studio/README.md#development).
-Install dependencies and open the app:
+Studio needs pnpm, Node.js, Rust and the Tauri prerequisites in
+[Studio development](../orion_studio/README.md#development):
 
 ```bash
 pnpm --dir orion_studio install
 scripts/studio-dev.sh
 ```
 
-Select **Pair Orion**, enter the gateway address and token, and save the pairing.
-The default gateway address is `http://orion.local:7447`. Settings and profile
-changes are sent to the Pi. The Pi services continue running when Studio closes.
+Choose **Pair Orion** and enter the gateway address, for example
+`http://ariadne-robot.local:7447`, and the token from [Prepare a new Pi](#prepare-a-new-pi) (print it on the Pi
+with `cat ~/.config/orion/studio-token`). Studio stores one pairing; to switch
+lamps, choose **Forget Orion on this computer** first.
 
 ## Deploy to the Pi
 
-Choose the lamp hardware explicitly. On a new V2 lamp, first complete
-[V2 calibration and centring](hardware-versions.md).
-
-Commit and push the intended branch, then run from the workstation:
+Commit and push your changes, then run from your computer:
 
 ```bash
 scripts/deploy_pi.sh --hardware v2 --host mofe@ariadne-robot.local \
   --root /home/mofe/orion --branch main
 ```
 
-Use `--hardware v1` for V1. The script's defaults are `mofe@orion.local` and
-`/home/mofe/dev/orion`, so pass your Pi account and checkout path when they differ.
-Stop any `oriond` started by hand before deploying; it holds the servo port and
-the runtime socket. SSH must already
-trust the host. The script keeps terminal input available for sudo authentication.
-Unattended deployment requires the Pi account's existing sudo policy to allow
-service control without prompting.
-For a first installation, create the Pi user's Studio pairing token and complete
-the [Codex login](#pi-local-voice-and-agent) before deploying. These credentials
-are separate from servo calibration. If activation stops before switching
-services, fix the reported prerequisite and activate the printed prepared
-release directly; preparation does not need repeating.
-Use `--prepare-only` to build and test the immutable release while the installed
-services continue running. The script prints the release path; activate it later
-with that release's `scripts/install_pi_voice_stack.py --release PATH` after the
-area around Orion is clear.
+- Use `--hardware v1` for V1. Without flags the script uses `mofe@orion.local`
+  and `/home/mofe/dev/orion`.
+- Stop any `oriond` you started by hand first; it holds the servo port and the
+  runtime socket.
+- SSH must already trust the Pi. The terminal stays open for the sudo password.
+- Keep the area around the lamp clear: the deploy moves the arm.
+- `--prepare-only` builds and tests the release without switching services.
+  Activate it later with that release's `scripts/install_pi_voice_stack.py --release PATH`.
 
-The workstation tests and builds Studio. The Pi fetches the chosen commit into
-a separate release directory, prepares locked Python environments, runs tests,
-and builds the runtime, trajectory compiler and voice host. The old services
-remain available during preparation. The installer then checks calibration,
-pairing, Codex login and saved settings. It compiles both expressive acknowledgement
-motions against a temporary copy of the planned YAML catalog and Pi calibration,
-before stopping services or changing live assets.
+What the deploy does:
 
-Pi runtime checks skip native MuJoCo integration tests, which require the
-workstation's root simulation environment. All other runtime tests run during
-release preparation.
+1. Tests and builds Studio on your computer.
+2. On the Pi, extracts the pushed commit into a new release folder, prepares
+   its Python environments, runs the tests and builds the binaries. The running
+   services are untouched until this succeeds. Native MuJoCo tests are skipped
+   on the Pi.
+3. Checks calibration, pairing, Codex login and settings, and compiles the
+   smoke-test motions against the Pi's calibration.
+4. Stops the voice services, moves the arm to rest and confirms torque is off,
+   then stops the runtime.
+5. Updates service files and built-in YAML, starts the new runtime and runs the
+   physical smoke test: lights and audio, `home` (V2) or `zero_reference` (V1),
+   `acknowledge_left`, `acknowledge_right`, `return_home`, then rest with lights
+   and torque off. Each step waits for measured completion.
+6. Starts the voice and Studio services and waits up to three minutes for them
+   to report ready.
 
-For activation, the installer stops the voice companions, cancels active scene
-and speech playback (already-inactive playback is accepted), returns Orion to rest
-and confirms torque is off before stopping the runtime. An installed but inactive
-runtime is started for this rest sequence; a torque-off robot in another pose is
-configured and enabled to reach measured rest.
+If anything fails, the installer restores the previous release automatically.
+When it cannot confirm the arm is safely at rest, it stops instead and asks you
+to run `--rollback` (see below). After a successful deploy, say "Hey Orion" and
+complete one spoken turn to check the microphone, agent and speaker together.
 
-With the runtime stopped, activation updates built-in YAML and service paths. It
-starts the new runtime and keeps voice/Studio companions stopped during the physical
-smoke test. The test establishes rest, moves to `zero_reference`, runs
-`deployment_smoke` for light/audio, then `acknowledge_left`, `acknowledge_right`
-and `return_home`. Each pose and scene waits for measured completion. The final
-`character rest` waits for its own movement run to complete, lights to fade off,
-and torque to be disabled. Movement and torque come from runtime `status`;
-the resting lifecycle and light state come from `character status`. Deployment
-prints each smoke pose and scene and includes the observed states if rest times
-out. Keep Orion's surroundings clear during activation.
-Normal character startup may also move Orion home.
+### What an update keeps
 
-Readiness requires the expected runtime revision, a running coordinator with
-Qwen, the selected TTS model and Codex ready, and a gateway connected to that
-same voice service. It also requires the runtime to remain in its voice-wakeable
-`resting` state with lights and torque off after the smoke test.
-A failed activation or smoke test restores the immediately previous configuration,
-built-in YAML and service state. A failed mechanical rest leaves the runtime
-running for recovery. Complete a spoken turn afterward to check the microphone,
-generation and speech playback together.
-
-### Settings preserved by an update
-
-The installer preserves voice preferences, microphone settings, calibration,
-pairing, Codex login, personality, memory and user-authored poses, motions and
-scenes. Built-in `.yaml`/`.yml` files under `motion/config/`, `motion/motions/`
-and `scenes/` update from the selected
-commit. Local edits to those built-ins are replaced and backed up for rollback.
-Retired tracked built-ins are removed; untracked local files are preserved.
-Each hardware version has separate directories. User subdirectories are excluded
-from built-in replacement.
-It changes release paths while retaining installed command arguments
-and environment overrides, including sleep and microphone tuning. Existing
-service enablement is retained; missing services are enabled. Restarting the agent
-service begins a fresh conversation with its saved profile and memory available.
-
-An update converts older saved voice choices to Piper Alba Medium. Turn listening
-back on in Studio and complete a spoken turn to check the physical speaker.
-Release rollback preserves saved voice settings; an older release may require
-its own compatible settings.
-
-The Pi checkout is used to fetch Git objects and supply the asset catalog.
-Deployment keeps the checkout's Git HEAD and index unchanged; it updates only
-the managed built-in YAML paths in its working tree. Put intended code and YAML
-changes in the selected remote commit. See
+Voice preferences, microphone settings, calibration, pairing, Codex login,
+personality, memory, and user-authored poses, motions and scenes are kept.
+Built-in YAML under `motion/config/`, `motion/motions/` and `scenes/` is
+replaced with the commit's version; local edits to built-ins are backed up for
+rollback. Service command-line tuning and environment overrides are kept.
+The Pi checkout's Git `HEAD` and index are not changed. See
 [installed release boundaries](system-architecture.md#assets-and-installed-releases).
-
-## Pi local voice and agent
-
-The installation targets a Pi 5 with 8 GB RAM and 64-bit Linux. It requires working
-[servo calibration](../hardware/servo_setup/README.md),
-[audio setup](../hardware/audio/README.md) and
-[lighting setup](../hardware/lighting/README.md). Git, Rust/Cargo, uv, Python 3.11
-or later, and native build/audio dependencies must be installed. These include
-`build-essential`, `pkg-config`, `libssl-dev`, `libdbus-1-dev`, `alsa-utils`,
-`python3-venv` and `ca-certificates`.
-
-Calibration and pairing belong to the Pi user under `~/.config/orion/`.
-Select the matching calibration and audio setup in the
-[hardware-version guide](hardware-versions.md). The ReSpeaker 2-Mics V2 HAT
-setup belongs to the v1 lamp; v2 uses USB audio.
-If the Pi has no pairing token, create one once and save the displayed value for
-Studio:
-
-```bash
-python3 orion_studio/gateway.py create-token \
-  --token-file ~/.config/orion/studio-token
-```
-
-For the first onboard installation, prepare a complete release from committed
-source on the Pi:
-
-```bash
-export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-python3 scripts/deploy_pi_release.py --hardware v1 --source "$PWD" --revision HEAD --prepare-only
-```
-
-The command prints the release path. The preparer downloads pinned Qwen GGUF,
-Piper Alba Medium, native llama-server, Codex and Silero assets and verifies
-their SHA-256 hashes. It synthesizes a short Piper check at 24 kHz before
-activation.
-Matching assets are reused; a mismatched file stops preparation for inspection.
-The speech environment uses Python 3.11 and the listener uses Python 3.12.
-Their models and download inventories
-live under `~/.local/share/orion/voice-stack/`.
-
-Sign in as the Pi user over SSH:
-
-```bash
-~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login --device-auth
-~/.local/share/orion/voice-stack/codex-0.157.0/bin/codex login status
-```
-
-Complete the displayed device code in your browser. The account credentials belong
-to the Pi user. Run activation as that user; the installer requests sudo for system
-files and service control. Replace `/path/to/prepared-release` below with the path
-printed during preparation:
-
-```bash
-python3 /path/to/prepared-release/scripts/install_pi_voice_stack.py \
-  --release /path/to/prepared-release
-systemctl is-active oriond orion-studio-gateway orion-listener orion-voice-stack
-```
-
-Use `--runtime-project` when the existing catalog root differs from
-`~/dev/orion`. Add `--plan` to list the proposed files without activation.
-Subsequent workstation updates use `scripts/deploy_pi.sh`.
 
 ## Logs and recovery
 
-On the Pi, inspect all four services:
+On the Pi:
 
 ```bash
 systemctl status oriond orion-studio-gateway orion-listener orion-voice-stack
-journalctl -u oriond -u orion-studio-gateway -u orion-listener \
-  -u orion-voice-stack -n 60 --no-pager
+journalctl -u oriond -u orion-studio-gateway -u orion-listener -u orion-voice-stack -n 60 --no-pager
 ```
 
-An active service process does not establish speech readiness. Studio Debug shows
-loaded models. **View conversation history** in its Voice card reads saved turns,
-including transcript, agent actions and timings, from the Pi. Its gateway log view includes the
-runtime, gateway and listener; use `journalctl -u orion-voice-stack` for coordinator,
-speech-worker and agent startup diagnostics.
+A running service is not proof that speech is ready. Studio's Debug page shows
+loaded models, and **View conversation history** shows saved turns with
+transcripts, agent actions and timings. For coordinator, speech-worker and
+agent start-up problems, read `journalctl -u orion-voice-stack`.
 
-To restore the previous installation, run the installer from the most recently
-prepared release:
+To restore the previous installation:
 
 ```bash
 python3 /path/to/prepared-release/scripts/install_pi_voice_stack.py --rollback
 ```
 
-Rollback restores the service files and active/enabled states captured immediately
-before the update. Models, login credentials and saved preferences remain available.
-A pending deployment journal blocks another update until `--rollback` completes.
-Recovery does not force termination when mechanical rest cannot be confirmed.
-If activation and recovery both fail, the installer reports both errors and
-saves them as `activation_error` and `recovery_error` in the transaction's
-`state.json`. Captured runtime command output is included so the configuration
-or movement rejection remains available after the daemon exits.
+Rollback restores the service files and service states from just before the
+update; models, login and preferences stay. An interrupted deploy blocks the
+next one until `--rollback` finishes. When both activation and recovery fail,
+the installer prints both errors and saves them as `activation_error` and
+`recovery_error` in the transaction's `state.json`.
 
-## Retained files
+## Files the installer keeps
 
-`installation.json` identifies the active release and recent transaction backup.
-`pending-installation.json` records an interrupted switch.
-`downloads.json` and `model-files.json` inventory shared assets.
+In `~/.local/share/orion/voice-stack/`:
 
-Keep the active release, one usable rollback, their Python environments and the
-managed interpreters those environments use. The existing catalog root also
-remains a runtime dependency. A successful update prunes old transaction snapshots;
-it retains release directories so binaries and environments remain available for
-recovery.
-
-After successful deployment and a physical voice check, older unused releases,
-superseded manual backups, download archives and compiled test outputs can be
-removed after checking their references. Build caches are optional; removing them
-makes future builds slower. Tests for supported behavior belong in the source
-repository and run during validation. The installer extracts a complete
-source commit, so test sources also remain in each prepared release.
+- `installation.json` names the active release and its rollback snapshot.
+- `pending-installation.json` exists only while a deploy is unfinished.
+- `downloads.json` and `model-files.json` list shared downloaded assets.
+- `releases/` holds every prepared release. Keep the active one and the
+  rollback one; older releases can be deleted after a successful deploy and
+  voice check. Build caches are optional and only speed up later builds.

@@ -32,7 +32,7 @@ speech-model setup. Closing it leaves Orion's services running.
 
 ## Connect Studio to the Pi
 
-Install the [Pi services](../docs/quickstart.md#pi-local-voice-and-agent), then
+Install the [Pi services](../docs/quickstart.md#prepare-a-new-pi), then
 select **Pair Orion** in Studio. Enter the gateway address, normally
 `http://orion.local:7447`, and the token from `~/.config/orion/studio-token` on the
 Pi. **Pair and remember Orion** verifies the connection and saves the desktop
@@ -124,7 +124,7 @@ A pose defines all five joint positions. A motion describes the journey between
 positions, including travel, holds and arrival behavior. A scene combines motion,
 lighting and sound. For example, a left-facing pose supplies the destination, a
 look motion adds anticipation and settling, and a scene adds a light or cue.
-See the [asset reference](../docs/motion-assets.md) and [scene format](../scenes/README.md).
+See the [asset reference](../docs/motion-reference.md) and [scene format](../scenes/README.md).
 
 **Create scene** starts from a scene copy or pose and opens the editor. Drafts save
 locally and survive restarts. **Save** retains the draft; **Publish to Orion** sends
@@ -213,5 +213,5 @@ Support Orion before using this control.
 Use [Pi deployment](../docs/quickstart.md#deploy-to-the-pi) to build and activate the
 matching runtime, gateway, listener and voice host. The deployment preserves saved
 settings and the existing asset catalog and checks readiness before accepting the
-release. The [motion architecture](../docs/motion-and-animation-architecture.md)
+release. The [motion architecture](../docs/motion-architecture.md)
 describes the runtime contracts used by previews and hardware execution.

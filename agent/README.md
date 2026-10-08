@@ -34,7 +34,7 @@ The crate groups code by responsibility:
 - `src/lib.rs`: public exports for the host and coordinator.
 
 An installed Codex executable and existing login are required. Follow the
-[Pi login procedure](../docs/quickstart.md#pi-local-voice-and-agent) before starting
+[Pi login procedure](../docs/quickstart.md#prepare-a-new-pi) before starting
 the host.
 
 ## Validation

@@ -44,7 +44,7 @@ so model execution and network waits stay outside the 50 Hz movement loop.
 
 The hardware and MuJoCo backends use the same movement lifecycle and trajectory
 compiler. Each backend supplies its own joint feedback. See the
-[motion architecture](motion-and-animation-architecture.md) for execution details.
+[motion architecture](motion-architecture.md) for execution details.
 
 ## Authority boundaries
 
