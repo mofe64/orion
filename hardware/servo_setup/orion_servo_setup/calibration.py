@@ -16,7 +16,12 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .provisioning import ORION_SERVO_ASSIGNMENTS, ServoAssignment, validate_assignments
+from .provisioning import (
+    ORION_SERVO_ASSIGNMENTS,
+    ServoAssignment,
+    assignments_for_hardware,
+    validate_assignments,
+)
 
 
 ENCODER_RESOLUTION = 4096
@@ -114,7 +119,8 @@ def load_hardware_calibration(path: Path, hardware: str = "v1") -> dict[str, Har
         raise CalibrationError("Calibration must contain Orion's five canonical joints.")
 
     result: dict[str, HardwareJointCalibration] = {}
-    for assignment in ORION_SERVO_ASSIGNMENTS:
+    # V2 servo IDs differ from V1's (the wrist pitch is servo 4, the neck 5).
+    for assignment in assignments_for_hardware(hardware):
         raw = raw_joints[assignment.joint_name]
         if not isinstance(raw, dict):
             raise CalibrationError(f"Calibration {assignment.joint_name} must be a mapping.")

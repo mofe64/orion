@@ -13,20 +13,22 @@ from orion_servo_setup.centre_cli import main
 from orion_servo_setup.centring import centred_document, plan_centring
 
 
-# The V2 calibration captured on 2026-10-07: four of five ranges cross 0/4095.
+# The V2 calibration captured on 2026-10-07, with servo 4 (wrist pitch) and
+# servo 5 (neck swivel) under their measured joint names: four of five ranges
+# cross 0/4095.
 V2_JOINTS = {
     "base_yaw_joint": (1, 4066, -938, 1004),
     "shoulder_pitch_joint": (2, 3415, -362, 818),
     "elbow_pitch_joint": (3, 3995, -1024, 697),
-    "head_roll_joint": (4, 827, -438, 877),
-    "head_pitch_joint": (5, 4023, -1159, 1051),
+    "head_roll_joint": (5, 4023, -1159, 1051),
+    "head_pitch_joint": (4, 827, -438, 877),
 }
 EXPECTED_OFFSETS = {
     "base_yaw_joint": 2019,
     "shoulder_pitch_joint": 1368,
     "elbow_pitch_joint": 1948,
-    "head_roll_joint": -1220,
-    "head_pitch_joint": 1976,
+    "head_roll_joint": 1976,
+    "head_pitch_joint": -1220,
 }
 
 
@@ -97,7 +99,7 @@ class CentringPlanTests(unittest.TestCase):
         self.assertEqual({s.joint_name: s.target_offset_raw for s in steps}, EXPECTED_OFFSETS)
         self.assertEqual(
             {s.joint_name for s in steps if s.crosses_boundary},
-            {"base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint", "head_pitch_joint"},
+            {"base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint", "head_roll_joint"},
         )
         centred = centred_document(document, steps)
         for name, joint in centred["joints"].items():
@@ -143,7 +145,8 @@ class CentreCliTests(unittest.TestCase):
         result, path, output = self.run_cli(bus)
         self.assertEqual(result, 0, output)
         self.assertEqual(bus.offsets, EXPECTED_OFFSETS)
-        self.assertEqual([w for w in bus.writes if w[0] == "Lock"], [("Lock", n, 1) for n in V2_JOINTS])
+        by_servo_id = sorted(V2_JOINTS, key=lambda name: V2_JOINTS[name][0])
+        self.assertEqual([w for w in bus.writes if w[0] == "Lock"], [("Lock", n, 1) for n in by_servo_id])
         saved = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual({j["neutral_raw"] for j in saved["joints"].values()}, {2047})
         self.assertEqual(len(list(path.parent.glob("*.backup-*"))), 1)

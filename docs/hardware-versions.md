@@ -80,12 +80,29 @@ keys remain stable:
 | 1 | `base_yaw_joint` | Base yaw |
 | 2 | `shoulder_pitch_joint` | Shoulder pitch |
 | 3 | `elbow_pitch_joint` | Elbow pitch |
-| 4 | `head_roll_joint` | Neck swivel |
-| 5 | `head_pitch_joint` | Wrist pitch |
+| 4 | `head_pitch_joint` | Wrist pitch |
+| 5 | `head_roll_joint` | Neck swivel |
 
-Verify physical ID assignments before capture. The zero-pose model rotates yaw
-and swivel about +Z and pitch about +X, using the right-hand rule. Angles use
-radians and model geometry uses metres.
+V2 numbers its servos along its own chain, so servo 4 is the wrist pitch and
+servo 5 the neck swivel; V1's servo 4 was its wrist roll. The runtime refuses a
+calibration whose servo IDs differ from this map. The zero-pose model rotates
+yaw and swivel about +Z and pitch about +X, using the right-hand rule. Angles
+use radians and model geometry uses metres.
+
+Torque-off readings on the fitted lamp (2026-10-08) give these positive
+directions with `encoder_direction: 1`:
+
+| API key | Negative | Positive |
+| --- | --- | --- |
+| `base_yaw_joint` | Turns to the lamp's left | Turns to the lamp's right |
+| `shoulder_pitch_joint` | Leans back | Leans forward |
+| `elbow_pitch_joint` | Raises the forearm | Lowers the forearm |
+| `head_pitch_joint` | Tilts the head up | Tilts the head down |
+| `head_roll_joint` | Turns the head to its left | Turns the head to its right |
+
+V2 poses keep V1's arm and head-pitch offsets from home. V1's `head_roll` was a
+wrist roll used as a constant head cock; on V2 the neck swivel instead leads
+each turn in the base's direction at half its angle.
 
 Read calibrated hardware state without enabling torque:
 

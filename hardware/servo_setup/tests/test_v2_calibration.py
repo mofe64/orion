@@ -30,7 +30,8 @@ class V2CalibrationTests(unittest.TestCase):
         assignments = assignments_for_hardware('v2')
         self.assertEqual(assignments[3].joint_ref_name, 'neck_swivel')
         self.assertEqual(assignments[4].joint_ref_name, 'wrist_pitch')
-        directions = {a.joint_name: -1 if a.servo_id == 5 else 1 for a in assignments}
+        self.assertEqual((assignments[3].servo_id, assignments[4].servo_id), (5, 4))
+        directions = {a.joint_name: -1 if a.joint_name == 'head_pitch_joint' else 1 for a in assignments}
         document = build_calibration_document(self.captures(), port='fake', hardware='v2', directions=directions)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'v2.json'; write_calibration_file(document, path)
@@ -58,6 +59,8 @@ class V2CalibrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             calibration = Path(directory) / 'v2.json'
             document = calibration_document(); document['hardware'] = 'v2'
+            for assignment in assignments_for_hardware('v2'):
+                document['joints'][assignment.joint_name]['servo_id'] = assignment.servo_id
             calibration.write_text(json.dumps(document))
             poses = Path(directory) / 'motion/config/v2/poses.yaml'
             poses.parent.mkdir(parents=True)

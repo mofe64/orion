@@ -88,6 +88,19 @@ impl HardwareVersion {
             ));
         }
         let calibrations = load_calibration_file(path, &ORION_JOINT_NAMES)?;
+        // Each servo ID must drive the mechanism its joint name describes; a
+        // calibration taken under another ID map would move the wrong servo.
+        for calibration in &calibrations {
+            let expected = self.profile().joints[&calibration.name].servo_id;
+            if calibration.servo_id != expected {
+                return Err(Error::Runtime(format!(
+                    "{} uses servo {} in the calibration, but the {} profile maps it to servo {expected}.",
+                    calibration.name,
+                    calibration.servo_id,
+                    self.profile().hardware
+                )));
+            }
+        }
         Ok(calibrations)
     }
 }
@@ -106,6 +119,12 @@ mod tests {
         document["hardware"] = serde_json::json!("v2");
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("calibration.json");
+        // V1 IDs put the neck joint on servo 4; V2 measured it on servo 5.
+        std::fs::write(&path, document.to_string()).unwrap();
+        let error = HardwareVersion::V2.load_calibration(&path).unwrap_err();
+        assert!(error.to_string().contains("maps it to servo 5"), "{error}");
+        document["joints"]["head_roll_joint"]["servo_id"] = serde_json::json!(5);
+        document["joints"]["head_pitch_joint"]["servo_id"] = serde_json::json!(4);
         std::fs::write(&path, document.to_string()).unwrap();
         assert!(HardwareVersion::V2.load_calibration(&path).is_ok());
         document["simulation_only"] = serde_json::json!(true);
@@ -130,5 +149,8 @@ mod tests {
         let v2 = HardwareVersion::V2.profile();
         assert_eq!(v2.joints["head_pitch_joint"].physical_joint, "wrist_pitch");
         assert_eq!(v2.joints["head_roll_joint"].physical_joint, "neck_swivel");
+        // Measured on the fitted V2 lamp: servo 4 tilts the head, servo 5 turns it.
+        assert_eq!(v2.joints["head_pitch_joint"].servo_id, 4);
+        assert_eq!(v2.joints["head_roll_joint"].servo_id, 5);
     }
 }
