@@ -50,8 +50,8 @@ during playback are not implemented.
 `--hardware v1` uses HAT capture routing. `--hardware v2` uses USB capture
 without HAT mixer commands; `--capture-channels 2|6` and `--processed-channel N`
 select the verified XVF3800 stream. The processed channel feeds the listener
-without averaging raw microphone channels, and direction-based attention is
-disabled. See [USB profile setup](../docs/hardware-versions.md#usb-capture-and-playback).
+without averaging raw microphone channels. V2 attention uses calibrated USB beam
+observations when explicitly enabled; it defaults off. See [USB profile setup](../docs/hardware-versions.md#usb-capture-and-playback).
 
 Microphone mute persists in `~/.config/orion/microphone.json`. The listener applies
 capture routing before opening ALSA, discards startup frames, reapplies gain after
@@ -61,8 +61,8 @@ startup interval before capture is ready.
 Set microphone overrides in `~/.config/orion/voice.env` and restart the listener.
 The [configuration reference](../docs/configuration.md#pi-runtime-and-listener)
 lists wake sensitivity, gain, VAD and direction settings. Direction estimation
-requires measured microphone spacing and channel orientation; its default settings
-disable attention turns.
+on V1 requires measured microphone spacing and channel orientation. V2 requires
+the measured mounting offset and sign; both default to unset.
 
 ## Troubleshooting
 
@@ -177,6 +177,30 @@ service threshold of 0.35, and the auto-select beam's azimuth while the board
 reports speech. Across direction trials it fits the board's mounting offset and
 rotation sense, and prints the worst error after that fit. With the six-channel
 firmware it also reports echo reduction against the raw microphones.
+
+## Calibrate V2 attention
+
+Keep processed channel 0. Fit the mounting with the base cover in its normal
+position: from about 1.5 m, record `dir-front`, `dir-left` and `dir-right` trials
+with `--expected-azimuth 0`, `90` and `270`, saying “Hey Orion” three times at
+each position. Run `analyze` as above and copy its mounting `sign` and
+`offset_deg` into the [XVF listener settings](../docs/configuration.md#pi-runtime-and-listener).
+Set `ORION_XVF_DIRECTION=1` only after the positions separate clearly. If the
+cover collapses the positions into two beams, report that acoustic obstruction
+before enabling facing.
+
+The poller reads auto-select beam 3 at 20 Hz without blocking capture. It converts
+board radians to lamp degrees with `wrap180(sign * (board_deg - offset_deg))`:
+positive is counter-clockwise from front seen from above, toward the lamp's left.
+The default front sector is ±30 degrees; other angles vote for their nearer side,
+including angles behind the lamp. A turn needs at least five speech-energy votes
+in three seconds with 75% agreement. Centre/unknown send no attention command.
+
+Before acceptance, verify that `attention_left` physically points left; V2
+attention poses still require hardware playback validation. Report swapped poses
+to the deploy smoke-test owner. Try five wakes from each side and front: at least
+12 of 15 must face correctly or remain front, with no wrong-way turns. Board
+access/read failures log once and leave voice working without a turn.
 
 ## Validation
 

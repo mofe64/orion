@@ -36,7 +36,13 @@ preference. One authenticated loopback WebSocket owns processing; separate
 control connections can read or change mute.
 
 Capture arrives as 20 ms stereo frames at 16 kHz. The listener estimates direction
-before downmixing to mono and retains three seconds of audio in memory. When
+before downmixing to mono and retains three seconds of audio in memory. On V2,
+processed channel 0 supplies mono capture; optional calibrated XVF3800 direction
+reads run in a separate 20 Hz daemon thread. Only beam-3 samples above the energy
+threshold vote. At least five votes in three seconds and 75% agreement are needed;
+the first supporting vote supplies the evidence age. Missing calibration or a
+USB failure suppresses attention without affecting capture. See
+[V2 calibration](../voice/README.md#calibrate-v2-attention). When
 Rustpotter detects a candidate, the listener assigns a random session ID and
 registers a silent runtime session before notifying the coordinator.
 

@@ -15,7 +15,7 @@ import uuid
 
 import numpy as np
 
-from .direction import DirectionEstimator
+from .direction import DirectionEstimator, XvfDirectionEstimator
 from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise, pcm16_rms
 from .rustpotter import RustpotterWakeDetector
 from .verifier import AcousticVerifier
@@ -368,7 +368,12 @@ async def serve(args):
     if getattr(args, "vad_model", None):
         from .vad import SileroModel
         endpoint_factory = SileroModel(args.vad_model).endpoint
-    session = SatelliteSession(wake, DirectionEstimator(args.mic_spacing if hardware == "v1" else 0, args.channel_sign if hardware == "v1" else 0),
+    direction = DirectionEstimator(args.mic_spacing if hardware == "v1" else 0, args.channel_sign if hardware == "v1" else 0)
+    if hardware == "v2" and getattr(args, "xvf_direction", 0):
+        direction = XvfDirectionEstimator(getattr(args, "xvf_azimuth_offset_deg", None),
+            getattr(args, "xvf_azimuth_sign", None), getattr(args, "xvf_front_half_width_deg", 30),
+            getattr(args, "xvf_min_energy", 0))
+    session = SatelliteSession(wake, direction,
                                endpoint_factory=endpoint_factory, verifier=verifier)
     lock = asyncio.Lock()
     capture_gate = asyncio.Lock()
@@ -689,6 +694,8 @@ async def serve(args):
             await asyncio.gather(*tasks)
     finally:
         capture.close()
+        if isinstance(direction, XvfDirectionEstimator):
+            direction.close()
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         if session.session_id:
@@ -715,6 +722,11 @@ def main():
     parser.add_argument("--local-processor", action="store_true", help="Reserve processing ownership for the onboard coordinator")
     parser.add_argument("--mic-spacing", type=float, default=0.0)
     parser.add_argument("--channel-sign", type=int, choices=[-1, 0, 1], default=0)
+    parser.add_argument("--xvf-direction", type=int, choices=(0, 1), default=os.environ.get("ORION_XVF_DIRECTION", "0"))
+    parser.add_argument("--xvf-azimuth-offset-deg", type=float, default=os.environ.get("ORION_XVF_AZIMUTH_OFFSET_DEG"))
+    parser.add_argument("--xvf-azimuth-sign", type=int, choices=(-1, 1), default=os.environ.get("ORION_XVF_AZIMUTH_SIGN"))
+    parser.add_argument("--xvf-front-half-width-deg", type=float, default=os.environ.get("ORION_XVF_FRONT_HALF_WIDTH_DEG", "30"))
+    parser.add_argument("--xvf-min-energy", type=float, default=os.environ.get("ORION_XVF_MIN_ENERGY", "0"))
     parser.add_argument("--daemon-socket", default="/tmp/oriond.sock")
     args = parser.parse_args()
     if not 0 < args.threshold <= 1:

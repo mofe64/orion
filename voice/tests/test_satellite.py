@@ -23,6 +23,24 @@ class ListenerDefaultsTests(unittest.TestCase):
             main()
         self.assertEqual(seen[0].wake_model.name, 'hey_orion_reference.rpw')
         self.assertEqual(seen[0].threshold, 0.35)
+        self.assertEqual(seen[0].xvf_direction, 0)
+        self.assertIsNone(seen[0].xvf_azimuth_sign)
+        self.assertIsNone(seen[0].xvf_azimuth_offset_deg)
+
+    def test_xvf_settings_use_environment_defaults_and_cli_overrides(self):
+        seen = []
+        async def capture(args):
+            seen.append(args)
+        with patch.dict('os.environ', {'ORION_XVF_DIRECTION': '1',
+                'ORION_XVF_AZIMUTH_OFFSET_DEG': '275.5', 'ORION_XVF_AZIMUTH_SIGN': '-1',
+                'ORION_XVF_FRONT_HALF_WIDTH_DEG': '25', 'ORION_XVF_MIN_ENERGY': '0.04'}), \
+             patch('sys.argv', ['orion-listener', '--token-file', '/tmp/unused',
+                                '--xvf-front-half-width-deg', '35']), \
+             patch('orion_voice.satellite.serve', capture):
+            main()
+        self.assertEqual((seen[0].xvf_direction, seen[0].xvf_azimuth_offset_deg,
+                          seen[0].xvf_azimuth_sign, seen[0].xvf_front_half_width_deg,
+                          seen[0].xvf_min_energy), (1, 275.5, -1, 35, .04))
 
 class Wake:
     next = False

@@ -122,7 +122,14 @@ The V2 profile captures the XVF3800's two-channel stream and uses processed
 channel 0. The listener accepts `--capture-channels 2|6 --processed-channel N`
 for other firmware layouts; see the
 [Seeed USB guide](https://wiki.seeedstudio.com/respeaker_xvf3800_introduction/).
-V2 skips HAT mixer commands and raw-microphone direction estimation.
+V2 skips HAT mixer commands and raw-microphone direction estimation. Calibrated
+beam-based attention is opt-in; see [listener settings](configuration.md#pi-runtime-and-listener).
+
+The Orion service user needs one-time access to the read-only USB control
+interface. Install the [XVF3800 udev rule](../voice/README.md#measure-the-xvf3800-on-v2),
+add the service user to `plugdev` (`sudo usermod -aG plugdev USER`), and restart
+the listener so it picks up the group. Audio capture can work without this
+permission while direction reads fail. This setup is separate from release installation.
 
 The XVF3800 playback controls `PCM,0` and `PCM,1` default to -20 dB. `oriond`
 sets both to 0 dB at startup. To set them by hand:

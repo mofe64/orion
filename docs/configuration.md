@@ -178,7 +178,21 @@ relevant setting for a running Pi.
 `ORION_VAD_MODEL` selects the listener's Silero ONNX file. `ORION_MIC_SPACING`, in
 metres, and `ORION_CHANNEL_SIGN`, as `1` or `-1`, configure direction estimation.
 Their zero defaults disable direction estimates until the microphone geometry
-is checked. Restart the listener after changing them. Starting `oriond` pulls in
+is checked. V2 uses read-only XVF3800 beam observations instead:
+
+| Environment / listener flag | Default | Meaning |
+| --- | --- | --- |
+| `ORION_XVF_DIRECTION` / `--xvf-direction` | `0` | `1` enables direction only with `--hardware v2` |
+| `ORION_XVF_AZIMUTH_OFFSET_DEG` / `--xvf-azimuth-offset-deg` | unset | Measured mounting offset in degrees |
+| `ORION_XVF_AZIMUTH_SIGN` / `--xvf-azimuth-sign` | unset | Measured rotation sense, `1` or `-1` |
+| `ORION_XVF_FRONT_HALF_WIDTH_DEG` / `--xvf-front-half-width-deg` | `30` | Front sector half-width, 0–150 degrees |
+| `ORION_XVF_MIN_ENERGY` / `--xvf-min-energy` | `0` | Minimum beam-3 speech energy; votes require energy above it |
+
+Set these in `~/.config/orion/voice.env`. Missing offset/sign or a failed board
+read disables attention for that listener run; speech capture continues. Use the
+[assembled-lamp calibration](../voice/README.md#calibrate-v2-attention) and the
+[one-time USB access setup](hardware-versions.md#usb-capture-and-playback).
+Restart the listener after changing them. Starting `oriond` pulls in
 the listener, and runtime stop/restart propagates to it.
 
 Qwen still confirms the wake phrase after Rustpotter detection. Household noise,

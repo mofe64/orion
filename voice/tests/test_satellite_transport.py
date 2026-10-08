@@ -255,7 +255,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.gather(task, return_exceptions=True)
 
     async def test_confirmation_reaches_runtime_before_optional_fresh_attention(self):
-        for side, age in [("unknown", 0), ("left", 0), ("right", 4)]:
+        for side, age in [("unknown", 0), ("centre", 0), ("left", 0), ("right", 4)]:
             with self.subTest(side=side, age=age), tempfile.TemporaryDirectory() as directory:
                 class Direction:
                     def __init__(self, *args): pass
