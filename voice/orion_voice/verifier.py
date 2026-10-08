@@ -134,9 +134,10 @@ class AcousticVerifier:
         self.history.clear()
         self.candidate = None
 
-    def feed(self, pcm: np.ndarray) -> None:
+    def feed(self, pcm: np.ndarray) -> list[tuple[int, float, bool]]:
         started = self.clock()
-        for end, score, eligible in self.scorer.feed(pcm):
+        chunks = self.scorer.feed(pcm)
+        for end, score, eligible in chunks:
             if eligible:
                 self.history.append((end, score))
             self.chunk_seconds.append(self.clock() - started)
@@ -145,6 +146,9 @@ class AcousticVerifier:
         while self.history and self.history[0][0] < keep_from:
             self.history.popleft()
         self._check_health()
+        # Diagnostics observe every score, including warmup; decision history
+        # above keeps the same eligibility rule.
+        return chunks
 
     def _check_health(self) -> None:
         # Real time allows 80 ms per chunk. Sustained use of more than half of it

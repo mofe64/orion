@@ -314,7 +314,9 @@ formats.
 The coordinator saves each voice turn on the Pi under
 `~/.local/share/orion/voice-stack/history/YYYY-MM-DD/`. Each private turn file
 contains dated events for the recognized command, agent reply, tool calls and
-results, errors, speech generation and playback timings. Audio is not saved.
+results, errors, speech generation and playback timings. Conversation history
+does not save audio. Opt-in [wake diagnostics](../voice/README.md#troubleshooting)
+save a short verifier-input recording locally on the Pi, outside this history.
 Studio reads this history through the paired gateway from **Debug → Voice → View
 conversation history**. Turns are shown newest first, with older turns available
 through **Load older**. A coordinator restart does not erase saved turns. The

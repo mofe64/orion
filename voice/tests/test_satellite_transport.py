@@ -217,6 +217,26 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
             await self.wait_for(expressions, f'voice {new} processing')
             self.assertFalse(any(e.startswith(f'voice {new} attend_') for e in expressions))
 
+    async def test_wake_debug_environment_writes_live_verdict_and_capture_open_age(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug_dir = Path(directory) / 'wake-debug'
+            with patch.dict('os.environ', {'ORION_WAKE_DEBUG_DIR': str(debug_dir)}):
+                client, sid, _ = await self.acoustic_session({1: .9}, hardware="v2")
+                verdict = json.loads(await client.recv())
+                self.assertTrue(verdict['accepted'])
+                for _ in range(100):
+                    files = list(debug_dir.glob('*/meta.json'))
+                    if files: break
+                    await asyncio.sleep(.01)
+                else: self.fail('Enabled listener did not save wake diagnostics')
+                # The writer creates metadata only after finishing the WAV.
+                meta = json.loads(files[0].read_text())
+                self.assertEqual(meta['session_id'], sid)
+                self.assertEqual(meta['phase_at_candidate'], 'listening')
+                self.assertIsNotNone(meta['capture_open_seconds'])
+                self.assertGreaterEqual(meta['capture_open_seconds'], 0)
+                self.assertTrue((files[0].parent / 'audio.wav').exists())
+
     async def test_acoustic_acceptance_cues_after_verdict_and_skips_prefix(self):
         client, sid, expressions = await self.acoustic_session({1: 0.9})
         verdict = json.loads(await client.recv())

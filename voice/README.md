@@ -26,7 +26,8 @@ can inspect or change microphone mute.
 The listener opens synchronized stereo PCM16 capture at 16 kHz. It estimates
 coarse direction from stereo frames and downmixes to mono for Rustpotter and ASR.
 It keeps pre-roll and the current recording in memory; recordings are cleared on
-mute, cancellation or disconnect.
+mute, cancellation or disconnect. Saving wake audio requires the opt-in
+[wake diagnostics](#troubleshooting).
 
 A wake candidate registers a runtime session. The chime and brief light pulse
 wait for the acoustic verifier to accept it. If the verifier is unavailable,
@@ -81,6 +82,40 @@ On the Pi:
 systemctl status orion-listener orion-voice-stack
 journalctl -u orion-listener -u orion-voice-stack -n 60 --no-pager
 ```
+
+To diagnose live acoustic-verifier rejection, set this in
+`~/.config/orion/voice.env`, then restart the listener after deploying the change:
+
+```bash
+ORION_WAKE_DEBUG_DIR=/home/mofe/orion-wake-debug
+```
+
+The variable defaults unset: no diagnostic writer, audio files or additional
+score buffer are created. When enabled, each accepted or rejected acoustic verdict
+saves a `<UTC timestamp>-accepted/` or `-rejected/` folder containing `audio.wav` and
+`meta.json`. The WAV holds up to four seconds of exact mono verifier input at
+16 kHz, ending when the verdict is produced. Metadata records the session ID and
+phase at the candidate, Rustpotter score, candidate/verdict sample positions,
+all verifier chunk scores in that window (including ineligible warm-up scores),
+verifier health, its last 250 processing times in seconds, and time since capture
+last opened. `audio_start_sample` and `audio_end_sample` map WAV samples to the
+verifier's sample positions; capture reopening resets that origin. Alarm
+dismissal does not save a recording.
+
+A bounded queue writes on a separate thread and keeps the newest 50 diagnostic
+folders. A full queue drops snapshots and logs a warning; disk errors also log
+without changing wake decisions. Once a minute during capture,
+`voice.capture_read_timing` reports `reads_over_40_ms`. Read latency includes
+dispatch to and from the capture worker thread, so CPU scheduling delays count.
+
+The audio stays on the Pi; it is not uploaded or included in Studio history.
+Unset the variable and restart the listener after testing, then delete the saved
+audio and metadata after use. For the V2 check, make five wakes from idle and
+three from the follow-up window, then replay each WAV through `StreamingScorer`
+on the Pi. High offline scores paired with low live scores point toward verifier
+state or timing. Low scores in both point toward the live audio: compare it by
+ear and spectrum with the measurement recordings. These diagnostics do not change
+wake thresholds, models or verification rules.
 
 For dependency repair, prepare and deploy a complete replacement release through
 the [Pi deployment procedure](../docs/quickstart.md#deploy-to-the-pi). It builds the

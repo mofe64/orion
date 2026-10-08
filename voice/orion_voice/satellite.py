@@ -20,6 +20,7 @@ from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise, pc
 from .rustpotter import RustpotterWakeDetector
 from .verifier import AcousticVerifier
 from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
+from .wake_debug import CaptureReadStats, WakeDebugRecorder
 
 PROTOCOL = 1
 FRAME_BYTES = 640  # 20 ms of mono signed little-endian PCM16 at 16 kHz
@@ -34,13 +35,14 @@ WAKE_PREFIX_TAIL_MS = 200
 
 
 class SatelliteSession:
-    """One capture owner, one active turn. Audio is never retained on disk."""
+    """One capture owner, one active turn. Disk audio requires opt-in diagnostics."""
     def __init__(self, wake, direction=None, clock=time.monotonic, endpoint_factory=EnergyEndpointDetector,
-                 early_wake=False, verifier=None, barge_in=False):
+                 early_wake=False, verifier=None, barge_in=False, wake_debug=None):
         self.wake = wake
         # The verifier hears every captured frame, across sessions, so its
         # score history already covers the phrase when Rustpotter fires.
         self.verifier = verifier
+        self.wake_debug = wake_debug
         self.barge_in = barge_in
         self.direction = direction or DirectionEstimator(clock=clock)
         self.clock = clock
@@ -80,6 +82,8 @@ class SatelliteSession:
         self.direction.reset()
         if self.verifier is not None:
             self.verifier.cancel()
+        if self.wake_debug is not None:
+            self.wake_debug.cancel()
 
     def set_alarm(self, active):
         if active == self.alarm_active: return None
@@ -99,6 +103,8 @@ class SatelliteSession:
         """Discard score history after a capture gap; the stream is no longer continuous."""
         if self.verifier is not None:
             self.verifier.reset()
+        if self.wake_debug is not None:
+            self.wake_debug.capture_opened()
 
     def accept_stereo(self, pcm: bytes):
         if len(pcm) != FRAME_BYTES * 2:
@@ -106,7 +112,9 @@ class SatelliteSession:
         stereo = np.frombuffer(pcm, dtype="<i2").reshape(-1, 2)
         mono = stereo.astype(np.int32).sum(axis=1) // 2
         if self.verifier is not None:
-            self.verifier.feed(mono.astype(np.int16))
+            chunks = self.verifier.feed(mono.astype(np.int16))
+            if self.wake_debug is not None:
+                self.wake_debug.accept(mono.astype("<i2").tobytes(), chunks, self.verifier.position)
         messages = self._accept_frame(stereo, mono.astype("<i2").tobytes())
         if self.acoustic_pending or self.barge_candidate is not None:
             messages.extend(self.acoustic_decision())
@@ -120,6 +128,8 @@ class SatelliteSession:
         verdict = self.verifier.verdict()
         if verdict is None:
             return []
+        if self.wake_debug is not None:
+            self.wake_debug.verdict(verdict, self.verifier)
         interrupted = []
         if self.barge_candidate is not None:
             detection, self.barge_candidate = self.barge_candidate, None
@@ -148,6 +158,7 @@ class SatelliteSession:
         return [*interrupted, message, *pending]
 
     def start_wake(self, detection, already_verified=False):
+        candidate_phase = self.phase
         self.session_id = uuid.uuid4().hex
         self.phase = "wake"
         config = EndpointConfig(speech_rms=self.noise.threshold())
@@ -162,6 +173,8 @@ class SatelliteSession:
             self.verifier.begin()
             self.verifier_candidate = self.verifier.candidate
             self.acoustic_pending = True
+            if self.wake_debug is not None:
+                self.wake_debug.begin(self.session_id, candidate_phase, detection.score, self.verifier_candidate)
         elif not verifying and self.early_wake:
             self.prefix = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
             self.prefix_pending = True
@@ -194,6 +207,8 @@ class SatelliteSession:
                         self.barge_candidate = detection
                         self.verifier.begin()
                         self.verifier_candidate = self.verifier.candidate
+                        if self.wake_debug is not None:
+                            self.wake_debug.begin(self.session_id, self.phase, detection.score, self.verifier_candidate)
             return []
         if self.phase == "listening":
             self.noise.accept(audio)
@@ -432,6 +447,8 @@ async def serve(args):
     changed = asyncio.Event()
     feedback = asyncio.Queue(maxsize=64)
     background = set()
+    wake_debug = WakeDebugRecorder.from_environment()
+    session.wake_debug = wake_debug
 
     def expression(kind, session_id=None):
         identity = session_id or session.session_id
@@ -546,6 +563,7 @@ async def serve(args):
     async def listen():
         nonlocal generation
         opened = False
+        read_stats = CaptureReadStats()
         try:
             while True:
                 if muted:
@@ -572,8 +590,12 @@ async def serve(args):
                         capture_ready.set()
                     if muted: continue
                 epoch = generation
+                read_started = time.monotonic()
                 try:
-                    audio = await asyncio.to_thread(capture.read)
+                    try:
+                        audio = await asyncio.to_thread(capture.read)
+                    finally:
+                        read_stats.accept(time.monotonic() - read_started)
                 except Exception:
                     capture_ready.clear()
                     capture.close()
@@ -744,6 +766,8 @@ async def serve(args):
             direction.close()
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if wake_debug is not None:
+            await asyncio.to_thread(wake_debug.close)
         if session.session_id:
             with suppress(OSError, ValueError, asyncio.TimeoutError):
                 await daemon_command(f"voice {session.session_id} cancel", args.daemon_socket)
