@@ -12,7 +12,7 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-for required_command in modinfo depmod install grep systemctl udevadm getent; do
+for required_command in modinfo depmod install grep systemctl udevadm getent dkms; do
     if ! command -v "${required_command}" >/dev/null 2>&1; then
         echo "Required command is not installed: ${required_command}" >&2
         exit 1
@@ -32,7 +32,7 @@ fi
 upstream_root=$1
 driver_directory=${upstream_root}/rp1_ws281x_pwm
 kernel_release=$(uname -r)
-module_source=${driver_directory}/rp1_ws281x_pwm.ko
+module_source=${driver_directory}/rp1_ws281x_pwm.c
 overlay_source=${driver_directory}/rp1_ws281x_pwm.dtbo
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
@@ -42,14 +42,17 @@ if [[ ${upstream_root} != /* ]]; then
 fi
 
 if [[ ! -f ${module_source} || ! -f ${overlay_source} ]]; then
-    echo "Missing built Pi 5 module or overlay in ${driver_directory}." >&2
-    echo "Build the rpi_ws281x pi5 branch with 'make' and './dts.sh' first." >&2
+    echo "Missing Pi 5 driver source or overlay in ${driver_directory}." >&2
+    echo "Build the overlay with './dts.sh' in the rpi_ws281x pi5 branch first." >&2
     exit 1
 fi
 
-module_vermagic=$(modinfo -F vermagic "${module_source}")
-if [[ ${module_vermagic%% *} != "${kernel_release}" ]]; then
-    echo "Module vermagic '${module_vermagic}' does not match running kernel '${kernel_release}'." >&2
+# Future kernels need their headers installed alongside them, or DKMS cannot
+# rebuild the driver when they arrive.
+if [[ -r /etc/os-release ]] && grep -q '^ID=ubuntu' /etc/os-release \
+    && ! dpkg-query -W -f='${Status}' linux-headers-raspi 2>/dev/null | grep -q 'install ok installed'; then
+    echo "Install linux-headers-raspi so each kernel update brings matching headers:" >&2
+    echo "  sudo apt install linux-headers-raspi" >&2
     exit 1
 fi
 
@@ -64,8 +67,25 @@ else
     exit 1
 fi
 
-install -D -m 0644 "${module_source}" \
-    "/lib/modules/${kernel_release}/extra/rp1_ws281x_pwm.ko"
+# Register the driver source with DKMS. The kernel package's postinstall hook
+# then builds and installs it for each new kernel before that kernel boots.
+dkms_name=rp1_ws281x_pwm
+dkms_version=orion1
+dkms_source=/usr/src/${dkms_name}-${dkms_version}
+# Earlier installs copied a single-kernel build here. Remove it before DKMS
+# installs its own copy, which may use the same directory.
+rm -f "/lib/modules/${kernel_release}/extra/rp1_ws281x_pwm.ko"
+if dkms status "${dkms_name}/${dkms_version}" | grep -q .; then
+    dkms remove "${dkms_name}/${dkms_version}" --all
+fi
+rm -rf "${dkms_source}"
+install -d "${dkms_source}"
+install -m 0644 "${driver_directory}"/*.c "${driver_directory}"/*.h \
+    "${driver_directory}/Makefile" "${dkms_source}/"
+install -m 0644 "${script_directory}/dkms.conf" "${dkms_source}/dkms.conf"
+dkms add "${dkms_name}/${dkms_version}"
+dkms build "${dkms_name}/${dkms_version}" -k "${kernel_release}"
+dkms install "${dkms_name}/${dkms_version}" -k "${kernel_release}" --force
 depmod -a "${kernel_release}"
 
 install -m 0644 "${overlay_source}" \
@@ -97,6 +117,7 @@ if [[ -e /sys/class/misc/ws281x_pwm ]]; then
 fi
 
 echo "Installed persistent Orion NeoPixel support for kernel ${kernel_release}."
+echo "DKMS rebuilds the driver for each kernel update: $(dkms status "${dkms_name}/${dkms_version}" | tr '\n' ' ')"
 echo "Boot configuration: ${boot_config}"
 if [[ -e ${boot_config}.orion-backup ]]; then
     echo "Boot configuration backup: ${boot_config}.orion-backup"

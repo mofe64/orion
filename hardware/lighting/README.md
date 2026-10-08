@@ -88,12 +88,15 @@ Raspberry Pi 5 support in `rpi_ws281x` uses the RP1 PWM kernel module from its
 `pi5` branch. Orion keeps the upstream source outside this repository and owns
 the boot installation through `install-persistent.sh`.
 
-Install the exact headers for the running kernel and the remaining build
-requirements:
+Install DKMS, the headers for the running kernel, the headers package that
+follows kernel updates, and the device-tree compiler:
 
 ```bash
-sudo apt install linux-headers-$(uname -r) device-tree-compiler
+sudo apt install dkms linux-headers-$(uname -r) linux-headers-raspi device-tree-compiler
 ```
+
+On Raspberry Pi OS, replace `linux-headers-raspi` with the headers package for
+your kernel flavour.
 
 On Raspberry Pi OS, install `raspi-utils` for `/usr/bin/pinctrl`. On Ubuntu 24.04,
 build the [official Raspberry Pi utility](https://github.com/raspberrypi/utils/blob/master/pinctrl/README.md):
@@ -109,14 +112,14 @@ sudo groupadd -f gpio
 sudo usermod -aG gpio "$USER"
 ```
 
-Clone and build the official Pi 5 branch:
+Clone the official Pi 5 branch and build its device-tree overlay. DKMS builds
+the driver itself:
 
 ```bash
 cd ~/dev
 git clone --branch pi5 --single-branch \
   https://github.com/jgarff/rpi_ws281x.git
 cd ~/dev/rpi_ws281x/rp1_ws281x_pwm
-make
 ./dts.sh
 ```
 
@@ -130,8 +133,10 @@ sudo reboot
 
 The installer performs six persistent operations:
 
-1. Installs the kernel-matched module under `/lib/modules/$(uname -r)/extra/`
-   and refreshes module dependencies.
+1. Registers the driver source with DKMS as `rp1_ws281x_pwm/orion1` under
+   `/usr/src/rp1_ws281x_pwm-orion1/`, then builds and installs it for the
+   running kernel. When the package manager installs a new kernel, DKMS
+   builds the driver for it before that kernel boots.
 2. Installs `rp1_ws281x_pwm.dtbo` into the Pi boot overlay directory and adds
    `dtoverlay=rp1_ws281x_pwm` to `config.txt`.
 3. Configures `rp1_ws281x_pwm` to use PWM channel 0 through
@@ -162,10 +167,16 @@ verifier retries only the GPIO12 state read with `sudo`; device permissions are
 still checked as the invoking user. A failed GPIO read prints its diagnostic
 instead of exiting silently.
 
-The module is compiled for one kernel ABI. After booting a newly installed
-kernel, rebuild `rp1_ws281x_pwm.ko` against that running kernel's headers and
-rerun the installer. Lighting remains unavailable between that kernel change
-and the rebuild.
+DKMS needs the new kernel's headers to rebuild the driver, which
+`linux-headers-raspi` installs with each kernel update. On Ubuntu the installer
+refuses to run without that package. To check the driver after a kernel update:
+
+```bash
+dkms status rp1_ws281x_pwm
+```
+
+Each installed kernel should be listed as `installed`. If one is missing,
+install its headers and run `sudo dkms autoinstall -k KERNEL`.
 
 ## Orion output checks
 
