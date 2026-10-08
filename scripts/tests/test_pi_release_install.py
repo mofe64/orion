@@ -440,6 +440,28 @@ class RuntimeRestartTests(Fixture):
                 system.state('oriond')
 
 
+class SystemWriteTests(Fixture):
+    def test_user_files_get_user_owned_parent_directories_before_sudo(self):
+        target = self.home / '.local/share/orion/studio-service/installed'
+        system = installer.System()
+        calls = []
+        def run(*args, **kwargs):
+            # The parent must already exist (owned by us) when sudo runs.
+            calls.append((args[:2], target.parent.is_dir()))
+            return subprocess.CompletedProcess(args, 0)
+        with patch.object(system, 'run', side_effect=run):
+            system.write(target, b'release\n', 0o600)
+        self.assertTrue(calls)
+        self.assertTrue(all(parent_exists for _, parent_exists in calls))
+
+    def test_system_files_leave_directory_creation_to_sudo(self):
+        system = installer.System()
+        with patch.object(system, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(installer.Path, 'mkdir') as mkdir:
+            system.write(Path('/etc/systemd/system/oriond.service'), b'unit', 0o644)
+        mkdir.assert_not_called()
+
+
 class FakeSystem:
     """Model unit existence separately from enablement to catch dangling wants links."""
     def __init__(self, units, existing=True):

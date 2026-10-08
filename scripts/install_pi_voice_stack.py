@@ -103,6 +103,11 @@ class System:
         self.run('sudo', 'systemctl', 'daemon-reload')
 
     def write(self, path, data, mode):
+        if not str(path).startswith('/etc/'):
+            # `install -D` would create missing parents as root, and a
+            # root-owned ~/.local/share/orion/studio-service stops orion-service
+            # from making its own directory private.
+            path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile() as source:
             source.write(data); source.flush()
             # install to a sibling followed by rename keeps readers from seeing partial files.
