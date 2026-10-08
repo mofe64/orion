@@ -17,6 +17,8 @@ JOINT_MAP = {
     'v21_neck_swivel': 'head_roll_joint',
 }
 
+REVERSED_JOINTS = {'base_yaw_joint', 'head_roll_joint'}
+
 
 def save_xml(tree, path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,12 @@ def import_model(source, destination=PROJECT / 'simulation/mujoco/v2', urdf=PROJ
     for joint in tree.findall('.//joint'):
         if 'name' in joint.attrib:
             joint.set('name', JOINT_MAP[joint.attrib['name']])
+            # On the fitted lamp a negative base yaw or neck swivel turns
+            # toward the lamp's own left (checked 2026-10-08 with look_left).
+            # The CAD's +Z right-hand axis turns the other way, so reverse it.
+            if joint.attrib['name'] in REVERSED_JOINTS:
+                axis = [-float(value) for value in joint.attrib['axis'].split()]
+                joint.set('axis', ' '.join(f'{value:g}' for value in axis))
     custom = ET.SubElement(tree, 'custom')
     ET.SubElement(custom, 'text', name='orion_hardware', data='v2')
     ET.SubElement(custom, 'text', name='orion_simulation_scope', data='kinematic_preview')

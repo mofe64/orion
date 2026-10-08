@@ -2,11 +2,19 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { GatewayError, getCapabilities, getStatus, type GatewayConnection } from "./gateway";
 import type { GatewayCapabilities, GatewayStatus } from "../types";
 
+/** A lamp saved on this computer; tokens stay in the credential store. */
+export interface SavedLamp { url: string; active: boolean }
+
 export interface PairingStore {
   readonly persistent?: boolean;
+  /** The active lamp's connection. */
   load(): Promise<GatewayConnection | null>;
+  /** Saves or updates a lamp by address and makes it active. */
   save(connection: GatewayConnection): Promise<void>;
+  /** Forgets the active lamp; another saved lamp becomes active. */
   forget(): Promise<void>;
+  list?(): Promise<SavedLamp[]>;
+  select?(url: string): Promise<void>;
 }
 export const nativePairingStore: PairingStore = {
   persistent: isTauri(),
@@ -14,6 +22,8 @@ export const nativePairingStore: PairingStore = {
   save: (pairing) => isTauri() ? invoke("save_pairing", { pairing })
     : Promise.resolve(),
   forget: () => isTauri() ? invoke("forget_pairing") : Promise.resolve(),
+  list: () => isTauri() ? invoke("list_pairings") : Promise.resolve([]),
+  select: (url) => isTauri() ? invoke("select_pairing", { url }) : Promise.resolve(),
 };
 
 export type ConnectionPhase = "loading" | "unpaired" | "connecting" | "connected" | "reconnecting" | "disconnected" | "auth_required" | "error";
@@ -26,9 +36,11 @@ export interface ConnectionSnapshot {
   status: GatewayStatus | null;
   capabilities: GatewayCapabilities | null;
   error: string | null;
+  /** Every lamp saved on this computer, including the active one. */
+  lamps?: SavedLamp[];
 }
 const INITIAL: ConnectionSnapshot = { phase: "loading", persistent: true, paired: false, address: null,
-  connection: null, status: null, capabilities: null, error: null };
+  connection: null, status: null, capabilities: null, error: null, lamps: [] };
 
 export function normalizeGatewayUrl(value: string): string {
   const hasScheme = value.includes("://");
@@ -86,6 +98,7 @@ export class PairingController {
       if (generation !== this.generation) return;
       this.target = target;
       this.publish({ paired: !!target, address: target?.url ?? null });
+      await this.refreshLamps();
       if (!target) { this.offline("unpaired"); return; }
       this.offline("connecting");
       await this.poll(generation);
@@ -106,6 +119,7 @@ export class PairingController {
       this.target = target;
       this.publish({ phase: "connected", paired: true, address: target.url,
         connection: target, status, capabilities, error: null });
+      await this.refreshLamps();
       this.schedule(generation, 1000);
       return true;
     } catch (error) {
@@ -162,6 +176,25 @@ export class PairingController {
       if (generation !== this.generation) return;
       this.target = null;
       this.publish({ ...INITIAL, persistent: this.store.persistent !== false, phase: "unpaired" });
+      await this.refreshLamps();
+      // Another saved lamp becomes active after forgetting this one; connect to it.
+      if (this.snapshot.lamps?.length && generation === this.generation) await this.start();
+    } catch (error) {
+      if (generation === this.generation) this.offline("error", String(error instanceof Error ? error.message : error));
+    }
+  }
+  private async refreshLamps() {
+    if (this.store.list) this.publish({ lamps: await this.store.list() });
+  }
+  /** Make another saved lamp active and connect to it. */
+  async switchTo(url: string) {
+    if (!this.store.select) return;
+    const generation = this.reset();
+    this.offline("connecting");
+    try {
+      await this.write(() => this.store.select!(url));
+      if (generation !== this.generation) return;
+      await this.start();
     } catch (error) {
       if (generation === this.generation) this.offline("error", String(error instanceof Error ? error.message : error));
     }

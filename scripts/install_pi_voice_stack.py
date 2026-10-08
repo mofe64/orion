@@ -120,6 +120,16 @@ class System:
     def remove(self, path):
         self.run('sudo', 'rm', '-f', path)
 
+    def foreign_runtimes(self):
+        """oriond processes that systemd does not own, such as a hand-started copy."""
+        try:
+            main = subprocess.run(['systemctl', 'show', 'oriond', '--property=MainPID', '--value'],
+                                  capture_output=True, text=True).stdout.strip()
+            found = subprocess.run(['pgrep', '-x', 'oriond'], capture_output=True, text=True).stdout.split()
+        except OSError:
+            return []
+        return [pid for pid in found if pid.isdigit() and pid != main]
+
     def runtime_client(self):
         """Use the running hardware owner's binary and configured socket."""
         pid = self.run('systemctl', 'show', 'oriond', '--property=MainPID', '--value', capture_output=True, text=True).stdout.strip()
@@ -170,11 +180,8 @@ class System:
 
     def rest_runtime(self, force=False):
         """Confirm torque is off before systemd can terminate the hardware owner."""
-        if force:
-            client, status = self.wait_runtime_client()
-        else:
-            client = self.runtime_client()
-            status = json.loads(self.run(*client, '--status', capture_output=True, text=True).stdout)
+        # Re-resolve with retries: a restarting runtime has no usable PID yet.
+        client, status = self.wait_runtime_client()
         # A powered-off robot can have been moved by hand since its last rest.
         # Forced deployment rest always measures a fresh goto before release.
         if status.get('torque_enabled') or force:
@@ -266,10 +273,12 @@ class System:
     def ready(self, release, home, timeout=180):
         metadata = json.loads((release / 'release.json').read_text())
         deadline = time.monotonic() + timeout
+        last_error, attempts = None, 0
         while time.monotonic() < deadline:
             try:
-                if not all(self.state(name)['active'] for name in SERVICES):
-                    raise RuntimeError('Services are still starting')
+                waiting = [name for name in SERVICES if not self.state(name)['active']]
+                if waiting:
+                    raise RuntimeError(f'Waiting for {", ".join(waiting)} to start')
                 # Read the running gateway's arguments, including locally chosen port/token/socket.
                 pid = self.run('systemctl', 'show', 'orion-studio-gateway', '--property=MainPID', '--value', capture_output=True, text=True).stdout.strip()
                 if not pid.isdigit() or int(pid) == 0:
@@ -323,9 +332,14 @@ class System:
                 if gateway.get('pid') != status.get('pid'):
                     raise RuntimeError('Gateway is connected to a different release')
                 return
-            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                last_error = error
+                attempts += 1
+                if attempts % 30 == 0:  # about every 15 s
+                    print(f'Still waiting for readiness: {error}', flush=True)
                 time.sleep(.5)
-        raise RuntimeError('Pi release did not become ready: check runtime, Qwen, TTS, Codex and gateway logs')
+        raise RuntimeError(f'Pi release did not become ready: {last_error}. Check runtime, Qwen, TTS, Codex '
+                           f'and gateway logs.{journal_tail("orion-voice-stack")}')
 
 
 def expected_tts(home):
@@ -514,7 +528,8 @@ def activate(root, release, home, files, system):
         pending.unlink(missing_ok=True)
         raise
     pending.unlink(missing_ok=True)
-    # Retain exactly one transaction owned by this installer. Never prune release/source directories.
+    prune_releases(release, previous.get('release') if previous else None)
+    # Retain exactly one transaction owned by this installer.
     for old in folder.parent.iterdir():
         if old.is_dir() and not old.is_symlink() and re.fullmatch(r'[0-9a-f]{32}', old.name) and old != folder:
             try:
@@ -522,6 +537,21 @@ def activate(root, release, home, files, system):
             except OSError as error:
                 print(f'Release is active; could not remove old rollback {old}: {error}')
     return folder
+
+
+def prune_releases(active, rollback_release):
+    """Keep the active release and the one rollback restores; delete older ones."""
+    keep = {Path(active).resolve()}
+    if rollback_release:
+        keep.add(Path(rollback_release).resolve())
+    for old in Path(active).resolve().parent.iterdir():
+        if old.is_dir() and not old.is_symlink() and re.fullmatch(r'[0-9a-f]{12}-[0-9a-f]{8}', old.name) \
+                and old.resolve() not in keep:
+            try:
+                shutil.rmtree(old)
+                print(f'Removed old release {old.name}')
+            except OSError as error:
+                print(f'Could not remove old release {old}: {error}')
 
 
 def rollback(root, system):
@@ -562,10 +592,33 @@ def preflight(release, home, files, system):
     if not token.is_file():
         raise RuntimeError(f'Missing Studio pairing token: {token}. Create it with: '
                            f'python3 {release / "orion_studio/gateway.py"} create-token --token-file {token}')
+    check_calibration(calibration, hardware)
+    stray = system.foreign_runtimes()
+    if stray:
+        raise RuntimeError(f'Stop the oriond started by hand (PID {", ".join(stray)}) before deploying; '
+                           'it holds the servo port and the runtime socket')
     environment = {**os.environ, **read_env(files[home / '.config/orion/voice-stack.env']),
                    'ORION_PROJECT_ROOT': str(release), 'ORION_ONBOARD': '1', 'ORION_SPEECH_BACKEND': 'pi'}
     system.run(environment['ORION_STUDIO_CODEX_BIN'], 'login', 'status')
     system.run(release / 'orion-service/target/release/orion-service', 'check', env=environment)
+
+
+def check_calibration(path, hardware):
+    """Refuse a calibration the runtime would reject, before any service stops."""
+    try:
+        joints = json.loads(path.read_text()).get('joints', {})
+    except (ValueError, AttributeError) as error:
+        raise RuntimeError(f'Calibration {path} is not readable JSON: {error}') from None
+    expected = profile(hardware)['joints']
+    for name, joint in joints.items():
+        if name in expected and joint.get('servo_id') != expected[name]['servo_id']:
+            raise RuntimeError(f'{path} maps {name} to servo {joint.get("servo_id")}, but the {hardware} '
+                               f'profile uses servo {expected[name]["servo_id"]}')
+        low = joint['neutral_raw'] + joint['safe_min_delta_raw']
+        high = joint['neutral_raw'] + joint['safe_max_delta_raw']
+        if low < 0 or high > 4095:
+            raise RuntimeError(f'{name} safe range covers raw {low}..{high}, crossing 0/4095; '
+                               'run orion-centre-servos before deploying')
 
 
 def validate_catalog(release, project, calibration, system, assets, home=None):
@@ -634,7 +687,12 @@ def main():
             raise KeyboardInterrupt('Deployment interrupted')
         signal.signal(signal.SIGTERM, interrupted)
         folder = activate(root, release, home, files, system)
-        print(f'Complete Pi release is ready; physical smoke test passed and Orion is at rest with lights and torque off. Previous installation can be restored from {folder}.')
+        metadata = json.loads((release / 'release.json').read_text())
+        states = ', '.join(f'{name} {"active" if system.state(name)["active"] else "inactive"}' for name in SERVICES)
+        print(f'Complete Pi release is ready; physical smoke test passed and Orion is at rest with lights and torque off.\n'
+              f'  revision {metadata["revision"]} for {hardware}\n  services: {states}\n'
+              f'  Studio gateway: http://{socket.gethostname()}.local:7447 '
+              f'(token: ~/.config/orion/studio-token)\n  rollback snapshot: {folder}')
 
 
 if __name__ == '__main__':

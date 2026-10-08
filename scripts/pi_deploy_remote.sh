@@ -36,4 +36,13 @@ release_args=(--hardware "${hardware}" --source "${project_root}" --revision "${
 if [[ "${prepare_only}" == true ]]; then
   release_args+=(--prepare-only)
 fi
-python3 "${bootstrap}/scripts/deploy_pi_release.py" "${release_args[@]}"
+# Keep a copy of the whole run on the Pi; failure reasons outlive the terminal.
+log_directory="${HOME}/.local/share/orion/voice-stack/logs"
+mkdir -p "${log_directory}"
+log="${log_directory}/deploy-$(date +%Y%m%d-%H%M%S)-${revision:0:12}.log"
+set +e
+python3 "${bootstrap}/scripts/deploy_pi_release.py" "${release_args[@]}" 2>&1 | tee "${log}"
+status=${PIPESTATUS[0]}
+set -e
+echo "Deployment log: ${log}"
+exit "${status}"

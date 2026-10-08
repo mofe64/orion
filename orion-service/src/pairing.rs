@@ -1,4 +1,5 @@
-//! One paired robot, stored as a single OS credential so address and token agree.
+//! Paired lamps, stored as one OS credential so addresses and tokens agree.
+//! One lamp is active; the remote client talks only to the active lamp.
 use keyring::{Entry, Error};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -33,35 +34,116 @@ impl Pairing {
     }
 }
 
-fn load(entry: &Entry) -> Result<Option<Pairing>, String> {
-    match entry.get_password() {
-        Ok(value) => {
-            let pairing: Pairing = serde_json::from_str(&value)
-                .map_err(|_| "Saved pairing is invalid. Forget Orion and pair again.")?;
-            pairing.validate()?;
-            Ok(Some(pairing))
-        }
-        Err(Error::NoEntry) => Ok(None),
-        // Never format keyring errors: some variants contain secret bytes.
-        Err(_) => Err("Could not read the system credential store. Unlock it and retry.".into()),
+/// A saved lamp without its token, for listing in Studio.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct PairedLamp {
+    pub url: String,
+    pub active: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Store {
+    active: Option<String>,
+    lamps: Vec<Pairing>,
+}
+
+impl Store {
+    fn active(&self) -> Option<&Pairing> {
+        let active = self.active.as_deref()?;
+        self.lamps.iter().find(|lamp| lamp.url == active)
     }
 }
 
-fn save(entry: &Entry, pairing: &Pairing) -> Result<(), String> {
-    pairing.validate()?;
-    let value = serde_json::to_string(pairing).map_err(|_| "Could not encode pairing.")?;
+fn read(entry: &Entry) -> Result<Store, String> {
+    let value = match entry.get_password() {
+        Ok(value) => value,
+        Err(Error::NoEntry) => return Ok(Store::default()),
+        // Never format keyring errors: some variants contain secret bytes.
+        Err(_) => {
+            return Err("Could not read the system credential store. Unlock it and retry.".into());
+        }
+    };
+    let invalid = "Saved pairing is invalid. Forget Orion and pair again.";
+    // Studio saved a single pairing object before it supported several lamps.
+    let store = match serde_json::from_str::<Store>(&value) {
+        Ok(store) => store,
+        Err(_) => {
+            let pairing: Pairing = serde_json::from_str(&value).map_err(|_| invalid)?;
+            Store {
+                active: Some(pairing.url.clone()),
+                lamps: vec![pairing],
+            }
+        }
+    };
+    for lamp in &store.lamps {
+        lamp.validate()?;
+    }
+    if store.active.is_some() && store.active().is_none() {
+        return Err(invalid.into());
+    }
+    Ok(store)
+}
+
+fn write(entry: &Entry, store: &Store) -> Result<(), String> {
+    if store.lamps.is_empty() {
+        return match entry.delete_credential() {
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
+            Err(_) => {
+                Err("Could not forget Orion. Unlock the system credential store and retry.".into())
+            }
+        };
+    }
+    let value = serde_json::to_string(store).map_err(|_| "Could not encode pairing.")?;
     entry.set_password(&value).map_err(|_| {
         "Could not save pairing in the system credential store. Unlock it and retry.".into()
     })
 }
 
-fn forget(entry: &Entry) -> Result<(), String> {
-    match entry.delete_credential() {
-        Ok(()) | Err(Error::NoEntry) => Ok(()),
-        Err(_) => {
-            Err("Could not forget Orion. Unlock the system credential store and retry.".into())
-        }
+fn load(entry: &Entry) -> Result<Option<Pairing>, String> {
+    Ok(read(entry)?.active().cloned())
+}
+
+/// Save or update a lamp by address and make it the active lamp.
+fn save(entry: &Entry, pairing: &Pairing) -> Result<(), String> {
+    pairing.validate()?;
+    let mut store = read(entry)?;
+    match store.lamps.iter_mut().find(|lamp| lamp.url == pairing.url) {
+        Some(existing) => *existing = pairing.clone(),
+        None => store.lamps.push(pairing.clone()),
     }
+    store.active = Some(pairing.url.clone());
+    write(entry, &store)
+}
+
+/// Forget the active lamp; the next saved lamp, if any, becomes active.
+fn forget(entry: &Entry) -> Result<(), String> {
+    let mut store = read(entry)?;
+    if let Some(active) = store.active.take() {
+        store.lamps.retain(|lamp| lamp.url != active);
+    }
+    store.active = store.lamps.first().map(|lamp| lamp.url.clone());
+    write(entry, &store)
+}
+
+fn list(entry: &Entry) -> Result<Vec<PairedLamp>, String> {
+    let store = read(entry)?;
+    Ok(store
+        .lamps
+        .iter()
+        .map(|lamp| PairedLamp {
+            url: lamp.url.clone(),
+            active: store.active.as_deref() == Some(lamp.url.as_str()),
+        })
+        .collect())
+}
+
+fn select(entry: &Entry, url: &str) -> Result<(), String> {
+    let mut store = read(entry)?;
+    if !store.lamps.iter().any(|lamp| lamp.url == url) {
+        return Err("That lamp is not paired on this computer.".into());
+    }
+    store.active = Some(url.to_owned());
+    write(entry, &store)
 }
 
 async fn with_store<T: Send + 'static>(
@@ -88,6 +170,14 @@ pub async fn save_pairing(pairing: Pairing) -> Result<(), String> {
 
 pub async fn forget_pairing() -> Result<(), String> {
     with_store(forget).await
+}
+
+pub async fn list_pairings() -> Result<Vec<PairedLamp>, String> {
+    with_store(list).await
+}
+
+pub async fn select_pairing(url: String) -> Result<(), String> {
+    with_store(move |entry| select(entry, &url)).await
 }
 
 #[cfg(test)]
@@ -127,6 +217,63 @@ mod tests {
         forget(&entry).unwrap();
         assert_eq!(restored.unwrap().unwrap().token, pairing.token);
         assert!(load(&entry).unwrap().is_none());
+    }
+
+    fn lamp(url: &str, token: char) -> Pairing {
+        Pairing {
+            url: url.into(),
+            token: token.to_string().repeat(32),
+        }
+    }
+
+    #[test]
+    fn several_lamps_are_saved_switched_and_forgotten_one_at_a_time() {
+        let entry = Entry::new_with_credential(Box::new(keyring::mock::MockCredential::default()));
+        save(&entry, &lamp("http://orion.local:7447", 'a')).unwrap();
+        save(&entry, &lamp("http://ariadne-robot.local:7447", 'b')).unwrap();
+        assert_eq!(
+            load(&entry).unwrap().unwrap().url,
+            "http://ariadne-robot.local:7447"
+        );
+        assert_eq!(
+            list(&entry).unwrap(),
+            vec![
+                PairedLamp {
+                    url: "http://orion.local:7447".into(),
+                    active: false
+                },
+                PairedLamp {
+                    url: "http://ariadne-robot.local:7447".into(),
+                    active: true
+                },
+            ]
+        );
+        select(&entry, "http://orion.local:7447").unwrap();
+        assert_eq!(load(&entry).unwrap().unwrap().token, "a".repeat(32));
+        assert!(select(&entry, "http://unknown.local:7447").is_err());
+        // Re-pairing an address replaces its token instead of adding a duplicate.
+        save(&entry, &lamp("http://orion.local:7447", 'c')).unwrap();
+        assert_eq!(list(&entry).unwrap().len(), 2);
+        forget(&entry).unwrap();
+        assert_eq!(
+            load(&entry).unwrap().unwrap().url,
+            "http://ariadne-robot.local:7447"
+        );
+        forget(&entry).unwrap();
+        assert!(load(&entry).unwrap().is_none());
+        assert!(list(&entry).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_single_pairing_saved_by_older_studio_still_loads() {
+        let entry = Entry::new_with_credential(Box::new(keyring::mock::MockCredential::default()));
+        let old = lamp("http://orion.local:7447", 'a');
+        entry
+            .set_password(&serde_json::to_string(&old).unwrap())
+            .unwrap();
+        assert_eq!(load(&entry).unwrap().unwrap().url, old.url);
+        save(&entry, &lamp("http://ariadne-robot.local:7447", 'b')).unwrap();
+        assert_eq!(list(&entry).unwrap().len(), 2);
     }
 
     #[test]

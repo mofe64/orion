@@ -6,8 +6,8 @@ usage() {
 Usage: scripts/deploy_pi.sh --hardware v1|v2 [--host USER@HOST] [--root PATH] [--branch BRANCH] [--prepare-only] [--skip-studio-check]
 
 Build, test, activate and physically smoke-test the complete Orion Pi stack through SSH. Defaults:
-  host:   mofe@orion.local
-  root:   /home/mofe/dev/orion
+  host:   mofe@ariadne-robot.local
+  root:   /home/mofe/orion
   branch: main
 
 Commit and push the intended revision first. The Pi fetches it into an isolated
@@ -28,8 +28,8 @@ validated on another supported build host.
 EOF
 }
 
-pi_host="${ORION_PI_HOST:-mofe@orion.local}"
-project_root="${ORION_PI_ROOT:-/home/mofe/dev/orion}"
+pi_host="${ORION_PI_HOST:-mofe@ariadne-robot.local}"
+project_root="${ORION_PI_ROOT:-/home/mofe/orion}"
 branch="${ORION_PI_BRANCH:-main}"
 studio_check=true
 prepare_only=false
@@ -68,6 +68,15 @@ fi
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_checkout="$(cd "${script_directory}/.." && pwd)"
+# The Pi deploys the pushed branch, not this checkout. Warn when they differ.
+if git -C "${project_checkout}" fetch -q origin "${branch}" 2>/dev/null; then
+  if [[ "$(git -C "${project_checkout}" rev-parse HEAD)" != "$(git -C "${project_checkout}" rev-parse "origin/${branch}")" ]]; then
+    echo "Warning: local HEAD differs from origin/${branch}; the Pi deploys origin/${branch}." >&2
+  fi
+fi
+if [[ -n "$(git -C "${project_checkout}" status --porcelain)" ]]; then
+  echo "Warning: uncommitted local changes are not deployed." >&2
+fi
 if [[ "${studio_check}" == true ]]; then
   command -v pnpm >/dev/null 2>&1 || {
     echo "pnpm is required for the atomic Studio v2 release check." >&2

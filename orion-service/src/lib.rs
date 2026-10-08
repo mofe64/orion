@@ -58,6 +58,8 @@ pub enum Request {
     LoadPairing,
     SavePairing(pairing::Pairing),
     ForgetPairing,
+    ListPairings,
+    SelectPairing(String),
     LoadSettings,
     SaveSettings(settings::VoiceSettings),
     ModelLocations(settings::VoiceSettings),
@@ -199,6 +201,10 @@ impl Host {
                 serde_json::to_value(self.agent.profile_handle()?.profile(change).await?)
                     .map_err(|e| e.to_string())
             }
+            // Studio keeps its list of lamps on the desktop, not on the Pi.
+            Request::ListPairings | Request::SelectPairing(_) => {
+                Err("Studio manages saved lamps on the desktop".into())
+            }
         }
     }
 }
@@ -223,6 +229,13 @@ impl Backend {
             }
             Request::ForgetPairing => {
                 pairing::forget_pairing().await?;
+                Ok(Value::Null)
+            }
+            Request::ListPairings => {
+                serde_json::to_value(pairing::list_pairings().await?).map_err(|e| e.to_string())
+            }
+            Request::SelectPairing(url) => {
+                pairing::select_pairing(url).await?;
                 Ok(Value::Null)
             }
             request => remote::request(&request).await,

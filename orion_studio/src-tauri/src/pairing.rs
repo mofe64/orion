@@ -17,3 +17,14 @@ pub async fn forget_pairing(
 ) -> Result<serde_json::Value, String> {
     backend.request(Request::ForgetPairing).await
 }
+#[tauri::command]
+pub async fn list_pairings(backend: tauri::State<'_, Backend>) -> Result<serde_json::Value, String> {
+    backend.request(Request::ListPairings).await
+}
+#[tauri::command]
+pub async fn select_pairing(
+    backend: tauri::State<'_, Backend>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    backend.request(Request::SelectPairing(url)).await
+}

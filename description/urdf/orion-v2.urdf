@@ -84,7 +84,7 @@
     <parent link="v21_base" />
     <child link="v21_base_yaw_link" />
     <origin xyz="0.0 0.0 0.060000000000000005" rpy="0 0 0" />
-    <axis xyz="0 0 1" />
+    <axis xyz="0 0 -1" />
     <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
   </joint>
   <link name="v21_shoulder_pitch_link">
@@ -272,7 +272,7 @@
     <parent link="v21_wrist_pitch_link" />
     <child link="v21_neck_swivel_link" />
     <origin xyz="0.0 -0.0175 0.04899999999999999" rpy="0 0 0" />
-    <axis xyz="0 0 1" />
+    <axis xyz="0 0 -1" />
     <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
   </joint>
 </robot>

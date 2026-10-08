@@ -1,9 +1,11 @@
 import { load } from "js-yaml";
 
 import posesYaml from "../../../motion/config/v1/poses.yaml?raw";
+import posesYamlV2 from "../../../motion/config/v2/poses.yaml?raw";
 import calibration from "../../../simulation/mujoco/config/servo_calibration.json";
 import modelReference from "../../../simulation/mujoco/config/model_reference.json";
 import orionUrdf from "../../../description/urdf/orion.urdf?raw";
+import orionUrdfV2 from "../../../description/urdf/orion-v2.urdf?raw";
 import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
 import type {
   JointLimit,
@@ -21,19 +23,23 @@ import type {
   StoredSceneDocument,
 } from "../types";
 
-const userPoseFiles = import.meta.glob("../../../motion/user/poses/v1/**/*.yaml", {
-  eager: true, query: "?raw", import: "default",
-}) as Record<string, string>;
-const motionFiles = import.meta.glob("../../../motion/motions/v1/**/*.yaml", {
-  eager: true, query: "?raw", import: "default",
-}) as Record<string, string>;
-const sceneFiles = import.meta.glob("../../../scenes/v1/**/*.yaml", {
-  eager: true, query: "?raw", import: "default",
-}) as Record<string, string>;
+type Files = Record<string, string>;
+// Vite needs literal glob patterns, so each hardware version is listed explicitly.
+const FILES = {
+  v1: {
+    userPoses: import.meta.glob("../../../motion/user/poses/v1/**/*.yaml", { eager: true, query: "?raw", import: "default" }) as Files,
+    motions: import.meta.glob("../../../motion/motions/v1/**/*.yaml", { eager: true, query: "?raw", import: "default" }) as Files,
+    scenes: import.meta.glob("../../../scenes/v1/**/*.yaml", { eager: true, query: "?raw", import: "default" }) as Files,
+    meshes: import.meta.glob("../../../description/meshes/*.stl", { eager: true, query: "?url", import: "default" }) as Files,
+  },
+  v2: {
+    userPoses: import.meta.glob("../../../motion/user/poses/v2/**/*.yaml", { eager: true, query: "?raw", import: "default" }) as Files,
+    motions: import.meta.glob("../../../motion/motions/v2/**/*.yaml", { eager: true, query: "?raw", import: "default" }) as Files,
+    scenes: import.meta.glob("../../../scenes/v2/**/*.yaml", { eager: true, query: "?raw", import: "default" }) as Files,
+    meshes: import.meta.glob("../../../simulation/mujoco/v2/meshes/*.stl", { eager: true, query: "?url", import: "default" }) as Files,
+  },
+};
 const cueFiles = import.meta.glob("../../../audio/cues/*.wav", {
-  eager: true, query: "?url", import: "default",
-}) as Record<string, string>;
-const meshFiles = import.meta.glob("../../../description/meshes/*.stl", {
   eager: true, query: "?url", import: "default",
 }) as Record<string, string>;
 
@@ -45,10 +51,10 @@ function requireVersionTwo(document: { format_version?: number }, path: string):
   if (document.format_version !== 2) throw new Error(`${path} must use format_version 2 (v2 required).`);
 }
 
-function loadPoses(): Record<string, PoseDefinition> {
+function loadPoses(builtIn: string, builtInPath: string, userPoseFiles: Files): Record<string, PoseDefinition> {
   const poses: Record<string, PoseDefinition> = {};
   const documents: Array<[string, StoredPoseDocument, PoseDefinition["source"]]> = [
-    ["motion/config/v1/poses.yaml", load(posesYaml) as StoredPoseDocument, "built_in"],
+    [builtInPath, load(builtIn) as StoredPoseDocument, "built_in"],
     ...Object.entries(userPoseFiles).filter(([path]) => !path.includes("/_scene_owned/")).map(([path, yaml]) => [path, load(yaml) as StoredPoseDocument, "user"] as [string, StoredPoseDocument, "user"]),
   ];
   for (const [path, document, source] of documents) {
@@ -71,7 +77,7 @@ function loadPoses(): Record<string, PoseDefinition> {
   return poses;
 }
 
-function loadMotions(): Record<string, MotionDefinition> {
+function loadMotions(motionFiles: Files): Record<string, MotionDefinition> {
   const motions: Record<string, MotionDefinition> = {};
   for (const [path, yaml] of Object.entries(motionFiles)) {
     const document = load(yaml) as StoredMotionDocument;
@@ -103,7 +109,7 @@ function withId<T extends object>(value: T, id: string): T & { id: string } {
   return { ...value, id };
 }
 
-function loadScenes(): Record<string, SceneDefinition> {
+function loadScenes(sceneFiles: Files): Record<string, SceneDefinition> {
   const scenes: Record<string, SceneDefinition> = {};
   for (const [path, yaml] of Object.entries(sceneFiles).sort(([a], [b]) => a.localeCompare(b))) {
     const document = load(yaml) as StoredSceneDocument;
@@ -119,7 +125,7 @@ function loadScenes(): Record<string, SceneDefinition> {
       custom_motions: document.studio?.motions,
       name: scene.name,
       description: scene.description ?? "",
-      source: path.includes("/scenes/v1/user/") ? "user" : "built_in",
+      source: /\/scenes\/v[12]\/user\//.test(path) ? "user" : "built_in",
       motion: (scene.motion ?? []).map((event, index) => withId(event, `${scene.name}-motion-${index}`)) as SceneMotionClip[],
       lighting: (scene.lighting ?? []).map((event, index) => withId(event, `${scene.name}-light-${index}`)) as SceneLightingEvent[],
       audio: (scene.audio ?? []).map((event, index) => withId(event, `${scene.name}-audio-${index}`)) as SceneAudioEvent[],
@@ -144,14 +150,50 @@ const urdfJointOffsets = Object.fromEntries(
   JOINT_NAMES.map((name) => [name, -Number(modelReference.joint_reference_radians[name])]),
 ) as JointPositions;
 
-export const projectCatalog: ProjectCatalog = {
-  poses: loadPoses(),
-  motions: loadMotions(),
-  scenes: loadScenes(),
-  cues: Object.keys(cueUrls).sort(),
-  cueUrls,
-  urdf: orionUrdf,
-  meshUrls: Object.fromEntries(Object.entries(meshFiles).map(([path, url]) => [path.split("/").at(-1) ?? path, url])),
-  urdfJointOffsets,
-  jointLimits: loadJointLimits(),
+function meshUrls(files: Files): Record<string, string> {
+  return Object.fromEntries(Object.entries(files).map(([path, url]) => [path.split("/").at(-1) ?? path, url]));
+}
+
+/** V2 has no tracked calibration; use the model's limits until a lamp reports its own. */
+function urdfJointLimits(urdf: string): JointLimit[] {
+  return JOINT_NAMES.map((name) => {
+    const joint = urdf.match(new RegExp(`<joint name="${name}"[\\s\\S]*?<limit lower="([^"]+)" upper="([^"]+)"`));
+    if (!joint) throw new Error(`The V2 robot description is missing ${name}.`);
+    return { name, lower_rad: Number(joint[1]), upper_rad: Number(joint[2]) };
+  });
+}
+
+export type HardwareVersion = "v1" | "v2";
+
+export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
+  v1: {
+    poses: loadPoses(posesYaml, "motion/config/v1/poses.yaml", FILES.v1.userPoses),
+    motions: loadMotions(FILES.v1.motions),
+    scenes: loadScenes(FILES.v1.scenes),
+    cues: Object.keys(cueUrls).sort(),
+    cueUrls,
+    urdf: orionUrdf,
+    meshUrls: meshUrls(FILES.v1.meshes),
+    urdfJointOffsets,
+    jointLimits: loadJointLimits(),
+  },
+  v2: {
+    poses: loadPoses(posesYamlV2, "motion/config/v2/poses.yaml", FILES.v2.userPoses),
+    motions: loadMotions(FILES.v2.motions),
+    scenes: loadScenes(FILES.v2.scenes),
+    cues: Object.keys(cueUrls).sort(),
+    cueUrls,
+    urdf: orionUrdfV2,
+    meshUrls: meshUrls(FILES.v2.meshes),
+    // The V2 calibration zero is the CAD zero pose, so no model offset applies.
+    urdfJointOffsets: Object.fromEntries(JOINT_NAMES.map((name) => [name, 0])) as JointPositions,
+    jointLimits: urdfJointLimits(orionUrdfV2),
+  },
 };
+
+/** The bundled catalogue and 3D model for the hardware a lamp reports. */
+export function catalogForHardware(hardware: string | undefined): ProjectCatalog {
+  return catalogs[hardware === "v2" ? "v2" : "v1"];
+}
+
+export const projectCatalog: ProjectCatalog = catalogs.v1;

@@ -20,7 +20,7 @@ import { useStudioVoice } from "./hooks/useStudioVoice";
 import { loadPreferences, savePreferences } from "./lib/preferences";
 import { PairingController } from "./lib/pairing";
 import { PairingPanel } from "./components/PairingPanel";
-import { projectCatalog } from "./lib/catalog";
+import { catalogForHardware, projectCatalog } from "./lib/catalog";
 import { buildSceneDocument } from "./lib/sceneDocument";
 import {
   sampleCompiledTrajectory, sampleSceneLight, sampleSceneTrajectory, sceneDuration,
@@ -77,8 +77,13 @@ export default function App() {
   const [selection, setSelection] = useState<TrackSelection | null>(() => scene.motion[0] ? { track: "motion", id: scene.motion[0].id } : null);
   const [saveAs, setSaveAs] = useState(`${scene.name}_studio`);
   const [publishedAssets, setPublishedAssets] = useState<Record<string, SceneDefinition | MotionDefinition | PoseDefinition>>(() => readUserDrafts());
+  const [pairing] = useState(() => new PairingController());
+  const pairingState = useSyncExternalStore(pairing.subscribe, pairing.current);
+  const { connection, status, capabilities } = pairingState;
+  // The connected lamp decides which bundled model and built-in assets apply.
+  const hardwareCatalog = catalogForHardware(status?.runtime.hardware);
   const currentAsset = kind === "scene" ? scene : kind === "motion" ? motion : pose;
-  const originalAsset = publishedAssets[`${kind}:${currentAsset.name}`] ?? (kind === "scene" ? projectCatalog.scenes[scene.name] : kind === "motion" ? projectCatalog.motions[motion.name] : projectCatalog.poses[pose.name]);
+  const originalAsset = publishedAssets[`${kind}:${currentAsset.name}`] ?? (kind === "scene" ? hardwareCatalog.scenes[scene.name] : kind === "motion" ? hardwareCatalog.motions[motion.name] : hardwareCatalog.poses[pose.name]);
   const [draftError, setDraftError] = useState(false);
   const assetDirty = JSON.stringify(currentAsset) !== JSON.stringify(originalAsset);
   useEffect(() => {
@@ -89,9 +94,6 @@ export default function App() {
   const [notice, setNotice] = useState("Connect Orion to use voice, character and lamp controls.");
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [preferences, setPreferences] = useState(loadPreferences);
-  const [pairing] = useState(() => new PairingController());
-  const pairingState = useSyncExternalStore(pairing.subscribe, pairing.current);
-  const { connection, status, capabilities } = pairingState;
   const voice = useStudioVoice(connection, setNotice);
   const sceneTimingReady = timedScene?.scene === scene && timedScene.anchor === anchorName && timedScene.connection === connection;
   useEffect(() => {
@@ -145,17 +147,17 @@ export default function App() {
   };
 
   const catalog = useMemo(() => {
-    const poses = { ...projectCatalog.poses };
-    const motions = { ...projectCatalog.motions };
-    const scenes = { ...projectCatalog.scenes };
+    const poses = { ...hardwareCatalog.poses };
+    const motions = { ...hardwareCatalog.motions };
+    const scenes = { ...hardwareCatalog.scenes };
     for (const [key, value] of Object.entries(publishedAssets)) {
       if (key.startsWith("pose:")) poses[value.name] = value as PoseDefinition;
       if (key.startsWith("motion:")) motions[value.name] = value as MotionDefinition;
-      if (key.startsWith("scene:") && projectCatalog.scenes[value.name]?.source !== "built_in") scenes[value.name] = value as SceneDefinition;
+      if (key.startsWith("scene:") && hardwareCatalog.scenes[value.name]?.source !== "built_in") scenes[value.name] = value as SceneDefinition;
     }
-    const base = { ...projectCatalog, poses, motions, scenes, jointLimits: capabilities?.capabilities.joint_limits ?? projectCatalog.jointLimits };
+    const base = { ...hardwareCatalog, poses, motions, scenes, jointLimits: capabilities?.capabilities.joint_limits ?? hardwareCatalog.jointLimits };
     return sceneCatalog(base, scene);
-  }, [capabilities, publishedAssets, scene.custom_poses, scene.custom_motions]);
+  }, [hardwareCatalog, capabilities, publishedAssets, scene.custom_poses, scene.custom_motions]);
   const foregroundBusy = !!(status?.scene.active || status?.speech.active || (status?.runtime.motion && !status.runtime.motion.name?.startsWith("idle_")));
   const anchor = catalog.poses[anchorName] ?? initialPose;
   const compiledSceneValues = Object.values(sceneCompiled);
@@ -338,7 +340,7 @@ export default function App() {
     const publishAsset = kind === "scene" ? renameScene(scene,publishName) : { ...currentAsset, name: publishName };
     try {
       if (kind === "scene") {
-        if (projectCatalog.scenes[publishName]?.source === "built_in") throw new Error("Choose your own scene name; Orion collection scenes are preserved.");
+        if (hardwareCatalog.scenes[publishName]?.source === "built_in") throw new Error("Choose your own scene name; Orion collection scenes are preserved.");
         for (const event of scene.motion) {
           const dependency = catalog.motions[event.play];
           if (dependency?.source === "draft" && !dependency.owner_scene) {

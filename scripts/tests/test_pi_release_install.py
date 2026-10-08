@@ -452,6 +452,52 @@ class SystemWriteTests(Fixture):
         mkdir.assert_not_called()
 
 
+class DeployHardeningTests(Fixture):
+    def calibration(self, **override):
+        joints = {name: {'servo_id': info['servo_id'], 'neutral_raw': 2047,
+                         'safe_min_delta_raw': -500, 'safe_max_delta_raw': 500}
+                  for name, info in installer.profile('v2')['joints'].items()}
+        for name, values in override.items():
+            joints[name].update(values)
+        path = self.base / 'calibration.json'
+        path.write_text(json.dumps({'joints': joints}))
+        return path
+
+    def test_calibration_crossing_the_encoder_seam_or_wrong_ids_is_refused_before_switching(self):
+        installer.check_calibration(self.calibration(), 'v2')
+        with self.assertRaisesRegex(RuntimeError, 'crossing 0/4095.*orion-centre-servos'):
+            installer.check_calibration(self.calibration(base_yaw_joint={'neutral_raw': 4066}), 'v2')
+        with self.assertRaisesRegex(RuntimeError, 'head_roll_joint to servo 4'):
+            installer.check_calibration(self.calibration(head_roll_joint={'servo_id': 4}), 'v2')
+
+    def test_hand_started_runtime_is_found_and_systemds_own_is_ignored(self):
+        def run(args, **kwargs):
+            output = '100\n' if args[0] == 'systemctl' else '100\n4321\n'
+            return subprocess.CompletedProcess(args, 0, output)
+        with patch.object(installer.subprocess, 'run', side_effect=run):
+            self.assertEqual(installer.System().foreign_runtimes(), ['4321'])
+
+    def test_success_keeps_only_the_active_and_rollback_releases(self):
+        releases = self.base / 'releases'
+        names = ['aaaaaaaaaaaa-00000001', 'bbbbbbbbbbbb-00000002', 'cccccccccccc-00000003']
+        for name in names:
+            (releases / name).mkdir(parents=True)
+        (releases / 'keep-me').mkdir()
+        with patch('builtins.print'):
+            installer.prune_releases(releases / names[2], str(releases / names[1]))
+        self.assertEqual(sorted(p.name for p in releases.iterdir()), sorted(names[1:] + ['keep-me']))
+
+    def test_rest_reconnects_when_the_runtime_restarted(self):
+        system = installer.System()
+        client = ['runtime', '--socket', 's']
+        status = subprocess.CompletedProcess([], 0, json.dumps({'torque_enabled': False}))
+        with patch.object(system, 'wait_runtime_client', return_value=(client, {'torque_enabled': False})) as wait, \
+             patch.object(system, 'runtime_client', side_effect=AssertionError('stale client')), \
+             patch.object(system, 'run', return_value=status):
+            system.rest_runtime()
+        wait.assert_called_once()
+
+
 class FakeSystem:
     """Model unit existence separately from enablement to catch dangling wants links."""
     def __init__(self, units, existing=True):
@@ -738,8 +784,8 @@ class ReadinessTests(Fixture):
         for name in ('runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
                      'orion-service/target/release/orion-service', 'speech/.venv/bin/python', 'voice/.venv/bin/orion-listener'):
             self.write(self.release / name, 'fixture')
-        for name in ('servo_calibration.json', 'studio-token'):
-            self.write(self.env.parent / name, 'fixture')
+        self.write(self.env.parent / 'servo_calibration.json', '{"joints": {}}')
+        self.write(self.env.parent / 'studio-token', 'fixture')
         system = installer.System()
         before = self.env.read_bytes()
         with patch.object(system, 'run') as run:

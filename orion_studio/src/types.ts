@@ -238,6 +238,7 @@ export interface GatewayStatus {
     joints?: Array<{ name: string; position_rad?: number; velocity_rad_s?: number; current_ma?: number; voltage_v?: number; temperature_c?: number; status?: number }>;
     schema_version: number;
     robot: string;
+    hardware?: "v1" | "v2";
     build_revision: string;
     mode: string;
     torque_enabled: boolean;

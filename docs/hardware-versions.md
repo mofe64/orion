@@ -80,8 +80,9 @@ keys remain stable:
 
 V2 numbers its servos along its own chain, so servo 4 is the wrist pitch and
 servo 5 the neck swivel; V1's servo 4 was its wrist roll. The runtime refuses a
-calibration whose servo IDs differ from this map. The zero-pose model rotates
-yaw and swivel about +Z and pitch about +X, using the right-hand rule. Angles
+calibration whose servo IDs differ from this map. The zero-pose model rotates pitch about +X and
+yaw and swivel about −Z, so negative yaw or swivel turns toward the lamp's own
+left, matching the hardware. Angles
 use radians and model geometry uses metres.
 
 With `encoder_direction: 1`, the fitted V2 joints move as follows:

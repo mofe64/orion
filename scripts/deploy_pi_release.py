@@ -13,6 +13,10 @@ import uuid
 from install_pi_voice_stack import deployment_lock
 
 
+# Sources, two Python environments and binaries for one release.
+MINIMUM_FREE_BYTES = 3 * 10**9
+
+
 def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
@@ -80,6 +84,10 @@ def main():
     for tool in ('cargo', 'git', 'python3', 'uv'):
         if not shutil.which(tool):
             raise RuntimeError(f'Install {tool} before preparing a Pi release')
+    free = shutil.disk_usage(root if root.exists() else root.parent).free
+    if free < MINIMUM_FREE_BYTES:
+        raise RuntimeError(f'Only {free / 1e9:.1f} GB free; a release needs about '
+                           f'{MINIMUM_FREE_BYTES / 1e9:.0f} GB. Remove old folders in {root / "releases"}')
     with deployment_lock(root):
         if (root / 'pending-installation.json').exists():
             raise RuntimeError('Recover the interrupted deployment with install_pi_voice_stack.py --rollback first')

@@ -19,7 +19,9 @@ pub fn run() {
             coordinator::set_voice_microphone,
             pairing::load_pairing,
             pairing::save_pairing,
-            pairing::forget_pairing
+            pairing::forget_pairing,
+            pairing::list_pairings,
+            pairing::select_pairing
         ])
         .build(tauri::generate_context!())
         .expect("error while building Orion Studio")

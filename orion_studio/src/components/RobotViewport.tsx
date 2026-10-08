@@ -146,8 +146,11 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
     const urdfLoader = new URDFLoader();
     urdfLoader.manager = manager;
     urdfLoader.loadMeshCb = (path, loadingManager, _material, done) => {
-      remainingMeshes += 1;
       const name = path.split("/").at(-1) ?? path;
+      // The V2 description references the camera module as OBJ; it is internal
+      // and not needed for the preview.
+      if (!name.endsWith(".stl")) { done(null); return; }
+      remainingMeshes += 1;
       const url = catalog.meshUrls[name];
       if (!url) {
         if (!disposed) setRenderError(`Missing Orion mesh: ${name}`);

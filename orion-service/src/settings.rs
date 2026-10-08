@@ -86,7 +86,7 @@ fn config_path() -> Result<PathBuf, String> {
 }
 fn read(path: &Path) -> Result<VoiceSettings, String> {
     if !path.exists() {
-        let mut settings = VoiceSettings {
+        let settings = VoiceSettings {
             asr_model: std::env::var("ORION_STUDIO_ASR_MODEL")
                 .unwrap_or_else(|_| VoiceSettings::default().asr_model),
             tts_model: std::env::var("ORION_STUDIO_TTS_MODEL")

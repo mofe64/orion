@@ -51,7 +51,7 @@
     <geom type="plane" size="2 2 .01" rgba=".9 .9 .87 1" />
     <body name="v21_base" pos="0 0 0">
       <body name="v21_base_yaw_link" pos="0.0 0.0 0.060000000000000005">
-        <joint name="base_yaw_joint" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966" />
+        <joint name="base_yaw_joint" type="hinge" axis="0 0 -1" range="-1.5707963267948966 1.5707963267948966" />
         <body name="v21_shoulder_pitch_link" pos="0.0 0.0 0.05299999999999999">
           <joint name="shoulder_pitch_joint" type="hinge" axis="1 0 0" range="-1.5707963267948966 1.5707963267948966" />
           <body name="v21_elbow_pitch_link" pos="0.0 0.0 0.15000000000000002">
@@ -59,7 +59,7 @@
             <body name="v21_wrist_pitch_link" pos="0.0 0.0 0.131">
               <joint name="head_pitch_joint" type="hinge" axis="1 0 0" range="-1.5707963267948966 1.5707963267948966" />
               <body name="v21_neck_swivel_link" pos="0.0 -0.0175 0.04899999999999999">
-                <joint name="head_roll_joint" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966" />
+                <joint name="head_roll_joint" type="hinge" axis="0 0 -1" range="-1.5707963267948966 1.5707963267948966" />
                 <geom name="v21_8" type="mesh" mesh="v21_8" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
                 <geom name="v21_9" type="mesh" mesh="v21_9" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
                 <geom name="v21_12" type="mesh" mesh="v21_12" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />

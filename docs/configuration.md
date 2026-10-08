@@ -24,7 +24,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.local/share/orion/voice-stack/` | Releases, shared models, native tools and deployment inventories |
 
 The runtime and gateway read assets from the existing catalog root, normally
-`/home/mofe/dev/orion`. This is separate from the code release selected by systemd.
+the checkout passed as `--root` (for example `/home/mofe/orion`). This is separate from the code release selected by systemd.
 See [assets and installed releases](system-architecture.md#assets-and-installed-releases).
 
 ## Voice settings
@@ -123,8 +123,8 @@ Command-line flags override the deployment environment:
 
 | Variable | Default | Flag |
 | --- | --- | --- |
-| `ORION_PI_HOST` | `mofe@orion.local` | `--host USER@HOST` |
-| `ORION_PI_ROOT` | `/home/mofe/dev/orion` | `--root PATH` |
+| `ORION_PI_HOST` | `mofe@ariadne-robot.local` | `--host USER@HOST` |
+| `ORION_PI_ROOT` | `/home/mofe/orion` | `--root PATH` |
 | `ORION_PI_BRANCH` | `main` | `--branch BRANCH` |
 | `ORION_PI_HARDWARE` | Required; no deployment default | `--hardware v1\|v2` |
 

@@ -52,6 +52,21 @@ class V2ModelTests(unittest.TestCase):
             site = mujoco.mj_name2id(bridge.model, mujoco.mjtObj.mjOBJ_SITE, 'v21_face')
             np.testing.assert_allclose(bridge.data.site_xpos[site], expected_face[:3], atol=1e-10)
 
+    def test_look_left_turns_toward_the_lamps_own_left_like_the_hardware(self):
+        # The lamp faces -Y, so its own left is +X. On the fitted lamp,
+        # look_left turns to its own left (checked 2026-10-08).
+        poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']
+        model = mujoco.MjModel.from_xml_path(str(PROJECT / 'simulation/mujoco/v2/scene.xml'))
+        data = mujoco.MjData(model)
+        def face_x(pose):
+            data.qpos[:] = 0
+            for joint, value in poses[pose]['positions'].items():
+                data.qpos[model.joint(joint).qposadr[0]] = value
+            mujoco.mj_forward(model, data)
+            return data.site('v21_face').xpos[0]
+        self.assertGreater(face_x('look_left'), 0.05)
+        self.assertLess(face_x('look_right'), -0.05)
+
     def test_bridge_rejects_wrong_hardware_and_never_claims_dynamic_safety(self):
         poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']['home']['positions']
         scene = PROJECT / 'simulation/mujoco/v2/scene.xml'

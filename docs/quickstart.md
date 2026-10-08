@@ -83,10 +83,15 @@ scripts/deploy_pi.sh --hardware v2 --host mofe@ariadne-robot.local \
   --root /home/mofe/orion --branch main
 ```
 
-- Use `--hardware v1` for V1. Without flags the script uses `mofe@orion.local`
-  and `/home/mofe/dev/orion`.
-- Stop any `oriond` you started by hand first; it holds the servo port and the
-  runtime socket.
+- Use `--hardware v1` for V1. Without flags the script uses
+  `mofe@ariadne-robot.local` and `/home/mofe/orion`.
+- The Pi deploys what is pushed. The script warns when your local commit
+  differs from the pushed branch or you have uncommitted changes.
+- The deploy refuses to start while an `oriond` you started by hand is running,
+  because it holds the servo port and the runtime socket. It also refuses a
+  calibration that crosses raw 0/4095 or uses the wrong servo IDs.
+- Each run's full output is saved on the Pi in
+  `~/.local/share/orion/voice-stack/logs/`.
 - SSH must already trust the Pi. The terminal stays open for the sudo password.
 - Keep the area around the lamp clear: the deploy moves the arm.
 - `--prepare-only` builds and tests the release without switching services.
@@ -158,6 +163,7 @@ In `~/.local/share/orion/voice-stack/`:
 - `installation.json` names the active release and its rollback snapshot.
 - `pending-installation.json` exists only while a deploy is unfinished.
 - `downloads.json` and `model-files.json` list shared downloaded assets.
-- `releases/` holds every prepared release. Keep the active one and the
-  rollback one; older releases can be deleted after a successful deploy and
-  voice check. Build caches are optional and only speed up later builds.
+- `releases/` holds prepared releases. A successful deploy keeps the active
+  release and the one rollback would restore, and deletes older ones. A deploy
+  refuses to start with less than 3 GB free.
+- `logs/` holds the output of each deploy.

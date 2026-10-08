@@ -224,6 +224,7 @@ h1, h2 { color: var(--text); font-weight: 620; letter-spacing: -.025em; }
 }
 
 .connection-popover > header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.connection-popover .saved-lamps { display: grid; gap: .5rem; }
 .connection-popover form { display: grid; gap: 1rem; }
 .connection-popover { max-height: calc(100dvh - 5rem); overflow: auto; }
 

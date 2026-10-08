@@ -164,4 +164,21 @@ describe("pairing and reconnect", () => {
   it.each(["http://user:secret@orion.local", "http://orion.local/api", "http://orion.local?token=x", "file:///tmp/a"])("rejects %s", (value) => {
     expect(() => normalizeGatewayUrl(value)).toThrow();
   });
+  it("switches between saved lamps and reconnects to the newly active one", async () => {
+    const other = { url: "http://ariadne-robot.local:7447", token: "b".repeat(32) };
+    let active = target;
+    const store = {
+      load: vi.fn(async () => active), save: vi.fn(async () => {}), forget: vi.fn(async () => {}),
+      list: vi.fn(async () => [{ url: target.url, active: active === target }, { url: other.url, active: active === other }]),
+      select: vi.fn(async (url: string) => { active = url === other.url ? other : target; }),
+    };
+    const controller = new PairingController(store, { status: vi.fn(async () => status), capabilities: vi.fn(async () => capabilities) });
+    await controller.start();
+    expect(controller.current().lamps).toEqual([{ url: target.url, active: true }, { url: other.url, active: false }]);
+    await controller.switchTo(other.url);
+    expect(store.select).toHaveBeenCalledWith(other.url);
+    expect(controller.current()).toMatchObject({ phase: "connected", address: other.url, connection: other });
+    controller.dispose();
+  });
 });
+

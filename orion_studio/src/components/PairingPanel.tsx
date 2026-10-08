@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link2, Unplug, X } from "lucide-react";
+import { Link2, Plus, Unplug, X } from "lucide-react";
 import type { ConnectionSnapshot, PairingController } from "../lib/pairing";
 
 export function PairingPanel({ controller, state, onClose }: {
@@ -9,10 +9,12 @@ export function PairingPanel({ controller, state, onClose }: {
   const [token, setToken] = useState("");
   const [editing, setEditing] = useState(!state.paired || state.phase === "auth_required");
   const [changingAddress, setChangingAddress] = useState(false);
+  const [addingLamp, setAddingLamp] = useState(false);
+  const otherLamps = (state.lamps ?? []).filter((lamp) => !lamp.active);
   useEffect(() => { if (state.phase === "auth_required") setEditing(true); }, [state.phase]);
   const panel = useRef<HTMLElement>(null);
   const busy = state.phase === "loading" || state.phase === "connecting";
-  const needsPairing = editing || !state.paired || state.phase === "auth_required";
+  const needsPairing = editing || addingLamp || !state.paired || state.phase === "auth_required";
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.querySelector<HTMLElement>("button, input")?.focus();
@@ -20,7 +22,7 @@ export function PairingPanel({ controller, state, onClose }: {
   }, []);
   return <section ref={panel} id="orion-pairing" className="connection-popover" role="dialog"
     aria-labelledby="pairing-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
-    <header><h2 id="pairing-title">{changingAddress ? "Change Orion address" : needsPairing ? state.persistent ? "Pair with Orion" : "Connect to Orion" : "Your Orion"}</h2>
+    <header><h2 id="pairing-title">{changingAddress ? "Change Orion address" : addingLamp ? "Pair another lamp" : needsPairing ? state.persistent ? "Pair with Orion" : "Connect to Orion" : "Your Orion"}</h2>
       <button className="icon-button" aria-label="Close connection settings" onClick={onClose}><X size={16} /></button></header>
     <p className="field-help">{changingAddress ? "Studio will use your existing pairing token to verify this address before saving it."
       : needsPairing
@@ -33,12 +35,12 @@ export function PairingPanel({ controller, state, onClose }: {
     {needsPairing || changingAddress ? <form onSubmit={(event) => {
       event.preventDefault();
       const result = changingAddress ? controller.changeAddress(address) : controller.pair(address, token);
-      void result.then((saved) => { if (saved) { setToken(""); onClose(); } });
+      void result.then((saved) => { if (saved) { setToken(""); setAddingLamp(false); onClose(); } });
     }}>
       <label>Orion address<input value={address} required autoComplete="url" spellCheck={false} onChange={(event) => setAddress(event.target.value)} /></label>
       {!changingAddress && <label>Pairing token<input type="password" value={token} required minLength={32} maxLength={4096} autoComplete="off" spellCheck={false} onChange={(event) => setToken(event.target.value)} /></label>}
       <button className="primary-button" type="submit" disabled={busy}><Link2 size={15} />{busy ? "Connecting…" : changingAddress ? "Save address and connect" : state.persistent ? "Pair and remember Orion" : "Connect for this session"}</button>
-      {changingAddress && <button className="quiet-button" type="button" disabled={busy} onClick={() => { setChangingAddress(false); }}>Cancel</button>}
+      {(changingAddress || addingLamp) && <button className="quiet-button" type="button" disabled={busy} onClick={() => { setChangingAddress(false); setAddingLamp(false); }}>Cancel</button>}
     </form> : <>
       {state.phase === "connected" || state.phase === "reconnecting" || busy
         ? <button className="secondary-button" onClick={() => controller.disconnect()}><Unplug size={15} />Disconnect</button>
@@ -47,9 +49,17 @@ export function PairingPanel({ controller, state, onClose }: {
         setAddress(state.address ?? "http://orion.local:7447");
         setChangingAddress(true);
       }}>Change address</button>
+      {otherLamps.length > 0 && <div className="saved-lamps" role="group" aria-label="Other saved lamps">
+        <span className="field-help">Other lamps on this computer</span>
+        {otherLamps.map((lamp) => <button key={lamp.url} className="secondary-button" disabled={busy}
+          onClick={() => { void controller.switchTo(lamp.url); }}>Switch to {new URL(lamp.url).hostname}</button>)}
+      </div>}
+      {state.persistent && <button className="quiet-button" disabled={busy} onClick={() => {
+        setAddress(""); setToken(""); setAddingLamp(true);
+      }}><Plus size={15} />Pair another lamp</button>}
     </>}
     {!state.paired && state.phase === "error" && <button className="secondary-button" onClick={() => { void controller.start(); }}>Retry saved pairing</button>}
-    {(state.paired || state.phase === "error") && <button className="quiet-button" disabled={busy} onClick={() => { setToken(""); setChangingAddress(false); void controller.forget(); }}>{state.persistent ? "Forget Orion on this computer" : "Clear this connection"}</button>}
+    {(state.paired || state.phase === "error") && <button className="quiet-button" disabled={busy} onClick={() => { setToken(""); setChangingAddress(false); void controller.forget(); }}>{state.persistent ? "Forget this lamp on this computer" : "Clear this connection"}</button>}
     <small className="field-help">Connecting does not turn on the microphone or start a movement.</small>
   </section>;
 }
