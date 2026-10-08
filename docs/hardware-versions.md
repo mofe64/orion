@@ -113,7 +113,7 @@ V2 does not inherit V1's measured gravity-gain overrides.
 
 Reuse the [persistent GPIO12 installation](../hardware/lighting/README.md#persistent-raspberry-pi-5-setup)
 for the ring. Verify it after reboot with `hardware/lighting/verify-persistent.sh`.
-The module must match the running kernel. Add `--hardware v2` to Orion's direct
+DKMS rebuilds the module for each installed kernel. Add `--hardware v2` to Orion's direct
 light/audio checks for the 24-pixel ring and USB playback.
 
 ### USB capture and playback

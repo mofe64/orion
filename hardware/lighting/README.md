@@ -182,6 +182,11 @@ dkms status rp1_ws281x_pwm
 Each installed kernel should be listed as `installed`. If one is missing,
 install its headers and run `sudo dkms autoinstall -k KERNEL`.
 
+Run the installer once per Pi. Pi deployment runs `verify-persistent.sh` but
+not the installer, so a deploy on a Pi without this setup stops with
+`/dev/ws281x_pwm is not a character device`. Run the installer, reboot, and
+deploy again.
+
 ## Orion output checks
 
 Build the Rust runtime on the Pi, then verify the four logical channels with
