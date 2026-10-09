@@ -796,7 +796,7 @@ def main():
     parser.add_argument("--processed-channel", type=int, default=0, help="Verified XVF3800 processed USB channel; never mix raw channels")
     parser.add_argument("--device", default=None)
     parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_reference.rpw")
-    parser.add_argument("--threshold", type=float, default=0.8)
+    parser.add_argument("--threshold", type=float, default=0.35)
     parser.add_argument("--verifier-dir", type=Path, default=Path(__file__).resolve().parents[1] / "models/verifier",
                         help="openWakeWord phrase verifier; pass --no-verifier to use the ASR prefix instead")
     parser.add_argument("--no-verifier", dest="verifier_dir", action="store_const", const=None)

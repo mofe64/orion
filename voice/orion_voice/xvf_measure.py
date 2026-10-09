@@ -27,7 +27,7 @@ FRAME_SAMPLES = 320  # 20 ms, the listener's frame size
 DEFAULT_DEVICE = "plughw:CARD=Array,DEV=0"
 DEFAULT_OUT = Path.home() / "orion-measurements"
 DEFAULT_WAKE_MODEL = Path(__file__).resolve().parents[1] / "models" / "wake" / "hey_orion_reference.rpw"
-DEFAULT_WAKE_THRESHOLD = 0.8
+DEFAULT_WAKE_THRESHOLD = 0.35
 LEAD_IN_SECONDS = 1.0
 TAIL_SECONDS = 1.5
 

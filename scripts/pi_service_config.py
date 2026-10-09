@@ -12,9 +12,9 @@ REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 # The reference model proposes candidates for the packaged acoustic verifier
 # (voice/models/verifier); the trained model remains packaged for comparison.
 ACTIVE_WAKE_MODEL = REFERENCE_WAKE_MODEL
-ACTIVE_WAKE_THRESHOLD = '0.8'
+ACTIVE_WAKE_THRESHOLD = '0.35'
 # Recognize the legacy managed threshold so upgrades keep following the active profile.
-MANAGED_WAKE_THRESHOLDS = frozenset((float(ACTIVE_WAKE_THRESHOLD), 0.35))
+MANAGED_WAKE_THRESHOLDS = frozenset((float(ACTIVE_WAKE_THRESHOLD), 0.8))
 PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',

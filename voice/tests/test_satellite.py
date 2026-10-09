@@ -24,7 +24,7 @@ class ListenerDefaultsTests(unittest.TestCase):
                  patch('orion_voice.satellite.serve', capture):
                 main()
                 self.assertEqual(seen[-1].wake_model.name, 'hey_orion_reference.rpw')
-                self.assertEqual(seen[-1].threshold, 0.8)
+                self.assertEqual(seen[-1].threshold, 0.35)
                 self.assertEqual(seen[-1].xvf_direction, 0)
                 self.assertIsNone(seen[-1].xvf_azimuth_sign)
                 self.assertIsNone(seen[-1].xvf_azimuth_offset_deg)
