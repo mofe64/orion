@@ -62,7 +62,8 @@ mod tests {
     fn normalizes_reactions_without_eating_prose() {
         for (input, expected) in [
             ("[nod] Yes.", "[agree] Yes."),
-            ("Yes [Laugh] ok.", "Yes ok."),
+            ("Yes [Laugh] ok.", "Yes [laugh] ok."),
+            ("[Happy] Great.", "[happy] Great."),
             ("[foo] Yes.", "Yes."),
             ("See [1, 2] here.", "See [1, 2] here."),
             (
@@ -74,6 +75,11 @@ mod tests {
             assert_eq!(spoken_response(input).unwrap(), expected);
         }
         assert!(spoken_response("[agree]").is_err());
+        assert!(spoken_response("[laugh]").is_err());
+        assert_eq!(
+            spoken_response("[laugh] Nice joke.").unwrap(),
+            "[laugh] Nice joke."
+        );
         assert!(spoken_response("[agree] [disagree]").is_err());
     }
     #[test]

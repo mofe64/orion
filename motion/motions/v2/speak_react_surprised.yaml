@@ -1,0 +1,16 @@
+format_version: 2
+motion:
+  name: speak_react_surprised
+  description: A quick pull back and lift used as a spoken surprised reaction.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_pitch_joint: 0.16, shoulder_pitch_joint: -0.06, elbow_pitch_joint: 0.05}
+      duration: 0.18
+      arrival: settle
+      hold: 0.22
+      marker: surprised
+    - offsets: {}
+      duration: 0.45
+      arrival: settle

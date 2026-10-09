@@ -380,8 +380,13 @@ calibration is required before enabling direction estimates.
 
 ## Streaming replies and timing
 
-The agent may insert `[agree]` or `[disagree]` before related words, with `[nod]`
-and `[shake]` accepted as aliases. The coordinator removes tags before TTS and
+The agent may start a sentence with `[agree]`, `[disagree]`, `[happy]`,
+`[curious]`, `[thinking]`, `[surprised]`, `[sympathy]`, `[unsure]`, or `[laugh]`.
+`[nod]` and `[shake]` remain aliases for the first two cues; the others have no
+aliases. The [motion catalogue](motion-reference.md#animation-catalogue) lists
+their meanings and dedicated V2 motions. The prompt generates one clause per
+enabled cue and permits at most one tag per sentence and three per reply.
+The coordinator removes tags before TTS and
 before publishing reply text to Studio or history. Each cue travels on the
 next text piece's first WAV chunk in `X-Orion-Speech-Cues`, including the
 stream-creating chunk, and the runtime records its absolute 20 ms audio frame.

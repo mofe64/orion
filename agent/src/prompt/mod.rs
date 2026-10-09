@@ -9,13 +9,32 @@ Use set_mode for lamp or idle mode. For an explicit sleep request, call go_to_sl
 Return only the final words to speak; do not read out URLs or citation markup.";
 
 pub fn instructions() -> String {
-    let tags = crate::ReactionCue::enabled()
+    instructions_for_cues(crate::ReactionCue::enabled())
+}
+
+fn instructions_for_cues(cues: &[crate::ReactionCue]) -> String {
+    use crate::ReactionCue::{Agree, Disagree, Happy, Thinking};
+    let clauses = cues
         .iter()
-        .map(|cue| format!("[{}]", cue.as_str()))
+        .map(|cue| format!("[{}] {}", cue.as_str(), cue.when()))
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("; ");
+    let examples: &[(&[crate::ReactionCue], &str)] = &[
+        (&[Agree], "\"[agree] Yes, the sky is blue on a clear day.\""),
+        (&[Disagree], "\"[disagree] No, two plus two is four.\""),
+        (
+            &[Thinking, Happy],
+            "\"[thinking] Let me work that out. [happy] Good news, it's about twenty minutes.\"",
+        ),
+    ];
+    let examples = examples
+        .iter()
+        .filter(|(required, _)| required.iter().all(|cue| cues.contains(cue)))
+        .map(|(_, example)| *example)
+        .collect::<Vec<_>>()
+        .join(" ");
     ORION_INSTRUCTIONS.replace("Return only the final words", &format!(
-        "Orion's body reacts to tags in your reply. Available tags: {tags}. When a sentence agrees, confirms or answers yes, start it with [agree]. When a sentence corrects, disagrees or answers no, start it with [disagree]. Use at most one tag per sentence and three per reply. Tags are not spoken and are the only exception to returning only spoken words. Never write any other square-bracket text.\nExamples: \"[agree] Yes, the sky is blue on a clear day.\" \"[disagree] No, two plus two is four.\"\nReturn only the final words"
+        "Orion's body reacts to tags in your reply. Start a sentence with a tag when it:\n{clauses}.\nUse at most one tag per sentence and three per reply, and only the tags listed. Tags are not spoken and are the only exception to returning only spoken words. Never write any other square-bracket text.\nExamples: {examples}\nReturn only the final words"
     ))
 }
 
@@ -27,32 +46,34 @@ pub(crate) use stream::Sentences;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn instructions_use_the_enabled_vocabulary() {
+    fn instructions_use_one_clause_per_enabled_cue_and_three_examples() {
         let prompt = super::instructions();
-        let tags = crate::ReactionCue::enabled()
-            .iter()
-            .map(|cue| format!("[{}]", cue.as_str()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        assert!(prompt.contains(&format!("Available tags: {tags}.")));
-        assert!(!prompt.contains("[laugh]"));
-        assert!(
-            prompt.contains(
-                "When a sentence agrees, confirms or answers yes, start it with [agree]."
-            )
-        );
+        for cue in crate::ReactionCue::enabled() {
+            let clause = format!("[{}] {}", cue.as_str(), cue.when());
+            assert_eq!(prompt.matches(&clause).count(), 1, "{clause}");
+        }
         assert!(prompt.contains(
-            "When a sentence corrects, disagrees or answers no, start it with [disagree]."
+            "Use at most one tag per sentence and three per reply, and only the tags listed."
         ));
-        assert!(prompt.contains("Use at most one tag per sentence and three per reply."));
         assert!(prompt.contains(
             "Tags are not spoken and are the only exception to returning only spoken words."
         ));
         let examples = concat!(
             "Examples: \"[agree] Yes, the sky is blue on a clear day.\" ",
-            "\"[disagree] No, two plus two is four.\""
+            "\"[disagree] No, two plus two is four.\" ",
+            "\"[thinking] Let me work that out. [happy] Good news, it's about twenty minutes.\""
         );
-        assert!(prompt.contains(examples));
         assert!(prompt.contains(&format!("{examples}\nReturn only the final words")));
+    }
+    #[test]
+    fn disabled_cues_do_not_appear_in_rules_or_examples() {
+        let enabled = [crate::ReactionCue::Disagree, crate::ReactionCue::Curious];
+        let prompt = super::instructions_for_cues(&enabled);
+        for cue in crate::ReactionCue::enabled() {
+            assert_eq!(
+                prompt.contains(&format!("[{}]", cue.as_str())),
+                enabled.contains(cue)
+            );
+        }
     }
 }

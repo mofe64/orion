@@ -254,13 +254,32 @@ or substitutes a missing pose.
 
 ## Animation catalogue
 
-`speak_react_agree` and `speak_react_disagree` supply V2 speech reactions for
-`agree` and `disagree`. Listening and scenes retain the subtler
-`acknowledge_nod` and `disagree_soft`. A mapped speech reaction must use
-`anchor_relative`, return to the anchor, and have exactly one keyframe marker
-at its apex; loading rejects an invalid contract. The speech composer keeps
-all its authored head and body offsets. See
-[reaction cues](speech-animation-runtime.md#reaction-cues) for timing and spacing.
+V2 speech reactions use dedicated `speak_react_*` assets. Listening and scenes
+retain their own subtler motions, including `acknowledge_nod` and `disagree_soft`.
+Every mapped speech reaction must use `anchor_relative`, return to the anchor,
+and have exactly one keyframe marker at its apex; loading rejects an invalid
+contract. The final keyframe has empty offsets and a `settle` arrival. Holds
+are permitted only at `settle` arrivals.
+
+Catalogue tests require a largest absolute joint offset of at least 0.12 rad
+and a total authored duration, including holds, of 0.8–1.3 seconds. The speech
+composer keeps every authored head and body offset and plays reactions at
+duration scale 1.0. Style weighting and motor-speed retiming still apply;
+calibrated limits always constrain the compiled trajectory. See
+[reaction placement](speech-animation-runtime.md#reaction-cues) for quiet
+lead-ins, facing limits, spacing, and short-reply compression.
+
+| Cue | Speech motion | When to use it |
+| --- | --- | --- |
+| `agree` | `speak_react_agree` | Agreement, confirmation, or yes |
+| `disagree` | `speak_react_disagree` | Correction, disagreement, or no |
+| `happy` | `speak_react_happy` | Good news, thanks, or shared delight |
+| `curious` | `speak_react_curious` | A question or something intriguing |
+| `thinking` | `speak_react_thinking` | Weighing options, estimating, or working something out |
+| `surprised` | `speak_react_surprised` | Something unexpected |
+| `sympathy` | `speak_react_sympathy` | Sadness, frustration, or bad news |
+| `unsure` | `speak_react_unsure` | Uncertainty, maybe, or it depends |
+| `laugh` | `speak_react_laugh` | A joke or a light remark |
 
 | Animation                        | Primary action and silhouette                                                  | Anticipation / follow-through                                                                                              | Timing and secondary action                                                                                                                                                  |
 | -------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -285,6 +304,13 @@ all its authored head and body offsets. See
 | `idle_directional_hold`          | Detail that preserves a left/right held silhouette                             | Small pitch start precedes unchanged shoulder drawing; roll/elbow follow                                                                                     | Avoids yaw that would undermine the directional staging                                                                                                                      |
 | `speak_react_agree`              | Clear double nod for `[agree]`                                                | 0.17 rad first pitch stroke, small counter, second nod, authored anchor return                                               | Speech-specific timing at scale 1.0; one apex marker; ordinary lead-in is quieted                                                                                             |
 | `speak_react_disagree`           | Clear three-beat shake for `[disagree]`                                         | ±0.14 rad yaw with neck counter-swivel, diminished third beat, authored anchor return                                        | Speech-specific timing at scale 1.0; facing clamp and 3.5-second emphasis spacing apply                                                                                        |
+| `speak_react_happy` | Bright lift with a small bounce for `[happy]` | 0.15 rad pitch and coordinated shoulder/elbow lift, smaller bounce, anchor return | 1.03 s; through arrivals keep the bounce flowing |
+| `speak_react_curious` | Tilt and slight lean for `[curious]` | 0.13 rad head roll with pitch and yaw detail | 0.99 s; 0.25 s hold begins at the apex arrival |
+| `speak_react_thinking` | Glance aside and up for `[thinking]` | −0.13 rad yaw with upward pitch and counter-roll | 1.10 s; 0.30 s apex hold, then anchor return |
+| `speak_react_surprised` | Quick pull back and lift for `[surprised]` | 0.16 rad pitch with opposing shoulder/elbow motion | 0.85 s; fast arrival, 0.22 s hold, weighted return |
+| `speak_react_sympathy` | Slow droop and soft tilt for `[sympathy]` | −0.13 rad pitch, slight roll and shoulder droop | 1.25 s; 0.25 s apex hold, slow anchor return |
+| `speak_react_unsure` | Slow side-to-side tilt for `[unsure]` | +0.12 rad roll, smaller opposite tilt with yaw detail | 1.05 s; through arrivals connect both tilts |
+| `speak_react_laugh` | Three quick head bounces for `[laugh]` | 0.14 rad first pitch stroke with a small shoulder lift | 1.02 s; 0.14–0.16 s bounce steps, final anchor return |
 | `speak_calm_sway`                | Readable conversational head-and-body sway                                     | Supplies a calm dominant drawing to the speech performance                                                            | Weighted toward ordinary phrases; quiet intervals can hold its phrase pose                                                                                                                |
 | `speak_emphasis_nod`             | Clear phrase-boundary nod                                                      | Fast head drawing redirects the continuing body path                                                                       | Compiled stroke targets 0.17 s before an eligible audio peak; authored lift then drop                                                                                                         |
 | `speak_explanatory_lean`         | Clear forward explanatory emphasis                                             | Shoulder/head drawing carries momentum into the next phrase                                                                | Phrase-scale staging inside the continuous performance                                                                                                                       |
@@ -315,7 +341,7 @@ See the [design qualities](motion-architecture.md#designing-animation) and the
 
 **Speaking source drawings:** `speak_calm_sway`, `speak_emphasis_nod`, `speak_explanatory_lean`, `speak_reflective_tilt`
 
-**Speech reactions (V2):** `speak_react_agree` (`agree`), `speak_react_disagree` (`disagree`). These keep `acknowledge_nod` and `disagree_soft` subtle for listening and scenes. See [reaction placement and timing](speech-animation-runtime.md#reaction-cues).
+**Speech reactions (V2):** the nine dedicated assets in the [cue vocabulary table](#animation-catalogue). Listening and scenes retain their own subtler motions. See [reaction placement and timing](speech-animation-runtime.md#reaction-cues).
 
 The runtime-generated `speaking_performance` and interruption-only `speak_settle` are not YAML assets. `CharacterCoordinator` builds them in memory from waveform analysis and the speaking source drawings.
 

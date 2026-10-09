@@ -592,12 +592,16 @@ Because composition updates planning history and checkpoints, ordinary execution
 
 ## Reaction cues
 
-The agent can put `[agree]` or `[disagree]` immediately before related words.
-`[nod]` and `[shake]` normalize to those names; other short tag-like bracket
-text is removed. The enabled vocabulary lives in
-[ReactionCue](../agent/src/reaction.rs), which also generates the prompt's tag
-list. Phase 1 supplies motion only. Other reactions and non-verbal sound clips
-are planned.
+The agent starts a sentence with a reaction tag when its meaning matches a
+cue in the [vocabulary table](motion-reference.md#animation-catalogue).
+[ReactionCue](../agent/src/reaction.rs) supplies the enabled names and one
+prompt clause per cue describing when to use it. Prompt examples also exclude
+disabled cues. The prompt allows at most one tag per sentence and three per
+reply; tags are the only exception to returning only spoken words.
+
+`[nod]` and `[shake]` normalize to `agree` and `disagree`. The seven other cues
+have no aliases. Unknown short tag-like bracket text is removed. All nine cues
+supply motion only; non-verbal sound clips remain planned.
 
 The coordinator separates words from cues before TTS. Studio and conversation
 history receive clean `agent.response.text`; `agent.response.cues` lists the
@@ -617,9 +621,9 @@ reaction cannot replay it on a later tail.
 
 The composer reserves a reaction before choosing audio-driven emphasis:
 
-- `agree` uses `speak_react_agree`, a clear double nod; `disagree` uses
-  `speak_react_disagree`, a three-beat shake. The listening and scene motions
-  `acknowledge_nod` and `disagree_soft` retain their subtle shapes.
+- Each cue maps to its own `speak_react_*` asset in the
+  [motion catalogue](motion-reference.md#animation-catalogue). The listening
+  and scene motions retain their subtle shapes.
 - A reaction asset must be anchor-relative, return to its anchor, and contain
   exactly one marker identifying its apex. Invalid mapped assets fail loading.
 - Reaction drawings emit every authored keyframe, including their own body
@@ -630,8 +634,12 @@ The composer reserves a reaction before choosing audio-driven emphasis:
   needed to keep the sum inside the speech-facing range. Loudness does not
   scale their authored head shapes.
 - A cue within the first 0.6 seconds becomes the first drawing without
-  `speech_prepare`. Audio starts normally; the authored apex arrives about
-  0.3 seconds later. This onset drawing makes no exact alignment claim.
+  `speech_prepare`. Audio starts normally; the apex arrives at the motion's
+  authored first keyframe after compiler weighting and any required speed
+  retiming. This onset drawing makes no exact alignment claim.
+- An apex keyframe's hold starts after its arrival; the hold is excluded
+  when calculating the apex time. This keeps held reactions such as `curious`
+  aligned to their arrival rather than the end of their hold.
 - Later apices target cue time plus 0.15 seconds. The existing peak-alignment
   tolerance is translated around that target (80 ms early to 90 ms late).
   Alignment retimes all keyframes of the preceding drawing together using its
@@ -883,7 +891,7 @@ Speech animation is best-effort relative to audio playback: the character helper
 
 The implementation has several deliberate boundaries:
 
-- Audio-driven gestures respond to signal energy, pauses, history, and seeded variation without understanding the semantic meaning of the answer. Explicit agent cues supply agreement and disagreement reactions.
+- Audio-driven gestures respond to signal energy, pauses, history, and seeded variation without understanding the semantic meaning of the answer. Explicit agent cues supply the nine semantic reactions in the motion catalogue.
 - It plans from audio received so far. The future can change while streaming continues.
 - It adopts history from movement timeline progress. It does not independently confirm physical arrival at every gesture checkpoint.
 - It keeps an anchor reference stable. Gesture targets and the intermediate physical posture still change.

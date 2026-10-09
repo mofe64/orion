@@ -22,19 +22,50 @@ const STREAM_LIMIT_ERROR: &str =
 pub enum SpeechCue {
     Agree,
     Disagree,
+    Happy,
+    Curious,
+    Thinking,
+    Surprised,
+    Sympathy,
+    Unsure,
+    Laugh,
 }
 impl SpeechCue {
-    pub const ALL: [Self; 2] = [Self::Agree, Self::Disagree];
+    pub const ALL: [Self; 9] = [
+        Self::Agree,
+        Self::Disagree,
+        Self::Happy,
+        Self::Curious,
+        Self::Thinking,
+        Self::Surprised,
+        Self::Sympathy,
+        Self::Unsure,
+        Self::Laugh,
+    ];
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Agree => "agree",
             Self::Disagree => "disagree",
+            Self::Happy => "happy",
+            Self::Curious => "curious",
+            Self::Thinking => "thinking",
+            Self::Surprised => "surprised",
+            Self::Sympathy => "sympathy",
+            Self::Unsure => "unsure",
+            Self::Laugh => "laugh",
         }
     }
     pub fn motion(self) -> &'static str {
         match self {
             Self::Agree => "speak_react_agree",
             Self::Disagree => "speak_react_disagree",
+            Self::Happy => "speak_react_happy",
+            Self::Curious => "speak_react_curious",
+            Self::Thinking => "speak_react_thinking",
+            Self::Surprised => "speak_react_surprised",
+            Self::Sympathy => "speak_react_sympathy",
+            Self::Unsure => "speak_react_unsure",
+            Self::Laugh => "speak_react_laugh",
         }
     }
 }
@@ -697,10 +728,33 @@ mod tests {
 
     #[test]
     fn cue_vocabulary_and_chunk_frames_are_canonical_and_bounded() {
-        assert_eq!(SpeechCue::ALL.map(SpeechCue::as_str), ["agree", "disagree"]);
+        assert_eq!(
+            SpeechCue::ALL.map(SpeechCue::as_str),
+            [
+                "agree",
+                "disagree",
+                "happy",
+                "curious",
+                "thinking",
+                "surprised",
+                "sympathy",
+                "unsure",
+                "laugh"
+            ]
+        );
         assert_eq!(
             SpeechCue::ALL.map(SpeechCue::motion),
-            ["speak_react_agree", "speak_react_disagree"]
+            [
+                "speak_react_agree",
+                "speak_react_disagree",
+                "speak_react_happy",
+                "speak_react_curious",
+                "speak_react_thinking",
+                "speak_react_surprised",
+                "speak_react_sympathy",
+                "speak_react_unsure",
+                "speak_react_laugh"
+            ]
         );
         assert!("nod".parse::<SpeechCue>().is_err());
         let directory = tempfile::tempdir().unwrap();

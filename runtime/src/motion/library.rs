@@ -956,6 +956,28 @@ mod tests {
         for cue in crate::expression::speech::SpeechCue::ALL {
             let reaction = motions.motion(cue.motion()).unwrap();
             assert_eq!(validate_reaction_motion(reaction).unwrap(), 0);
+            let largest_offset = reaction
+                .keyframes
+                .iter()
+                .flat_map(|keyframe| keyframe.target.values())
+                .copied()
+                .map(f64::abs)
+                .fold(0.0, f64::max);
+            assert!(
+                largest_offset >= 0.12,
+                "{} amplitude {largest_offset}",
+                cue.as_str()
+            );
+            let duration: f64 = reaction
+                .keyframes
+                .iter()
+                .map(|keyframe| keyframe.duration_seconds + keyframe.hold_seconds)
+                .sum();
+            assert!(
+                (0.8..=1.3).contains(&duration),
+                "{} duration {duration}",
+                cue.as_str()
+            );
             let last = reaction.keyframes.last().unwrap();
             assert!(last.target.is_empty());
             assert_eq!(last.arrival, KeyframeArrival::Settle);

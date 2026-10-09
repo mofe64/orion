@@ -385,6 +385,39 @@ async fn reaction_cues_follow_sentence_chunks_without_reaching_speech_or_history
 }
 
 #[tokio::test]
+async fn every_reaction_cue_crosses_streamed_agent_and_tts_boundaries() {
+    let mut h = Harness::new().await;
+    // Deliberately exceed the prompt's soft three-tag cap to exercise every
+    // canonical name through transport; each cue still belongs to one sentence.
+    h.wake("Hey Orion, all-reaction-cues-fixture").await;
+    until(&mut h.pi, "session.finish").await;
+    let response = until(&mut h.observer, "agent.response").await;
+    assert_eq!(
+        response["text"],
+        "Agree. Disagree. Happy. Curious. Thinking. Surprised. Sympathy. Unsure. Laugh."
+    );
+    let names = orion_agent::ReactionCue::enabled()
+        .iter()
+        .map(|cue| cue.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(response["cues"], json!(names));
+    let state = h.gateway.lock().await;
+    assert_eq!(state.uploads.len(), names.len() * 2);
+    let headers = names
+        .iter()
+        .flat_map(|name| [Some((*name).to_owned()), None])
+        .collect::<Vec<_>>();
+    assert_eq!(state.cue_headers, headers);
+    assert_eq!(state.uploads[0].0, "/api/v2/speech/stream");
+    assert_eq!(
+        state.uploads.last().unwrap().0,
+        "/api/v2/speech/1/chunks/17"
+    );
+    drop(state);
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn prefix_wakes_early_but_only_complete_audio_reaches_agent() {
     let mut h = Harness::new().await;
     send(

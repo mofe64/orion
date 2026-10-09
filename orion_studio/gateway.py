@@ -54,7 +54,7 @@ DEFAULT_ALLOWED_ORIGINS = (
 )
 
 
-SPEECH_CUES = frozenset({"agree", "disagree"})
+SPEECH_CUES = frozenset({"agree", "disagree", "happy", "curious", "thinking", "surprised", "sympathy", "unsure", "laugh"})
 
 
 def validate_speech_cues(value: str | None) -> str:

@@ -1,0 +1,16 @@
+format_version: 2
+motion:
+  name: speak_react_thinking
+  description: A glance aside and up used as a spoken thinking reaction.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {base_yaw_joint: -0.13, head_pitch_joint: 0.09, head_roll_joint: -0.05}
+      duration: 0.38
+      arrival: settle
+      hold: 0.30
+      marker: thinking
+    - offsets: {}
+      duration: 0.42
+      arrival: settle

@@ -1077,7 +1077,7 @@ mod tests {
         assert_eq!(stale["error"], "Stale voice session");
         assert!(!h.speech.is_active());
         assert_eq!(
-            h.command(&format!("speech stream reply {session} cues=laugh"))["ok"],
+            h.command(&format!("speech stream reply {session} cues=joy"))["ok"],
             false
         );
         assert!(!h.speech.is_active());
@@ -1101,9 +1101,26 @@ mod tests {
                 .collect::<Vec<_>>(),
             [SpeechCue::Agree, SpeechCue::Disagree]
         );
+        for (sequence, cue) in SpeechCue::ALL.iter().enumerate().skip(2) {
+            write_test_wav(&h._spool.path().join("next.wav"));
+            h.ok(&format!(
+                "speech append {run} {sequence} next cues={}",
+                cue.as_str()
+            ));
+        }
+        assert_eq!(
+            h.speech
+                .active_analysis()
+                .unwrap()
+                .cues
+                .iter()
+                .map(|(_, cue)| *cue)
+                .collect::<Vec<_>>(),
+            SpeechCue::ALL
+        );
         write_test_wav(&h._spool.path().join("plain.wav"));
-        h.ok(&format!("speech append {run} 2 plain"));
-        h.ok(&format!("speech end {run} 3"));
+        h.ok(&format!("speech append {run} 9 plain"));
+        h.ok(&format!("speech end {run} 10"));
         h.ok("speech stop");
         write_test_wav(&h._spool.path().join("plain.wav"));
         h.ok("speech stream plain");

@@ -1,0 +1,18 @@
+format_version: 2
+motion:
+  name: speak_react_unsure
+  description: A slow side-to-side head tilt used as a spoken unsure reaction.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_roll_joint: 0.12, base_yaw_joint: 0.04}
+      duration: 0.32
+      arrival: through
+      marker: unsure
+    - offsets: {head_roll_joint: -0.10, base_yaw_joint: -0.03}
+      duration: 0.38
+      arrival: through
+    - offsets: {}
+      duration: 0.35
+      arrival: settle

@@ -1,0 +1,21 @@
+format_version: 2
+motion:
+  name: speak_react_happy
+  description: A bright lift with a small bounce used as a spoken happy reaction.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_pitch_joint: 0.15, shoulder_pitch_joint: 0.08, elbow_pitch_joint: -0.07}
+      duration: 0.28
+      arrival: through
+      marker: happy
+    - offsets: {head_pitch_joint: 0.07, shoulder_pitch_joint: 0.04, elbow_pitch_joint: -0.03}
+      duration: 0.20
+      arrival: through
+    - offsets: {head_pitch_joint: 0.12, shoulder_pitch_joint: 0.06, elbow_pitch_joint: -0.05}
+      duration: 0.20
+      arrival: through
+    - offsets: {}
+      duration: 0.35
+      arrival: settle

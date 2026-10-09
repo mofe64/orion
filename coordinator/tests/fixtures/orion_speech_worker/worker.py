@@ -1,5 +1,6 @@
 """Deterministic inference peer: no model libraries or network access."""
 import json
+import re
 import sys
 import time
 
@@ -23,7 +24,7 @@ for raw in reader:
         emit(dict(type='transcript',id=rid,text=text,language='English'))
     else:
         text = request['text']
-        assert '[agree]' not in text and '[disagree]' not in text, 'Reaction tags must never reach TTS'
+        assert re.search(r'\[[a-z_]{2,16}\]', text, re.IGNORECASE) is None, 'Reaction tags must never reach TTS'
         assert len(text) <= 160, 'TTS inputs must be bounded before inference'
         if 'preplay-tts' in text:
             time.sleep(6)

@@ -3261,6 +3261,91 @@ mod tests {
             .collect()
     }
     #[test]
+    fn every_cue_fits_a_short_final_reply_at_onset() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        for cue in SpeechCue::ALL {
+            let mut character = CharacterCoordinator::new(42);
+            let motion = character
+                .compose_speech_performance(
+                    &cue_analysis(1.7, vec![(0, cue)]),
+                    core.motions(),
+                    &anchor,
+                )
+                .unwrap();
+            let indices = reaction_indices(&motion, cue);
+            assert_eq!(
+                indices.len(),
+                core.motions().motion(cue.motion()).unwrap().keyframes.len(),
+                "{}",
+                cue.as_str()
+            );
+            assert!(
+                motion.keyframes[0]
+                    .marker
+                    .as_deref()
+                    .unwrap()
+                    .starts_with(&format!("reaction_0_{}", cue.as_str()))
+            );
+            assert!(motion.keyframes[*indices.last().unwrap()].target.is_empty());
+            let sequence = MotionSequence::new(&motion, anchor.clone()).unwrap();
+            assert!(
+                sequence.duration_seconds() <= 1.7 + SPEECH_REACTION_OVERRUN_SECONDS,
+                "{} finishes at {}",
+                cue.as_str(),
+                sequence.duration_seconds()
+            );
+            assert_eq!(character.speech_cues_planned, [0]);
+        }
+    }
+
+    #[test]
+    fn held_curious_apex_aligns_at_arrival_before_the_hold() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        let motion = character
+            .compose_speech_performance(
+                &cue_analysis(6.0, vec![(100, SpeechCue::Curious)]),
+                core.motions(),
+                &anchor,
+            )
+            .unwrap();
+        let apex = reaction_indices(&motion, SpeechCue::Curious)[0];
+        assert_eq!(motion.keyframes[apex].arrival, KeyframeArrival::Settle);
+        assert!((motion.keyframes[apex].hold_seconds - 0.25).abs() < 1e-9);
+        let sequence = MotionSequence::new(&motion, anchor).unwrap();
+        let arrival = sequence.keyframe_arrival_time(apex).unwrap();
+        let residual = arrival - (2.0 + SPEECH_CUE_APEX_DELAY_SECONDS);
+        assert!(
+            SPEECH_APEX_WINDOW_SECONDS.contains(&(residual - SPEECH_STROKE_LEAD_SECONDS)),
+            "curious apex at {arrival}"
+        );
+        assert_eq!(
+            sequence.marker_time(motion.keyframes[apex].marker.as_deref().unwrap()),
+            Some(arrival)
+        );
+        assert!(sequence.keyframe_arrival_time(apex + 1).unwrap() > arrival + 0.25);
+    }
+
+    #[test]
+    fn reaction_spacing_applies_between_thinking_and_happy() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        let motion = character
+            .compose_speech_performance(
+                &cue_analysis(6.0, vec![(0, SpeechCue::Thinking), (100, SpeechCue::Happy)]),
+                core.motions(),
+                &anchor,
+            )
+            .unwrap();
+        assert!(!reaction_indices(&motion, SpeechCue::Thinking).is_empty());
+        assert!(reaction_indices(&motion, SpeechCue::Happy).is_empty());
+        assert_eq!(character.speech_cues_planned, [0, 100]);
+    }
+
+    #[test]
     fn short_final_reactions_use_actual_audio_room_and_uniform_compression() {
         let core = reaction_core();
         let anchor = core.poses().pose("home").unwrap().clone();
@@ -3371,49 +3456,51 @@ mod tests {
         let plain = ordinary
             .compose_speech_performance(&cue_analysis(6.0, vec![]), core.motions(), &anchor)
             .unwrap();
-        let mut character = CharacterCoordinator::new(42);
-        let tagged = character
-            .compose_speech_performance(
-                &cue_analysis(6.0, vec![(100, SpeechCue::Agree)]),
-                core.motions(),
-                &anchor,
-            )
-            .unwrap();
-        let lead = |motion: &MotionDefinition| {
-            motion
-                .keyframes
-                .iter()
-                .find(|k| {
-                    k.marker
-                        .as_deref()
-                        .is_some_and(|m| m.starts_with("gesture_0_"))
-                })
-                .unwrap()
-                .clone()
-        };
-        let plain_lead = lead(&plain);
-        let tagged_lead = lead(&tagged);
-        for joint in ["head_pitch_joint", "head_roll_joint", "base_yaw_joint"] {
-            let expected = plain_lead.target.get(joint).copied().unwrap_or(0.0) * 0.5;
-            let actual = tagged_lead.target.get(joint).copied().unwrap_or(0.0);
-            assert!(
-                (actual - expected).abs() < 1e-9,
-                "{joint}: {actual} vs {expected}"
-            );
-        }
-        let body = |motion: &MotionDefinition| {
-            motion
-                .keyframes
-                .iter()
-                .find(|k| k.marker.as_deref() == Some("body_follow_0"))
-                .unwrap()
-                .clone()
-        };
-        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
-            assert_eq!(
-                body(&plain).target.get(joint),
-                body(&tagged).target.get(joint)
-            );
+        for cue in SpeechCue::ALL {
+            let mut character = CharacterCoordinator::new(42);
+            let tagged = character
+                .compose_speech_performance(
+                    &cue_analysis(6.0, vec![(100, cue)]),
+                    core.motions(),
+                    &anchor,
+                )
+                .unwrap();
+            let lead = |motion: &MotionDefinition| {
+                motion
+                    .keyframes
+                    .iter()
+                    .find(|k| {
+                        k.marker
+                            .as_deref()
+                            .is_some_and(|m| m.starts_with("gesture_0_"))
+                    })
+                    .unwrap()
+                    .clone()
+            };
+            let plain_lead = lead(&plain);
+            let tagged_lead = lead(&tagged);
+            for joint in ["head_pitch_joint", "head_roll_joint", "base_yaw_joint"] {
+                let expected = plain_lead.target.get(joint).copied().unwrap_or(0.0) * 0.5;
+                let actual = tagged_lead.target.get(joint).copied().unwrap_or(0.0);
+                assert!(
+                    (actual - expected).abs() < 1e-9,
+                    "{joint}: {actual} vs {expected}"
+                );
+            }
+            let body = |motion: &MotionDefinition| {
+                motion
+                    .keyframes
+                    .iter()
+                    .find(|k| k.marker.as_deref() == Some("body_follow_0"))
+                    .unwrap()
+                    .clone()
+            };
+            for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+                assert_eq!(
+                    body(&plain).target.get(joint),
+                    body(&tagged).target.get(joint)
+                );
+            }
         }
     }
 

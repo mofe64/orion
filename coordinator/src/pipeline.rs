@@ -1034,6 +1034,21 @@ impl PlaybackProgress {
 mod playback_tests {
     use super::*;
     #[test]
+    fn every_enabled_cue_stays_out_of_spoken_text_and_reply_history() {
+        for cue in ReactionCue::enabled() {
+            let tagged = format!("[{}] Hello.", cue.as_str());
+            assert_eq!(
+                speech_pieces(&tagged),
+                vec![SpeechPiece::Cue(*cue), SpeechPiece::Text("Hello.".into())]
+            );
+            assert_eq!(
+                response_metadata(&tagged),
+                ("Hello.".into(), vec![cue.as_str()])
+            );
+        }
+    }
+
+    #[test]
     fn retained_audio_accepts_exactly_thirty_minutes_and_rejects_more() {
         assert_eq!(
             checked_audio_total(MAX_REPLY_AUDIO_BYTES - 96_000, 96_000).unwrap(),

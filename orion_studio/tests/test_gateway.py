@@ -426,7 +426,7 @@ class HomeOperationTests(unittest.TestCase):
 class StreamingSpeechGatewayTests(unittest.TestCase):
     def test_cue_vocabulary_validation_and_exact_command_forwarding(self):
         from gateway import SPEECH_CUES
-        self.assertEqual(SPEECH_CUES, frozenset({"agree", "disagree"}))
+        self.assertEqual(SPEECH_CUES, frozenset({"agree", "disagree", "happy", "curious", "thinking", "surprised", "sympathy", "unsure", "laugh"}))
         with tempfile.TemporaryDirectory() as directory:
             client = Mock()
             client.request.return_value = {"ok": True, "run_id": 12}
@@ -438,9 +438,13 @@ class StreamingSpeechGatewayTests(unittest.TestCase):
                 self.assertEqual(client.request.call_args.args[0], "speech append 12 1 chunk cues=disagree")
                 gateway.upload_speech(pcm_wav(), "reply", streaming=True, run_id=12, sequence=2, cues="")
                 self.assertEqual(client.request.call_args.args[0], "speech append 12 2 chunk")
+            for sequence, cue in enumerate(sorted(SPEECH_CUES), start=3):
+                with self.subTest(cue=cue), patch("gateway.secrets.token_urlsafe", return_value="chunk"):
+                    gateway.upload_speech(pcm_wav(), "reply", streaming=True, run_id=12, sequence=sequence, cues=cue)
+                    self.assertEqual(client.request.call_args.args[0], f"speech append 12 {sequence} chunk cues={cue}")
             before = set(Path(directory).iterdir())
             client.request.reset_mock()
-            for cues in ["nod", "laugh", "Agree", "agree, disagree", "agree,", "agree " , "agree;stop", ",", "agree," * 4 + "agree"]:
+            for cues in ["nod", "joy", "Agree", "agree, disagree", "agree,", "agree " , "agree;stop", ",", "agree," * 4 + "agree"]:
                 with self.subTest(cues=cues), self.assertRaises(GatewayError) as failure:
                     gateway.upload_speech(pcm_wav(), "reply", streaming=True, cues=cues)
                 self.assertEqual(failure.exception.code, "invalid_speech_cues")

@@ -1,0 +1,16 @@
+format_version: 2
+motion:
+  name: speak_react_curious
+  description: A head tilt with a slight lean used as a spoken curious reaction.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_roll_joint: 0.13, head_pitch_joint: 0.06, base_yaw_joint: 0.05}
+      duration: 0.34
+      arrival: settle
+      hold: 0.25
+      marker: curious
+    - offsets: {}
+      duration: 0.40
+      arrival: settle
