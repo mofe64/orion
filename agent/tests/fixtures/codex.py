@@ -167,6 +167,8 @@ for line in sys.stdin:
                 emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,
                       'itemId':'final','delta':piece}})
             response = '[agree] Yes. Fine. [shake] No. [agree]'
+        if text == 'crowded-reaction-cues-fixture':
+            response = '[agree] [happy] [surprised] [curious] [laugh] Yes!'
         if text == 'all-reaction-cues-fixture':
             names = ['agree', 'disagree', 'happy', 'curious', 'thinking', 'surprised', 'sympathy', 'unsure', 'laugh']
             emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,

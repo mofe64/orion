@@ -53,6 +53,9 @@ mod tests {
             assert_eq!(prompt.matches(&clause).count(), 1, "{clause}");
         }
         assert!(prompt.contains(
+            "[surprised] reacts to something unexpected, including a surprising fact the user shares (prefer this over agree)"
+        ));
+        assert!(prompt.contains(
             "Use at most one tag per sentence and three per reply, and only the tags listed."
         ));
         assert!(prompt.contains(

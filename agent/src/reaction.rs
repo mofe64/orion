@@ -45,7 +45,9 @@ impl ReactionCue {
             Self::Happy => "shares good news, thanks the user or shares their delight",
             Self::Curious => "asks the user a question or finds something intriguing",
             Self::Thinking => "weighs options, estimates or works something out",
-            Self::Surprised => "reacts to something unexpected",
+            Self::Surprised => {
+                "reacts to something unexpected, including a surprising fact the user shares (prefer this over agree)"
+            }
             Self::Sympathy => "responds to sadness, frustration or bad news",
             Self::Unsure => "is uncertain, such as maybe, it depends or I'm not sure",
             Self::Laugh => "responds to a joke or makes a light one",
@@ -66,15 +68,12 @@ impl ReactionCue {
         };
         Self::enabled().contains(&cue).then_some(cue)
     }
-    pub fn sound(self) -> Option<&'static str> {
-        None
-    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn enabled_vocabulary_is_canonical_and_silent() {
+    fn enabled_vocabulary_is_canonical() {
         assert_eq!(
             ReactionCue::enabled()
                 .iter()
@@ -98,6 +97,5 @@ mod tests {
         assert_eq!(ReactionCue::parse(" SHAKE "), Some(ReactionCue::Disagree));
         assert_eq!(ReactionCue::parse("nod"), Some(ReactionCue::Agree));
         assert!(ReactionCue::parse("joy").is_none());
-        assert!(ReactionCue::enabled().iter().all(|c| c.sound().is_none()));
     }
 }

@@ -386,8 +386,10 @@ The agent may start a sentence with `[agree]`, `[disagree]`, `[happy]`,
 aliases. The [motion catalogue](motion-reference.md#animation-catalogue) lists
 their meanings and dedicated V2 motions. The prompt generates one clause per
 enabled cue and permits at most one tag per sentence and three per reply.
-The coordinator removes tags before TTS and
-before publishing reply text to Studio or history. Each cue travels on the
+The coordinator removes tags before TTS and before publishing reply text to
+Studio or history. A tag mid-sentence still works, but the coordinator synthesises
+the words on each side separately, so Piper may pause there; this is why the
+prompt asks for tags at the start of a sentence. A retained cue travels on the
 next text piece's first WAV chunk in `X-Orion-Speech-Cues`, including the
 stream-creating chunk, and the runtime records its absolute 20 ms audio frame.
 Onset reactions overlap the first words. Reaction placement, spacing, checkpoint

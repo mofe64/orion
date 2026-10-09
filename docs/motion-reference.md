@@ -271,6 +271,9 @@ calibrated limits always constrain the compiled trajectory. See
 [reaction placement](speech-animation-runtime.md#reaction-cues) for quiet
 lead-ins, facing limits, spacing, and short-reply compression.
 
+Tune a reaction by editing its YAML apex offsets or durations; no runtime code
+change is needed. Catalogue tests enforce the size and duration bounds above.
+
 | Cue | Speech motion | When to use it |
 | --- | --- | --- |
 | `agree` | `speak_react_agree` | Agreement, confirmation, or yes |
@@ -304,8 +307,8 @@ lead-ins, facing limits, spacing, and short-reply compression.
 | `idle_soft_head_shake`           | Restrained asymmetric shake                                                    | Small first side, larger counter, diminished final echo                                                                    | Direction changes flow through spline points without stop plateaus                                                                                                           |
 | `idle_attentive_hold`            | Subtle upward energy within attentive anchors                                  | Small head-only start, unchanged shoulder/elbow rise, then diagonal detail                                                                          | Faster attentive character but low amplitude                                                                                                                                 |
 | `idle_directional_hold`          | Detail that preserves a left/right held silhouette                             | Small pitch start precedes unchanged shoulder drawing; roll/elbow follow                                                                                     | Avoids yaw that would undermine the directional staging                                                                                                                      |
-| `speak_react_agree`              | Clear double nod for `[agree]`                                                | 0.17 rad first pitch stroke, small counter, second nod, authored anchor return                                               | Speech-specific timing at scale 1.0; one apex marker; ordinary lead-in is quieted                                                                                             |
-| `speak_react_disagree`           | Clear three-beat shake for `[disagree]`                                         | ±0.14 rad yaw with neck counter-swivel, diminished third beat, authored anchor return                                        | Speech-specific timing at scale 1.0; facing clamp and 3.5-second emphasis spacing apply                                                                                        |
+| `speak_react_agree`              | Clear double nod for `[agree]`                                                | 0.17 rad first pitch stroke, small counter, second nod, authored anchor return                                               | 1.00 s at duration scale 1.0; one apex marker; ordinary lead-in is quieted                                                                                             |
+| `speak_react_disagree`           | Clear three-beat shake for `[disagree]`                                         | ±0.14 rad yaw with neck counter-swivel, diminished third beat, authored anchor return                                        | 1.04 s at duration scale 1.0; facing clamp and 3.5-second emphasis spacing apply                                                                                        |
 | `speak_react_happy` | Bright lift with a small bounce for `[happy]` | 0.24 rad pitch with 0.13 rad shoulder and −0.11 rad elbow lift, smaller bounce, anchor return | 1.03 s; through arrivals keep the bounce flowing |
 | `speak_react_curious` | Tilt and slight lean for `[curious]` | 0.20 rad head roll with pitch, yaw and shoulder detail | 1.04 s; 0.30 s hold begins at the apex arrival |
 | `speak_react_thinking` | Glance aside and up for `[thinking]` | −0.20 rad yaw with pitch, counter-roll and shoulder detail | 1.15 s; 0.35 s apex hold, then anchor return |

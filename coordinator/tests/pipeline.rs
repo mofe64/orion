@@ -385,6 +385,57 @@ async fn reaction_cues_follow_sentence_chunks_without_reaching_speech_or_history
 }
 
 #[tokio::test]
+async fn crowded_cues_keep_the_first_and_complete_reply() {
+    // Isolate stderr so the structured log assertions cannot capture parallel
+    // tests. The child exercises the real streamed pipeline and fake peers.
+    const CHILD: &str = "ORION_TEST_CROWDED_CUES_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "crowded_cues_keep_the_first_and_complete_reply",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child test failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let drops = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|event| event["event"] == "speech.cue_dropped" && event["reason"] == "crowded")
+            .collect::<Vec<_>>();
+        let expected = ["happy", "surprised", "curious", "laugh"].map(|cue| {
+            json!({"event":"speech.cue_dropped", "cue":cue, "reason":"crowded", "request_id":1})
+        });
+        assert_eq!(drops, expected);
+        return;
+    }
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, crowded-reaction-cues-fixture").await;
+    until(&mut h.pi, "session.finish").await;
+    let response = until(&mut h.observer, "agent.response").await;
+    assert_eq!(response["text"], "Yes!");
+    assert_eq!(
+        response["cues"],
+        json!(["agree", "happy", "surprised", "curious", "laugh"])
+    );
+    let state = h.gateway.lock().await;
+    assert_eq!(state.cue_headers, [Some("agree".into()), None]);
+    assert_eq!(state.uploads.len(), 2);
+    assert_eq!(state.uploads[0].0, "/api/v2/speech/stream");
+    assert!(state.ended);
+    drop(state);
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn every_reaction_cue_crosses_streamed_agent_and_tts_boundaries() {
     let mut h = Harness::new().await;
     // Deliberately exceed the prompt's soft three-tag cap to exercise every

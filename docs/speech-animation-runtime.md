@@ -600,17 +600,22 @@ disabled cues. The prompt allows at most one tag per sentence and three per
 reply; tags are the only exception to returning only spoken words.
 
 `[nod]` and `[shake]` normalize to `agree` and `disagree`. The seven other cues
-have no aliases. Unknown short tag-like bracket text is removed. All nine cues
-supply motion only; non-verbal sound clips remain planned.
+have no aliases. Unknown short tag-like bracket text is removed. Reactions
+are motion only. Piper Alba cannot voice laughs or other non-speech sounds,
+and clips from other voices do not match it.
 
 The coordinator separates words from cues before TTS. Studio and conversation
 history receive clean `agent.response.text`; `agent.response.cues` lists the
 canonical names in reply order, including cues later dropped. Pending cues ride
-on the next text piece's first audio chunk. Both the stream-creating request
-and subsequent chunk requests use `X-Orion-Speech-Cues`, with at most four
-canonical names separated by commas. The gateway rejects invalid names before
-spooling and appends `cues=` to the private runtime command. Session validation
-still applies when that token is present.
+on the next text piece's first audio chunk. The coordinator keeps only the first
+pending cue on that chunk and logs the others as `crowded`, so extra tags
+cannot abort the spoken reply. It sends at most one cue per chunk.
+
+Both the stream-creating request and subsequent chunk requests use
+`X-Orion-Speech-Cues`. The gateway accepts at most four canonical names separated
+by commas as a transport safety limit; it rejects invalid names before spooling
+and appends `cues=` to the private runtime command. Session validation still
+applies when that token is present.
 
 The speech analyzer records each cue at `received_samples / 480`, the 20 ms
 frame containing its chunk's first sample. Chunk buffering and upload pacing do
@@ -668,9 +673,10 @@ EOF receives the same room test, while ordinary gestures yield to a return.
 
 `speech.cue_received` reports the run, sequence, canonical cue, and absolute
 frame. `speech.motion_compiled.reactions` reports `reaction_*` markers and their
-compiled arrival times. `speech.cue_dropped` reasons are `trailing` (no later
-audio), `spacing`, `no_room`, and `limit` (more
-than 32 cues). A cue can appear in the agent event yet be dropped by animation.
+compiled arrival times. `speech.cue_dropped` reasons are `crowded` (another cue
+already owns the next chunk), `trailing` (no later audio), `spacing`, `no_room`,
+and `limit` (more than 32 cues). A cue can appear in the agent event yet be
+dropped before upload or during animation.
 
 ## 10. `choose_speech_turn_direction()`: choose a yaw offset sign
 
@@ -959,12 +965,12 @@ Character tests live in [character.rs](../runtime/src/expression/character.rs), 
 
 | Source | What to consult it for |
 | --- | --- |
-| [agent reaction vocabulary](../agent/src/reaction.rs) | Enabled names, aliases, and sound mapping. |
+| [agent reaction vocabulary](../agent/src/reaction.rs) | Enabled names, aliases, and prompt clauses. |
 | [agent response parser](../agent/src/prompt/response.rs) | Tag normalization and speech-output validation. |
 | [coordinator pipeline](../coordinator/src/pipeline.rs) | Text/cue separation, clean history events, and chunk attachment. |
 | [coordinator gateway client](../coordinator/src/gateway.rs) | Cue headers on streamed WAV uploads. |
 | [Studio gateway](../orion_studio/gateway.py) | Header validation and private runtime command forwarding. |
-| [reaction assets](../motion/motions/v2) | Authored nod and disagreement keyframes. |
+| [reaction assets](../motion/motions/v2) | Authored keyframes for all nine speech reactions. |
 | [character coordinator](../runtime/src/expression/character.rs) | Speech planning methods, memory structures, gesture rules, state machine and tests. |
 | [speech coordinator and analyzer](../runtime/src/expression/speech.rs) | Audio-analysis types, playback, streaming, and analysis in the runtime. |
 | [executable entry point](../runtime/src/main.rs) | Thin entry point into the application module. |

@@ -739,7 +739,14 @@ async fn speak_sequence(
                     let job = speech.synthesize(text, chunk_send);
                     let forward = async {
                         while let Some(Some(mut chunk)) = chunk_receive.recv().await {
-                            chunk.cues = std::mem::take(&mut pending_cues);
+                            let cues = std::mem::take(&mut pending_cues);
+                            chunk.cues = cues.first().copied().into_iter().collect();
+                            for cue in cues.into_iter().skip(1) {
+                                eprintln!(
+                                    "{}",
+                                    json!({"event":"speech.cue_dropped", "cue":cue.as_str(), "reason":"crowded", "request_id":request})
+                                );
+                            }
                             chunk.synthesis_ms = started.unwrap().elapsed().as_secs_f64() * 1000.;
                             send.send(Some(chunk))
                                 .await
