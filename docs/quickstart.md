@@ -61,6 +61,10 @@ Python 3.11 or later and these packages: `build-essential`, `pkg-config`,
 
 Later updates use the [deploy script](#deploy-to-the-pi).
 
+For access away from configured Wi-Fi, install the optional
+[fallback hotspot](networking.md) after verifying which network manager owns
+the Pi's Wi-Fi interface.
+
 ## Connect Studio
 
 Studio needs pnpm, Node.js, Rust and the Tauri prerequisites in

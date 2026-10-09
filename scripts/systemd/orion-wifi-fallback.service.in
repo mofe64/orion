@@ -1,0 +1,15 @@
+[Unit]
+Description=Restore Orion Wi-Fi or start the fallback hotspot
+Requires=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/orion/wifi-fallback.env
+ExecStart=/usr/local/sbin/orion-wifi-fallback
+TimeoutStartSec=50s
+RuntimeDirectory=orion-wifi-fallback
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true

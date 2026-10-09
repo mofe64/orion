@@ -28,6 +28,7 @@ Read these in order when you are new to Orion:
 - [STS3215 servo setup, calibration and centring](../hardware/servo_setup/README.md)
 - [V1 ReSpeaker HAT audio](../hardware/audio/README.md); V2 USB audio is in [hardware versions](hardware-versions.md#usb-capture-and-playback)
 - [RGBW light](../hardware/lighting/README.md)
+- [Wi-Fi fallback hotspot](networking.md)
 
 ## Component development
 
