@@ -1,7 +1,7 @@
 {
   "provider": "openwakeword",
   "phrase": "Hey Orion",
-  "threshold": 0.8,
+  "threshold": 0.5,
   "lookback_seconds": 0.8,
   "deadline_seconds": 1.0,
   "warmup_frames": 26,

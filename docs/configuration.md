@@ -202,7 +202,7 @@ relying on a clock alarm.
 The managed listener and standalone CLI use two wake stages: the reference
 Rustpotter model `voice/models/wake/hey_orion_reference.rpw` proposes candidates
 at threshold `0.8`, then the openWakeWord “Hey Orion” acoustic verifier in
-`voice/models/verifier/` accepts them at threshold `0.8`. Both thresholds apply
+`voice/models/verifier/` accepts them at threshold `0.5`. Both thresholds apply
 to V1 and V2, with no per-hardware overrides. `--threshold VALUE` changes only
 the Rustpotter gate; the [packaged verifier configuration](../voice/models/verifier/config.json)
 sets the acoustic threshold and timing. The trained

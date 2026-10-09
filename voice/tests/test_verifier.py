@@ -48,7 +48,7 @@ def feed_frames(v, count):
 class VerifierRuleTests(unittest.TestCase):
     def test_config_matches_packaged_decision_rule(self):
         config = json.loads((MODELS / "config.json").read_text())
-        self.assertEqual((config["threshold"], config["lookback_seconds"], config["deadline_seconds"]), (0.8, 0.8, 1.0))
+        self.assertEqual((config["threshold"], config["lookback_seconds"], config["deadline_seconds"]), (0.5, 0.8, 1.0))
         self.assertEqual(config["warmup_frames"], 26)
         for name, digest in config["files"].items():
             self.assertEqual(sha256(MODELS / name), digest)
@@ -68,7 +68,7 @@ class VerifierRuleTests(unittest.TestCase):
         self.assertIsNone(v.verdict())
 
     def test_later_score_within_deadline_accepts_when_it_arrives(self):
-        v = verifier({45: 0.8})
+        v = verifier({45: 0.5})
         feed_frames(v, 40 * 4)
         v.begin()
         for _ in range(4 * 5 - 1):
@@ -80,7 +80,7 @@ class VerifierRuleTests(unittest.TestCase):
         self.assertEqual(verdict.decided_sample, 45 * CHUNK)
 
     def test_rejects_at_deadline_and_reports_best_score(self):
-        v = verifier({41: 0.79, 60: 0.9})  # 60 is after the 1 s deadline
+        v = verifier({41: 0.49, 60: 0.9})  # 60 is after the 1 s deadline
         feed_frames(v, 40 * 4)
         v.begin()
         verdict = None
@@ -90,7 +90,7 @@ class VerifierRuleTests(unittest.TestCase):
             frames += 1
             verdict = v.verdict()
         self.assertFalse(verdict.accepted)
-        self.assertAlmostEqual(verdict.score, 0.79)
+        self.assertAlmostEqual(verdict.score, 0.49)
         self.assertEqual(frames * 320, RATE)
 
     def test_warmup_scores_are_ignored(self):
