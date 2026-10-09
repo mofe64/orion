@@ -6,10 +6,10 @@ motion:
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.16, shoulder_pitch_joint: -0.06, elbow_pitch_joint: 0.05}
-      duration: 0.18
+    - offsets: {head_pitch_joint: 0.24, shoulder_pitch_joint: -0.10, elbow_pitch_joint: 0.08}
+      duration: 0.20
       arrival: settle
-      hold: 0.22
+      hold: 0.25
       marker: surprised
     - offsets: {}
       duration: 0.45

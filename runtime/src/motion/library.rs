@@ -955,17 +955,31 @@ mod tests {
         let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
         for cue in crate::expression::speech::SpeechCue::ALL {
             let reaction = motions.motion(cue.motion()).unwrap();
-            assert_eq!(validate_reaction_motion(reaction).unwrap(), 0);
-            let largest_offset = reaction
-                .keyframes
-                .iter()
-                .flat_map(|keyframe| keyframe.target.values())
+            let apex = validate_reaction_motion(reaction).unwrap();
+            let apex_offset = reaction.keyframes[apex]
+                .target
+                .values()
                 .copied()
                 .map(f64::abs)
                 .fold(0.0, f64::max);
+            // A missing relative joint offset is zero, including the final
+            // anchor return. Measure each joint's range separately.
+            let excursion = ORION_JOINT_NAMES
+                .iter()
+                .map(|joint| {
+                    let (lower, upper) = reaction
+                        .keyframes
+                        .iter()
+                        .map(|keyframe| keyframe.target.get(*joint).copied().unwrap_or(0.0))
+                        .fold((0.0_f64, 0.0_f64), |(lower, upper), offset| {
+                            (lower.min(offset), upper.max(offset))
+                        });
+                    upper - lower
+                })
+                .fold(0.0_f64, f64::max);
             assert!(
-                largest_offset >= 0.12,
-                "{} amplitude {largest_offset}",
+                apex_offset >= 0.18 - 1e-9 || excursion >= 0.20 - 1e-9,
+                "{} apex {apex_offset}, peak-to-peak {excursion}",
                 cue.as_str()
             );
             let duration: f64 = reaction

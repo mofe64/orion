@@ -6,11 +6,11 @@ motion:
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.12, base_yaw_joint: 0.04}
+    - offsets: {head_roll_joint: 0.19, base_yaw_joint: 0.07}
       duration: 0.32
       arrival: through
       marker: unsure
-    - offsets: {head_roll_joint: -0.10, base_yaw_joint: -0.03}
+    - offsets: {head_roll_joint: -0.17, base_yaw_joint: -0.06}
       duration: 0.38
       arrival: through
     - offsets: {}

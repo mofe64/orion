@@ -261,8 +261,10 @@ and have exactly one keyframe marker at its apex; loading rejects an invalid
 contract. The final keyframe has empty offsets and a `settle` arrival. Holds
 are permitted only at `settle` arrivals.
 
-Catalogue tests require a largest absolute joint offset of at least 0.12 rad
-and a total authored duration, including holds, of 0.8–1.3 seconds. The speech
+Catalogue tests require either a joint offset of at least 0.18 rad at the
+apex or at least 0.20 rad peak to peak on one joint across the keyframes.
+Missing offsets mean zero relative to the anchor. Total authored duration,
+including holds, stays within 0.8–1.3 seconds. The speech
 composer keeps every authored head and body offset and plays reactions at
 duration scale 1.0. Style weighting and motor-speed retiming still apply;
 calibrated limits always constrain the compiled trajectory. See
@@ -304,13 +306,13 @@ lead-ins, facing limits, spacing, and short-reply compression.
 | `idle_directional_hold`          | Detail that preserves a left/right held silhouette                             | Small pitch start precedes unchanged shoulder drawing; roll/elbow follow                                                                                     | Avoids yaw that would undermine the directional staging                                                                                                                      |
 | `speak_react_agree`              | Clear double nod for `[agree]`                                                | 0.17 rad first pitch stroke, small counter, second nod, authored anchor return                                               | Speech-specific timing at scale 1.0; one apex marker; ordinary lead-in is quieted                                                                                             |
 | `speak_react_disagree`           | Clear three-beat shake for `[disagree]`                                         | ±0.14 rad yaw with neck counter-swivel, diminished third beat, authored anchor return                                        | Speech-specific timing at scale 1.0; facing clamp and 3.5-second emphasis spacing apply                                                                                        |
-| `speak_react_happy` | Bright lift with a small bounce for `[happy]` | 0.15 rad pitch and coordinated shoulder/elbow lift, smaller bounce, anchor return | 1.03 s; through arrivals keep the bounce flowing |
-| `speak_react_curious` | Tilt and slight lean for `[curious]` | 0.13 rad head roll with pitch and yaw detail | 0.99 s; 0.25 s hold begins at the apex arrival |
-| `speak_react_thinking` | Glance aside and up for `[thinking]` | −0.13 rad yaw with upward pitch and counter-roll | 1.10 s; 0.30 s apex hold, then anchor return |
-| `speak_react_surprised` | Quick pull back and lift for `[surprised]` | 0.16 rad pitch with opposing shoulder/elbow motion | 0.85 s; fast arrival, 0.22 s hold, weighted return |
-| `speak_react_sympathy` | Slow droop and soft tilt for `[sympathy]` | −0.13 rad pitch, slight roll and shoulder droop | 1.25 s; 0.25 s apex hold, slow anchor return |
-| `speak_react_unsure` | Slow side-to-side tilt for `[unsure]` | +0.12 rad roll, smaller opposite tilt with yaw detail | 1.05 s; through arrivals connect both tilts |
-| `speak_react_laugh` | Three quick head bounces for `[laugh]` | 0.14 rad first pitch stroke with a small shoulder lift | 1.02 s; 0.14–0.16 s bounce steps, final anchor return |
+| `speak_react_happy` | Bright lift with a small bounce for `[happy]` | 0.24 rad pitch with 0.13 rad shoulder and −0.11 rad elbow lift, smaller bounce, anchor return | 1.03 s; through arrivals keep the bounce flowing |
+| `speak_react_curious` | Tilt and slight lean for `[curious]` | 0.20 rad head roll with pitch, yaw and shoulder detail | 1.04 s; 0.30 s hold begins at the apex arrival |
+| `speak_react_thinking` | Glance aside and up for `[thinking]` | −0.20 rad yaw with pitch, counter-roll and shoulder detail | 1.15 s; 0.35 s apex hold, then anchor return |
+| `speak_react_surprised` | Quick pull back and lift for `[surprised]` | 0.24 rad pitch with −0.10 rad shoulder and +0.08 rad elbow motion | 0.90 s; fast arrival, 0.25 s hold, weighted return |
+| `speak_react_sympathy` | Slow droop and soft tilt for `[sympathy]` | −0.20 rad pitch, roll, shoulder droop and elbow detail | 1.25 s; 0.25 s apex hold, slow anchor return |
+| `speak_react_unsure` | Slow side-to-side tilt for `[unsure]` | +0.19 to −0.17 rad roll with opposing yaw detail | 1.05 s; through arrivals connect both tilts |
+| `speak_react_laugh` | Three quick head bounces for `[laugh]` | 0.20 rad first pitch stroke with 0.08 rad shoulder lift | 1.07 s; 0.15–0.17 s bounce steps, final anchor return |
 | `speak_calm_sway`                | Readable conversational head-and-body sway                                     | Supplies a calm dominant drawing to the speech performance                                                            | Weighted toward ordinary phrases; quiet intervals can hold its phrase pose                                                                                                                |
 | `speak_emphasis_nod`             | Clear phrase-boundary nod                                                      | Fast head drawing redirects the continuing body path                                                                       | Compiled stroke targets 0.17 s before an eligible audio peak; authored lift then drop                                                                                                         |
 | `speak_explanatory_lean`         | Clear forward explanatory emphasis                                             | Shoulder/head drawing carries momentum into the next phrase                                                                | Phrase-scale staging inside the continuous performance                                                                                                                       |

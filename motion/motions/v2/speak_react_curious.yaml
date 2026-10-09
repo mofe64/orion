@@ -6,10 +6,10 @@ motion:
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.13, head_pitch_joint: 0.06, base_yaw_joint: 0.05}
+    - offsets: {head_roll_joint: 0.20, head_pitch_joint: 0.10, base_yaw_joint: 0.09, shoulder_pitch_joint: 0.05}
       duration: 0.34
       arrival: settle
-      hold: 0.25
+      hold: 0.30
       marker: curious
     - offsets: {}
       duration: 0.40

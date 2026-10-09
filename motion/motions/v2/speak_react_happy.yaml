@@ -6,14 +6,14 @@ motion:
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.15, shoulder_pitch_joint: 0.08, elbow_pitch_joint: -0.07}
+    - offsets: {head_pitch_joint: 0.24, shoulder_pitch_joint: 0.13, elbow_pitch_joint: -0.11}
       duration: 0.28
       arrival: through
       marker: happy
-    - offsets: {head_pitch_joint: 0.07, shoulder_pitch_joint: 0.04, elbow_pitch_joint: -0.03}
+    - offsets: {head_pitch_joint: 0.08, shoulder_pitch_joint: 0.05, elbow_pitch_joint: -0.04}
       duration: 0.20
       arrival: through
-    - offsets: {head_pitch_joint: 0.12, shoulder_pitch_joint: 0.06, elbow_pitch_joint: -0.05}
+    - offsets: {head_pitch_joint: 0.20, shoulder_pitch_joint: 0.10, elbow_pitch_joint: -0.08}
       duration: 0.20
       arrival: through
     - offsets: {}

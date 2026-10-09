@@ -3313,7 +3313,14 @@ mod tests {
             .unwrap();
         let apex = reaction_indices(&motion, SpeechCue::Curious)[0];
         assert_eq!(motion.keyframes[apex].arrival, KeyframeArrival::Settle);
-        assert!((motion.keyframes[apex].hold_seconds - 0.25).abs() < 1e-9);
+        let hold = core
+            .motions()
+            .motion(SpeechCue::Curious.motion())
+            .unwrap()
+            .keyframes[0]
+            .hold_seconds;
+        assert!(hold > 0.0);
+        assert!((motion.keyframes[apex].hold_seconds - hold).abs() < 1e-9);
         let sequence = MotionSequence::new(&motion, anchor).unwrap();
         let arrival = sequence.keyframe_arrival_time(apex).unwrap();
         let residual = arrival - (2.0 + SPEECH_CUE_APEX_DELAY_SECONDS);
@@ -3325,7 +3332,7 @@ mod tests {
             sequence.marker_time(motion.keyframes[apex].marker.as_deref().unwrap()),
             Some(arrival)
         );
-        assert!(sequence.keyframe_arrival_time(apex + 1).unwrap() > arrival + 0.25);
+        assert!(sequence.keyframe_arrival_time(apex + 1).unwrap() > arrival + hold);
     }
 
     #[test]
