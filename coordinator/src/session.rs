@@ -45,7 +45,8 @@ impl Session {
         })
     }
     /// Record the listener's acoustic verdict. It replaces the ASR prefix pass,
-    /// so no prefix can follow; Qwen still checks the complete utterance.
+    /// so no prefix can follow. Rejection retires the session in the pipeline;
+    /// Qwen checks complete utterances only for accepted candidates.
     pub fn acoustic_verdict(&mut self, id: &str, accepted: bool) -> Result<(), String> {
         if self.id != id || self.phase != Phase::Wake || self.prefix_attempted {
             return Err("Unexpected acoustic wake verdict".into());

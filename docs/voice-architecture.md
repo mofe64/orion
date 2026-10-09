@@ -44,7 +44,8 @@ the first supporting vote supplies the evidence age. Missing calibration or a
 USB failure suppresses attention without affecting capture. See
 [V2 calibration](../voice/README.md#calibrate-v2-attention). When
 Rustpotter detects a candidate, the listener assigns a random session ID and
-registers a silent runtime session before notifying the coordinator.
+notifies the coordinator. With acoustic verification, runtime wake feedback
+starts only after acceptance.
 
 ### Acoustic wake verification
 
@@ -59,20 +60,30 @@ after the Rustpotter candidate; otherwise the verifier rejects it at the
 so a typical acceptance adds no delay.
 
 Acceptance sends `wake.verified` with `source: "acoustic"` to the coordinator
-and replaces the Qwen prefix pass. Rejection does not end the session: capture
-continues and Qwen checks the complete recording, as it does for an
-inconclusive prefix. Qwen's complete-recording wake check remains the final
-authority in both cases. An endpoint that arrives before the verdict is held
-until the verdict is sent.
+and replaces the Qwen prefix pass. Rejection sends the same message with
+`accepted: false` and ends the candidate session immediately. The listener
+discards the candidate recording, any held endpoint and follow-up speech,
+then returns to listening. It preserves three seconds of rolling pre-roll,
+Rustpotter state and the verifier's continuous score history, so another wake
+can start a fresh session without a capture restart or cooldown.
 
-The verifier falls back to the prefix pass below when more than a tenth of
-its recent chunks take over 40 ms, or when the listener starts with
-`--no-verifier`. The ready message reports the verifier's settings and
-whether it is active.
+The listener sends `voice SESSION cancel` to the runtime using the rejected ID.
+The coordinator publishes `wake.rejected`, clears its session and sends
+`session.cancel` for that ID. The listener ignores this late control after
+rearming, including when a fresh session has already started. Rejected audio
+never reaches Qwen. For accepted candidates, Qwen still checks the wake phrase
+in the complete recording before dispatching a command. An endpoint that
+arrives before the verdict is held and released only on acceptance.
+
+A loaded verifier remains authoritative for ordinary wakes even when more
+than a tenth of its recent chunks take over 40 ms. This unhealthy state disables
+playback barge-in. The ready message reports the loaded verifier as `active`
+and reports its speed status separately as `healthy`. The Qwen prefix path
+applies only when no verifier is loaded, such as with `--no-verifier`.
 
 ### ASR prefix fallback
 
-With the negotiated `wakePrefix` capability and no active verifier, the
+With the negotiated `wakePrefix` capability and no loaded verifier, the
 listener sends up to two seconds before detection plus 200 ms afterward for
 Qwen verification. Capture continues
 into the same complete recording while that job runs. Prefix text can confirm
@@ -113,11 +124,10 @@ separate settings described in [configuration](configuration.md#pi-runtime-and-l
 
 ## Confirmed waking
 
-With the acoustic verifier active, the wake chime and three-color light pulse
+With the acoustic verifier loaded, the wake chime and three-color light pulse
 play only after the verifier accepts. The listener then confirms the wake
 itself, which starts the return home at mechanical rest. A candidate the
-verifier rejects stays silent; if Qwen later confirms the complete recording,
-the chime and pulse play at that confirmation. Without the verifier, the
+verifier rejects stays silent and returns to listening. Without the verifier, the
 candidate plays the chime and pulse and Qwen confirmation starts the return
 home. A rejected wake ends any light feedback without waking the body or
 dispatching a command. Other lighting remains suppressed at rest.
@@ -369,6 +379,15 @@ Stale evidence leaves Orion facing home and lets the voice turn continue. Physic
 calibration is required before enabling direction estimates.
 
 ## Streaming replies and timing
+
+The agent may insert `[agree]` or `[disagree]` before related words, with `[nod]`
+and `[shake]` accepted as aliases. The coordinator removes tags before TTS and
+before publishing reply text to Studio or history. Each cue travels on the
+next text piece's first WAV chunk in `X-Orion-Speech-Cues`, including the
+stream-creating chunk, and the runtime records its absolute 20 ms audio frame.
+Onset reactions overlap the first words. Reaction placement, spacing, checkpoint
+replacement, and drop reasons are described in
+[reaction cues](speech-animation-runtime.md#reaction-cues).
 
 The Codex adapter streams speech text only from a matching thread, turn and item
 explicitly marked `final_answer`. Complete sentences can reach the selected TTS

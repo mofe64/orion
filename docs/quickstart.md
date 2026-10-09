@@ -23,7 +23,9 @@ Python 3.11 or later and these packages: `build-essential`, `pkg-config`,
    the [servo](../hardware/servo_setup/README.md),
    [audio](../hardware/audio/README.md) and
    [lighting](../hardware/lighting/README.md) guides.
-2. **Create the Studio pairing token** and keep the printed value for Studio:
+2. **Create the Studio gateway token.** Studio obtains it through
+   [spoken-code pairing](configuration.md#studio-gateway); the printed value is
+   available for manual entry:
 
    ```bash
    python3 orion_studio/gateway.py create-token --token-file ~/.config/orion/studio-token
@@ -69,10 +71,17 @@ pnpm --dir orion_studio install
 scripts/studio-dev.sh
 ```
 
-Choose **Pair Orion** and enter the gateway address, for example
-`http://ariadne-robot.local:7447`, and the token from [Prepare a new Pi](#prepare-a-new-pi) (print it on the Pi
-with `cat ~/.config/orion/studio-token`). Studio stores one pairing; to switch
-lamps, choose **Forget Orion on this computer** first.
+Choose **Pair Orion**, enter the gateway address, for example
+`http://ariadne-robot.local:7447`, and click **Get code**. Listen to the lamp,
+type its spoken code, then click **Pair**. Studio verifies the connection and
+saves the returned token securely on this computer.
+
+**Say it again** asks for a replacement code. See [Studio gateway](configuration.md#studio-gateway)
+for expiry, attempt limits and the gateway journal fallback. **Use a token instead**
+opens manual entry for the token created during Pi setup.
+
+Use **Pair another lamp** to add a lamp, then switch between saved lamps in the
+connection panel. **Change address** verifies an address with the saved token.
 
 ## Deploy to the Pi
 

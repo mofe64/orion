@@ -424,6 +424,52 @@ class HomeOperationTests(unittest.TestCase):
 
 
 class StreamingSpeechGatewayTests(unittest.TestCase):
+    def test_cue_vocabulary_validation_and_exact_command_forwarding(self):
+        from gateway import SPEECH_CUES
+        self.assertEqual(SPEECH_CUES, frozenset({"agree", "disagree"}))
+        with tempfile.TemporaryDirectory() as directory:
+            client = Mock()
+            client.request.return_value = {"ok": True, "run_id": 12}
+            gateway = OrionGateway(client, speech_spool=Path(directory))
+            with patch("gateway.secrets.token_urlsafe", return_value="chunk"):
+                gateway.upload_speech(pcm_wav(), "voice:" + "a" * 32, streaming=True, cues="agree,disagree")
+                self.assertEqual(client.request.call_args.args[0], "speech stream chunk " + "a" * 32 + " cues=agree,disagree")
+                gateway.upload_speech(pcm_wav(), "reply", streaming=True, run_id=12, sequence=1, cues="disagree")
+                self.assertEqual(client.request.call_args.args[0], "speech append 12 1 chunk cues=disagree")
+                gateway.upload_speech(pcm_wav(), "reply", streaming=True, run_id=12, sequence=2, cues="")
+                self.assertEqual(client.request.call_args.args[0], "speech append 12 2 chunk")
+            before = set(Path(directory).iterdir())
+            client.request.reset_mock()
+            for cues in ["nod", "laugh", "Agree", "agree, disagree", "agree,", "agree " , "agree;stop", ",", "agree," * 4 + "agree"]:
+                with self.subTest(cues=cues), self.assertRaises(GatewayError) as failure:
+                    gateway.upload_speech(pcm_wav(), "reply", streaming=True, cues=cues)
+                self.assertEqual(failure.exception.code, "invalid_speech_cues")
+            client.request.assert_not_called()
+            self.assertEqual(set(Path(directory).iterdir()), before)
+
+    def test_http_cue_headers_forward_for_both_stream_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = Mock()
+            client.request.return_value = {"ok": True, "run_id": 12}
+            server = GatewayHTTPServer(("127.0.0.1", 0), make_handler(OrionGateway(client, speech_spool=Path(directory)), "a" * 32, []))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                for path in ["/api/v2/speech/stream", "/api/v2/speech/12/chunks/1"]:
+                    for cue, status in [("agree", 202), ("unknown", 400)]:
+                        connection = HTTPConnection("127.0.0.1", server.server_port)
+                        connection.request("POST", path, pcm_wav(), {"Authorization": "Bearer " + "a" * 32, "Content-Type": "audio/wav", "X-Orion-Voice-Request-ID": "reply", "X-Orion-Speech-Cues": cue})
+                        response = connection.getresponse()
+                        self.assertEqual(response.status, status)
+                        body = json.loads(response.read())
+                        if status == 202:
+                            self.assertTrue(client.request.call_args.args[0].endswith(" cues=agree"))
+                        else:
+                            self.assertEqual(body["error"]["code"], "invalid_speech_cues")
+                        connection.close()
+            finally:
+                server.shutdown(); server.server_close(); thread.join(timeout=2)
+
     def test_stream_chunks_use_one_runtime_run_and_cleanup_rejected_files(self):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory() as directory:

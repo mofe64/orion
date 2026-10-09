@@ -135,6 +135,7 @@ pub struct SpeechAnalysis {
     pub rms_20ms: Vec<f64>,
     pub quiet_regions: Vec<(usize, usize)>,
     pub phrase_peaks: Vec<usize>,
+    pub cues: Vec<(usize, SpeechCue)>,
     pub duration_seconds: f64,
     pub streaming: bool,
 }
@@ -175,6 +176,8 @@ struct SpeechMemory {
     body: JointPositions,
     seconds: f64,
     emphasis_at: Option<f64>,
+    cues_planned: Vec<usize>,
+    facing: f64,
 }
 ```
 
@@ -191,7 +194,9 @@ One snapshot can be read aloud as: “The previous gesture had this name. These 
 | `turn` | `speech_last_turn` | Remembers a yaw-direction choice of -1, 0, or +1. It is not the base's measured position. |
 | `body` | `speech_previous_body` | Holds the planned shoulder and elbow offsets retained during the next head lead. |
 | `seconds` | `speech_seconds` | Carries the planner's accumulated gesture timeline into later plans. |
-| `emphasis_at` | `speech_emphasis_at` | Records when emphasis was selected on that timeline, allowing later emphasis to be spaced out. |
+| `emphasis_at` | `speech_emphasis_at` | Records when an emphasis or reaction was selected on that timeline, allowing later accents to be spaced out. |
+| `cues_planned` | `speech_cues_planned` | Absolute cue frames handled through this checkpoint, including placed reactions and spacing/budget drops. Discarded candidates restore the previous set. |
+| `facing` | `speech_previous_yaw` | Retains the preceding drawing’s base-yaw offset in radians so a reaction at a replacement tail onset keeps its facing. |
 
 These are planning decisions, not a recording of servo telemetry. A snapshot made during composition describes a hypothetical future. A snapshot adopted after a checkpoint describes history reached according to the movement timeline.
 
@@ -208,12 +213,13 @@ These are planning decisions, not a recording of servo telemetry. A snapshot mad
 | `speech_motion_started` | Records that initial movement planning/start was attempted for the utterance. It is set before success is known. |
 | `speech_planned_until` | Audio duration associated with the installed replacement or latest initial planning attempt. It is not compiled movement duration. |
 | `speech_plan_streaming` | Whether that plan or attempt expected more audio. Compared with fresh analysis to detect a stream-end transition. |
-| `speech_checkpoints` | Ordered pairs of local body-follow keyframe indices and future `SpeechMemory` snapshots. |
+| `speech_checkpoints` | Ordered pairs of local drawing-end keyframe indices and future `SpeechMemory` snapshots. Ordinary drawings end at body follow; reactions end after their last authored keyframe. |
+| `speech_cue_frame_offset` | Absolute audio frame at which the local planning tail begins; translates cue identity independently of gesture-memory time. |
 | `thinking_run`, `active_idle_run_id` | Existing lower-priority movement that may hand over to speech. |
 
 ### What resets at a new utterance
 
-`note_speech_started()` normally enters `Speaking`, clears the clip label, allows one fresh startup attempt, resets the audio-coverage fields, and clears gesture count, body-beat history, directions, previous body shape, recent clips, planning time, emphasis time, and checkpoints.
+`note_speech_started()` normally enters `Speaking`, clears the clip label, allows one fresh startup attempt, resets the audio-coverage fields and cue frame origin, and clears handled cue frames, gesture count, body-beat history, directions, previous body shape, recent clips, planning time, emphasis time, and checkpoints.
 
 It preserves the anchor, the last speech clip, and the existing movement run ID. The retained last clip helps avoid a repeat across utterances. The retained run ID is checked against active runtime movement before another speech performance starts. The random generator continues its existing sequence; resetting idle timers also consumes random choices.
 
@@ -355,7 +361,7 @@ late_end   = finalizing and D - e <= 0.9 seconds
 attempt replacement when:
     late_end
     OR
-    G AND (finalizing OR (D > P AND P - e < 1.5 seconds))
+    G AND (finalizing OR new unplanned cue at/after playback OR (D > P AND P - e < 1.5 seconds))
 ```
 
 This creates three distinct cases:
@@ -377,7 +383,7 @@ Illustrative decision: with `P = 3.0`, `D = 5.0`, and `e = 1.8`, more audio exis
 Replacement planning uses a `tail` of the analysis starting at the current audio frame:
 
 - Skip energy frames already before the current frame.
-- Subtract the current frame from each remaining peak index; discard peaks before it.
+- Subtract the current frame from each remaining peak and cue index; discard entries before it.
 - Discard quiet regions already ended. Shift the remaining start and end indices; a region already in progress begins at tail frame zero.
 - Set duration to `max(D - e, 0)` and copy the final/streaming flag.
 
@@ -419,7 +425,7 @@ On success, store the new checkpoints and movement ID and report `speaking_perfo
 
 ## 9. `compose_speech_performance()`: turn audio into gesture keyframes
 
-The composer builds a `MotionDefinition`. It does not execute it or directly send servo commands. Its work has two main passes: choose gesture drawings, then convert those drawings into a staged keyframe sequence.
+The composer builds a `MotionDefinition`. It does not execute it or directly send servo commands. Its work has two main passes: choose gesture or reaction drawings, then convert those drawings into a staged keyframe sequence. Ordinary drawings use the head-lead/body-follow rules below; [reaction drawings](#reaction-cues) emit their authored stages.
 
 ### 9.1 Allocate time for gestures and the final return
 
@@ -540,6 +546,7 @@ Store the resulting previous-body shape and accumulated planning time. Create a 
 | `clip` | Name of the source shape. |
 | `head_target` | Planned roll, pitch, and optional yaw offsets. |
 | `body_target` | Planned shoulder and elbow offsets. |
+| `reaction` | Optional authored reaction keyframes, apex index, cue kind, and local cue time. |
 | `duration_seconds` | Authored travel time for the two movement stages combined. |
 | `body_beat` | Whether the body is supplying a stronger accent. |
 | `lead_fraction` | Fraction of travel allocated to the head-leading stage. |
@@ -579,6 +586,66 @@ Return a definition named `speaking_performance`, with `AnchorRelative` space, t
 `return_to_anchor = true` is a declaration checked by the runtime; it does not create the return by itself. The explicit final zero-offset keyframe supplies the actual target.
 
 Because composition updates planning history and checkpoints, ordinary execution uses the `plan_speech()` wrapper. Calling the composer directly has those state changes; tests sometimes do so intentionally when inspecting generated output.
+
+## Reaction cues
+
+The agent can put `[agree]` or `[disagree]` immediately before related words.
+`[nod]` and `[shake]` normalize to those names; other short tag-like bracket
+text is removed. The enabled vocabulary lives in
+[ReactionCue](../agent/src/reaction.rs), which also generates the prompt's tag
+list. Phase 1 supplies motion only. Other reactions and non-verbal sound clips
+are planned.
+
+The coordinator separates words from cues before TTS. Studio and conversation
+history receive clean `agent.response.text`; `agent.response.cues` lists the
+canonical names in reply order, including cues later dropped. Pending cues ride
+on the next text piece's first audio chunk. Both the stream-creating request
+and subsequent chunk requests use `X-Orion-Speech-Cues`, with at most four
+canonical names separated by commas. The gateway rejects invalid names before
+spooling and appends `cues=` to the private runtime command. Session validation
+still applies when that token is present.
+
+The speech analyzer records each cue at `received_samples / 480`, the 20 ms
+frame containing its chunk's first sample. Chunk buffering and upload pacing do
+not change that audio position. Analysis retains at most 32 cues per run. Tail
+planning discards cues behind playback and shifts the remaining frames to the
+local tail. Checkpoint memory retains absolute utterance frames, so adopting a
+reaction cannot replay it on a later tail.
+
+The composer reserves a reaction before choosing audio-driven emphasis:
+
+- `agree` uses `acknowledge_nod`; `disagree` uses `disagree_soft`.
+- A reaction asset must be anchor-relative, return to its anchor, and contain
+  exactly one marker identifying its apex. Invalid mapped assets fail loading.
+- Reaction drawings emit every authored keyframe, including their own body
+  offsets. Checkpoint memory retains facing even at a replacement tail onset.
+  They retain the previous facing offset and scale reaction yaw when
+  needed to keep the sum inside the speech-facing range. Loudness does not
+  scale their authored head shapes.
+- A cue within the first 0.6 seconds becomes the first drawing without
+  `speech_prepare`. Audio starts normally; the authored apex arrives about
+  0.3 seconds later. This onset drawing makes no exact alignment claim.
+- Later apices target cue time plus 0.15 seconds. The existing peak-alignment
+  tolerance is translated around that target (80 ms early to 90 ms late).
+  Alignment retimes all keyframes of the preceding drawing together using its
+  recorded range. If safe compilation cannot fit the target, the reaction
+  remains and its `@cue=` claim is removed.
+- Reactions share the 3.5-second emphasis spacing and take priority over nearby
+  audio peaks. They must fit before the final return budget, with 0.3 seconds
+  of additional room.
+
+A new cue inside an installed streaming plan triggers replacement at the next
+passed gesture checkpoint. It does not bypass that boundary. Installed future
+checkpoints prevent repeated replacement for the same cue; history consumes
+it only after the reaction's last keyframe passes. A discarded candidate
+restores cue history with the other speech memory. The late stream-end path
+still installs only a return to the anchor.
+
+`speech.cue_received` reports the run, sequence, canonical cue, and absolute
+frame. `speech.motion_compiled.reactions` reports `reaction_*` markers and their
+compiled arrival times. `speech.cue_dropped` reasons are `trailing` (no later
+audio), `spacing`, `no_room`, `ending` (late final return), and `limit` (more
+than 32 cues). A cue can appear in the agent event yet be dropped by animation.
 
 ## 10. `choose_speech_turn_direction()`: choose a yaw offset sign
 
@@ -793,7 +860,7 @@ Speech animation is best-effort relative to audio playback: the character helper
 
 The implementation has several deliberate boundaries:
 
-- It responds to signal energy, pauses, history, and seeded variation. It does not understand the semantic meaning of the spoken answer.
+- Audio-driven gestures respond to signal energy, pauses, history, and seeded variation without understanding the semantic meaning of the answer. Explicit agent cues supply agreement and disagreement reactions.
 - It plans from audio received so far. The future can change while streaming continues.
 - It adopts history from movement timeline progress. It does not independently confirm physical arrival at every gesture checkpoint.
 - It keeps an anchor reference stable. Gesture targets and the intermediate physical posture still change.
@@ -831,7 +898,25 @@ handover. Physical speaker alignment and smoothness require a check on the Pi.
 | Replacing a movement preserves its run ID, position, and velocity in the tested case | `extending_character_spline_preserves_run_position_and_velocity` |
 | Return replacements preserve commanded state at several tested phases | `speech_settle_replacement_preserves_commanded_state_at_multiple_phases` |
 | Waveform analysis is deterministic and identifies expected energy landmarks | `waveform_analysis_is_deterministic_and_finds_quiet_regions_and_peaks` |
+| Cue sample positions, canonical vocabulary, and per-run cap | `cue_vocabulary_and_chunk_frames_are_canonical_and_bounded` |
+| Cue-bearing commands preserve voice-session ownership and ordering | `streamed_reply_cues_preserve_session_ownership_and_ordering` |
+| Both reaction apices align to compiled cue timing and preserve authored shapes | `reaction_apices_align_and_preserve_authored_shapes` |
+| Onset overlaps speech; a nearby second cue is dropped | `onset_reaction_overlaps_without_preparation_and_spacing_drops_second_cue` |
+| Final cues have no room; tails and planning windows filter old or distant cues | `final_reaction_has_no_room_and_tail_drops_past_cues` |
+| Candidate rollback preserves cue history until its checkpoint passes | `discarded_reaction_candidate_restores_cues_until_its_checkpoint_passes` |
+| Newly streamed cues replace plans only at a passed checkpoint | `newly_streamed_cue_replaces_only_at_a_passed_checkpoint` |
+| Reactions at a tail onset retain adopted facing and roll it back with candidate memory | `reaction_at_tail_onset_keeps_adopted_facing_and_rolls_it_back` |
+| Late stream end wins over reactions | `late_stream_end_wins_over_a_new_reaction` |
+| Reaction yaw remains bounded and shapes ignore loudness scaling | `reaction_yaw_stays_inward_and_energy_does_not_scale_reaction_shapes` |
+| Reaction assets reject missing or multiple apex markers at load time | `reaction_assets_require_one_apex_marker_on_load` |
 | Streaming uses one playback process and enforces stream ordering | `streaming_uses_one_player_and_requires_ordered_end` |
+
+Agent tests cover alias normalization, unknown/partial tags, tag-only rejection,
+and split deltas. The coordinator's
+`reaction_cues_follow_sentence_chunks_without_reaching_speech_or_history`
+checks first-chunk headers, inter-sentence cues, and trailing-cue drops against
+fake inference and gateway peers. Studio tests cover exact command forwarding,
+HTTP headers on both routes, and rejection before spooling.
 
 Character tests live in [character.rs](../runtime/src/expression/character.rs), handover tests in [core.rs](../runtime/src/control/core.rs), and audio-analysis/playback tests in [speech.rs](../runtime/src/expression/speech.rs).
 
@@ -839,6 +924,12 @@ Character tests live in [character.rs](../runtime/src/expression/character.rs), 
 
 | Source | What to consult it for |
 | --- | --- |
+| [agent reaction vocabulary](../agent/src/reaction.rs) | Enabled names, aliases, and sound mapping. |
+| [agent response parser](../agent/src/prompt/response.rs) | Tag normalization and speech-output validation. |
+| [coordinator pipeline](../coordinator/src/pipeline.rs) | Text/cue separation, clean history events, and chunk attachment. |
+| [coordinator gateway client](../coordinator/src/gateway.rs) | Cue headers on streamed WAV uploads. |
+| [Studio gateway](../orion_studio/gateway.py) | Header validation and private runtime command forwarding. |
+| [reaction assets](../motion/motions/v2) | Authored nod and disagreement keyframes. |
 | [character coordinator](../runtime/src/expression/character.rs) | Speech planning methods, memory structures, gesture rules, state machine and tests. |
 | [speech coordinator and analyzer](../runtime/src/expression/speech.rs) | Audio-analysis types, playback, streaming, and analysis in the runtime. |
 | [executable entry point](../runtime/src/main.rs) | Thin entry point into the application module. |

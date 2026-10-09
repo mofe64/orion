@@ -7,14 +7,33 @@ export function PairingPanel({ controller, state, onClose }: {
 }) {
   const [address, setAddress] = useState(state.address ?? localStorage.getItem("orionStudioGateway") ?? "http://orion.local:7447");
   const [token, setToken] = useState("");
+  const [useToken, setUseToken] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeRequested, setCodeRequested] = useState(false);
+  const [requestingCode, setRequestingCode] = useState(false);
+  const [codeMessage, setCodeMessage] = useState<string | null>(null);
   const [editing, setEditing] = useState(!state.paired || state.phase === "auth_required");
   const [changingAddress, setChangingAddress] = useState(false);
   const [addingLamp, setAddingLamp] = useState(false);
   const otherLamps = (state.lamps ?? []).filter((lamp) => !lamp.active);
   useEffect(() => { if (state.phase === "auth_required") setEditing(true); }, [state.phase]);
   const panel = useRef<HTMLElement>(null);
-  const busy = state.phase === "loading" || state.phase === "connecting";
+  const busy = requestingCode || state.phase === "loading" || state.phase === "connecting";
   const needsPairing = editing || addingLamp || !state.paired || state.phase === "auth_required";
+  const resetCode = () => { setCode(""); setCodeRequested(false); setCodeMessage(null); };
+  const requestCode = async () => {
+    setRequestingCode(true);
+    setCodeMessage(null);
+    try {
+      const result = await controller.requestCode(address);
+      if (result) {
+        setCode(""); setCodeRequested(true);
+        setCodeMessage(result.message ?? null);
+      }
+    } finally {
+      setRequestingCode(false);
+    }
+  };
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.querySelector<HTMLElement>("button, input")?.focus();
@@ -30,17 +49,27 @@ export function PairingPanel({ controller, state, onClose }: {
         : "This browser connection lasts for this tab only. Use the desktop app to pair once and remember Orion."
       : state.address}</p>
     <p role="status" aria-live="polite" className={state.error ? "voice-error" : "field-help"}>
-      {state.error ?? (state.phase === "connected" ? state.persistent ? "Connected · pairing saved" : "Connected · this session only" : state.phase === "disconnected"
+      {requestingCode ? "Listen to the lamp…" : state.error ?? codeMessage ?? (needsPairing && !changingAddress
+        ? useToken ? "Use the token provided during Orion setup." : "The lamp will say a 6-digit code. Type it here."
+        : state.phase === "connected" ? state.persistent ? "Connected · pairing saved" : "Connected · this session only" : state.phase === "disconnected"
         ? state.persistent ? "Disconnected for this session. Your pairing is still saved." : "Disconnected for this session." : busy ? "Connecting…" : "Use the token provided during Orion setup.")}</p>
     {needsPairing || changingAddress ? <form onSubmit={(event) => {
       event.preventDefault();
-      const result = changingAddress ? controller.changeAddress(address) : controller.pair(address, token);
-      void result.then((saved) => { if (saved) { setToken(""); setAddingLamp(false); onClose(); } });
+      if (busy) return;
+      if (!changingAddress && !useToken && !codeRequested) { void requestCode(); return; }
+      const result = changingAddress ? controller.changeAddress(address) : useToken
+        ? controller.pair(address, token) : controller.pairWithCode(address, code);
+      void result.then((saved) => { if (saved) { setToken(""); resetCode(); setAddingLamp(false); onClose(); } });
     }}>
-      <label>Orion address<input value={address} required autoComplete="url" spellCheck={false} onChange={(event) => setAddress(event.target.value)} /></label>
-      {!changingAddress && <label>Pairing token<input type="password" value={token} required minLength={32} maxLength={4096} autoComplete="off" spellCheck={false} onChange={(event) => setToken(event.target.value)} /></label>}
-      <button className="primary-button" type="submit" disabled={busy}><Link2 size={15} />{busy ? "Connecting…" : changingAddress ? "Save address and connect" : state.persistent ? "Pair and remember Orion" : "Connect for this session"}</button>
-      {(changingAddress || addingLamp) && <button className="quiet-button" type="button" disabled={busy} onClick={() => { setChangingAddress(false); setAddingLamp(false); }}>Cancel</button>}
+      <label>Orion address<input value={address} required autoComplete="url" spellCheck={false} disabled={requestingCode} onChange={(event) => { setAddress(event.target.value); resetCode(); }} /></label>
+      {!changingAddress && (useToken
+        ? <label>Pairing token<input type="password" value={token} required minLength={32} maxLength={4096} autoComplete="off" spellCheck={false} onChange={(event) => setToken(event.target.value)} /></label>
+        : codeRequested && <label>Pairing code<input value={code} required minLength={6} maxLength={6} pattern="[0-9]{6}" inputMode="numeric" autoComplete="one-time-code" spellCheck={false} onChange={(event) => setCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))} /></label>)}
+      <button className="primary-button" type="submit" disabled={busy}><Link2 size={15} />{requestingCode ? "Listen to the lamp…" : busy ? "Connecting…" : changingAddress ? "Save address and connect" : useToken
+        ? state.persistent ? "Pair and remember Orion" : "Connect for this session" : codeRequested ? "Pair" : "Get code"}</button>
+      {!changingAddress && !useToken && codeRequested && <button className="quiet-button" type="button" disabled={busy} onClick={() => { void requestCode(); }}>Say it again</button>}
+      {!changingAddress && <button className="quiet-button" type="button" disabled={busy} onClick={() => { setUseToken(!useToken); setToken(""); resetCode(); }}>{useToken ? "Use a spoken code instead" : "Use a token instead"}</button>}
+      {(changingAddress || addingLamp) && <button className="quiet-button" type="button" disabled={busy} onClick={() => { setChangingAddress(false); setAddingLamp(false); resetCode(); }}>Cancel</button>}
     </form> : <>
       {state.phase === "connected" || state.phase === "reconnecting" || busy
         ? <button className="secondary-button" onClick={() => controller.disconnect()}><Unplug size={15} />Disconnect</button>
@@ -55,11 +84,11 @@ export function PairingPanel({ controller, state, onClose }: {
           onClick={() => { void controller.switchTo(lamp.url); }}>Switch to {new URL(lamp.url).hostname}</button>)}
       </div>}
       {state.persistent && <button className="quiet-button" disabled={busy} onClick={() => {
-        setAddress(""); setToken(""); setAddingLamp(true);
+        setAddress(""); setToken(""); setUseToken(false); resetCode(); setAddingLamp(true);
       }}><Plus size={15} />Pair another lamp</button>}
     </>}
     {!state.paired && state.phase === "error" && <button className="secondary-button" onClick={() => { void controller.start(); }}>Retry saved pairing</button>}
-    {(state.paired || state.phase === "error") && <button className="quiet-button" disabled={busy} onClick={() => { setToken(""); setChangingAddress(false); void controller.forget(); }}>{state.persistent ? "Forget this lamp on this computer" : "Clear this connection"}</button>}
+    {(state.paired || state.phase === "error") && <button className="quiet-button" disabled={busy} onClick={() => { setToken(""); setUseToken(false); resetCode(); setChangingAddress(false); void controller.forget(); }}>{state.persistent ? "Forget this lamp on this computer" : "Clear this connection"}</button>}
     <small className="field-help">Connecting does not turn on the microphone or start a movement.</small>
   </section>;
 }

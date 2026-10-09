@@ -25,12 +25,20 @@ can inspect or change microphone mute.
 
 The listener opens synchronized stereo PCM16 capture at 16 kHz. It estimates
 coarse direction from stereo frames and downmixes to mono for Rustpotter and ASR.
-It keeps pre-roll and the current recording in memory; recordings are cleared on
-mute, cancellation or disconnect. Saving wake audio requires the opt-in
+It keeps pre-roll and the current recording in memory. Mute, coordinator
+cancellation and disconnect clear both buffers; acoustic rejection clears the
+candidate recording and keeps the rolling pre-roll. Saving wake audio requires
+the opt-in
 [wake diagnostics](#troubleshooting).
 
-A wake candidate registers a runtime session. The chime and brief light pulse
-wait for the acoustic verifier to accept it. If the verifier is unavailable,
+A wake candidate opens a listener/coordinator session. The runtime session,
+chime and brief light pulse wait for the acoustic verifier to accept it.
+Acoustic rejection ends the candidate immediately and returns to listening,
+preserving three seconds of pre-roll, Rustpotter state and verifier history.
+The listener cancels runtime feedback for the rejected ID; the coordinator
+clears that session and sends its cancellation control. Held audio is discarded
+without ASR. A loaded verifier remains authoritative even when marked unhealthy;
+that speed guard disables playback barge-in. If no verifier is loaded,
 a short wake prefix reaches Qwen while full command capture continues.
 Prefix verification and transcription of the complete utterance run in order. Follow-up
 speech can remain buffered during confirmation. The coordinator rejects recordings
@@ -122,9 +130,10 @@ the [Pi deployment procedure](../docs/quickstart.md#deploy-to-the-pi). It builds
 Python environment before switching service paths. Playback routing and speaker
 checks are described in [audio setup](../hardware/audio/README.md).
 
-If wake detection succeeds but the body stays at rest, inspect Qwen confirmation
-and the runtime's rest status. The candidate chime can play even when Qwen
-rejects the phrase; home movement still requires confirmation and a healthy
+If wake detection succeeds but the body stays at rest, inspect
+`voice.wake_verifier` acceptance and the runtime's rest status. With
+`--no-verifier`, inspect Qwen confirmation: the candidate chime can play even
+when Qwen rejects the phrase. Home movement requires confirmation and a healthy
 rest lifecycle. If a recording
 ends early, inspect the VAD configuration, capture gain and endpoint reason before
 changing the ASR model.

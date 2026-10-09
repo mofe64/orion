@@ -248,19 +248,22 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
         indices = [expressions.index(event) for event in sequence]
         self.assertEqual(indices, sorted(indices))
 
-    async def test_acoustic_rejection_defers_cue_until_qwen_confirms(self):
+    async def test_acoustic_rejection_cancels_runtime_and_ignores_late_controls(self):
         client, sid, expressions = await self.acoustic_session({})
         verdict = json.loads(await asyncio.wait_for(client.recv(), 3))
         self.assertEqual((verdict['type'], verdict['accepted']), ('wake.verified', False))
-        full = json.loads(await asyncio.wait_for(client.recv(), 3)); await client.recv()
-        self.assertEqual(full['purpose'], 'wake_and_command')
-        await asyncio.sleep(.05)
-        self.assertNotIn(f'voice {sid} wake', expressions)
+        self.assertEqual(verdict['sessionId'], sid)
+        await self.wait_for(expressions, f'voice {sid} cancel')
+        # Coordinator cleanup can arrive after the listener has already rearmed.
+        await client.send(json.dumps({'type': 'session.cancel', 'sessionId': sid}))
         await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': sid, 'followup': False}))
-        await self.wait_for(expressions, f'voice {sid} confirmed')
+        capture = FakeCapture.instances[-1]
+        before = capture.frames
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(client.recv(), .15)
+        self.assertGreater(capture.frames, before)
         tail = [e for e in expressions if e.startswith(f'voice {sid} ')]
-        wake = tail.index(f'voice {sid} wake')
-        self.assertEqual(tail[wake:wake + 3], [f'voice {sid} {e}' for e in ['wake', 'endpoint', 'confirmed']])
+        self.assertEqual(tail, [f'voice {sid} cancel'])
 
     async def test_unmute_waits_until_microphone_startup_finishes(self):
         opening, finish = threading.Event(), threading.Event()

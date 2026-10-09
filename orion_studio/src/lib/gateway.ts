@@ -83,6 +83,36 @@ async function request<T>(connection: GatewayConnection, path: string, init?: Re
   return body as T;
 }
 
+export interface PairingCodeResult {
+  api_version: 2;
+  expires_in_seconds: number;
+  spoken?: boolean;
+  message?: string;
+}
+
+async function pairingRequest<T>(url: string, path: string, timeout: number, code?: string): Promise<T> {
+  const response = await fetch(`${url.replace(/\/$/, "")}${path}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(timeout),
+    redirect: "error",
+    ...(code === undefined ? {} : {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new GatewayError(body.error?.message ?? `Gateway returned ${response.status}.`, response.status);
+  return body as T;
+}
+
+export function requestPairingCode(url: string): Promise<PairingCodeResult> {
+  return pairingRequest(url, "/api/v2/pair/code", 40000);
+}
+
+export function exchangePairingCode(url: string, code: string): Promise<{ api_version: 2; token: string }> {
+  return pairingRequest(url, "/api/v2/pair/token", 5000, code);
+}
+
 export function getStatus(connection: GatewayConnection): Promise<GatewayStatus> {
   return request(connection, "/api/v2/status");
 }

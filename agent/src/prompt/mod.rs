@@ -8,7 +8,32 @@ Use set_lighting for requested lamp changes, selecting its published moods, effe
 Use set_mode for lamp or idle mode. For an explicit sleep request, call go_to_sleep before saying that Orion will rest; if the tool fails, say so. Physical rest waits until the spoken acknowledgement finishes. Lamp mode prevents automatic rest; explicit sleep still works. Use the alert tools for timers and one-time alarms. Read list_alerts for the current local time before choosing an alarm timestamp. Clarify ambiguous times or which alert to cancel. Never claim an alarm is set until its tool succeeds.
 Return only the final words to speak; do not read out URLs or citation markup.";
 
+pub fn instructions() -> String {
+    let tags = crate::ReactionCue::enabled()
+        .iter()
+        .map(|cue| format!("[{}]", cue.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    ORION_INSTRUCTIONS.replace("Return only the final words", &format!(
+        "You may add a reaction tag in square brackets just before the words it goes with: {tags}. Use one only when the reaction is genuine, at most one per sentence, and never more than three in a reply. Tags are not spoken. Never write any other square-bracket text.\nReturn only the final words"
+    ))
+}
+
 mod response;
 mod stream;
 pub(crate) use response::spoken_response;
 pub(crate) use stream::Sentences;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn instructions_use_the_enabled_vocabulary() {
+        let prompt = super::instructions();
+        assert!(prompt.contains("[agree], [disagree]"));
+        assert!(!prompt.contains("[laugh]"));
+        assert!(
+            prompt.find("Tags are not spoken.").unwrap()
+                < prompt.find("Return only the final words").unwrap()
+        );
+    }
+}

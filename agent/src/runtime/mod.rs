@@ -260,6 +260,17 @@ fn is_direct_sleep_request(text: &str) -> bool {
     )
 }
 
+impl Drop for AgentService {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 #[cfg(test)]
 mod sleep_tests {
     use super::is_direct_sleep_request;
@@ -281,17 +292,6 @@ mod sleep_tests {
             "I said go to sleep",
         ] {
             assert!(!is_direct_sleep_request(text), "{text}");
-        }
-    }
-}
-
-impl Drop for AgentService {
-    fn drop(&mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
         }
     }
 }

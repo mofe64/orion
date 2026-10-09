@@ -19,12 +19,13 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 from io import BytesIO
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 
@@ -53,11 +54,78 @@ DEFAULT_ALLOWED_ORIGINS = (
 )
 
 
+SPEECH_CUES = frozenset({"agree", "disagree"})
+
+
+def validate_speech_cues(value: str | None) -> str:
+    if not value:
+        return ""
+    if not re.fullmatch(r"[a-z_]{2,16}(,[a-z_]{2,16}){0,3}", value) or any(name not in SPEECH_CUES for name in value.split(",")):
+        raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_speech_cues", "Expected at most four canonical speech cues.")
+    return value
+
+
 class GatewayError(Exception):
     def __init__(self, status: HTTPStatus, code: str, message: str):
         super().__init__(message)
         self.status = status
         self.code = code
+
+
+class PairingCodes:
+    """One short-lived code shared by all HTTP handlers, independent of audio work."""
+
+    def __init__(self, token: str, speak: Callable[[str], None], clock: Callable[[], float] = time.monotonic):
+        self.token = token
+        self.speak = speak
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.code: str | None = None
+        self.expires_at = 0.0
+        self.attempts = 0
+        self.last_request: float | None = None
+
+    def request_code(self) -> dict[str, Any]:
+        with self.lock:
+            now = self.clock()
+            if self.last_request is not None and now - self.last_request < 15:
+                raise GatewayError(HTTPStatus.TOO_MANY_REQUESTS, "pairing_busy", "Wait 15 seconds before asking the lamp for a new code.")
+            self.last_request = now
+            code = f"{secrets.randbelow(10**6):06d}"
+            self.code = code
+            self.expires_at = now + 300
+            self.attempts = 0
+
+        # The journal fallback is available even if synthesis or playback fails.
+        print(f"Studio pairing code: {code}", flush=True)
+        words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+        digits = ", ".join(words[int(digit)] for digit in code)
+        response: dict[str, Any] = {"api_version": API_VERSION, "expires_in_seconds": 300}
+        try:
+            self.speak(f"Studio pairing code. {digits}. Again, {digits}.")
+        except Exception as error:
+            print(f"Studio pairing code: {code}; speech failed: {error}", flush=True)
+            response.update(spoken=False, message="The pairing code is in the gateway log.")
+        return response
+
+    def exchange(self, code: Any) -> dict[str, Any]:
+        if not isinstance(code, str) or not re.fullmatch(r"[0-9]{6}", code):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_pairing_code", "Enter exactly 6 digits for the pairing code.")
+        with self.lock:
+            if self.code is None or self.clock() >= self.expires_at:
+                self.code = None
+                raise GatewayError(HTTPStatus.GONE, "pairing_code_expired", "Ask the lamp for a new code.")
+            if not secrets.compare_digest(code, self.code):
+                self.attempts += 1
+                remaining = 5 - self.attempts
+                if remaining == 0:
+                    self.code = None
+                    message = "That code is wrong. The code was discarded. Ask the lamp for a new code."
+                else:
+                    message = f"That code is wrong. {remaining} {'try' if remaining == 1 else 'tries'} remain."
+                raise GatewayError(HTTPStatus.FORBIDDEN, "pairing_code_wrong", message)
+            self.code = None
+            return {"api_version": API_VERSION, "token": self.token}
 
 
 class UnixOrionClient:
@@ -356,11 +424,55 @@ class OrionGateway:
             "result": response,
         }
 
-    def upload_speech(self, body: bytes, studio_request_id: str, *, streaming=False, run_id=None, sequence=None) -> tuple[HTTPStatus, dict[str, Any]]:
+    def speak(self, text: str) -> None:
+        root = self.project_root or Path(__file__).resolve().parents[1]
+        environment = os.environ.copy()
+        keys = {"ORION_STUDIO_VOICE_PYTHON", "ORION_PIPER_MODEL_DIR", "ORION_STUDIO_TTS_MODEL", "ORION_TTS_THREADS"}
+        try:
+            lines = Path("~/.config/orion/voice-stack.env").expanduser().read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            lines = []
+        for line in lines:
+            key, separator, value = line.strip().partition("=")
+            if separator and key.strip() in keys:
+                environment[key.strip()] = value.strip().strip("\"'")
+        python = Path(environment.get("ORION_STUDIO_VOICE_PYTHON") or root / "speech/.venv/bin/python").expanduser()
+        # Keep the venv path intact: its executable can be a symlink to a base interpreter.
+        speech_root = python.parent.parent.parent
+        if not (speech_root / "orion_speech_worker").is_dir():
+            speech_root = root / "speech"
+        model = environment.get("ORION_STUDIO_TTS_MODEL") or "piper-alba-medium"
+        if "ORION_PIPER_MODEL_DIR" in environment:
+            environment["ORION_PIPER_MODEL_DIR"] = str(Path(environment["ORION_PIPER_MODEL_DIR"]).expanduser())
+        environment["PYTHONPATH"] = str(speech_root)
+        script = (
+            "import sys\n"
+            "from orion_speech_worker.piper import PiperAlbaSynthesizer\n"
+            "for chunk in PiperAlbaSynthesizer(sys.argv[1]).stream(sys.argv[2]):\n"
+            "    sys.stdout.buffer.write(chunk.pcm)\n"
+        )
+        try:
+            result = subprocess.run([str(python), "-c", script, model, text],
+                                    env=environment, capture_output=True, timeout=30, check=True)
+        except subprocess.CalledProcessError as error:
+            detail = error.stderr.decode("utf-8", errors="replace").strip() if error.stderr else str(error)
+            raise RuntimeError(f"Piper synthesis failed: {detail}") from error
+        output = BytesIO()
+        with wave.open(output, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24_000)
+            wav.writeframes(result.stdout)
+        self.upload_speech(output.getvalue(), "pairing-code")
+
+    def upload_speech(self, body: bytes, studio_request_id: str, *, streaming=False, run_id=None, sequence=None, cues=None) -> tuple[HTTPStatus, dict[str, Any]]:
         if not studio_request_id or len(studio_request_id) > 128 or any(char in studio_request_id for char in "\r\n\0"):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_request_id", "Studio voice request ID is required.")
         if run_id is not None and (type(run_id) is not int or run_id < 1 or type(sequence) is not int or sequence < 1 or not streaming):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_sequence", "A stream run and positive sequence are required.")
+        cues = validate_speech_cues(cues)
+        if cues and not streaming:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_speech_cues", "Reaction cues require streamed speech.")
         self._validate_speech_wav(body)
         if streaming and len(body) > 100_000:
             raise GatewayError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Speech chunks may contain at most two seconds of audio.")
@@ -383,12 +495,13 @@ class OrionGateway:
                 temporary.unlink(missing_ok=True)
         except OSError as error:
             raise GatewayError(HTTPStatus.INTERNAL_SERVER_ERROR, "speech_spool_failed", f"Could not spool speech: {error}") from error
+        cue_suffix = f" cues={cues}" if cues else ""
         try:
             if run_id is not None:
-                runtime = self._checked(f"speech append {run_id} {sequence} {identifier}")
+                runtime = self._checked(f"speech append {run_id} {sequence} {identifier}{cue_suffix}")
             else:
                 suffix = f" {voice_session}" if voice_session is not None else ""
-                runtime = self._checked(f"speech {'stream' if streaming else 'file'} {identifier}{suffix}")
+                runtime = self._checked(f"speech {'stream' if streaming else 'file'} {identifier}{suffix}{cue_suffix}")
         except GatewayError:
             path.unlink(missing_ok=True)
             raise
@@ -1372,6 +1485,7 @@ def voice_service_request(request: dict[str, Any]) -> Any:
 
 def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[str] | tuple[str, ...]):
     origin_allowlist = {allowed_origins} if isinstance(allowed_origins, str) else set(allowed_origins)
+    pairing_codes = PairingCodes(token, lambda text: gateway.speak(text))
 
     class GatewayHandler(BaseHTTPRequestHandler):
         server_version = "OrionStudioGateway/2"
@@ -1379,7 +1493,7 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
         def do_OPTIONS(self) -> None:
             self.send_response(HTTPStatus.NO_CONTENT)
             self._cors_headers()
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Orion-Voice-Request-ID")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Orion-Voice-Request-ID, X-Orion-Speech-Cues")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
             self.end_headers()
 
@@ -1435,13 +1549,18 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == "/api/v2/pair/code":
+                return HTTPStatus.OK, pairing_codes.request_code()
+            if path == "/api/v2/pair/token":
+                payload = self._read_json()
+                return HTTPStatus.OK, pairing_codes.exchange(payload.get("code") if isinstance(payload, dict) else None)
             if path == "/api/v2/voice/request":
                 return HTTPStatus.OK, voice_service_request(self._read_json())
             if path == "/api/v2/speech/stream":
-                return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True)
+                return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True, cues=self.headers.get("X-Orion-Speech-Cues"))
             match = re.fullmatch(r"/api/v2/speech/([1-9][0-9]*)/chunks/([1-9][0-9]*)", path)
             if match:
-                return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True, run_id=int(match[1]), sequence=int(match[2]))
+                return gateway.upload_speech(self._read_speech_wav(), self.headers.get("X-Orion-Voice-Request-ID", ""), streaming=True, run_id=int(match[1]), sequence=int(match[2]), cues=self.headers.get("X-Orion-Speech-Cues"))
             match = re.fullmatch(r"/api/v2/speech/([1-9][0-9]*)/end", path)
             if match:
                 sequence = self._read_json().get("sequence")
@@ -1498,7 +1617,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
             try:
                 authorization = self.headers.get("Authorization", "")
                 supplied = authorization[7:] if authorization.startswith("Bearer ") else ""
-                if not secrets.compare_digest(supplied, token):
+                pairing_request = self.command == "POST" and urlparse(self.path).path in {"/api/v2/pair/code", "/api/v2/pair/token"}
+                if not pairing_request and not secrets.compare_digest(supplied, token):
                     raise GatewayError(HTTPStatus.UNAUTHORIZED, "unauthorized", "A valid Studio token is required.")
                 status, body = action()
             except GatewayError as error:

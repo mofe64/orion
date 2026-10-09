@@ -25,6 +25,7 @@ mod tests {
     use super::*;
     fn chunk(ms: f64) -> Chunk {
         Chunk {
+            cues: Vec::new(),
             pcm: vec![0; 48000],
             generation_ms: ms,
             synthesis_ms: ms,

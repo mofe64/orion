@@ -11,6 +11,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use orion_agent::AgentHandle;
+use orion_agent::ReactionCue;
 use serde_json::{Value, json};
 use std::{
     sync::Arc,
@@ -350,8 +351,14 @@ async fn connected(
                                 json!({"type":"wake.confirmed", "text":"", "hasCommand":false, "early":true,
                                        "source":"acoustic", "score":message["score"], "verifierMs":message["verifierMs"]})
                             } else {
-                                json!({"type":"wake.verification_deferred", "source":"acoustic", "score":message["score"]})
+                                json!({"type":"wake.rejected", "text":"", "source":"acoustic", "score":message["score"], "verifierMs":message["verifierMs"]})
                             });
+                            if !accepted {
+                                // No ASR job starts until the acoustic verdict.
+                                // Retire this candidate before the next wake arrives.
+                                session = None; followup = None;
+                                pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
+                            }
                         },
                         "conversation.ready" | "conversation.closed" => {
                             if followup.as_deref() != Some(sid) { return Err("Stale conversation window event".into()); }
@@ -446,6 +453,47 @@ async fn connected(
             .await;
     }
     result
+}
+
+#[derive(Debug, PartialEq)]
+enum SpeechPiece {
+    Text(String),
+    Cue(ReactionCue),
+}
+fn speech_pieces(text: &str) -> Vec<SpeechPiece> {
+    let mut pieces = Vec::new();
+    let mut rest = text;
+    let mut offset = 0;
+    while let Some(start) = rest[offset..].find('[').map(|i| i + offset) {
+        let Some(end) = rest[start..].find(']').map(|i| i + start) else {
+            break;
+        };
+        if let Some(cue) = ReactionCue::parse(&rest[start + 1..end]) {
+            if !rest[..start].trim().is_empty() {
+                pieces.push(SpeechPiece::Text(rest[..start].trim().into()));
+            }
+            pieces.push(SpeechPiece::Cue(cue));
+            rest = &rest[end + 1..];
+            offset = 0;
+        } else {
+            offset = end + 1;
+        }
+    }
+    if !rest.trim().is_empty() {
+        pieces.push(SpeechPiece::Text(rest.trim().into()));
+    }
+    pieces
+}
+fn response_metadata(text: &str) -> (String, Vec<&'static str>) {
+    let mut words = Vec::new();
+    let mut cues = Vec::new();
+    for piece in speech_pieces(text) {
+        match piece {
+            SpeechPiece::Text(text) => words.push(text),
+            SpeechPiece::Cue(cue) => cues.push(cue.as_str()),
+        }
+    }
+    (words.join(" "), cues)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -581,10 +629,11 @@ async fn response(
                 .map_err(|_| "Speech renderer stopped")?;
         }
         drop(text_send);
+        let (text, cues) = response_metadata(&text);
         event(
             hub,
             sid,
-            json!({"type":"agent.response", "requestId":request, "text":text, "durationMs":started.elapsed().as_secs_f64()*1000.}),
+            json!({"type":"agent.response", "requestId":request, "text":text, "cues":cues, "durationMs":started.elapsed().as_secs_f64()*1000.}),
         );
         Ok::<(), String>(())
     };
@@ -665,6 +714,7 @@ async fn speak_sequence(
         let (send, receive) = mpsc::channel(8);
         let produce = async {
             let mut started = None;
+            let mut pending_cues = Vec::new();
             while let Some(text) = texts.recv().await {
                 if started.is_none() {
                     started = Some(Instant::now());
@@ -677,18 +727,34 @@ async fn speak_sequence(
                         );
                     }
                 }
-                let (chunk_send, mut chunk_receive) = mpsc::channel(8);
-                let job = speech.synthesize(text, chunk_send);
-                let forward = async {
-                    while let Some(Some(mut chunk)) = chunk_receive.recv().await {
-                        chunk.synthesis_ms = started.unwrap().elapsed().as_secs_f64() * 1000.;
-                        send.send(Some(chunk))
-                            .await
-                            .map_err(|_| "Speech upload stopped")?;
-                    }
-                    Ok::<(), String>(())
-                };
-                tokio::try_join!(job, forward)?;
+                for piece in speech_pieces(&text) {
+                    let text = match piece {
+                        SpeechPiece::Cue(cue) => {
+                            pending_cues.push(cue);
+                            continue;
+                        }
+                        SpeechPiece::Text(text) => text,
+                    };
+                    let (chunk_send, mut chunk_receive) = mpsc::channel(8);
+                    let job = speech.synthesize(text, chunk_send);
+                    let forward = async {
+                        while let Some(Some(mut chunk)) = chunk_receive.recv().await {
+                            chunk.cues = std::mem::take(&mut pending_cues);
+                            chunk.synthesis_ms = started.unwrap().elapsed().as_secs_f64() * 1000.;
+                            send.send(Some(chunk))
+                                .await
+                                .map_err(|_| "Speech upload stopped")?;
+                        }
+                        Ok::<(), String>(())
+                    };
+                    tokio::try_join!(job, forward)?;
+                }
+            }
+            for cue in pending_cues {
+                eprintln!(
+                    "{}",
+                    json!({"event":"speech.cue_dropped", "cue":cue.as_str(), "reason":"trailing", "request_id":request})
+                );
             }
             let elapsed = started
                 .ok_or("No final speech was produced")?
@@ -885,7 +951,7 @@ async fn upload_chunks(
                 }
                 let started = Instant::now();
                 let accepted = gateway
-                    .upload(&path, &chunk.pcm, &format!("voice:{sid}"))
+                    .upload(&path, &chunk.pcm, &format!("voice:{sid}"), &chunk.cues)
                     .await?;
                 if run.is_none() {
                     let id = accepted["run_id"]
@@ -898,7 +964,7 @@ async fn upload_chunks(
                 eprintln!(
                     "{}",
                     json!({"event":"speech.chunk", "request_id":request, "run_id":run, "sequence":sequence,
-                    "audio_ms":chunk.pcm.len() as f64/48., "generation_ms":chunk.generation_ms, "upload_ms":started.elapsed().as_secs_f64()*1000.})
+                    "cues":chunk.cues.iter().map(|c| c.as_str()).collect::<Vec<_>>(), "audio_ms":chunk.pcm.len() as f64/48., "generation_ms":chunk.generation_ms, "upload_ms":started.elapsed().as_secs_f64()*1000.})
                 );
                 if sequence == 0 {
                     timing(hub, sid, "firstChunkMs", chunk.synthesis_ms);

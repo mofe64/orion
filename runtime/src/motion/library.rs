@@ -319,6 +319,24 @@ pub struct MotionLibrary {
     motions: BTreeMap<String, MotionDefinition>,
 }
 
+pub(crate) fn validate_reaction_motion(motion: &MotionDefinition) -> Result<usize> {
+    let markers: Vec<_> = motion
+        .keyframes
+        .iter()
+        .enumerate()
+        .filter(|(_, keyframe)| keyframe.marker.is_some())
+        .map(|(i, _)| i)
+        .collect();
+    if motion.space != MotionSpace::AnchorRelative || !motion.return_to_anchor || markers.len() != 1
+    {
+        return Err(OrionRuntimeError::InvalidArgument(format!(
+            "Speech reaction '{}' must be anchor_relative, return to its anchor, and have exactly one apex marker.",
+            motion.name
+        )));
+    }
+    Ok(markers[0])
+}
+
 impl MotionLibrary {
     /// Loads motion definitions from yaml files in the given directory into memory.
     pub fn load(directory: impl AsRef<Path>, poses: &PoseLibrary) -> Result<Self> {
@@ -341,6 +359,12 @@ impl MotionLibrary {
         let mut motions = BTreeMap::new();
         for path in files {
             let motion = load_motion_file(&path, poses)?;
+            if crate::expression::speech::SpeechCue::ALL
+                .iter()
+                .any(|cue| cue.motion() == motion.name)
+            {
+                validate_reaction_motion(&motion)?;
+            }
             if motions.insert(motion.name.clone(), motion).is_some() {
                 return Err(OrionRuntimeError::Runtime(format!(
                     "Duplicate Orion motion name in {}",
@@ -898,6 +922,30 @@ mod tests {
     use crate::ORION_JOINT_NAMES;
     use crate::motion::calibration::load_calibration_file;
     use crate::motion::shared::fixture_path;
+
+    #[test]
+    fn reaction_assets_require_one_apex_marker_on_load() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let poses = PoseLibrary::load(
+            root.join("motion/config/v2/poses.yaml"),
+            &crate::ORION_JOINT_NAMES,
+        )
+        .unwrap();
+        let source =
+            fs::read_to_string(root.join("motion/motions/v2/acknowledge_nod.yaml")).unwrap();
+        for document in [
+            source.replace("      marker: acknowledge\n", ""),
+            source.replace(
+                "      duration: 0.24",
+                "      marker: extra\n      duration: 0.24",
+            ),
+        ] {
+            let temporary = tempfile::tempdir().unwrap();
+            fs::write(temporary.path().join("reaction.yaml"), document).unwrap();
+            let error = MotionLibrary::load(temporary.path(), &poses).unwrap_err();
+            assert!(error.to_string().contains("exactly one apex marker"));
+        }
+    }
 
     #[test]
     fn loads_v2_absolute_and_relative_catalog() {

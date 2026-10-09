@@ -1,3 +1,5 @@
+mod reaction;
+pub use reaction::ReactionCue;
 mod config;
 mod prompt;
 mod providers;

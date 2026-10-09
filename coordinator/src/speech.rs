@@ -23,6 +23,7 @@ pub struct SpeechConfig {
 #[derive(Debug)]
 pub(crate) struct Chunk {
     pub pcm: Vec<u8>,
+    pub cues: Vec<orion_agent::ReactionCue>,
     pub generation_ms: f64,
     pub synthesis_ms: f64,
 }
@@ -277,6 +278,7 @@ impl Process {
                         .map_err(|e| e.to_string())?;
                     send.send(Some(Chunk {
                         pcm,
+                        cues: Vec::new(),
                         generation_ms,
                         synthesis_ms,
                     }))

@@ -160,7 +160,14 @@ for line in sys.stdin:
             time.sleep(.15)
             emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,'itemId':'final','delta':'Take a breath.'}})
             response = 'Let us begin. Take a breath.'
-        completed = {'method': 'turn/completed', 'params': {'threadId': thread_id,
+        if text == 'reaction-cues-fixture':
+            emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,
+                  'item':{'type':'agentMessage','id':'final','phase':'final_answer'}}})
+            for piece in ['[agr', 'ee] Yes. ', 'Fine. [sha', 'ke] No. ']:
+                emit({'method':'item/agentMessage/delta','params':{'threadId':thread_id,'turnId':turn_id,
+                      'itemId':'final','delta':piece}})
+            response = '[agree] Yes. Fine. [shake] No. [agree]'
+        completed = {'method': 'turn/completed' , 'params': {'threadId': thread_id,
                      'turn': {'id': turn_id, 'status': 'failed' if text == 'fail' else 'completed',
                               'error': {'message':'fixture failure'} if text == 'fail' else None,
                               'items': []}}}

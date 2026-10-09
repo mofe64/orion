@@ -403,7 +403,11 @@ coordinator buffers and uploads mono PCM16 24 kHz WAV through the local
 authenticated gateway. `oriond` accepts a validated spool identifier through its private
 `speech file` operation and owns speaker playback. Streaming uses `speech stream`,
 ordered `speech append` commands and an explicit `speech end`, all under one run
-ID and one player process. See [streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)
+ID and one player process. Stream and append commands accept an optional final
+`cues=agree,disagree` token (at most four canonical names). For scoped voice
+streams it follows the session ID; it never bypasses session ownership checks.
+Each cue uses its chunk's first audio frame. One-shot `speech file` playback
+has no reaction cues. See [streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)
 for buffering, limits and timing semantics.
 
 Inspect or cancel playback with:

@@ -58,14 +58,33 @@ impl Gateway {
         safe
     }
 
-    pub async fn upload(&self, path: &str, pcm: &[u8], request_id: &str) -> Result<Value, String> {
-        let response = self
+    pub async fn upload(
+        &self,
+        path: &str,
+        pcm: &[u8],
+        request_id: &str,
+        cues: &[orion_agent::ReactionCue],
+    ) -> Result<Value, String> {
+        if cues.len() > 4 {
+            return Err("Too many speech cues on a chunk".into());
+        }
+        let mut request = self
             .client
             .post(format!("{}{path}", self.url))
             .bearer_auth(&self.token)
             .header("Content-Type", "audio/wav")
             .header("X-Orion-Voice-Request-ID", request_id)
-            .body(wav(pcm))
+            .body(wav(pcm));
+        if !cues.is_empty() {
+            request = request.header(
+                "X-Orion-Speech-Cues",
+                cues.iter()
+                    .map(|c| c.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| e.without_url().to_string())?;

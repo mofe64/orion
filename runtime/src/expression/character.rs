@@ -4,7 +4,7 @@ use crate::control::core::RuntimeCore;
 use crate::control::state::{MovementPhase, RuntimeMode};
 use crate::devices::driver::RuntimeDriver;
 use crate::error::{OrionRuntimeError as Error, Result};
-use crate::expression::speech::SpeechAnalysis;
+use crate::expression::speech::{SpeechAnalysis, SpeechCue};
 use crate::motion::library::{
     KeyframeArrival, MotionDefinition, MotionKeyframe, MotionLibrary, MotionSpace,
 };
@@ -46,6 +46,7 @@ const SPEECH_GESTURE_DURATION_SCALE: f64 = 1.35;
 /// How far the commanded emphasis apex leads its audio peak. Head pitch tracks
 /// about 70 ms late on hardware, so the visible apex lands roughly 0.1 s early.
 const SPEECH_STROKE_LEAD_SECONDS: f64 = 0.17;
+const SPEECH_CUE_APEX_DELAY_SECONDS: f64 = 0.15;
 /// Shortest drawing allowed before an emphasis, so preparing an accent never
 /// turns the preceding phrase into a twitch.
 const SPEECH_MIN_PRECEDING_SECONDS: f64 = 0.35;
@@ -96,7 +97,16 @@ const LARGE_IDLES: [&str; 2] = ["idle_weight_shift", "idle_soft_head_shake"];
 /// We separate head and body targets, so that we can implement staging and overlapping effects in our animation.
 /// the head leads and the body follows.
 #[derive(Clone, Debug)]
+struct PlannedReaction {
+    cue: SpeechCue,
+    keyframes: Vec<MotionKeyframe>,
+    apex_index: usize,
+    cue_seconds: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
 struct PlannedSpeechDrawing {
+    reaction: Option<PlannedReaction>,
     /// The named motion whose authored shape contributes to this gesture.
     clip: String,
     /// Desired head-related offsets: head roll, head pitch, and sometimes base yaw for facing direction.
@@ -178,6 +188,8 @@ struct SpeechMemory {
     seconds: f64,
     // when the latest emphasis was placed
     emphasis_at: Option<f64>,
+    cues_planned: Vec<usize>,
+    facing: f64,
 }
 
 /// CharacterState describes the character activity Orion is presenting.
@@ -338,6 +350,12 @@ pub struct CharacterCoordinator {
     /// Where the latest emphasis falls on the gesture timeline, in seconds.
     /// Used to keep stronger gestures spaced apart when speech is extended.
     speech_emphasis_at: Option<f64>,
+    /// Absolute audio frames handled by adopted checkpoints (including drops).
+    speech_cues_planned: Vec<usize>,
+    /// Audio origin of the current tail, independent of gesture-memory time.
+    speech_cue_frame_offset: usize,
+    /// Adopted facing offset, retained when a reaction starts a replacement tail.
+    speech_previous_yaw: f64,
 
     /// Bookmarks pairing a body-follow keyframe index with its future speech history.
     /// Adopt that history only after movement passes the keyframe and its hold,
@@ -386,6 +404,9 @@ impl CharacterCoordinator {
             speech_recent_clips: Vec::new(),
             speech_seconds: 0.0,
             speech_emphasis_at: None,
+            speech_cues_planned: Vec::new(),
+            speech_cue_frame_offset: 0,
+            speech_previous_yaw: 0.0,
             speech_checkpoints: Vec::new(),
             attention: None,
         }
@@ -869,6 +890,9 @@ impl CharacterCoordinator {
         // Restart the speech timeline and discard checkpoints from the old plan.
         self.speech_seconds = 0.0;
         self.speech_emphasis_at = None;
+        self.speech_cues_planned.clear();
+        self.speech_cue_frame_offset = 0;
+        self.speech_previous_yaw = 0.0;
         self.speech_checkpoints.clear();
     }
 
@@ -1419,6 +1443,8 @@ impl CharacterCoordinator {
             body: self.speech_previous_body.clone(),
             seconds: self.speech_seconds,
             emphasis_at: self.speech_emphasis_at,
+            cues_planned: self.speech_cues_planned.clone(),
+            facing: self.speech_previous_yaw,
         }
     }
 
@@ -1435,6 +1461,8 @@ impl CharacterCoordinator {
         self.speech_previous_body = memory.body;
         self.speech_seconds = memory.seconds;
         self.speech_emphasis_at = memory.emphasis_at;
+        self.speech_cues_planned = memory.cues_planned;
+        self.speech_previous_yaw = memory.facing;
     }
 
     /// Prepare a future speech plan, then restore the coordinator’s existing history.
@@ -1553,36 +1581,31 @@ impl CharacterCoordinator {
         if let Some(run_id) = self.speech_motion_run_id {
             let finalizing = self.speech_plan_streaming && !analysis.streaming;
             let late_end = finalizing && analysis.duration_seconds - elapsed <= 0.9;
+            let installed_cues = self
+                .speech_checkpoints
+                .last()
+                .map(|(_, m)| &m.cues_planned)
+                .unwrap_or(&self.speech_cues_planned);
+            let new_cue = analysis
+                .cues
+                .iter()
+                .any(|(at, _)| *at >= frame && !installed_cues.contains(at));
             if late_end
                 || (gesture_finished
                     && (finalizing
+                        || new_cue
                         || (analysis.duration_seconds > self.speech_planned_until
                             && self.speech_planned_until - elapsed < 1.5)))
             {
                 if let Some(anchor) = self.status.active_anchor.clone() {
-                    let tail = SpeechAnalysis {
-                        rms_20ms: analysis.rms_20ms.iter().skip(frame).copied().collect(),
-                        phrase_peaks: analysis
-                            .phrase_peaks
-                            .iter()
-                            .filter_map(|peak| peak.checked_sub(frame))
-                            .collect(),
-                        quiet_regions: analysis
-                            .quiet_regions
-                            .iter()
-                            .filter_map(|(start, end)| {
-                                (*end > frame).then_some((
-                                    start.saturating_sub(frame),
-                                    end.saturating_sub(frame),
-                                ))
-                            })
-                            .collect(),
-                        duration_seconds: (analysis.duration_seconds - elapsed).max(0.0),
-                        streaming: analysis.streaming,
-                    };
+                    let tail = speech_analysis_tail(analysis, frame);
+                    self.speech_cue_frame_offset = frame;
                     // Do not introduce a new minimum-length gesture at a late EOF.
                     let settle_only = !tail.streaming && tail.duration_seconds <= 0.9;
                     let performance = if settle_only {
+                        for (_, cue) in &tail.cues {
+                            log_cue_drop(*cue, "ending");
+                        }
                         Ok((speech_settle_motion(), Vec::new()))
                     } else {
                         self.speech_prepare_allowed = false;
@@ -1728,11 +1751,18 @@ impl CharacterCoordinator {
         let settle_budget = (SPEECH_FINAL_SETTLE_SECONDS * style.tempo)
             .min(authored_budget * 0.35)
             .max(0.16);
-        let prepare_budget = if self.speech_prepare_allowed && self.speech_gesture_index == 0 {
-            0.18 * style.tempo
-        } else {
-            0.0
-        };
+        let onset_cue = analysis.cues.iter().any(|(frame, _)| {
+            *frame <= 30
+                && !self
+                    .speech_cues_planned
+                    .contains(&(self.speech_cue_frame_offset + frame))
+        });
+        let prepare_budget =
+            if self.speech_prepare_allowed && self.speech_gesture_index == 0 && !onset_cue {
+                0.18 * style.tempo
+            } else {
+                0.0
+            };
         let resolve_budget = if !analysis.streaming && performance_seconds >= 2.0 {
             0.28 * style.tempo
         } else {
@@ -1756,25 +1786,182 @@ impl CharacterCoordinator {
 
         while active_budget - authored_seconds > 0.22 {
             let start_seconds = authored_seconds / style.tempo;
+            // Agent reactions reserve the same accent spacing as audio peaks.
+            // Their frame identity is absolute even when this plan uses a tail.
+            let candidate = analysis.cues.iter().copied().find(|(frame, _)| {
+                let c = *frame as f64 * 0.020;
+                !self
+                    .speech_cues_planned
+                    .contains(&(self.speech_cue_frame_offset + frame))
+                    && c >= start_seconds - 0.10
+                    && c <= start_seconds + 1.2
+                    && (!drawings.is_empty() || c <= 0.6)
+            });
+            if let Some((frame, cue)) = candidate {
+                let c = frame as f64 * 0.020;
+                let definition = motions.motion(cue.motion())?;
+                let apex_index = crate::motion::library::validate_reaction_motion(definition)?;
+                let mut keyframes = definition.keyframes.clone();
+                for keyframe in &mut keyframes {
+                    keyframe.duration_seconds *= SPEECH_GESTURE_DURATION_SCALE * style.tempo;
+                    keyframe.hold_seconds *= SPEECH_GESTURE_DURATION_SCALE;
+                }
+                let duration: f64 = keyframes
+                    .iter()
+                    .map(|k| k.duration_seconds + k.hold_seconds * style.tempo)
+                    .sum();
+                let apex: f64 = keyframes[..=apex_index]
+                    .iter()
+                    .map(|k| k.duration_seconds + k.hold_seconds * style.tempo)
+                    .sum::<f64>()
+                    - keyframes[apex_index].hold_seconds * style.tempo;
+                let reaction_start = if let Some(previous) = drawings.last() {
+                    let previous_start =
+                        authored_seconds - previous.duration_seconds - previous.hold_seconds;
+                    ((c + SPEECH_CUE_APEX_DELAY_SECONDS) * style.tempo - apex)
+                        .max(previous_start + SPEECH_MIN_PRECEDING_SECONDS * style.tempo)
+                } else {
+                    0.0
+                };
+                let reason = if self
+                    .speech_emphasis_at
+                    .is_some_and(|last| base_seconds + c - last < SPEECH_EMPHASIS_INTERVAL_SECONDS)
+                {
+                    Some("spacing")
+                } else if (reaction_start + duration) / style.tempo
+                    > active_budget / style.tempo - 0.3
+                {
+                    Some("no_room")
+                } else {
+                    None
+                };
+                self.speech_cues_planned
+                    .push(self.speech_cue_frame_offset + frame);
+                // Multiple tags can ride the same chunk. Only one reaction can
+                // occupy that frame; account for the others explicitly.
+                for (_, extra) in analysis.cues.iter().filter(|(at, _)| *at == frame).skip(1) {
+                    log_cue_drop(*extra, reason.unwrap_or("spacing"));
+                }
+                if let Some(reason) = reason {
+                    log_cue_drop(cue, reason);
+                    // Carry the disposition on the next checkpoint, so discarded
+                    // candidates still roll it back along with gesture history.
+                    continue;
+                }
+                if let Some(previous) = drawings.last_mut() {
+                    let previous_start =
+                        authored_seconds - previous.duration_seconds - previous.hold_seconds;
+                    let required = reaction_start - previous_start;
+                    if let Some(reaction) = &mut previous.reaction {
+                        let ratio = required / previous.duration_seconds;
+                        for keyframe in &mut reaction.keyframes {
+                            keyframe.duration_seconds *= ratio;
+                        }
+                    }
+                    previous.duration_seconds = required;
+                    previous.hold_seconds = 0.0;
+                    previous.memory.seconds = base_seconds + reaction_start / style.tempo;
+                }
+                let facing = drawings
+                    .last()
+                    .and_then(|d| d.head_target.get("base_yaw_joint"))
+                    .copied()
+                    .unwrap_or(self.speech_previous_yaw);
+                let anchor_yaw = anchor.get("base_yaw_joint").copied().unwrap_or(0.0);
+                let mut yaw_scale: f64 = 1.0;
+                for k in &keyframes {
+                    let yaw = k.target.get("base_yaw_joint").copied().unwrap_or(0.0);
+                    if yaw > 0.0 {
+                        yaw_scale = yaw_scale.min(((0.749 - anchor_yaw - facing) / yaw).max(0.0));
+                    }
+                    if yaw < 0.0 {
+                        yaw_scale = yaw_scale.min(((-0.749 - anchor_yaw - facing) / yaw).max(0.0));
+                    }
+                }
+                for k in &mut keyframes {
+                    let yaw = k.target.get("base_yaw_joint").copied().unwrap_or(0.0);
+                    if facing != 0.0 || yaw != 0.0 {
+                        k.target
+                            .insert("base_yaw_joint".into(), facing + yaw * yaw_scale);
+                    }
+                }
+                let last = &keyframes
+                    .last()
+                    .expect("validated motion has an apex")
+                    .target;
+                let body_target: JointPositions = last
+                    .iter()
+                    .filter(|(j, _)| j.ends_with("pitch_joint") && !j.starts_with("head_"))
+                    .map(|(j, v)| (j.clone(), *v))
+                    .collect();
+                let head_target: JointPositions = last
+                    .iter()
+                    .filter(|(j, _)| j.starts_with("head_") || *j == "base_yaw_joint")
+                    .map(|(j, v)| (j.clone(), *v))
+                    .collect();
+                authored_seconds = reaction_start + duration;
+                self.speech_emphasis_at = Some(base_seconds + c);
+                self.last_speech_clip = Some(cue.motion().into());
+                self.speech_recent_clips.push(cue.motion().into());
+                if self.speech_recent_clips.len() > 2 {
+                    self.speech_recent_clips.remove(0);
+                }
+                gesture_index += 1;
+                self.speech_gesture_index = gesture_index;
+                self.speech_seconds = base_seconds + authored_seconds / style.tempo;
+                self.speech_previous_body = body_target.clone();
+                self.speech_previous_yaw = facing;
+                drawings.push(PlannedSpeechDrawing {
+                    reaction: Some(PlannedReaction {
+                        cue,
+                        keyframes,
+                        apex_index,
+                        cue_seconds: (!drawings.is_empty()).then_some(c),
+                    }),
+                    clip: cue.motion().into(),
+                    head_target,
+                    counter_head: None,
+                    peak_seconds: None,
+                    body_target,
+                    duration_seconds: duration,
+                    body_beat: false,
+                    lead_fraction: 0.0,
+                    hold_seconds: 0.0,
+                    memory: self.speech_memory(),
+                });
+                continue;
+            }
             // A peak may lie inside the preceding ordinary drawing. Plan
             // backwards from it rather than testing only gesture boundaries.
             let phrase_peak = analysis.phrase_peaks.iter().copied().find(|peak| {
                 let seconds = *peak as f64 * 0.020;
+                if analysis.cues.iter().any(|(frame, _)| {
+                    !self
+                        .speech_cues_planned
+                        .contains(&(self.speech_cue_frame_offset + frame))
+                        && ((*frame as f64 * 0.020) - seconds).abs()
+                            < SPEECH_EMPHASIS_INTERVAL_SECONDS
+                }) {
+                    return false;
+                }
                 let previous_start = drawings.last().map(|d| {
                     (authored_seconds - d.duration_seconds - d.hold_seconds) / style.tempo
                 });
-                previous_start.is_some_and(|start| {
-                    // Even the longest possible stroke must leave the preceding
-                    // drawing its minimum length; otherwise skip this peak.
-                    let preparation = (seconds - SPEECH_STROKE_LEAD_SECONDS - start) * style.tempo
-                        - SPEECH_LONGEST_STROKE_AUTHORED_SECONDS;
-                    seconds >= start + SPEECH_MIN_PRECEDING_SECONDS + 0.60
-                        && preparation >= SPEECH_MIN_PRECEDING_SECONDS * style.tempo
-                        && seconds <= start_seconds + 1.2
-                        && seconds < active_budget / style.tempo - 0.8
-                }) && self.speech_emphasis_at.is_none_or(|last| {
-                    base_seconds + seconds - last >= SPEECH_EMPHASIS_INTERVAL_SECONDS
-                })
+                drawings.last().is_some_and(|d| d.reaction.is_none())
+                    && previous_start.is_some_and(|start| {
+                        // Even the longest possible stroke must leave the preceding
+                        // drawing its minimum length; otherwise skip this peak.
+                        let preparation = (seconds - SPEECH_STROKE_LEAD_SECONDS - start)
+                            * style.tempo
+                            - SPEECH_LONGEST_STROKE_AUTHORED_SECONDS;
+                        seconds >= start + SPEECH_MIN_PRECEDING_SECONDS + 0.60
+                            && preparation >= SPEECH_MIN_PRECEDING_SECONDS * style.tempo
+                            && seconds <= start_seconds + 1.2
+                            && seconds < active_budget / style.tempo - 0.8
+                    })
+                    && self.speech_emphasis_at.is_none_or(|last| {
+                        base_seconds + seconds - last >= SPEECH_EMPHASIS_INTERVAL_SECONDS
+                    })
             });
             let emphasis = phrase_peak.is_some();
             let gesture_seconds = base_seconds
@@ -1949,12 +2136,35 @@ impl CharacterCoordinator {
                         && start <= start_seconds + duration_seconds / style.tempo)
                         .then_some((start, end))
                 });
-            let hold_seconds = if let Some((start, end)) = pause {
+            let mut hold_seconds = if let Some((start, end)) = pause {
                 duration_seconds = (start - start_seconds) * style.tempo;
                 ((end - start).min(1.2) * style.tempo).min((remaining - duration_seconds).max(0.0))
             } else {
                 0.0
             };
+            if let Some((frame, cue)) = analysis.cues.iter().find(|(frame, _)| {
+                *frame as f64 * 0.020 >= start_seconds
+                    && !self
+                        .speech_cues_planned
+                        .contains(&(self.speech_cue_frame_offset + frame))
+            }) {
+                let definition = motions.motion(cue.motion())?;
+                let apex = crate::motion::library::validate_reaction_motion(definition)?;
+                let lead = definition.keyframes[..=apex]
+                    .iter()
+                    .map(|k| k.duration_seconds)
+                    .sum::<f64>()
+                    * SPEECH_GESTURE_DURATION_SCALE;
+                let before =
+                    (*frame as f64 * 0.020 + SPEECH_CUE_APEX_DELAY_SECONDS - lead - start_seconds)
+                        .max(SPEECH_MIN_PRECEDING_SECONDS)
+                        * style.tempo;
+                if before < duration_seconds + hold_seconds {
+                    duration_seconds = duration_seconds.min(before);
+                    // A hold must not push the reserved reaction past its cue.
+                    hold_seconds = 0.0;
+                }
+            }
             authored_seconds += duration_seconds + hold_seconds;
             if body_beat {
                 last_body_beat = Some(gesture_index);
@@ -1974,7 +2184,9 @@ impl CharacterCoordinator {
             self.speech_last_turn = last_turn_direction;
             self.speech_seconds = base_seconds + authored_seconds / style.tempo;
             self.speech_previous_body = body_target.clone();
+            self.speech_previous_yaw = head_target.get("base_yaw_joint").copied().unwrap_or(0.0);
             drawings.push(PlannedSpeechDrawing {
+                reaction: None,
                 clip,
                 head_target,
                 counter_head,
@@ -1988,6 +2200,16 @@ impl CharacterCoordinator {
             });
         }
 
+        for (frame, cue) in &analysis.cues {
+            let absolute = self.speech_cue_frame_offset + frame;
+            if !self.speech_cues_planned.contains(&absolute) {
+                self.speech_cues_planned.push(absolute);
+                log_cue_drop(*cue, "no_room");
+            }
+        }
+        if let Some(last) = drawings.last_mut() {
+            last.memory.cues_planned = self.speech_cues_planned.clone();
+        }
         if drawings.is_empty() {
             return Err(Error::Runtime(
                 "Speech performance could not allocate an expressive keyframe.".into(),
@@ -2001,6 +2223,10 @@ impl CharacterCoordinator {
         for drawing in &mut drawings {
             let window_end_seconds = window_start_seconds
                 + (drawing.duration_seconds + drawing.hold_seconds) / style.tempo;
+            if drawing.reaction.is_some() {
+                window_start_seconds = window_end_seconds;
+                continue;
+            }
             let start = (window_start_seconds / 0.020) as usize;
             let end = (window_end_seconds / 0.020).ceil() as usize;
             let window = &analysis.rms_20ms
@@ -2043,7 +2269,32 @@ impl CharacterCoordinator {
             });
         }
         self.speech_checkpoints.clear();
+        let mut drawing_ranges = Vec::new();
         for (index, drawing) in drawings.iter().enumerate() {
+            let range_start = keyframes.len();
+            if let Some(reaction) = &drawing.reaction {
+                for (at, source) in reaction.keyframes.iter().enumerate() {
+                    let mut keyframe = source.clone();
+                    keyframe.marker = Some(format!(
+                        "reaction_{index}_{}{}",
+                        reaction.cue.as_str(),
+                        if at == reaction.apex_index {
+                            reaction
+                                .cue_seconds
+                                .map(|c| format!("@cue={c:.6}"))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        }
+                    ));
+                    keyframes.push(keyframe);
+                }
+                previous_body = drawing.body_target.clone();
+                drawing_ranges.push(range_start..keyframes.len());
+                self.speech_checkpoints
+                    .push((keyframes.len() - 1, drawing.memory.clone()));
+                continue;
+            }
             let lead_fraction = drawing.lead_fraction;
             keyframes.push(MotionKeyframe {
                 pose_name: None,
@@ -2094,6 +2345,7 @@ impl CharacterCoordinator {
                     format!("body_follow_{index}")
                 }),
             });
+            drawing_ranges.push(range_start..keyframes.len());
             previous_body = drawing.body_target.clone();
             self.speech_checkpoints
                 .push((keyframes.len() - 1, drawing.memory.clone()));
@@ -2129,7 +2381,7 @@ impl CharacterCoordinator {
             return_to_anchor: true,
             keyframes,
         };
-        align_speech_apices(&mut performance, anchor)?;
+        align_speech_apices(&mut performance, anchor, &drawing_ranges)?;
         Ok(performance)
     }
 
@@ -2285,7 +2537,11 @@ fn attention_return_motion() -> MotionDefinition {
     motion
 }
 
-/// Peak metadata is carried by generated markers, never by asset schema fields.
+/// Audio timing metadata is carried by generated markers, never by asset schema fields.
+pub(crate) fn speech_cue(marker: &str) -> Option<f64> {
+    marker.rsplit_once("@cue=")?.1.parse().ok()
+}
+
 pub(crate) fn speech_peak(marker: &str) -> Option<f64> {
     marker.rsplit_once("@peak=")?.1.parse().ok()
 }
@@ -2299,62 +2555,109 @@ pub(crate) fn speech_peak(marker: &str) -> Option<f64> {
 /// the same amount. A second pass fixes what velocity retiming and settle
 /// weighting made inexact. At most `SPEECH_ALIGNMENT_PASSES + 1` compiles run,
 /// however many emphases the performance holds.
-fn align_speech_apices(motion: &mut MotionDefinition, anchor: &JointPositions) -> Result<()> {
+fn align_speech_apices(
+    motion: &mut MotionDefinition,
+    anchor: &JointPositions,
+    ranges: &[std::ops::Range<usize>],
+) -> Result<()> {
     use crate::motion::library::MotionSequence;
-    let peaks: Vec<(usize, f64)> = motion
+    // Residual tolerance is the existing peak window translated to its target.
+    let fits = |residual: f64| {
+        SPEECH_APEX_WINDOW_SECONDS.contains(&(residual - SPEECH_STROKE_LEAD_SECONDS))
+    };
+    let apices: Vec<(usize, f64, Option<std::ops::Range<usize>>)> = motion
         .keyframes
         .iter()
         .enumerate()
-        .filter_map(|(index, keyframe)| Some((index, speech_peak(keyframe.marker.as_deref()?)?)))
+        .filter_map(|(index, k)| {
+            let marker = k.marker.as_deref()?;
+            let target = if let Some(peak) = speech_peak(marker) {
+                peak - SPEECH_STROKE_LEAD_SECONDS
+            } else {
+                marker.rsplit_once("@cue=")?.1.parse::<f64>().ok()? + SPEECH_CUE_APEX_DELAY_SECONDS
+            };
+            let drawing = ranges.iter().position(|range| range.contains(&index))?;
+            Some((
+                index,
+                target,
+                drawing.checked_sub(1).map(|i| ranges[i].clone()),
+            ))
+        })
         .collect();
-    if peaks.is_empty() {
+    if apices.is_empty() {
         return Ok(());
     }
     let tempo = motion.style.tempo;
-    let apex_offsets = |motion: &MotionDefinition| -> Result<Vec<f64>> {
+    let residuals = |motion: &MotionDefinition| -> Result<Vec<f64>> {
         let sequence = MotionSequence::new(motion, anchor.clone())?;
-        Ok(peaks
+        Ok(apices
             .iter()
-            .map(|(index, peak)| sequence.keyframe_arrival_time(*index).unwrap() - peak)
+            .map(|(index, target, _)| sequence.keyframe_arrival_time(*index).unwrap() - target)
             .collect())
     };
-    let mut offsets = apex_offsets(motion)?;
+    let mut offsets = residuals(motion)?;
     for _ in 0..SPEECH_ALIGNMENT_PASSES {
-        if offsets
-            .iter()
-            .all(|offset| SPEECH_APEX_WINDOW_SECONDS.contains(offset))
-        {
+        if offsets.iter().all(|offset| fits(*offset)) {
             break;
         }
         let mut shift = 0.0;
-        for ((index, _), offset) in peaks.iter().zip(&offsets) {
+        for ((_, _, preceding), offset) in apices.iter().zip(&offsets) {
             let offset = offset + shift;
-            if *index < 2 || SPEECH_APEX_WINDOW_SECONDS.contains(&offset) {
+            let Some(preceding) = preceding else { continue };
+            if fits(offset) {
                 continue;
             }
-            // Keyframes index-2 and index-1 are the preceding drawing's head
-            // lead and body follow. Scale both to keep its staging ratio.
-            let preceding = motion.keyframes[index - 2].duration_seconds
-                + motion.keyframes[index - 1].duration_seconds;
-            let adjusted = (preceding + (-SPEECH_STROKE_LEAD_SECONDS - offset) * tempo)
-                .max(SPEECH_MIN_PRECEDING_SECONDS * tempo);
-            let ratio = adjusted / preceding;
-            motion.keyframes[index - 2].duration_seconds *= ratio;
-            motion.keyframes[index - 1].duration_seconds *= ratio;
-            shift += (adjusted - preceding) / tempo;
-        }
-        offsets = apex_offsets(motion)?;
-    }
-    for ((index, _), offset) in peaks.iter().zip(&offsets) {
-        if !SPEECH_APEX_WINDOW_SECONDS.contains(offset) {
-            // Keep the safe ordinary shape, but do not claim an audio accent
-            // when retiming cannot fit it. No speed limit is bypassed.
-            if let Some(marker) = &mut motion.keyframes[*index].marker {
-                *marker = marker.split("@peak=").next().unwrap().to_owned();
+            let duration: f64 = motion.keyframes[preceding.clone()]
+                .iter()
+                .map(|k| k.duration_seconds)
+                .sum();
+            let adjusted = (duration - offset * tempo).max(SPEECH_MIN_PRECEDING_SECONDS * tempo);
+            for k in &mut motion.keyframes[preceding.clone()] {
+                k.duration_seconds *= adjusted / duration;
             }
+            shift += (adjusted - duration) / tempo;
+        }
+        offsets = residuals(motion)?;
+    }
+    for ((index, _, _), offset) in apices.iter().zip(&offsets) {
+        if !fits(*offset)
+            && let Some(marker) = &mut motion.keyframes[*index].marker
+        {
+            *marker = marker.split('@').next().unwrap().to_owned();
         }
     }
     Ok(())
+}
+
+fn log_cue_drop(cue: SpeechCue, reason: &str) {
+    eprintln!(
+        "{}",
+        serde_json::json!({"event":"speech.cue_dropped", "cue":cue.as_str(), "reason":reason})
+    );
+}
+fn speech_analysis_tail(analysis: &SpeechAnalysis, frame: usize) -> SpeechAnalysis {
+    SpeechAnalysis {
+        rms_20ms: analysis.rms_20ms.iter().skip(frame).copied().collect(),
+        phrase_peaks: analysis
+            .phrase_peaks
+            .iter()
+            .filter_map(|p| p.checked_sub(frame))
+            .collect(),
+        cues: analysis
+            .cues
+            .iter()
+            .filter_map(|(at, c)| at.checked_sub(frame).map(|at| (at, *c)))
+            .collect(),
+        quiet_regions: analysis
+            .quiet_regions
+            .iter()
+            .filter_map(|(start, end)| {
+                (*end > frame).then_some((start.saturating_sub(frame), end.saturating_sub(frame)))
+            })
+            .collect(),
+        duration_seconds: (analysis.duration_seconds - frame as f64 * 0.020).max(0.0),
+        streaming: analysis.streaming,
+    }
 }
 
 /// Returns how many seconds of `remaining` audio one speech plan covers.
@@ -2390,6 +2693,12 @@ fn speech_planning_window(analysis: &SpeechAnalysis) -> SpeechAnalysis {
             .iter()
             .copied()
             .filter(|peak| *peak < frames)
+            .collect(),
+        cues: analysis
+            .cues
+            .iter()
+            .copied()
+            .filter(|(at, _)| *at < frames)
             .collect(),
         duration_seconds: SPEECH_PLAN_HORIZON_SECONDS,
         streaming: true,
@@ -2709,6 +3018,317 @@ mod tests {
         RuntimeCore::new(CharacterTestDriver, poses, motions).unwrap()
     }
 
+    fn reaction_core() -> RuntimeCore<CharacterTestDriver> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
+        RuntimeCore::new(CharacterTestDriver, poses, motions).unwrap()
+    }
+    fn cue_analysis(seconds: f64, cues: Vec<(usize, SpeechCue)>) -> SpeechAnalysis {
+        SpeechAnalysis {
+            rms_20ms: vec![0.2; (seconds / 0.020) as usize],
+            quiet_regions: vec![],
+            phrase_peaks: vec![],
+            cues,
+            duration_seconds: seconds,
+            streaming: false,
+        }
+    }
+    fn reaction_indices(motion: &MotionDefinition, cue: SpeechCue) -> Vec<usize> {
+        motion
+            .keyframes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, k)| {
+                k.marker
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("reaction_") && m.contains(cue.as_str()))
+                    .then_some(i)
+            })
+            .collect()
+    }
+    #[test]
+    fn reaction_apices_align_and_preserve_authored_shapes() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        for cue in SpeechCue::ALL {
+            let mut character = CharacterCoordinator::new(42);
+            let analysis = cue_analysis(6.0, vec![(100, cue)]);
+            let motion = character
+                .compose_speech_performance(&analysis, core.motions(), &anchor)
+                .unwrap();
+            let indices = reaction_indices(&motion, cue);
+            let source = core.motions().motion(cue.motion()).unwrap();
+            assert_eq!(indices.len(), source.keyframes.len());
+            let apex = indices
+                .iter()
+                .copied()
+                .find(|i| {
+                    motion.keyframes[*i]
+                        .marker
+                        .as_deref()
+                        .unwrap()
+                        .contains("@cue=")
+                })
+                .expect("compiled apex claim");
+            let sequence = MotionSequence::new(&motion, anchor.clone()).unwrap();
+            let residual = sequence.keyframe_arrival_time(apex).unwrap() - 2.15;
+            assert!(
+                SPEECH_APEX_WINDOW_SECONDS.contains(&(residual - SPEECH_STROKE_LEAD_SECONDS)),
+                "{} residual {residual}",
+                cue.as_str()
+            );
+            for (index, source) in indices.iter().zip(&source.keyframes) {
+                for (joint, offset) in &source.target {
+                    if joint != "base_yaw_joint" {
+                        assert_eq!(motion.keyframes[*index].target.get(joint), Some(offset));
+                    }
+                }
+            }
+            assert!(character.speech_checkpoints.iter().any(|(at,m)| *at == *indices.last().unwrap() && m.cues_planned.contains(&100)));
+        }
+    }
+    #[test]
+    fn onset_reaction_overlaps_without_preparation_and_spacing_drops_second_cue() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        character.speech_prepare_allowed = true;
+        let analysis = cue_analysis(6.0, vec![(0, SpeechCue::Agree), (50, SpeechCue::Disagree)]);
+        let motion = character
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        assert!(
+            motion.keyframes[0]
+                .marker
+                .as_deref()
+                .unwrap()
+                .starts_with("reaction_0_agree")
+        );
+        assert!(
+            motion
+                .keyframes
+                .iter()
+                .all(|k| k.marker.as_deref() != Some("speech_prepare"))
+        );
+        assert!(reaction_indices(&motion, SpeechCue::Disagree).is_empty());
+        assert_eq!(character.speech_cues_planned, [0, 50]);
+        assert!(
+            !motion.keyframes[0]
+                .marker
+                .as_deref()
+                .unwrap()
+                .contains("@cue=")
+        );
+        let sequence = MotionSequence::new(&motion, anchor).unwrap();
+        assert!((0.2..0.4).contains(&sequence.keyframe_arrival_time(0).unwrap()));
+    }
+    #[test]
+    fn final_reaction_has_no_room_and_tail_drops_past_cues() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        let analysis = cue_analysis(
+            6.0,
+            vec![(100, SpeechCue::Agree), (275, SpeechCue::Disagree)],
+        );
+        let motion = character
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        assert!(reaction_indices(&motion, SpeechCue::Disagree).is_empty());
+        let tail = speech_analysis_tail(&analysis, 150);
+        assert_eq!(tail.cues, [(125, SpeechCue::Disagree)]);
+        let window = speech_planning_window(&cue_analysis(
+            40.0,
+            vec![(100, SpeechCue::Agree), (1500, SpeechCue::Disagree)],
+        ));
+        assert_eq!(window.cues, [(100, SpeechCue::Agree)]);
+    }
+    #[test]
+    fn discarded_reaction_candidate_restores_cues_until_its_checkpoint_passes() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        character.speech_cue_frame_offset = 150;
+        let analysis = cue_analysis(6.0, vec![(100, SpeechCue::Agree)]);
+        let saved = character.speech_memory();
+        let (motion, checkpoints) = character
+            .plan_speech(&analysis, core.motions(), &anchor)
+            .unwrap();
+        assert!(character.speech_cues_planned.is_empty());
+        assert_eq!(character.speech_gesture_index, saved.index);
+        assert!(character.speech_checkpoints.is_empty());
+        let end = *reaction_indices(&motion, SpeechCue::Agree).last().unwrap();
+        let at = checkpoints.iter().find(|(i, _)| *i == end).unwrap();
+        assert_eq!(at.1.cues_planned, [250]);
+        character.restore_speech_memory(at.1.clone());
+        assert_eq!(character.speech_cues_planned, [250]);
+        character.restore_speech_memory(saved);
+        assert!(character.speech_cues_planned.is_empty());
+    }
+    #[test]
+    fn newly_streamed_cue_replaces_only_at_a_passed_checkpoint() {
+        let mut core = reaction_core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.active_anchor = Some(anchor.clone());
+        character.note_speech_started(0.0);
+        let mut analysis = cue_analysis(3.0, vec![]);
+        analysis.streaming = true;
+        analysis.quiet_regions = vec![(30, 50)];
+        character.tick_speaking(0.0, &mut core, Some(&analysis), Some(0));
+        let run = character.speech_motion_run_id.unwrap();
+        analysis.cues.push((150, SpeechCue::Agree));
+        analysis.duration_seconds = 4.0;
+        analysis.rms_20ms.extend(vec![0.2; 50]);
+        core.tick(0.1).unwrap();
+        character.tick_speaking(0.1, &mut core, Some(&analysis), Some(5));
+        assert!(
+            character
+                .speech_checkpoints
+                .iter()
+                .all(|(_, m)| m.cues_planned.is_empty())
+        );
+        assert_eq!(character.speech_planned_until, 3.0);
+        let mut replanned = false;
+        for frame in 6..150 {
+            let now = frame as f64 * 0.020;
+            core.tick(now).unwrap();
+            // The replacement gate must react to this cue even with the old
+            // frontier more than 1.5 seconds ahead.
+            let before = character.speech_gesture_index;
+            character.tick_speaking(now, &mut core, Some(&analysis), Some(frame));
+            if character
+                .speech_checkpoints
+                .iter()
+                .any(|(_, m)| m.cues_planned.contains(&150))
+            {
+                assert!(
+                    frame < 75,
+                    "cue forces replacement before the old audio frontier is near"
+                );
+                assert!(character.speech_gesture_index > before);
+                assert!(
+                    character.speech_cues_planned.is_empty(),
+                    "future reaction is not yet performed"
+                );
+                assert_eq!(character.speech_motion_run_id, Some(run));
+                assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+                replanned = true;
+                break;
+            }
+        }
+        assert!(
+            replanned,
+            "new cue must reserve a reaction at the next checkpoint"
+        );
+        let mut adopted = false;
+        for frame in 150..260 {
+            let now = frame as f64 * 0.020;
+            core.tick(now).unwrap();
+            character.tick_speaking(now, &mut core, Some(&analysis), Some(frame));
+            if character.speech_cues_planned.contains(&150) {
+                assert!(
+                    core.snapshot()
+                        .motion
+                        .as_ref()
+                        .unwrap()
+                        .reached_markers
+                        .iter()
+                        .any(|marker| marker.starts_with("reaction_") && marker.contains("agree"))
+                );
+                adopted = true;
+                break;
+            }
+        }
+        assert!(
+            adopted,
+            "reaction checkpoint eventually commits its absolute frame"
+        );
+    }
+    #[test]
+    fn reaction_at_tail_onset_keeps_adopted_facing_and_rolls_it_back() {
+        let core = reaction_core();
+        let anchor = core.poses().pose("home").unwrap().clone();
+        let mut character = CharacterCoordinator::new(42);
+        character.speech_previous_yaw = 0.04;
+        character.speech_cue_frame_offset = 150;
+        let (motion, checkpoints) = character
+            .plan_speech(
+                &cue_analysis(6.0, vec![(0, SpeechCue::Agree), (0, SpeechCue::Disagree)]),
+                core.motions(),
+                &anchor,
+            )
+            .unwrap();
+        for at in reaction_indices(&motion, SpeechCue::Agree) {
+            assert_eq!(motion.keyframes[at].target["base_yaw_joint"], 0.04);
+        }
+        assert!(reaction_indices(&motion, SpeechCue::Disagree).is_empty());
+        assert!(character.speech_cues_planned.is_empty());
+        assert_eq!(character.speech_previous_yaw, 0.04);
+        let first = &checkpoints[0].1;
+        assert_eq!(first.facing, 0.04);
+        assert_eq!(first.cues_planned, [150]);
+    }
+
+    #[test]
+    fn late_stream_end_wins_over_a_new_reaction() {
+        let mut core = reaction_core();
+        checked(core.handle_command("configure", 0.0)).unwrap();
+        checked(core.handle_command("enable", 0.0)).unwrap();
+        let mut character = CharacterCoordinator::new(42);
+        character.status.enabled = true;
+        character.status.active_anchor = Some(core.poses().pose("home").unwrap().clone());
+        character.note_speech_started(0.0);
+        let mut analysis = cue_analysis(3.0, vec![]);
+        analysis.streaming = true;
+        character.tick_speaking(0.0, &mut core, Some(&analysis), Some(0));
+        core.tick(2.5).unwrap();
+        analysis.streaming = false;
+        analysis.cues.push((130, SpeechCue::Agree));
+        character.tick_speaking(2.5, &mut core, Some(&analysis), Some(125));
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("speak_settle")
+        );
+        assert!(character.speech_checkpoints.is_empty());
+    }
+    #[test]
+    fn reaction_yaw_stays_inward_and_energy_does_not_scale_reaction_shapes() {
+        let core = reaction_core();
+        let mut anchor = core.poses().pose("home").unwrap().clone();
+        anchor.insert("base_yaw_joint".into(), 0.72);
+        let mut analysis = cue_analysis(6.0, vec![(0, SpeechCue::Disagree)]);
+        let mut a = CharacterCoordinator::new(42);
+        let loud = a
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        analysis.rms_20ms = vec![0.01; 300];
+        let mut b = CharacterCoordinator::new(42);
+        let quiet = b
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        for index in reaction_indices(&loud, SpeechCue::Disagree) {
+            assert_eq!(loud.keyframes[index].target, quiet.keyframes[index].target);
+            let yaw = loud.keyframes[index]
+                .target
+                .get("base_yaw_joint")
+                .copied()
+                .unwrap_or(0.0);
+            assert!((anchor["base_yaw_joint"] + yaw).abs() < 0.75);
+        }
+        assert!(
+            loud.keyframes[1].target["base_yaw_joint"] > 0.0,
+            "scale preserves the outward counterstroke"
+        );
+    }
+
     struct FollowingDriver {
         positions: JointPositions,
     }
@@ -2971,6 +3591,7 @@ mod tests {
             rms_20ms: vec![0.2; 1_000],
             quiet_regions: vec![(240, 255), (690, 705)],
             phrase_peaks: vec![60, 210, 360, 510, 660, 810, 940],
+            cues: Vec::new(),
             duration_seconds: 20.0,
             streaming: false,
         };
@@ -3039,6 +3660,7 @@ mod tests {
             rms_20ms: vec![0.2; 1500],
             quiet_regions: vec![],
             phrase_peaks: (0..1500).step_by(10).collect(),
+            cues: Vec::new(),
             duration_seconds: 30.0,
             streaming: false,
         };
@@ -3097,6 +3719,7 @@ mod tests {
             rms_20ms: vec![0.2; 1500],
             quiet_regions: vec![],
             phrase_peaks: vec![10, 60, 245, 460, 675, 900, 1120, 1340],
+            cues: Vec::new(),
             duration_seconds: 30.0,
             streaming: false,
         };
@@ -3146,6 +3769,7 @@ mod tests {
                 rms_20ms: rms,
                 quiet_regions: vec![],
                 phrase_peaks: vec![],
+                cues: Vec::new(),
                 duration_seconds: 20.0,
                 streaming: false,
             };
@@ -3188,6 +3812,7 @@ mod tests {
             rms_20ms: vec![0.2; 1500],
             quiet_regions: vec![],
             phrase_peaks: vec![],
+            cues: Vec::new(),
             duration_seconds: 30.0,
             streaming: false,
         };
@@ -3229,6 +3854,7 @@ mod tests {
             rms_20ms: vec![0.2; 500],
             quiet_regions: vec![],
             phrase_peaks: vec![],
+            cues: Vec::new(),
             duration_seconds: 10.0,
             streaming: false,
         };
@@ -3289,6 +3915,7 @@ mod tests {
                 rms_20ms: vec![0.2; 300],
                 quiet_regions: vec![],
                 phrase_peaks: vec![],
+                cues: Vec::new(),
                 duration_seconds: 6.0,
                 streaming: false,
             };
@@ -3322,6 +3949,7 @@ mod tests {
             rms_20ms: vec![0.2; 600],
             quiet_regions: vec![(60, 110), (260, 310)],
             phrase_peaks: vec![],
+            cues: Vec::new(),
             duration_seconds: 12.0,
             streaming: false,
         };
@@ -3370,6 +3998,7 @@ mod tests {
                 rms_20ms: vec![0.2; 150],
                 quiet_regions: vec![],
                 phrase_peaks: vec![],
+                cues: Vec::new(),
                 duration_seconds: 3.0,
                 streaming: true,
             };
@@ -3421,6 +4050,7 @@ mod tests {
                 .collect(),
             quiet_regions: vec![],
             phrase_peaks: vec![60, 210, 360, 510, 660, 810, 940],
+            cues: Vec::new(),
             duration_seconds: 20.0,
             streaming: false,
         };
@@ -3595,6 +4225,7 @@ mod tests {
             rms_20ms: vec![0.2; 200],
             quiet_regions: vec![],
             phrase_peaks: vec![40],
+            cues: Vec::new(),
             duration_seconds: 4.0,
             streaming: true,
         };
@@ -3643,6 +4274,7 @@ mod tests {
             rms_20ms: vec![0.2; 110],
             quiet_regions: vec![],
             phrase_peaks: vec![40],
+            cues: Vec::new(),
             duration_seconds: 2.2,
             streaming: true,
         };
@@ -3699,6 +4331,7 @@ mod tests {
             rms_20ms: vec![0.2; frames],
             quiet_regions: vec![],
             phrase_peaks: (1..).map(|i| i * 110).take_while(|p| *p < frames).collect(),
+            cues: Vec::new(),
             duration_seconds: seconds,
             streaming: false,
         };
@@ -3755,6 +4388,7 @@ mod tests {
                 rms_20ms: vec![0.2; 100],
                 quiet_regions: vec![],
                 phrase_peaks: vec![40],
+                cues: Vec::new(),
                 duration_seconds: 2.0,
                 streaming: true,
             };
@@ -3877,6 +4511,7 @@ mod tests {
             rms_20ms: vec![0.2; 100],
             quiet_regions: vec![],
             phrase_peaks: vec![],
+            cues: Vec::new(),
             duration_seconds: 2.0,
             streaming: false,
         };
@@ -3924,6 +4559,7 @@ mod tests {
             rms_20ms: vec![0.2; 500],
             quiet_regions: vec![],
             phrase_peaks: vec![80, 240, 400],
+            cues: Vec::new(),
             duration_seconds: 10.0,
             streaming: false,
         };
@@ -3973,6 +4609,7 @@ mod tests {
             rms_20ms: vec![0.2; 500],
             quiet_regions: vec![],
             phrase_peaks: vec![80, 240, 400],
+            cues: Vec::new(),
             duration_seconds: 10.0,
             streaming: false,
         };
@@ -4057,6 +4694,7 @@ mod tests {
             rms_20ms: vec![0.2; 500],
             quiet_regions: vec![],
             phrase_peaks: vec![80, 240, 400],
+            cues: Vec::new(),
             duration_seconds: 10.0,
             streaming: false,
         };
@@ -4104,6 +4742,7 @@ mod tests {
             rms_20ms: vec![0.2; 1_000],
             quiet_regions: vec![],
             phrase_peaks: vec![100, 300, 500, 700, 900],
+            cues: Vec::new(),
             duration_seconds: 20.0,
             streaming: false,
         };
@@ -4368,6 +5007,7 @@ mod tests {
                 rms_20ms: vec![0.2; (duration / 0.020) as usize],
                 quiet_regions: vec![],
                 phrase_peaks: (60..(duration / 0.020) as usize).step_by(215).collect(),
+                cues: Vec::new(),
                 duration_seconds: duration,
                 streaming: false,
             };

@@ -2,10 +2,11 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
-from orion_voice.satellite import SatelliteSession
+from orion_voice.satellite import FRAME_BYTES, SatelliteSession
 from orion_voice.verifier import CHUNK, RATE, AcousticVerifier, sha256
 
 from test_satellite import Wake, frame
@@ -131,26 +132,79 @@ class SessionVerifierTests(unittest.TestCase):
             for message in session.accept_stereo(frame(2100)):
                 self.assertNotEqual(message.get('purpose'), 'wake_prefix')
 
-    def test_rejected_candidate_holds_endpoint_until_verdict(self):
+    def test_rejected_candidate_discards_held_endpoint_and_followup(self):
         session = self.session({})
         result = self.trigger(session)
         self.assertEqual(len(result), 1)
+        rejected = session.session_id
+        self.assertEqual(session.finish_utterance(), [])
+        self.assertTrue(session.pending_utterance)
         seen = []
         for _ in range(49):
             seen += session.accept_stereo(frame(3000))
         seen += session.accept_stereo(frame(0))
         kinds = [m['type'] for m in seen if isinstance(m, dict)]
-        self.assertEqual(kinds[0], 'wake.verified')
+        self.assertEqual(kinds, ['wake.verified'])
         self.assertFalse(seen[0]['accepted'])
-        self.assertIs(session.acoustic_verdict, False)
+        self.assertEqual(seen[0]['sessionId'], rejected)
+        self.assertEqual(session.phase, 'listening')
+        self.assertIsNone(session.session_id)
+        self.assertIsNone(self.verifier.candidate)
+        self.assertFalse(session.acoustic_pending)
+        self.assertEqual(session.pending_utterance, [])
+        self.assertEqual(session.utterance, b'')
+        self.assertEqual(session.followup, b'')
+        self.assertEqual(len(session.pre_roll), 3 * 32000)
+        self.assertEqual(session.pre_roll[-FRAME_BYTES:], bytes(FRAME_BYTES))
 
-    def test_unhealthy_verifier_falls_back_to_asr_prefix(self):
+    def test_rejected_candidate_then_real_wake_one_second_later_is_accepted(self):
+        session = self.session({})
+        session.early_wake = True
+        now = 0
+        session.clock = lambda: now
+        with patch.object(self.wake, 'reset', wraps=self.wake.reset) as reset, \
+             patch.object(self.wake, 'process', wraps=self.wake.process) as process:
+            rejected = self.trigger(session)[0]['sessionId']
+            noise = session.noise
+            for _ in range(50):
+                now += .02
+                verdict = session.accept_stereo(frame(0))
+            self.assertFalse(verdict[0]['accepted'])
+            self.assertEqual(session.phase, 'listening')
+            rejected_at = now
+            position = self.verifier.position
+            for _ in range(49):
+                now += .02
+                self.assertEqual(session.accept_stereo(frame(700)), [])
+            # Score the next 80 ms chunk; the scorer was never restarted.
+            self.verifier.scorer.scores[self.verifier.scorer.frames + 1] = .9
+            pre_roll = bytes(session.pre_roll)
+            self.wake.next = True
+            now += .02
+            accepted = session.accept_stereo(frame(2100))
+            self.assertAlmostEqual(now - rejected_at, 1)
+            self.assertEqual([m['type'] for m in accepted], ['wake.candidate', 'wake.verified'])
+            self.assertTrue(accepted[1]['accepted'])
+            self.assertNotEqual(session.session_id, rejected)
+            self.assertEqual(accepted[0]['sessionId'], accepted[1]['sessionId'])
+            self.assertTrue(accepted[0]['acousticVerification'])
+            self.assertFalse(session.prefix_pending)
+            self.assertEqual(session.utterance[:-FRAME_BYTES], pre_roll[FRAME_BYTES:])
+            self.assertEqual(self.verifier.position, position + RATE)
+            self.assertIs(session.noise, noise)
+            reset.assert_not_called()
+            self.assertEqual(process.call_count, 40 * 4 + 50 + 50)
+
+    def test_unhealthy_loaded_verifier_still_skips_asr_prefix(self):
         session = self.session({39: 0.8})
         self.verifier.healthy = False
         session.early_wake = True
         result = self.trigger(session)
-        self.assertFalse(result[0]['acousticVerification'])
-        self.assertTrue(session.prefix_pending)
+        self.assertTrue(result[0]['acousticVerification'])
+        self.assertTrue(result[1]['accepted'])
+        self.assertFalse(session.prefix_pending)
+        self.assertTrue(self.verifier.describe()['active'])
+        self.assertFalse(self.verifier.describe()['healthy'])
 
     def test_reset_cancels_pending_verification(self):
         session = self.session({})

@@ -25,6 +25,7 @@ const NEXT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 #[derive(Default)]
 struct GatewayState {
     uploads: Vec<(String, String, Vec<u8>)>,
+    cue_headers: Vec<Option<String>>,
     ended: bool,
     cancellations: Vec<u64>,
     allow_complete: bool,
@@ -329,6 +330,12 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
         if let Some(clock) = &mut state.playback_clock {
             clock.accept(body.len() - 44);
         }
+        state.cue_headers.push(
+            headers
+                .iter()
+                .find(|(k, _)| k == "x-orion-speech-cues")
+                .map(|(_, v)| v.clone()),
+        );
         state.uploads.push((path, request_id, body));
         if let Some(reason) = &state.reject_upload {
             status = "400 Bad Request";
@@ -348,6 +355,33 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
     drop(state);
     let body = value.to_string();
     socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+}
+
+#[tokio::test]
+async fn reaction_cues_follow_sentence_chunks_without_reaching_speech_or_history() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, reaction-cues-fixture").await;
+    until(&mut h.pi, "session.finish").await;
+    let response = until(&mut h.observer, "agent.response").await;
+    assert_eq!(response["text"], "Yes. Fine. No.");
+    assert_eq!(response["cues"], json!(["agree", "disagree", "agree"]));
+    let state = h.gateway.lock().await;
+    assert_eq!(state.uploads.len(), 6, "Trailing cue must upload no audio");
+    assert_eq!(
+        state.cue_headers,
+        [
+            Some("agree".into()),
+            None,
+            None,
+            None,
+            Some("disagree".into()),
+            None
+        ]
+    );
+    assert_eq!(state.uploads[0].0, "/api/v2/speech/stream");
+    assert_eq!(state.uploads[4].0, "/api/v2/speech/1/chunks/4");
+    drop(state);
+    h.stop().await;
 }
 
 #[tokio::test]
@@ -419,7 +453,7 @@ async fn acoustic_verdict_confirms_early_without_asr_prefix() {
 }
 
 #[tokio::test]
-async fn acoustic_rejection_still_lets_qwen_confirm_or_reject() {
+async fn acoustic_rejection_clears_session_before_next_wake() {
     let mut h = Harness::new().await;
     send(
         &mut h.pi,
@@ -431,11 +465,31 @@ async fn acoustic_rejection_still_lets_qwen_confirm_or_reject() {
         json!({"type":"wake.verified","sessionId":SID,"accepted":false,"source":"acoustic","score":0.1,"verifierMs":1000}),
     )
     .await;
-    until(&mut h.observer, "wake.verification_deferred").await;
-    h.utterance(SID, "wake_and_command", "Hey Orion, complete request")
+    let rejected = until(&mut h.observer, "wake.rejected").await;
+    assert_eq!(rejected["sessionId"], SID);
+    assert_eq!(rejected["source"], "acoustic");
+    assert_eq!(rejected["text"], "");
+    assert_eq!(until(&mut h.pi, "session.cancel").await["sessionId"], SID);
+    assert!(h.gateway.lock().await.uploads.is_empty());
+    // Reuse the same connection: a stale session would reject this candidate
+    // as overlapping, before either ASR or the agent could run.
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":NEXT,"name":"hey_orion","score":0.8,"acousticVerification":true}),
+    )
+    .await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.verified","sessionId":NEXT,"accepted":true,"source":"acoustic","score":0.9,"verifierMs":0}),
+    )
+    .await;
+    assert_eq!(
+        until(&mut h.observer, "wake.confirmed").await["sessionId"],
+        NEXT
+    );
+    h.utterance(NEXT, "wake_and_command", "Hey Orion, complete request")
         .await;
-    assert_eq!(until(&mut h.pi, "wake.confirmed").await["followup"], false);
-    until(&mut h.pi, "session.finish").await;
+    assert_eq!(until(&mut h.pi, "session.finish").await["sessionId"], NEXT);
     assert_eq!(
         until(&mut h.observer, "agent.response").await["text"],
         "Reply 1: complete request"

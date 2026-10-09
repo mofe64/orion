@@ -104,6 +104,42 @@ environments also depend on the managed Python interpreters used to create them.
 The [retention guidance](quickstart.md#files-the-installer-keeps) explains what a working
 release and rollback need.
 
+## Studio gateway
+
+Enter the lamp's gateway address in Studio and choose **Get code**. The lamp
+speaks a six-digit code twice; enter it and choose **Pair**. The gateway exchanges
+the code for its existing bearer token, which Studio verifies and saves through
+the [saved pairing](#saved-pairing) flow.
+
+A code expires after five minutes and permits five wrong attempts. The fifth
+wrong attempt discards it. A successful exchange also discards it, so each code
+works once. **Say it again** creates a replacement and resets the attempts;
+requests must be at least fifteen seconds apart.
+
+The code also appears in `journalctl -u orion-studio-gateway` on the Pi. If speech
+fails, the gateway logs the reason beside the code, Studio directs you to that
+log and the code remains valid. **Use a token
+instead** opens manual entry; print the gateway token on the Pi with:
+
+```bash
+cat ~/.config/orion/studio-token
+```
+
+Only `POST /api/v2/pair/code` and `POST /api/v2/pair/token` accept requests without
+a bearer token. Other gateway operations still require it. CORS continues to
+allow only the configured Studio origins.
+
+Pairing speech runs Piper in a separate Python process and sends a WAV through
+the gateway's speech upload path for runtime playback. The gateway reads
+`ORION_STUDIO_VOICE_PYTHON`, `ORION_PIPER_MODEL_DIR`, `ORION_STUDIO_TTS_MODEL` and
+`ORION_TTS_THREADS` from the [Pi voice profile](#pi-voice-profile) environment file.
+Speech code loads from the Python executable's enclosing speech folder
+(`<release>/speech` for managed installs) when it contains `orion_speech_worker`,
+with `<project_root>/speech` as the fallback.
+Without overrides, it uses `<project_root>/speech/.venv/bin/python` and
+`piper-alba-medium`. Synthesis has a thirty-second timeout; Studio allows forty
+seconds for a code request and five seconds for exchange.
+
 ## Saved pairing
 
 Desktop Studio saves the gateway address and token in the credential entry

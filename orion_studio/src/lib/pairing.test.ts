@@ -18,9 +18,92 @@ function deferred<T>() {
   return { promise, resolve };
 }
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("pairing and reconnect", () => {
+  it("exchanges a spoken code and saves the returned token through the existing store", async () => {
+    const { controller, store, probe } = setup(null);
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 2, token: target.token }) });
+    vi.stubGlobal("fetch", fetch);
+    expect(await controller.pairWithCode("orion.local", "012345")).toBe(true);
+    expect(fetch.mock.calls[0][0]).toBe(`${target.url}/api/v2/pair/token`);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ code: "012345" });
+    expect(probe.status).toHaveBeenCalledWith(target);
+    expect(probe.capabilities).toHaveBeenCalledWith(target);
+    expect(store.save).toHaveBeenCalledExactlyOnceWith(target);
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: target });
+  });
+  it.each([
+    [403, "That code is wrong. 4 tries remain.", "Check the code spoken by the lamp. That code is wrong. 4 tries remain."],
+    [410, "Ask the lamp for a new code.", "That pairing code expired or was already used. Ask the lamp for a new code."],
+    [429, "pairing_busy", "The lamp is busy. Wait 15 seconds, then ask for a new code."],
+  ])("shows a friendly pairing-code error for HTTP %s", async (httpStatus, message, expected) => {
+    const { controller, store } = setup(null);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: httpStatus, json: async () => ({ error: { message } }) }));
+    expect(await controller.pairWithCode(target.url, "111111")).toBe(false);
+    expect(controller.current()).toMatchObject({ phase: "error", error: expected });
+    expect(store.save).not.toHaveBeenCalled();
+  });
+  it("normalizes a code request and returns the speech fallback without saving a pairing", async () => {
+    const { controller, store } = setup(null);
+    await controller.start();
+    const result = { api_version: 2, expires_in_seconds: 300, spoken: false, message: "The pairing code is in the gateway log." };
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => result });
+    vi.stubGlobal("fetch", fetch);
+    expect(await controller.requestCode("orion.local")).toEqual(result);
+    expect(fetch.mock.calls[0][0]).toBe(`${target.url}/api/v2/pair/code`);
+    expect(store.save).not.toHaveBeenCalled();
+    expect(controller.current()).toMatchObject({ phase: "unpaired", error: null });
+  });
+  it("keeps the active lamp connected and polling while requesting another lamp's code", async () => {
+    const { controller, store, probe } = setup();
+    await controller.start();
+    const pending = deferred<{ api_version: number; expires_in_seconds: number }>();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => pending.promise }));
+    const requesting = controller.requestCode("other-orion.local");
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(probe.status).toHaveBeenCalledTimes(2);
+    expect(probe.status).toHaveBeenLastCalledWith(target);
+    const result = { api_version: 2, expires_in_seconds: 300 };
+    pending.resolve(result);
+    expect(await requesting).toEqual(result);
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(probe.status).toHaveBeenCalledTimes(3);
+    expect(probe.capabilities).toHaveBeenCalledTimes(1);
+    expect(store.save).not.toHaveBeenCalled();
+  });
+  it("reports a failed code request without taking the active lamp offline", async () => {
+    const { controller, store, probe } = setup();
+    await controller.start();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({ error: { message: "pairing_busy" } }) }));
+    expect(await controller.requestCode("other-orion.local")).toBeNull();
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities,
+      error: "The lamp is busy. Wait 15 seconds, then ask for a new code." });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(probe.status).toHaveBeenCalledTimes(2);
+    expect(probe.status).toHaveBeenLastCalledWith(target);
+    expect(controller.current().phase).toBe("connected");
+    expect(store.save).not.toHaveBeenCalled();
+  });
+  it("shows the rate-limit message when requesting another code too soon", async () => {
+    const { controller } = setup(null);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({ error: { message: "pairing_busy" } }) }));
+    expect(await controller.requestCode(target.url)).toBeNull();
+    expect(controller.current().error).toBe("The lamp is busy. Wait 15 seconds, then ask for a new code.");
+  });
+  it("ignores a late token exchange after forgetting the lamp", async () => {
+    const { controller, store } = setup(null);
+    const pending = deferred<{ api_version: number; token: string }>();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => pending.promise }));
+    const pairing = controller.pairWithCode(target.url, "012345");
+    await controller.forget();
+    pending.resolve({ api_version: 2, token: target.token });
+    expect(await pairing).toBe(false);
+    expect(store.save).not.toHaveBeenCalled();
+    expect(controller.current().phase).toBe("unpaired");
+  });
   it("keeps browser development connections explicitly temporary", async () => {
     const store = { persistent: false, load: async () => null, save: async () => {}, forget: async () => {} };
     const controller = new PairingController(store, { status: async () => status, capabilities: async () => capabilities });
@@ -181,4 +264,3 @@ describe("pairing and reconnect", () => {
     controller.dispose();
   });
 });
-

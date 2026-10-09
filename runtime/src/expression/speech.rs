@@ -16,6 +16,61 @@ const MAX_STREAM_SAMPLES: u64 = 30 * 60 * 24_000;
 const STREAM_LIMIT_ERROR: &str =
     "Speech stream exceeds the 30-minute audio sanity limit; playback cannot complete this answer.";
 
+/// Canonical wire vocabulary; aliases are normalized by the agent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechCue {
+    Agree,
+    Disagree,
+}
+impl SpeechCue {
+    pub const ALL: [Self; 2] = [Self::Agree, Self::Disagree];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Agree => "agree",
+            Self::Disagree => "disagree",
+        }
+    }
+    pub fn motion(self) -> &'static str {
+        match self {
+            Self::Agree => "acknowledge_nod",
+            Self::Disagree => "disagree_soft",
+        }
+    }
+}
+impl std::str::FromStr for SpeechCue {
+    type Err = Error;
+    fn from_str(value: &str) -> Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|cue| cue.as_str() == value)
+            .ok_or_else(|| Error::InvalidArgument(format!("Unknown speech cue: {value}")))
+    }
+}
+fn record_cues(
+    analysis: &mut SpeechAnalysis,
+    samples: u64,
+    cues: Vec<SpeechCue>,
+    run: u64,
+    sequence: usize,
+) {
+    let frame = (samples / 480) as usize;
+    for cue in cues {
+        if analysis.cues.len() >= 32 {
+            eprintln!(
+                "{}",
+                serde_json::json!({"event":"speech.cue_dropped", "run_id":run, "sequence":sequence, "cue":cue.as_str(), "reason":"limit"})
+            );
+            continue;
+        }
+        analysis.cues.push((frame, cue));
+        eprintln!(
+            "{}",
+            serde_json::json!({"event":"speech.cue_received", "run_id":run, "sequence":sequence, "cue":cue.as_str(), "frame":frame})
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpeechPhase {
@@ -50,6 +105,7 @@ pub struct SpeechAnalysis {
     pub rms_20ms: Vec<f64>,
     pub quiet_regions: Vec<(usize, usize)>,
     pub phrase_peaks: Vec<usize>,
+    pub cues: Vec<(usize, SpeechCue)>,
     pub duration_seconds: f64,
     pub streaming: bool,
 }
@@ -144,7 +200,7 @@ impl SpeechCoordinator {
         Ok(status)
     }
 
-    pub fn start_stream(&mut self, identifier: &str) -> Result<SpeechStatus> {
+    pub fn start_stream(&mut self, identifier: &str, cues: Vec<SpeechCue>) -> Result<SpeechStatus> {
         let status = self.start_spooled(identifier)?;
         let active = self.active.as_mut().unwrap();
         let pcm = decode_pcm16_mono_wav(&active.wav_path)?;
@@ -156,6 +212,13 @@ impl SpeechCoordinator {
         }
         active.analysis = empty_analysis();
         let mut analyzer = EnergyAnalyzer::default();
+        record_cues(
+            &mut active.analysis,
+            analyzer.samples,
+            cues,
+            status.run_id,
+            0,
+        );
         analyzer.append(&pcm, &mut active.analysis);
         active.analysis.streaming = true;
         active.stream = Some(StreamSpeech {
@@ -169,7 +232,13 @@ impl SpeechCoordinator {
         Ok(status)
     }
 
-    pub fn append_stream(&mut self, run_id: u64, sequence: usize, identifier: &str) -> Result<()> {
+    pub fn append_stream(
+        &mut self,
+        run_id: u64,
+        sequence: usize,
+        identifier: &str,
+        cues: Vec<SpeechCue>,
+    ) -> Result<()> {
         if identifier.is_empty()
             || identifier.len() > 80
             || !identifier
@@ -203,6 +272,13 @@ impl SpeechCoordinator {
         if stream.analyzer.samples + (pcm.len() / 2) as u64 > MAX_STREAM_SAMPLES {
             return Err(Error::InvalidArgument(STREAM_LIMIT_ERROR.into()));
         }
+        record_cues(
+            &mut active.analysis,
+            stream.analyzer.samples,
+            cues,
+            run_id,
+            sequence,
+        );
         stream.analyzer.append(&pcm, &mut active.analysis);
         stream.pending.extend(pcm.chunks(24_000).map(Vec::from));
         stream.next_sequence += 1;
@@ -526,6 +602,7 @@ fn empty_analysis() -> SpeechAnalysis {
         rms_20ms: Vec::new(),
         quiet_regions: Vec::new(),
         phrase_peaks: Vec::new(),
+        cues: Vec::new(),
         duration_seconds: 0.0,
         streaming: false,
     }
@@ -619,12 +696,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cue_vocabulary_and_chunk_frames_are_canonical_and_bounded() {
+        assert_eq!(SpeechCue::ALL.map(SpeechCue::as_str), ["agree", "disagree"]);
+        assert!("nod".parse::<SpeechCue>().is_err());
+        let directory = tempfile::tempdir().unwrap();
+        write_energy_test_wav(&directory.path().join("first.wav"));
+        write_energy_test_wav(&directory.path().join("next.wav"));
+        let mut speech = SpeechCoordinator::new(directory.path());
+        let run = speech
+            .start_stream("first", vec![SpeechCue::Agree])
+            .unwrap()
+            .run_id;
+        assert_eq!(
+            speech.active_analysis().unwrap().cues,
+            [(0, SpeechCue::Agree)]
+        );
+        assert!(
+            speech
+                .append_stream(run, 2, "next", vec![SpeechCue::Disagree])
+                .is_err()
+        );
+        assert_eq!(speech.active_analysis().unwrap().cues.len(), 1);
+        speech
+            .append_stream(run, 1, "next", vec![SpeechCue::Disagree])
+            .unwrap();
+        assert_eq!(
+            speech.active_analysis().unwrap().cues,
+            [(0, SpeechCue::Agree), (50, SpeechCue::Disagree)]
+        );
+        let mut analysis = empty_analysis();
+        record_cues(&mut analysis, 479, vec![SpeechCue::Agree], run, 0);
+        record_cues(&mut analysis, 480, vec![SpeechCue::Disagree; 40], run, 1);
+        assert_eq!(analysis.cues.len(), 32);
+        assert_eq!(analysis.cues[0].0, 0);
+        assert_eq!(analysis.cues[31].0, 1);
+    }
+    #[test]
     fn a_stream_accepts_30_minutes_and_rejects_more_with_a_clear_reason() {
         let directory = tempfile::tempdir().unwrap();
         write_energy_test_wav(&directory.path().join("first.wav"));
         write_energy_test_wav(&directory.path().join("next.wav"));
         let mut speech = SpeechCoordinator::new(directory.path());
-        let run = speech.start_stream("first").unwrap().run_id;
+        let run = speech.start_stream("first", Vec::new()).unwrap().run_id;
         speech
             .active
             .as_mut()
@@ -634,11 +747,11 @@ mod tests {
             .unwrap()
             .analyzer
             .samples = MAX_STREAM_SAMPLES - 24_000;
-        speech.append_stream(run, 1, "next").unwrap();
+        speech.append_stream(run, 1, "next", Vec::new()).unwrap();
         assert_eq!(speech.active_analysis().unwrap().duration_seconds, 1800.);
         write_energy_test_wav(&directory.path().join("extra.wav"));
         let error = speech
-            .append_stream(run, 2, "extra")
+            .append_stream(run, 2, "extra", Vec::new())
             .unwrap_err()
             .to_string();
         assert!(error.contains(STREAM_LIMIT_ERROR));
@@ -664,9 +777,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         write_energy_test_wav(&directory.path().join("first.wav"));
         let mut speech = SpeechCoordinator::new(directory.path());
-        let run = speech.start_stream("first").unwrap().run_id;
+        let run = speech.start_stream("first", Vec::new()).unwrap().run_id;
         write_energy_test_wav(&directory.path().join("second.wav"));
-        speech.append_stream(run, 1, "second").unwrap();
+        speech.append_stream(run, 1, "second", Vec::new()).unwrap();
         let mut audio = RecordingAudioDevice::blocking();
         speech.tick(&mut audio);
         let active = speech.active.as_ref().unwrap();
@@ -682,7 +795,7 @@ mod tests {
         write_energy_test_wav(&directory.path().join("second.wav"));
         let mut speech = SpeechCoordinator::new(directory.path());
         let mut audio = RecordingAudioDevice::blocking();
-        let run = speech.start_stream("first").unwrap().run_id;
+        let run = speech.start_stream("first", Vec::new()).unwrap().run_id;
         speech.tick(&mut audio);
         assert!(
             audio.commands().is_empty(),
@@ -692,8 +805,8 @@ mod tests {
             speech.active_energy().is_none(),
             "buffering must not drive speaking light"
         );
-        assert!(speech.append_stream(run, 2, "second").is_err());
-        speech.append_stream(run, 1, "second").unwrap();
+        assert!(speech.append_stream(run, 2, "second", Vec::new()).is_err());
+        speech.append_stream(run, 1, "second", Vec::new()).unwrap();
         speech.tick(&mut audio);
         assert_eq!(speech.active_status().unwrap().state, SpeechPhase::Playing);
         assert_eq!(audio.commands().len(), 1);
@@ -717,7 +830,7 @@ mod tests {
         let mut speech = SpeechCoordinator::new(directory.path());
         let mut audio = RecordingAudioDevice::blocking();
         audio.play("voice_processing").unwrap();
-        let run = speech.start_stream("first").unwrap().run_id;
+        let run = speech.start_stream("first", Vec::new()).unwrap().run_id;
         speech.tick(&mut audio);
         assert_eq!(
             audio.commands().len(),
@@ -742,8 +855,8 @@ mod tests {
         write_energy_test_wav(&directory.path().join("second.wav"));
         let mut speech = SpeechCoordinator::new(directory.path());
         let mut audio = RecordingAudioDevice::blocking();
-        let run = speech.start_stream("first").unwrap().run_id;
-        speech.append_stream(run, 1, "second").unwrap();
+        let run = speech.start_stream("first", Vec::new()).unwrap().run_id;
+        speech.append_stream(run, 1, "second", Vec::new()).unwrap();
         speech.tick(&mut audio);
         speech.active.as_mut().unwrap().playing_at =
             Some(Instant::now() - Duration::from_millis(2200));
@@ -761,7 +874,7 @@ mod tests {
         assert!(!audio.is_playing());
 
         write_energy_test_wav(&directory.path().join("third.wav"));
-        speech.start_stream("third").unwrap();
+        speech.start_stream("third", Vec::new()).unwrap();
         speech
             .active
             .as_mut()
@@ -784,10 +897,10 @@ mod tests {
         write_energy_test_wav(&directory.path().join("late.wav"));
         let mut speech = SpeechCoordinator::new(directory.path());
         let mut audio = RecordingAudioDevice::blocking();
-        let run = speech.start_stream("first").unwrap().run_id;
+        let run = speech.start_stream("first", Vec::new()).unwrap().run_id;
         speech.cancel(&mut audio).unwrap();
-        assert!(speech.append_stream(run, 1, "late").is_err());
-        let next = speech.start_stream("late").unwrap().run_id;
+        assert!(speech.append_stream(run, 1, "late", Vec::new()).is_err());
+        let next = speech.start_stream("late", Vec::new()).unwrap().run_id;
         speech.end_stream(next, 1).unwrap();
         speech.tick(&mut audio);
         assert_eq!(speech.active_status().unwrap().state, SpeechPhase::Playing);

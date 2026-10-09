@@ -34,9 +34,11 @@ speech-model setup. Closing it leaves Orion's services running.
 
 Install the [Pi services](../docs/quickstart.md#prepare-a-new-pi), then
 select **Pair Orion** in Studio. Enter the gateway address, normally
-`http://orion.local:7447`, and the token from `~/.config/orion/studio-token` on the
-Pi. **Pair and remember Orion** verifies the connection and saves the desktop
-credential.
+`http://orion.local:7447`, choose **Get code**, enter the code spoken by the lamp
+and choose **Pair**. Studio verifies the connection and saves the desktop
+credential. **Use a token instead** opens manual token entry. See
+[Studio gateway](../docs/configuration.md#studio-gateway) for code limits and the
+journal fallback.
 
 Studio reconnects after startup or network loss. **Disconnect** pauses retries
 for that session; **Forget Orion on this computer** removes the saved pairing.

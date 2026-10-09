@@ -815,10 +815,17 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     "commanded_apex_seconds": apex, "apex_minus_peak_seconds": apex - peak}))
                 })
                 .collect();
+            let reactions: Vec<_> = definition.keyframes.iter().enumerate()
+                .filter_map(|(index,keyframe)| {
+                    let marker = keyframe.marker.as_deref().filter(|m| m.starts_with("reaction_"))?;
+                    let cue = crate::expression::character::speech_cue(marker);
+                    let apex = sequence.keyframe_arrival_time(index)?;
+                    Some(json!({"marker":marker, "cue_seconds":cue, "commanded_arrival_seconds":apex}))
+                }).collect();
             eprintln!(
                 "{}",
                 json!({"event": "speech.motion_compiled", "motion_run_id": replacing.unwrap_or(self.next_run_id),
-                "trajectory_start_runtime_seconds": now_seconds, "apices": apices})
+                "trajectory_start_runtime_seconds": now_seconds, "apices": apices, "reactions":reactions})
             );
         }
         self.motion_sequence = Some(sequence);

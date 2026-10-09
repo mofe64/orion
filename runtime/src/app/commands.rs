@@ -8,6 +8,32 @@ use crate::{
     parse_scene_document,
 };
 
+fn speech_cue_argument(command: &str) -> (&str, Option<&str>) {
+    if command.starts_with("speech stream ") || command.starts_with("speech append ") {
+        let command = command.trim_end();
+        if let Some((prefix, value)) = command.rsplit_once(char::is_whitespace)
+            && let Some(value) = value.strip_prefix("cues=")
+        {
+            return (prefix.trim_end(), Some(value));
+        }
+    }
+    (command, None)
+}
+fn parse_speech_cues(
+    value: Option<&str>,
+) -> crate::Result<Vec<crate::expression::speech::SpeechCue>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let names: Vec<_> = value.split(',').collect();
+    if names.len() > 4 {
+        return Err(crate::Error::InvalidArgument(
+            "At most four speech cues per chunk.".into(),
+        ));
+    }
+    names.into_iter().map(str::parse).collect()
+}
+
 #[derive(Clone)]
 pub(super) struct AssetReloadContext {
     pub(super) poses_file: PathBuf,
@@ -120,6 +146,8 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
     asset_reload: Option<&AssetReloadContext>,
     mut character: Option<&mut CharacterCoordinator>,
 ) -> crate::Result<String> {
+    let (command, cue_value) = speech_cue_argument(command);
+    let cues = parse_speech_cues(cue_value)?;
     if command == "character status" {
         let status = character.as_deref().map(CharacterCoordinator::status);
         return Ok(serde_json::json!({"ok": true, "character": status}).to_string());
@@ -219,7 +247,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
         let sequence = fields[1]
             .parse::<usize>()
             .map_err(|_| crate::Error::InvalidArgument("Invalid speech sequence.".into()))?;
-        speech.append_stream(run, sequence, fields[2])?;
+        speech.append_stream(run, sequence, fields[2], cues)?;
         return Ok(serde_json::json!({"ok":true,"run_id":run}).to_string());
     }
     if let Some(arguments) = command.strip_prefix("speech end ") {
@@ -246,7 +274,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
             return Ok(serde_json::json!({"ok": false, "command": "speech_file", "error": "scene already active"}).to_string());
         }
         let status = if command.starts_with("speech stream ") {
-            speech.start_stream(identifier.trim())?
+            speech.start_stream(identifier.trim(), cues)?
         } else {
             speech.start_spooled(identifier.trim())?
         };
@@ -655,7 +683,8 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
         };
     }
-    let fields: Vec<_> = command.split_whitespace().collect();
+    let (speech_command, cue_value) = speech_cue_argument(command);
+    let fields: Vec<_> = speech_command.split_whitespace().collect();
     let scoped_speech =
         fields.len() == 4 && fields[0] == "speech" && matches!(fields[1], "stream" | "file");
     if scoped_speech && !feedback.owns(fields[3]) {
@@ -674,11 +703,14 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     {
         return serde_json::json!({"ok": false, "error": "Start character mode or release movement before explicit motion."}).to_string();
     }
-    let normalized = if scoped_speech {
+    let mut normalized = if scoped_speech {
         fields[..3].join(" ")
     } else {
-        command.to_owned()
+        speech_command.to_owned()
     };
+    if let Some(value) = cue_value {
+        normalized.push_str(&format!(" cues={value}"));
+    }
     let response = handle_daemon_command_with_character(
         &normalized,
         now_seconds,

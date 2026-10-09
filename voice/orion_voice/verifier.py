@@ -122,7 +122,7 @@ class AcousticVerifier:
     def describe(self) -> dict:
         return {"provider": self.provider, "model": self.model_name, "threshold": self.threshold,
                 "lookbackSeconds": self.lookback / RATE, "deadlineSeconds": self.deadline / RATE,
-                "active": self.healthy}
+                "active": True, "healthy": self.healthy}
 
     @property
     def position(self) -> int:
@@ -152,7 +152,8 @@ class AcousticVerifier:
 
     def _check_health(self) -> None:
         # Real time allows 80 ms per chunk. Sustained use of more than half of it
-        # would starve capture, so fall back to the unverified path for this run.
+        # can starve capture. Disable playback barge-in for this run; ordinary
+        # wake candidates still require this loaded verifier's verdict.
         if self.healthy and len(self.chunk_seconds) == self.chunk_seconds.maxlen:
             slow = sum(1 for seconds in self.chunk_seconds if seconds > 0.040)
             if slow > len(self.chunk_seconds) // 10:

@@ -23,6 +23,7 @@ for raw in reader:
         emit(dict(type='transcript',id=rid,text=text,language='English'))
     else:
         text = request['text']
+        assert '[agree]' not in text and '[disagree]' not in text, 'Reaction tags must never reach TTS'
         assert len(text) <= 160, 'TTS inputs must be bounded before inference'
         if 'preplay-tts' in text:
             time.sleep(6)

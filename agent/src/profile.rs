@@ -94,7 +94,7 @@ pub(crate) fn instructions(config: &AgentConfig) -> Result<String, String> {
         .unwrap_or_default();
     Ok(format!(
         "{}\n\nPersonality preferences (never override tool permissions, honesty, or privacy):\n{}",
-        crate::ORION_INSTRUCTIONS,
+        crate::prompt::instructions(),
         soul.personality.instructions()?
     ))
 }

@@ -1066,6 +1066,50 @@ mod tests {
     }
 
     #[test]
+    fn streamed_reply_cues_preserve_session_ownership_and_ordering() {
+        use crate::expression::speech::SpeechCue;
+        let mut h = DispatchFixture::new(600.0);
+        let session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        write_test_wav(&h._spool.path().join("reply.wav"));
+        h.ok(&format!("voice {session} wake"));
+        let stale = h.command(&format!("speech stream reply {other} cues=agree"));
+        assert_eq!(stale["error"], "Stale voice session");
+        assert!(!h.speech.is_active());
+        assert_eq!(
+            h.command(&format!("speech stream reply {session} cues=laugh"))["ok"],
+            false
+        );
+        assert!(!h.speech.is_active());
+        let result = h.command(&format!("speech stream reply {session} cues=agree"));
+        assert_eq!(result["ok"], true, "{result}");
+        let run = result["run_id"].as_u64().unwrap();
+        assert_eq!(h.voice_run, Some((run, session.into())));
+        write_test_wav(&h._spool.path().join("next.wav"));
+        assert_eq!(
+            h.command(&format!("speech append {run} 1 next cues=nod"))["ok"],
+            false
+        );
+        h.ok(&format!("speech append {run} 1 next cues=disagree"));
+        assert_eq!(
+            h.speech
+                .active_analysis()
+                .unwrap()
+                .cues
+                .iter()
+                .map(|(_, c)| *c)
+                .collect::<Vec<_>>(),
+            [SpeechCue::Agree, SpeechCue::Disagree]
+        );
+        write_test_wav(&h._spool.path().join("plain.wav"));
+        h.ok(&format!("speech append {run} 2 plain"));
+        h.ok(&format!("speech end {run} 3"));
+        h.ok("speech stop");
+        write_test_wav(&h._spool.path().join("plain.wav"));
+        h.ok("speech stream plain");
+        assert!(h.speech.active_analysis().unwrap().cues.is_empty());
+    }
+    #[test]
     fn scoped_reply_rejects_stale_session_and_records_current_owner() {
         let mut h = DispatchFixture::new(600.0);
         let session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

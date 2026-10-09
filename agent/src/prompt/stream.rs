@@ -52,6 +52,21 @@ impl Sentences {
 mod tests {
     use super::*;
     #[test]
+    fn holds_split_reaction_tags_and_preserves_final_prefix() {
+        let mut stream = Sentences::default();
+        assert_eq!(stream.push("Yes. [agr").unwrap().as_deref(), Some("Yes."));
+        assert_eq!(
+            stream.push("ee] Sure. ").unwrap().as_deref(),
+            Some("[agree] Sure.")
+        );
+        assert!(
+            spoken_response("Yes. [agree] Sure. [disagree] No.")
+                .unwrap()
+                .strip_prefix(&stream.emitted)
+                .is_some()
+        );
+    }
+    #[test]
     fn streams_beyond_800_characters_and_keeps_the_runaway_guard() {
         let mut stream = Sentences::default();
         let prefix = format!("{}.", "a".repeat(799));

@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { GatewayError, getCapabilities, getStatus, type GatewayConnection } from "./gateway";
+import { GatewayError, exchangePairingCode, getCapabilities, getStatus, requestPairingCode, type GatewayConnection } from "./gateway";
 import type { GatewayCapabilities, GatewayStatus } from "../types";
 
 /** A lamp saved on this computer; tokens stay in the credential store. */
@@ -128,6 +128,37 @@ export class PairingController {
         : String(error instanceof Error ? error.message : error));
       return false;
     }
+  }
+  async requestCode(address: string) {
+    try {
+      const result = await requestPairingCode(normalizeGatewayUrl(address));
+      this.publish({ error: null });
+      return result;
+    } catch (error) {
+      this.publish({ error: this.pairingCodeError(error) });
+      return null;
+    }
+  }
+  async pairWithCode(address: string, code: string) {
+    const generation = this.reset();
+    this.offline("connecting");
+    try {
+      const result = await exchangePairingCode(normalizeGatewayUrl(address), code);
+      if (generation !== this.generation) return false;
+      // Reuse token verification and serialized credential writes for both pairing forms.
+      return this.pair(address, result.token);
+    } catch (error) {
+      if (generation === this.generation) this.offline("error", this.pairingCodeError(error));
+      return false;
+    }
+  }
+  private pairingCodeError(error: unknown): string {
+    if (error instanceof GatewayError) {
+      if (error.status === 403) return `Check the code spoken by the lamp. ${error.message}`;
+      if (error.status === 410) return "That pairing code expired or was already used. Ask the lamp for a new code.";
+      if (error.status === 429) return "The lamp is busy. Wait 15 seconds, then ask for a new code.";
+    }
+    return String(error instanceof Error ? error.message : error);
   }
   async changeAddress(address: string) {
     if (!this.target) {
