@@ -15,7 +15,7 @@ pub fn instructions() -> String {
         .collect::<Vec<_>>()
         .join(", ");
     ORION_INSTRUCTIONS.replace("Return only the final words", &format!(
-        "You may add a reaction tag in square brackets just before the words it goes with: {tags}. Use one only when the reaction is genuine, at most one per sentence, and never more than three in a reply. Tags are not spoken. Never write any other square-bracket text.\nReturn only the final words"
+        "Orion's body reacts to tags in your reply. Available tags: {tags}. When a sentence agrees, confirms or answers yes, start it with [agree]. When a sentence corrects, disagrees or answers no, start it with [disagree]. Use at most one tag per sentence and three per reply. Tags are not spoken and are the only exception to returning only spoken words. Never write any other square-bracket text.\nExamples: \"[agree] Yes, the sky is blue on a clear day.\" \"[disagree] No, two plus two is four.\"\nReturn only the final words"
     ))
 }
 
@@ -29,11 +29,30 @@ mod tests {
     #[test]
     fn instructions_use_the_enabled_vocabulary() {
         let prompt = super::instructions();
-        assert!(prompt.contains("[agree], [disagree]"));
+        let tags = crate::ReactionCue::enabled()
+            .iter()
+            .map(|cue| format!("[{}]", cue.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(prompt.contains(&format!("Available tags: {tags}.")));
         assert!(!prompt.contains("[laugh]"));
         assert!(
-            prompt.find("Tags are not spoken.").unwrap()
-                < prompt.find("Return only the final words").unwrap()
+            prompt.contains(
+                "When a sentence agrees, confirms or answers yes, start it with [agree]."
+            )
         );
+        assert!(prompt.contains(
+            "When a sentence corrects, disagrees or answers no, start it with [disagree]."
+        ));
+        assert!(prompt.contains("Use at most one tag per sentence and three per reply."));
+        assert!(prompt.contains(
+            "Tags are not spoken and are the only exception to returning only spoken words."
+        ));
+        let examples = concat!(
+            "Examples: \"[agree] Yes, the sky is blue on a clear day.\" ",
+            "\"[disagree] No, two plus two is four.\""
+        );
+        assert!(prompt.contains(examples));
+        assert!(prompt.contains(&format!("{examples}\nReturn only the final words")));
     }
 }
