@@ -17,7 +17,7 @@ import time
 import urllib.request
 import uuid
 
-from pi_service_config import SERVICES, STOP_ORDER, read_env, render_plan
+from pi_service_config import ACTIVE_WAKE_THRESHOLD, SERVICES, STOP_ORDER, read_env, render_plan
 from pi_catalog import catalog_plan
 from pi_hardware import profile, release_hardware, calibration_path
 
@@ -302,7 +302,7 @@ class System:
                 listener_args = Path(f'/proc/{listener_pid}/cmdline').read_bytes().decode().split('\0')
                 expected_wake_model = Path(option(listener_args, '--wake-model',
                     str(release / 'voice/models/wake/hey_orion_reference.rpw'))).name
-                expected_wake_threshold = float(option(listener_args, '--threshold', '0.35'))
+                expected_wake_threshold = float(option(listener_args, '--threshold', ACTIVE_WAKE_THRESHOLD))
                 expected_verifier = '--no-verifier' not in listener_args
                 if not (status.get('coordinator_running') and not status.get('error') and
                         status.get('project_root') == str(release) and status.get('revision') == metadata['revision'] and

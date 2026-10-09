@@ -103,6 +103,10 @@ class MountingTest(unittest.TestCase):
 
 
 class CliTest(unittest.TestCase):
+    def test_analyze_defaults_to_service_wake_threshold(self):
+        args = parser().parse_args(["analyze", "trial"])
+        self.assertEqual(args.threshold, 0.8)
+
     def test_record_arguments(self):
         args = parser().parse_args(["record", "--label", "front", "--seconds", "5", "--expected-azimuth", "0"])
         self.assertEqual((args.channels, args.device), (2, "plughw:CARD=Array,DEV=0"))

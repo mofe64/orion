@@ -43,6 +43,14 @@ class Fixture(unittest.TestCase):
 
 
 class ConfigurationTests(Fixture):
+    def test_new_listener_uses_active_threshold_on_both_hardware_versions(self):
+        for hardware in ('v1', 'v2'):
+            with self.subTest(hardware=hardware):
+                (self.release / 'release.json').write_text(json.dumps({'revision': 'new', 'hardware': hardware}))
+                result = self.plan()[self.units / 'orion-listener.service']
+                self.assertIn('--hardware ' + hardware, result)
+                self.assertIn('--threshold 0.8', result)
+
     def test_preserves_custom_environment_and_only_changes_release_fields(self):
         self.env.write_text('# operator tuning\nORION_ASR_THREADS="2"\nORION_TTS_THREADS=4\n'
             'ORION_ASR_CONTEXT="Hey Orion and Ada"\nORION_ASR_MODEL_DIR="/custom/qwen"\n'
@@ -88,15 +96,15 @@ class ConfigurationTests(Fixture):
         result = self.plan()[path]
         self.assertIn('--threshold 0.47', result)
         self.assertIn('--local-processor', result)
-        self.assertNotIn('--threshold 0.35', result)
+        self.assertNotIn('--threshold 0.8', result)
         self.assertIn('hey_orion_reference.rpw', result)
 
-    def test_managed_listener_keeps_reference_profile(self):
+    def test_legacy_managed_listener_migrates_to_active_reference_profile(self):
         self.installed_units()
         path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --local-processor --threshold 0.35 --host 0.0.0.0\n')
         result = self.plan()[path]
-        self.assertIn('--threshold 0.35', result)
+        self.assertIn('--threshold 0.8', result)
         self.assertIn(str(self.release / 'voice/models/wake/hey_orion_reference.rpw'), result)
         self.assertNotIn('--no-verifier', result)
 
@@ -126,6 +134,44 @@ class ConfigurationTests(Fixture):
         path = self.units / 'oriond.service.d/custom.conf'; path.parent.mkdir()
         path.symlink_to(self.env)
         with self.assertRaises(ValueError): self.plan()
+
+
+class ListenerStartTests(unittest.TestCase):
+    release = Path('/new/release')
+
+    def start(self, threshold, model=None):
+        start = f'/old/release/voice/.venv/bin/orion-listener --threshold {threshold}'
+        if model:
+            start += f' --wake-model /old/release/voice/models/wake/{model}'
+        return start
+
+    def test_legacy_managed_threshold_is_rewritten(self):
+        for model in (None, pi_service_config.REFERENCE_WAKE_MODEL):
+            with self.subTest(model=model):
+                result = pi_service_config.listener_start(self.start('0.35', model), self.release)
+                self.assertIn('--threshold 0.8', result)
+                self.assertNotIn('--threshold 0.35', result)
+                self.assertIn(f'--wake-model {self.release}/voice/models/wake/{pi_service_config.ACTIVE_WAKE_MODEL}', result)
+
+    def test_active_managed_threshold_still_receives_wake_model_updates(self):
+        for model in (None, pi_service_config.REFERENCE_WAKE_MODEL):
+            with self.subTest(model=model), \
+                 patch.object(pi_service_config, 'ACTIVE_WAKE_MODEL', 'updated.rpw'):
+                result = pi_service_config.listener_start(self.start('0.8', model), self.release)
+                self.assertIn('--threshold 0.8', result)
+                self.assertIn(f'--wake-model {self.release}/voice/models/wake/updated.rpw', result)
+
+    def test_custom_threshold_is_preserved(self):
+        for model in (None, pi_service_config.REFERENCE_WAKE_MODEL):
+            with self.subTest(model=model), \
+                 patch.object(pi_service_config, 'ACTIVE_WAKE_MODEL', 'updated.rpw'):
+                start = self.start('0.6', model)
+                result = pi_service_config.listener_start(start, self.release)
+                self.assertIn('--threshold 0.6', result)
+                self.assertNotIn('--threshold 0.8', result)
+                self.assertNotIn('updated.rpw', result)
+                if model:
+                    self.assertIn(start, result)
 
 
 class RestRuntimeTests(unittest.TestCase):
@@ -715,15 +761,18 @@ class TransactionTests(Fixture):
 
 class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
-        for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
+        cases = [(fault, None) for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
                       'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
-                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting', 'lights-on', 'torque-on'):
-            with self.subTest(fault=fault):
+                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting', 'lights-on', 'torque-on')]
+        cases += [(None, '0.8'), (None, '0.6'), ('wrong-wake-threshold', '0.6')]
+        for fault, listener_threshold in cases:
+            with self.subTest(fault=fault, listener_threshold=listener_threshold):
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
                 event = dict(type='ready', asr=dict(provider='qwen3-asr'),
                              tts=dict(provider='piper-tts', model='piper-alba-medium'),
                              agent=dict(provider='codex', model='gpt-6-luna', effort='medium'),
-                             wake=dict(provider='rustpotter', model='hey_orion_reference.rpw', threshold=0.35,
+                             wake=dict(provider='rustpotter', model='hey_orion_reference.rpw',
+                                       threshold=float(listener_threshold or '0.8'),
                                        verifier=dict(provider='openwakeword', active=True)))
                 revision, gateway_pid = 'new', 42
                 if fault == 'old-service': status['project_root'] = '/old/release'
@@ -735,11 +784,15 @@ class ReadinessTests(Fixture):
                 if fault == 'wrong-tts-model': event['tts']['model'] = 'pocket-int8'
                 if fault == 'wrong-agent-model': event['agent']['model'] = 'gpt-5.6-sol'
                 if fault == 'wrong-wake-model': event['wake']['model'] = 'hey_orion_trained_080.rpw'
-                if fault == 'wrong-wake-threshold': event['wake']['threshold'] = 0.80
+                if fault == 'wrong-wake-threshold': event['wake']['threshold'] = 0.35
                 if fault == 'no-verifier': event['wake']['verifier'] = None
                 system = installer.System()
                 self.write(self.home / '.config/orion/custom-token', 'fixture-token')
                 cmdline = '\0'.join(['python3', 'gateway.py', '--port', '7555', '--socket', '/tmp/custom.sock', '--token-file', str(self.home / '.config/orion/custom-token'), '']).encode()
+                listener_args = ['orion-listener']
+                if listener_threshold is not None:
+                    listener_args += ['--threshold', listener_threshold]
+                listener_cmdline = '\0'.join(listener_args + ['']).encode()
                 def run(*args, **kwargs):
                     if args[0] == 'systemctl': return subprocess.CompletedProcess(args, 0, '100\n')
                     self.assertIn('/tmp/custom.sock', args)
@@ -758,7 +811,7 @@ class ReadinessTests(Fixture):
                 with patch.object(system, 'state', return_value=dict(active=True)), \
                      patch.object(system, 'run', side_effect=run), \
                      patch.object(system, 'daemon_command', side_effect=command), \
-                     patch.object(installer.Path, 'read_bytes', return_value=cmdline), \
+                     patch.object(installer.Path, 'read_bytes', side_effect=[cmdline, listener_cmdline]), \
                      patch.object(installer, 'control', side_effect=[status, dict(events=[event])]), \
                      patch.object(installer.time, 'monotonic', side_effect=[0, 0, 2]), \
                      patch.object(installer.time, 'sleep'), \

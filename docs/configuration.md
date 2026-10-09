@@ -199,17 +199,24 @@ loss can lose a recent change. Clock alarms use
 the Pi’s local time and explicit UTC offsets; verify its timezone and clock before
 relying on a clock alarm.
 
-The managed listener uses the reference Rustpotter model
-`voice/models/wake/hey_orion_reference.rpw` at threshold `0.35`, the acoustic
-phrase verifier in `voice/models/verifier/`, and 25 dB capture gain. The
-trained `voice/models/wake/hey_orion_trained_080.rpw` model remains packaged
-for comparison. `--verifier-dir PATH` selects
-another verifier and `--no-verifier` restores the Qwen prefix check. The
-standalone listener defaults to the reference model, `0.35` and the packaged
-verifier; the capture-routing script
-defaults to 50 dB when no override is supplied. `ORION_CAPTURE_GAIN_DB` accepts
-0–50 dB. These separate defaults make the effective service configuration the
-relevant setting for a running Pi.
+The managed listener and standalone CLI use two wake stages: the reference
+Rustpotter model `voice/models/wake/hey_orion_reference.rpw` proposes candidates
+at threshold `0.8`, then the openWakeWord “Hey Orion” acoustic verifier in
+`voice/models/verifier/` accepts them at threshold `0.8`. Both thresholds apply
+to V1 and V2, with no per-hardware overrides. `--threshold VALUE` changes only
+the Rustpotter gate; the [packaged verifier configuration](../voice/models/verifier/config.json)
+sets the acoustic threshold and timing. The trained
+`voice/models/wake/hey_orion_trained_080.rpw` model remains packaged for comparison.
+`--verifier-dir PATH` selects another verifier and `--no-verifier` restores the
+Qwen prefix check. Release updates recognize the legacy and active managed
+thresholds so those units continue receiving managed wake-model updates;
+other thresholds remain operator tuning. See the
+[managed profile selection](../scripts/pi_service_config.py).
+
+The managed listener uses 25 dB capture gain; the capture-routing script defaults
+to 50 dB when no override is supplied. `ORION_CAPTURE_GAIN_DB` accepts 0–50 dB.
+These separate defaults make the effective service configuration the relevant
+setting for a running Pi.
 
 `ORION_VAD_MODEL` selects the listener's Silero ONNX file. `ORION_MIC_SPACING`, in
 metres, and `ORION_CHANNEL_SIGN`, as `1` or `-1`, configure direction estimation.

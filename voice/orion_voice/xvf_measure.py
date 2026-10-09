@@ -27,6 +27,7 @@ FRAME_SAMPLES = 320  # 20 ms, the listener's frame size
 DEFAULT_DEVICE = "plughw:CARD=Array,DEV=0"
 DEFAULT_OUT = Path.home() / "orion-measurements"
 DEFAULT_WAKE_MODEL = Path(__file__).resolve().parents[1] / "models" / "wake" / "hey_orion_reference.rpw"
+DEFAULT_WAKE_THRESHOLD = 0.8
 LEAD_IN_SECONDS = 1.0
 TAIL_SECONDS = 1.5
 
@@ -245,7 +246,7 @@ def wake_hits(audio, model, threshold, detector_factory=None):
     return hits
 
 
-def analyse_session(folder: Path, *, energy_threshold=0.0, wake_model=None, threshold=0.35,
+def analyse_session(folder: Path, *, energy_threshold=0.0, wake_model=None, threshold=DEFAULT_WAKE_THRESHOLD,
                     detector_factory=None) -> dict:
     meta, audio, rows = load_session(folder)
     duration = len(audio) / SAMPLE_RATE
@@ -351,7 +352,8 @@ def parser():
     ana = commands.add_parser("analyze", help="Summarise recorded trials")
     ana.add_argument("sessions", nargs="+", help="Trial folders written by record")
     ana.add_argument("--wake-model", type=Path, default=DEFAULT_WAKE_MODEL)
-    ana.add_argument("--threshold", type=float, default=0.35, help="Rustpotter threshold (the service uses 0.35)")
+    ana.add_argument("--threshold", type=float, default=DEFAULT_WAKE_THRESHOLD,
+                     help=f"Rustpotter threshold (the service uses {DEFAULT_WAKE_THRESHOLD})")
     ana.add_argument("--no-wake", action="store_true", help="Skip Rustpotter")
     ana.add_argument("--energy-threshold", type=float, default=0.0,
                      help="Auto-select beam speech energy above which a poll counts as speech")

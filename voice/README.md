@@ -227,8 +227,9 @@ $M analyze ~/orion-measurements/* --json ~/orion-measurements/summary.json
 The summary reports, per trial, the level of channel 0 (conference) and channel
 1 (ASR) before, during and after playback, how quickly `AEC_AECCONVERGED` reached
 1, Rustpotter hits per channel (marked when they fall inside playback) at the
-service threshold of 0.35, and the auto-select beam's azimuth while the board
-reports speech. Across direction trials it fits the board's mounting offset and
+[managed Rustpotter threshold](../docs/configuration.md#pi-runtime-and-listener),
+and the auto-select beam's azimuth while the board reports speech. Across
+direction trials it fits the board's mounting offset and
 rotation sense, and prints the worst error after that fit. With the six-channel
 firmware it also reports echo reduction against the raw microphones.
 

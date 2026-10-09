@@ -1,11 +1,10 @@
 # Train and evaluate “Hey Orion”
 
-Orion's managed listener uses the six-example Rustpotter reference model
-`voice/models/wake/hey_orion_reference.rpw` at threshold `0.35`, followed by
-the openWakeWord phrase verifier in `voice/models/verifier/`. The trained
-`voice/models/wake/hey_orion_trained_080.rpw` model remains in the release for
-comparison. Rustpotter can load either `.rpw` without changing the listener's
-audio path.
+Orion's managed listener uses the six-example Rustpotter reference model,
+followed by the openWakeWord “Hey Orion” phrase verifier. The
+[listener configuration](configuration.md#pi-runtime-and-listener) lists the
+active model, both wake thresholds and the retained trained model for comparison.
+Rustpotter can load either `.rpw` without changing the listener's audio path.
 
 The verifier's classifier was trained on screened Piper speech and reviewed
 original recordings. Its models inherit the non-commercial CC BY-NC-SA licence
@@ -13,9 +12,10 @@ of openWakeWord's training features.
 
 ## Record the baseline
 
-Measure the active reference model on the Pi with its normal ReSpeaker capture,
-25 dB capture gain, Rustpotter threshold `0.35`, acoustic phrase verification,
-and Qwen's complete-recording wake check. Log each intended wake attempt,
+Measure the active reference model on the Pi with its normal capture path and
+[managed listener settings](configuration.md#pi-runtime-and-listener), including
+acoustic phrase verification and Qwen's complete-recording wake check. Log each
+intended wake attempt,
 whether Rustpotter proposed it, whether the verifier accepted it, whether Qwen confirmed it,
 the time until confirmation, and the speaker's distance and room conditions.
 Also count Rustpotter candidates and confirmed false wakes per hour of ordinary

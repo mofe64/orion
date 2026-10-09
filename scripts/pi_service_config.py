@@ -12,7 +12,9 @@ REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 # The reference model proposes candidates for the packaged acoustic verifier
 # (voice/models/verifier); the trained model remains packaged for comparison.
 ACTIVE_WAKE_MODEL = REFERENCE_WAKE_MODEL
-ACTIVE_WAKE_THRESHOLD = '0.35'
+ACTIVE_WAKE_THRESHOLD = '0.8'
+# Recognize the legacy managed threshold so upgrades keep following the active profile.
+MANAGED_WAKE_THRESHOLDS = frozenset((float(ACTIVE_WAKE_THRESHOLD), 0.35))
 PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',
@@ -95,8 +97,8 @@ def listener_start(start, release):
         threshold = float(threshold_flag[1]) if threshold_flag else None
     except ValueError:
         threshold = None
-    managed = ((model is None and (threshold == 0.35 or threshold_flag is None)) or
-               (model == REFERENCE_WAKE_MODEL and threshold == 0.35))
+    managed = ((model is None and (threshold in MANAGED_WAKE_THRESHOLDS or threshold_flag is None)) or
+               (model == REFERENCE_WAKE_MODEL and threshold in MANAGED_WAKE_THRESHOLDS))
     if managed:
         wanted_model = f'{release}/voice/models/wake/{ACTIVE_WAKE_MODEL}'
         if threshold_flag:
