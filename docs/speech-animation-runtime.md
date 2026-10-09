@@ -215,6 +215,7 @@ These are planning decisions, not a recording of servo telemetry. A snapshot mad
 | `speech_plan_streaming` | Whether that plan or attempt expected more audio. Compared with fresh analysis to detect a stream-end transition. |
 | `speech_checkpoints` | Ordered pairs of local drawing-end keyframe indices and future `SpeechMemory` snapshots. Ordinary drawings end at body follow; reactions end after their last authored keyframe. |
 | `speech_cue_frame_offset` | Absolute audio frame at which the local planning tail begins; translates cue identity independently of gesture-memory time. |
+| `speech_reaction_finish_at` | End keyframe of an installed reaction protected through EOF; after it passes, trim ordinary future and keep the minimum settle. |
 | `thinking_run`, `active_idle_run_id` | Existing lower-priority movement that may hand over to speech. |
 
 ### What resets at a new utterance
@@ -347,6 +348,8 @@ Convert the frame to elapsed audio time with `elapsed = frame × 0.020`. Call `a
 
 ### Step 2: decide whether an existing plan needs replacement
 
+First preserve any reaction protected through EOF. An underway reaction finishes; an upcoming one is protected when its installed calibrated return fits the remaining audio plus the reaction overrun budget. After its last stage, trim any ordinary future to the minimum settle. Reaction protection ends with that installed plan and resets for a new utterance.
+
 The code distinguishes more audio arriving from the stream declaring its final length. Define:
 
 ```text
@@ -370,9 +373,9 @@ This creates three distinct cases:
 | --- | --- |
 | More audio arrives | Wait for a passed gesture checkpoint and until the previously planned audio frontier is less than 1.5 seconds ahead. |
 | End marker arrives with more than 0.9 seconds remaining | Replan at a passed checkpoint even if audio duration did not grow. |
-| End marker arrives with at most 0.9 seconds remaining | Attempt a return-only replacement immediately, without requiring a new checkpoint. |
+| End marker arrives with at most 0.9 seconds remaining | Preserve a fitting installed reaction, or test a new cue using overrun and compression. Otherwise attempt a return-only replacement immediately. |
 
-The late-end path returns toward the anchor immediately. This exception to the usual gesture-boundary rule avoids inserting another minimum-length gesture near the end of playback.
+Without a fitting reaction, the late-end path returns toward the anchor immediately. This exception to the usual gesture-boundary rule avoids inserting another ordinary gesture near the end of playback.
 
 `P - e` measures distance to a stored audio frontier. It is not the exact remaining duration of the compiled movement, which may have been retimed.
 
@@ -391,7 +394,7 @@ Illustrative frame conversion: if playback is at frame 100, an old peak at 150 b
 
 The local tail starts its audio coordinates at zero. Speech-memory time and gesture count continue from adopted history. This is why the implementation needs both local frame positions and accumulated planning history.
 
-For final audio with at most 0.9 seconds in the tail, choose `speech_settle_motion()` and an empty checkpoint list. Otherwise, ask `plan_speech()` to compose gestures from the tail.
+For final audio with at most 0.9 seconds in the tail, choose `speech_settle_motion()` and an empty checkpoint list when no reaction fits. Cues use the same overrun and compression rules as an initial final plan. An installed reaction already underway, or an upcoming reaction whose compiled return fits the remaining audio plus 0.6 seconds, is preserved through EOF. After its return, discard any ordinary future and retain only the minimum settle. Otherwise, ask `plan_speech()` to compose gestures from the tail.
 
 ### Step 4: install only a successful replacement
 
@@ -579,7 +582,7 @@ After creating the body-follow keyframe, add `(its keyframe index, drawing.memor
 
 ### 9.10 Append the final return and produce the definition
 
-Append a final keyframe with an empty relative target, `Settle` arrival, no hold, and marker `speech_settled`. Its authored duration is the remaining authored budget, with a minimum of 0.12. Leftover time from skipped small gestures can therefore make the final return longer than the nominal reserved amount.
+Append a final keyframe with an empty relative target, `Settle` arrival, no hold, and marker `speech_settled`. For an ordinary final drawing, its authored duration is the remaining authored budget, with a minimum of 0.12. Leftover time from skipped small gestures can therefore make the final return longer than the nominal reserved amount. A final reaction supplies its own anchor return: omit `speech_resolve` and use only the 0.12-second `speech_settled` marker after it.
 
 Return a definition named `speaking_performance`, with `AnchorRelative` space, the selected performance style, `return_to_anchor = true`, and the generated keyframes.
 
@@ -614,12 +617,16 @@ reaction cannot replay it on a later tail.
 
 The composer reserves a reaction before choosing audio-driven emphasis:
 
-- `agree` uses `acknowledge_nod`; `disagree` uses `disagree_soft`.
+- `agree` uses `speak_react_agree`, a clear double nod; `disagree` uses
+  `speak_react_disagree`, a three-beat shake. The listening and scene motions
+  `acknowledge_nod` and `disagree_soft` retain their subtle shapes.
 - A reaction asset must be anchor-relative, return to its anchor, and contain
   exactly one marker identifying its apex. Invalid mapped assets fail loading.
 - Reaction drawings emit every authored keyframe, including their own body
   offsets. Checkpoint memory retains facing even at a replacement tail onset.
-  They retain the previous facing offset and scale reaction yaw when
+  Their travel and holds use duration scale 1.0, preserving authored timing
+  instead of ordinary speech's 1.35 slowdown. They retain the previous facing
+  offset and scale reaction yaw when
   needed to keep the sum inside the speech-facing range. Loudness does not
   scale their authored head shapes.
 - A cue within the first 0.6 seconds becomes the first drawing without
@@ -630,21 +637,31 @@ The composer reserves a reaction before choosing audio-driven emphasis:
   Alignment retimes all keyframes of the preceding drawing together using its
   recorded range. If safe compilation cannot fit the target, the reaction
   remains and its `@cue=` claim is removed.
+- Quiet the ordinary drawing immediately before a reaction: halve its head,
+  counter-stroke, and facing offsets, leaving shoulder and elbow motion alone.
 - Reactions share the 3.5-second emphasis spacing and take priority over nearby
-  audio peaks. They must fit before the final return budget, with 0.3 seconds
-  of additional room.
+  audio peaks. A reaction that still leaves room for ordinary speech fits the
+  active budget with a 0.3-second margin. Otherwise it becomes the final drawing
+  and can use the whole performance plus 0.6 seconds. This room uses actual
+  audio duration, not the ordinary 0.9-second planning floor. If necessary,
+  uniformly compress travel and holds to the largest scale that fits, down to
+  0.75×; drop it with `no_room` only below that floor. A final reaction ends at
+  the anchor and gets only the minimum 0.12-second `speech_settled` afterward,
+  with no separate resolution or return gesture.
 
 A new cue inside an installed streaming plan triggers replacement at the next
 passed gesture checkpoint. It does not bypass that boundary. Installed future
 checkpoints prevent repeated replacement for the same cue; history consumes
 it only after the reaction's last keyframe passes. A discarded candidate
-restores cue history with the other speech memory. The late stream-end path
-still installs only a return to the anchor.
+restores cue history with the other speech memory. Late EOF and audio
+completion preserve a fitting installed reaction; an underway reaction finishes
+its return. Any ordinary future after it is trimmed. An unplanned cue at late
+EOF receives the same room test, while ordinary gestures yield to a return.
 
 `speech.cue_received` reports the run, sequence, canonical cue, and absolute
 frame. `speech.motion_compiled.reactions` reports `reaction_*` markers and their
 compiled arrival times. `speech.cue_dropped` reasons are `trailing` (no later
-audio), `spacing`, `no_room`, `ending` (late final return), and `limit` (more
+audio), `spacing`, `no_room`, and `limit` (more
 than 32 cues). A cue can appear in the agent event yet be dropped by animation.
 
 ## 10. `choose_speech_turn_direction()`: choose a yaw offset sign
@@ -760,11 +777,12 @@ Finalizing a stream and stopping audio playback are separate events. Finalizatio
 
 When audio has stopped but the character still reports `Speaking`, the outer tick examines the tracked speech movement:
 
-1. If a nonterminal run is already labelled `speak_settle`, preserve it and report character state `Settling`.
-2. If that run has reached the runtime's measured `Settling` phase, preserve it and report character state `Settling`.
-3. Otherwise, try replacing the remaining movement with `speech_settle_motion()` from the existing commanded position and velocity.
-4. If replacement fails, attempt to stop movement. If holding and an anchor are available, try starting a fresh return from measured state.
-5. If no movement remains to track, clear the speech clip label, choose the appropriate idle state, and reset idle timers.
+1. Preserve an underway reaction or a fitting upcoming reaction and report `Settling`. After its return, trim any ordinary future to the minimum settle. A final reaction already followed only by `speech_settled` continues unchanged.
+2. If a nonterminal run is already labelled `speak_settle`, preserve it and report character state `Settling`.
+3. If that run has reached the `speech_settled` keyframe or the runtime's measured `Settling` phase, preserve it and report character state `Settling`.
+4. Otherwise, try replacing the remaining movement with `speech_settle_motion()` from the existing commanded position and velocity.
+5. If replacement fails, attempt to stop movement. If holding and an anchor are available, try starting a fresh return from measured state.
+6. If no movement remains to track, clear the speech clip label, choose the appropriate idle state, and reset idle timers.
 
 A successful commanded replacement keeps the old movement ID. A successful fresh fallback receives a new movement ID. Both return toward the same anchor. Log events distinguish `commanded` from `measured_fallback` handovers.
 
@@ -779,6 +797,11 @@ Using the compiler's travel calculation gives approximately:
 ```
 
 That is the travel request before any speed-related extension and final measured settling. It is not a promise that the robot is physically finished 0.42 seconds after the call. It is also distinct from the composer's nominal 0.55-second final-return reservation.
+
+After a protected reaction returns, `speech_reaction_settle_motion()` retains
+only 0.12 authored seconds with `speaking_emphatic`, matching the composer's
+minimum final marker. It does not add the ordinary 0.42-second return. A final
+reaction already followed only by that marker needs no replacement.
 
 While character state is `Settling`, the coordinator waits for the tracked run to have a terminal result. It then clears the movement ID and clip label, returns to an idle state, and resets idle timers. Runtime completion checks use measured position error and velocity; merely finishing the planned travel does not immediately prove successful physical arrival.
 
@@ -835,7 +858,7 @@ Eventually the stream ends with eight seconds of audio received. The duration ma
 
 If two seconds remain, the coordinator waits for a newly passed checkpoint and plans a final tail without the extra streaming allowance. On successful installation it records `speech_plan_streaming = false`, so the same end marker does not cause a fresh finalization on every tick.
 
-If only 0.6 seconds remain, the late-end exception instead attempts an immediate `speak_settle` replacement with no gesture checkpoints. It avoids adding a new minimum-length gesture at the end of playback.
+If only 0.6 seconds remain and there is no fitting reaction, the late-end exception instead attempts an immediate `speak_settle` replacement with no gesture checkpoints. It avoids adding a new ordinary gesture at the end of playback. A fitting cue or an underway reaction uses the reaction completion path instead.
 
 When audio stops, the outer tick preserves an established return or attempts one. Once the tracked return ends, ordinary idle scheduling resumes around the same anchor.
 
@@ -902,13 +925,17 @@ handover. Physical speaker alignment and smoothness require a check on the Pi.
 | Cue-bearing commands preserve voice-session ownership and ordering | `streamed_reply_cues_preserve_session_ownership_and_ordering` |
 | Both reaction apices align to compiled cue timing and preserve authored shapes | `reaction_apices_align_and_preserve_authored_shapes` |
 | Onset overlaps speech; a nearby second cue is dropped | `onset_reaction_overlaps_without_preparation_and_spacing_drops_second_cue` |
-| Final cues have no room; tails and planning windows filter old or distant cues | `final_reaction_has_no_room_and_tail_drops_past_cues` |
+| Final cues use overrun room; tails and planning windows filter old or distant cues | `final_reaction_uses_overrun_room_and_tail_drops_past_cues` |
 | Candidate rollback preserves cue history until its checkpoint passes | `discarded_reaction_candidate_restores_cues_until_its_checkpoint_passes` |
 | Newly streamed cues replace plans only at a passed checkpoint | `newly_streamed_cue_replaces_only_at_a_passed_checkpoint` |
 | Reactions at a tail onset retain adopted facing and roll it back with candidate memory | `reaction_at_tail_onset_keeps_adopted_facing_and_rolls_it_back` |
-| Late stream end wins over reactions | `late_stream_end_wins_over_a_new_reaction` |
+| A new late-end reaction receives the ordinary reaction fit check | `late_stream_end_plans_a_new_reaction_when_it_fits`, `late_end_drops_a_new_cue_only_below_the_compression_floor` |
+| Short final replies fit or compress uniformly, without a second return | `short_final_reactions_use_actual_audio_room_and_uniform_compression` |
+| Calibrated compiled nod pitch remains readable | `compiled_agree_apex_remains_readable` |
+| Ordinary lead-in head/yaw are halved while body offsets stay unchanged | `ordinary_lead_in_halves_head_and_yaw_without_quieting_body` |
+| EOF and playback completion preserve installed reactions | `eof_preserves_a_planned_reaction_and_audio_completion_does_not_cut_it`, `short_final_reaction_finishes_after_audio_with_its_original_return` |
 | Reaction yaw remains bounded and shapes ignore loudness scaling | `reaction_yaw_stays_inward_and_energy_does_not_scale_reaction_shapes` |
-| Reaction assets reject missing or multiple apex markers at load time | `reaction_assets_require_one_apex_marker_on_load` |
+| Reaction assets validate their apex and anchor return, rejecting missing or multiple markers | `speech_reaction_assets_have_one_apex_and_an_anchor_return`, `reaction_assets_require_one_apex_marker_on_load` |
 | Streaming uses one playback process and enforces stream ordering | `streaming_uses_one_player_and_requires_ordered_end` |
 
 Agent tests cover alias normalization, unknown/partial tags, tag-only rejection,

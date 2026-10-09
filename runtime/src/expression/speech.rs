@@ -33,8 +33,8 @@ impl SpeechCue {
     }
     pub fn motion(self) -> &'static str {
         match self {
-            Self::Agree => "acknowledge_nod",
-            Self::Disagree => "disagree_soft",
+            Self::Agree => "speak_react_agree",
+            Self::Disagree => "speak_react_disagree",
         }
     }
 }
@@ -698,6 +698,10 @@ mod tests {
     #[test]
     fn cue_vocabulary_and_chunk_frames_are_canonical_and_bounded() {
         assert_eq!(SpeechCue::ALL.map(SpeechCue::as_str), ["agree", "disagree"]);
+        assert_eq!(
+            SpeechCue::ALL.map(SpeechCue::motion),
+            ["speak_react_agree", "speak_react_disagree"]
+        );
         assert!("nod".parse::<SpeechCue>().is_err());
         let directory = tempfile::tempdir().unwrap();
         write_energy_test_wav(&directory.path().join("first.wav"));

@@ -704,6 +704,25 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         self.install_character_performance(definition, anchor, now_seconds, None)
     }
 
+    /// Remaining commanded travel to a keyframe in the character-owned run.
+    /// Read the installed, calibrated spline rather than a planner estimate.
+    pub(crate) fn character_keyframe_remaining_seconds(
+        &self,
+        run_id: u64,
+        keyframe: usize,
+        now_seconds: f64,
+    ) -> Option<f64> {
+        let movement = self.active_movement.as_ref()?;
+        if movement.status.run_id != run_id || movement.status.state.is_terminal() {
+            return None;
+        }
+        let arrival = self
+            .motion_sequence
+            .as_ref()?
+            .keyframe_arrival_time(keyframe)?;
+        Some((arrival - (now_seconds - self.movement_started_at).max(0.0)).max(0.0))
+    }
+
     pub fn extend_character_performance(
         &mut self,
         run_id: u64,

@@ -932,18 +932,33 @@ mod tests {
         )
         .unwrap();
         let source =
-            fs::read_to_string(root.join("motion/motions/v2/acknowledge_nod.yaml")).unwrap();
+            fs::read_to_string(root.join("motion/motions/v2/speak_react_agree.yaml")).unwrap();
         for document in [
-            source.replace("      marker: acknowledge\n", ""),
+            source.replace("      marker: agree\n", ""),
             source.replace(
-                "      duration: 0.24",
-                "      marker: extra\n      duration: 0.24",
+                "      duration: 0.30",
+                "      marker: extra\n      duration: 0.30",
             ),
         ] {
             let temporary = tempfile::tempdir().unwrap();
             fs::write(temporary.path().join("reaction.yaml"), document).unwrap();
             let error = MotionLibrary::load(temporary.path(), &poses).unwrap_err();
             assert!(error.to_string().contains("exactly one apex marker"));
+        }
+    }
+
+    #[test]
+    fn speech_reaction_assets_have_one_apex_and_an_anchor_return() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
+        for cue in crate::expression::speech::SpeechCue::ALL {
+            let reaction = motions.motion(cue.motion()).unwrap();
+            assert_eq!(validate_reaction_motion(reaction).unwrap(), 0);
+            let last = reaction.keyframes.last().unwrap();
+            assert!(last.target.is_empty());
+            assert_eq!(last.arrival, KeyframeArrival::Settle);
         }
     }
 

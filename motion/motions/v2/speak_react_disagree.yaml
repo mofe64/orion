@@ -1,0 +1,21 @@
+format_version: 2
+motion:
+  name: speak_react_disagree
+  description: A clear three-beat head shake used as a spoken disagreement reaction.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+    - offsets: {base_yaw_joint: -0.14, head_roll_joint: 0.04}
+      duration: 0.24
+      arrival: through
+      marker: disagree
+    - offsets: {base_yaw_joint: 0.14, head_roll_joint: -0.04}
+      duration: 0.28
+      arrival: through
+    - offsets: {base_yaw_joint: -0.08}
+      duration: 0.24
+      arrival: through
+    - offsets: {}
+      duration: 0.28
+      arrival: settle
