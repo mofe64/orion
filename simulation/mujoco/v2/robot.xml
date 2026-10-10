@@ -71,6 +71,10 @@
                 <geom name="v21_31" type="mesh" mesh="v21_31" pos="0.0 0.0175 -0.433" rgba=".96 .91 .69 1" />
                 <geom name="v21_32" type="mesh" mesh="v21_32" pos="0.0 0.0175 -0.433" rgba=".16 .18 .18 1" />
                 <site name="v21_face" pos="0 -.085 .020" size=".002" rgba="0 0 0 0" />
+                <!-- MuJoCo camera axes: +X right, +Y up, -Z forward. -->
+                <camera name="camera_optical_frame" mode="fixed" pos="0 -0.082 0.0157" quat="0 0 0.7071067811865476 0.7071067811865476" />
+                <!-- Light uses the URDF optical axes: +X right, +Y down, +Z forward. -->
+                <site name="light_frame" pos="0 -0.077 0.020" quat="0 0 -0.7071067811865476 0.7071067811865476" size=".002" rgba="0 0 0 0" />
                 <inertial mass="0.29925124595845126" pos="-4.377315539681308e-05 -0.03902162685249138 0.02085453717818393" fullinertia="0.000480940372751178 0.00034629170794786557 0.0005082902884695034 1.956797464232746e-07 -2.432235430569997e-07 -6.5008799991696114e-06" />
               </body>
               <geom name="v21_13" type="mesh" mesh="v21_13" pos="-0.0 -0.0 -0.404" rgba=".37 .4 .41 1" />

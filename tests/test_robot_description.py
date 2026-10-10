@@ -4,6 +4,8 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import runpy
+import unittest
 import xml.etree.ElementTree as ET
 
 
@@ -108,3 +110,77 @@ def test_mujoco_zero_and_ranges_match_the_accepted_physical_calibration():
     qpos = [float(value) for value in zero.get("qpos").split()]
     assert qpos[7:] == [0.0] * len(CANONICAL_JOINTS)
     assert math.isclose(sum(value * value for value in qpos[3:7]), 1.0)
+
+
+class CameraFrameDescriptionTests(unittest.TestCase):
+    """Frame conventions and fixture provenance need only the Python stdlib."""
+
+    def test_v2_camera_and_light_are_fixed_nominal_neck_mounts(self):
+        root = ET.parse(PROJECT_ROOT / "description/urdf/orion-v2.urdf").getroot()
+        for joint_name, frame, position in (
+            ("camera_optical_joint", "camera_optical_frame", [0.0, -0.082, 0.0157]),
+            ("light_joint", "light_frame", [0.0, -0.077, 0.020]),
+        ):
+            with self.subTest(frame=frame):
+                self.assertIsNotNone(root.find(f"link[@name='{frame}']"))
+                joint = root.find(f"joint[@name='{joint_name}']")
+                self.assertIsNotNone(joint)
+                self.assertEqual(joint.get("type"), "fixed")
+                self.assertEqual(joint.find("parent").get("link"), "v21_neck_swivel_link")
+                self.assertEqual(joint.find("child").get("link"), frame)
+                self.assertEqual([float(v) for v in joint.find("origin").get("xyz").split()], position)
+                self.assertEqual(
+                    [float(v) for v in joint.find("origin").get("rpy").split()],
+                    [-math.pi / 2, 0.0, math.pi],
+                )
+        self.assertEqual(
+            {joint.get("name") for joint in root.findall("joint") if joint.get("type") != "fixed"},
+            set(CANONICAL_JOINTS),
+        )
+
+    def test_mujoco_mounts_account_for_its_camera_axis_convention(self):
+        root = ET.parse(PROJECT_ROOT / "simulation/mujoco/v2/robot.xml").getroot()
+        neck = root.find(".//body[@name='v21_neck_swivel_link']")
+        camera = neck.find("camera[@name='camera_optical_frame']")
+        light = neck.find("site[@name='light_frame']")
+        self.assertIsNotNone(camera)
+        self.assertIsNotNone(light)
+        self.assertEqual(camera.get("mode"), "fixed")
+        self.assertEqual([float(v) for v in camera.get("pos").split()], [0.0, -0.082, 0.0157])
+        self.assertEqual([float(v) for v in light.get("pos").split()], [0.0, -0.077, 0.020])
+        # Quaternion x=0, w=0: camera has y=z, light has y=-z.
+        # These differ by 180 degrees about local X (flip up/back to down/forward).
+        a = 1.0 / math.sqrt(2)
+        for node, expected in ((camera, [0.0, 0.0, a, a]), (light, [0.0, 0.0, -a, a])):
+            actual = [float(v) for v in node.get("quat").split()]
+            for value, target in zip(actual, expected, strict=True):
+                self.assertAlmostEqual(value, target, places=14)
+
+    def test_camera_fk_fixture_is_complete_and_matches_its_sources(self):
+        fixture = json.loads((PROJECT_ROOT / "runtime/tests/fixtures/camera_fk_v2.json").read_text())
+        self.assertEqual(fixture["format_version"], 1)
+        self.assertEqual(fixture["seed"], 2101)
+        self.assertEqual(fixture["random_count"], 20)
+        self.assertEqual(len(fixture["cases"]), 24)
+        self.assertEqual(
+            [case["name"] for case in fixture["cases"]],
+            ["zero", "home", "look_left", "look_right"] + [f"random_{i:02d}" for i in range(20)],
+        )
+        requirements = (PROJECT_ROOT / "simulation/mujoco/requirements.txt").read_text()
+        self.assertIn(f"mujoco=={fixture['mujoco_version']}", requirements.splitlines())
+        for path, expected in fixture["source_sha256"].items():
+            self.assertEqual(hashlib.sha256((PROJECT_ROOT / path).read_bytes()).hexdigest(), expected, path)
+        for case in fixture["cases"]:
+            self.assertEqual(set(case["positions"]), set(CANONICAL_JOINTS))
+            for joint, value in case["positions"].items():
+                lower, upper = fixture["model_joint_limits"][joint]
+                self.assertLessEqual(lower, value)
+                self.assertLessEqual(value, upper)
+
+
+def test_camera_fk_fixture_reproduces_the_pinned_mujoco_results():
+    # Pytest in the existing MuJoCo environment runs this independent numerical
+    # check. Stdlib unittest and cargo test consume the fixture without MuJoCo.
+    generator = runpy.run_path(str(PROJECT_ROOT / "tests/generate_camera_fk_fixtures.py"))
+    expected = json.loads((PROJECT_ROOT / "runtime/tests/fixtures/camera_fk_v2.json").read_text())
+    assert generator["build_fixture"]() == expected

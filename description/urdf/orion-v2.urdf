@@ -275,4 +275,17 @@
     <axis xyz="0 0 -1" />
     <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
   </joint>
+  <!-- Nominal CAD mounts. Optical axes: +X right, +Y down, +Z forward. -->
+  <link name="camera_optical_frame" />
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="v21_neck_swivel_link" />
+    <child link="camera_optical_frame" />
+    <origin xyz="0 -0.082 0.0157" rpy="-1.5707963267948966 0 3.141592653589793" />
+  </joint>
+  <link name="light_frame" />
+  <joint name="light_joint" type="fixed">
+    <parent link="v21_neck_swivel_link" />
+    <child link="light_frame" />
+    <origin xyz="0 -0.077 0.020" rpy="-1.5707963267948966 0 3.141592653589793" />
+  </joint>
 </robot>
