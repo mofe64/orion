@@ -139,6 +139,43 @@ Appearance in Settings is the single light/dark theme control. The theme is shar
 across Home, Animation, the editor and Settings and saved on this computer. Debug
 mode adds a Diagnostics shortcut on Home.
 
+### Camera feed
+
+On V2, Home's Camera card shows the live feed. Camera capture is a saved Pi
+privacy setting, independent of microphone mute. Turning it off stops capture
+for every viewer and clears the image. If the feed cannot connect, **Turn
+camera off** remains available. **Save snapshot** downloads one JPEG to the
+Studio device only when clicked; live frames are not saved automatically.
+
+Debug's **Show camera observations** toggle draws boxes on a separate canvas.
+The observations endpoint returns an empty list until detection is implemented.
+Leaving Home or Debug cancels the stream and releases its viewer indication.
+Dropped streams reconnect automatically; `camera_off` waits for an explicit
+privacy change, and invalid credentials require reconnecting Orion.
+
+The gateway protects all camera routes with the existing bearer token:
+
+| Route | Behaviour |
+| --- | --- |
+| `GET /api/v2/camera/stream` | Proxy the multipart JPEG feed |
+| `GET /api/v2/camera/snapshot` | Proxy one 640×360 JPEG |
+| `GET /api/v2/camera/observations` | Proxy observation JSON |
+| `POST /api/v2/camera/enabled` | Save `{"camera_enabled": true}` or `false` |
+
+Camera-off responses retain HTTP 503 and `error.code: camera_off`. Studio uses
+`fetch` with an Authorization header and incrementally parses parts by their
+Content-Length; it never places a token in an image URL. JPEG decoding and
+rendering keep the latest complete frame, and disconnecting aborts pending
+network work. The gateway accepts at most eight stream viewers.
+
+`--vision-socket` defaults to `/tmp/orion-vision.sock` and
+`--camera-preference-file` defaults to `~/.config/orion/camera.json`. The gateway
+and vision service must use the same preference path. A stream starts only
+after `oriond` accepts the viewer-marker lease. The gateway renews one shared
+lease while viewers remain and clears it when the last viewer leaves; failed
+renewal ends the feed. See the [runtime marker contract](../runtime/README.md#camera-viewer-indicator)
+and [vision setup](../vision/README.md#service-setup-and-development).
+
 ## Animation library and scene editor
 
 Animation separates the built-in Orion collection from user scenes and poses.

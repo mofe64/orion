@@ -479,6 +479,22 @@ program as `lamp` with brightness in percent, effect and RGBW colors, or null wh
 no manual program exists. The gateway exposes this through `lamp_status` and the
 agent through `get_lighting`. Starting the character clears the manual program.
 
+## Camera viewer indicator
+
+On V2, `camera-viewer 3` leases a faint cyan marker on the first ring pixel for
+three seconds; `camera-viewer 0` clears it. Other lease values and V1 requests
+are rejected. The authenticated gateway renews the lease once a second while
+at least one Studio stream is connected. A lost gateway therefore cannot
+leave a permanent marker.
+
+The marker does not change manual lamp preferences, routines, torque or motion.
+It is below scenes, speech and ringing alerts, and passes through the existing
+rest darkness mask. Those states suppress the marker; it reappears when they
+finish if the lease remains valid. The underlying RGBW frame is retained
+without the marker, so expiry restores prior lighting. Lease handling uses the
+existing queued command socket and bounded comparisons; no camera, file or
+model work enters the control tick.
+
 ## Mode and alert commands
 
 The private Unix socket accepts these commands. The gateway exposes them through

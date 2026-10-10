@@ -13,6 +13,7 @@ import { assetDisplayName } from "../lib/displayName";
 import { orionStateLabel } from "../lib/orionMode";
 import { quickExpressions } from "../lib/quickExpressions";
 import { ListsCard } from "./ListsCard";
+import { CameraCard } from "./CameraCard";
 import { AlarmForm } from "./AlarmForm";
 import { ReminderForm } from "./ReminderForm";
 import { alertTime } from "../lib/alertTime";
@@ -172,6 +173,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
       {feedback("alert")}
     </section>}
     <ListsCard connection={connection} />
+    {status?.runtime.hardware !== "v1" && <CameraCard connection={connection} />}
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>See all <ArrowUpRight size={15} /></button></header>
       <div className="oh-expression-list">{quickExpressions(catalog).map(({name}) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(assetDisplayName(name), value => runScene(value, name))}><span className="oh-expression-icon"><Sparkles size={16} /></span>{assetDisplayName(name)}<Play className="oh-arrow" size={14} /></button>)}</div>
       {feedback("expression")}

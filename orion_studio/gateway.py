@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 import argparse
 import hashlib
+import http.client
 import ipaddress
 import json
 import math
@@ -185,6 +186,57 @@ class UnixOrionClient:
         return value
 
 
+class CameraViewers:
+    """One renewable runtime lease shared by all authenticated stream clients."""
+    def __init__(self, request):
+        self.request = request
+        self.lock = threading.Lock()
+        self.clients = 0
+        self.healthy = False
+        self.stop = threading.Event()
+
+    @contextmanager
+    def watching(self):
+        with self.lock:
+            if self.clients >= 8:
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_busy", "Too many camera viewers.")
+            if self.clients and not self.healthy:
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable", "Orion's camera viewer indicator is unavailable.")
+            if self.clients == 0:
+                try:
+                    self.request("camera-viewer 3")
+                except GatewayError as error:
+                    raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable",
+                        "Orion's camera viewer indicator is unavailable.") from error
+                self.healthy = True
+                self.stop = threading.Event()
+                threading.Thread(target=self._renew, args=(self.stop,), daemon=True).start()
+            self.clients += 1
+        try:
+            yield self
+        finally:
+            with self.lock:
+                self.clients -= 1
+                if self.clients == 0:
+                    self.stop.set()
+                    self.healthy = False
+                    try:
+                        self.request("camera-viewer 0")
+                    except GatewayError:
+                        pass  # The runtime lease expires even if cleanup cannot reach it.
+
+    def _renew(self, stop):
+        while not stop.wait(1):
+            with self.lock:
+                if stop.is_set():
+                    return
+                try:
+                    self.request("camera-viewer 3")
+                except GatewayError:
+                    self.healthy = False
+                    return
+
+
 class OrionGateway:
     """Allowlisted semantic translation; this class never controls hardware."""
 
@@ -196,6 +248,8 @@ class OrionGateway:
         calibration_file: Path = DEFAULT_CALIBRATION,
         trajectory_compiler: Path | None = None,
         hardware: str = "v1",
+        vision_socket: str = "/tmp/orion-vision.sock",
+        camera_preference_file: Path | None = None,
     ):
         if hardware not in ("v1", "v2"):
             raise ValueError("Hardware must be v1 or v2")
@@ -206,6 +260,55 @@ class OrionGateway:
         self.calibration_file = calibration_file.expanduser()
         self.trajectory_compiler = trajectory_compiler
         self.scene_write_lock = threading.Lock()
+        self.vision_socket = vision_socket
+        self.camera_preference_file = camera_preference_file or Path.home() / ".config/orion/camera.json"
+        self.camera_viewers = CameraViewers(self._checked)
+
+    def camera_is_enabled(self):
+        try:
+            return json.loads(self.camera_preference_file.read_text()).get("camera_enabled") is True
+        except FileNotFoundError:
+            return True
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    def set_camera_enabled(self, payload):
+        if self.hardware != "v2":
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "This Orion has no camera.")
+        if not isinstance(payload, dict) or type(payload.get("camera_enabled")) is not bool:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_camera_setting", "camera_enabled must be true or false.")
+        path = self.camera_preference_file
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".camera-", delete=False) as output:
+                temporary = Path(output.name)
+                json.dump({"camera_enabled": payload["camera_enabled"]}, output)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(path)
+        except OSError as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_setting_unavailable", "Could not save camera privacy setting.") from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
+
+    def open_camera(self, path):
+        if self.hardware != "v2":
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "This Orion has no camera.")
+        if not self.camera_is_enabled():
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_off", "Camera is disabled.")
+        connection = http.client.HTTPConnection("localhost", timeout=2)
+        connection.sock = socket.socket(socket.AF_UNIX)
+        connection.sock.settimeout(2)
+        try:
+            connection.sock.connect(self.vision_socket)
+            connection.request("GET", path)
+            return connection, connection.getresponse()
+        except (OSError, http.client.HTTPException) as error:
+            connection.close()
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "Orion's camera service is unavailable.") from error
 
     def status(self) -> dict[str, Any]:
         runtime = self.client.request("status")
@@ -1565,8 +1668,12 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
         def do_PUT(self) -> None:
             self._handle(self._put)
 
-        def _get(self) -> tuple[HTTPStatus, dict[str, Any]]:
+        def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
+            camera_paths = {"/api/v2/camera/stream": "/stream", "/api/v2/camera/snapshot": "/frame.jpg",
+                            "/api/v2/camera/observations": "/observations"}
+            if path in camera_paths:
+                return self._proxy_camera(camera_paths[path])
             if path == "/api/v2/voice/status":
                 installed = (voice_service_directory() / "installed").exists()
                 return HTTPStatus.OK, {"onboard": installed}
@@ -1599,6 +1706,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == "/api/v2/camera/enabled":
+                return HTTPStatus.OK, gateway.set_camera_enabled(self._read_json())
             if path == "/api/v2/pair/code":
                 return HTTPStatus.OK, pairing_codes.request_code()
             if path == "/api/v2/pair/token":
@@ -1670,7 +1779,10 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 pairing_request = self.command == "POST" and urlparse(self.path).path in {"/api/v2/pair/code", "/api/v2/pair/token"}
                 if not pairing_request and not secrets.compare_digest(supplied, token):
                     raise GatewayError(HTTPStatus.UNAUTHORIZED, "unauthorized", "A valid Studio token is required.")
-                status, body = action()
+                result = action()
+                if result is None:  # Binary/stream responses have already been written.
+                    return
+                status, body = result
             except GatewayError as error:
                 status = error.status
                 body = {
@@ -1678,6 +1790,43 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                     "error": {"code": error.code, "message": str(error)},
                 }
             self._write_json(status, body)
+
+        def _proxy_camera(self, path):
+            connection, response = gateway.open_camera(path)
+            try:
+                content_type = response.getheader("Content-Type", "application/json")
+                if path != "/stream" or response.status != 200:
+                    body = response.read(MAX_RESPONSE_BYTES + 1)
+                    if len(body) > MAX_RESPONSE_BYTES:
+                        raise GatewayError(HTTPStatus.BAD_GATEWAY, "camera_response_too_large", "Camera response exceeds 1 MiB.")
+                    self.send_response(response.status)
+                    self._cors_headers()
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    stamp = response.getheader("X-Capture-Boottime-Ns")
+                    if stamp:
+                        self.send_header("X-Capture-Boottime-Ns", stamp)
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                with gateway.camera_viewers.watching() as viewers:
+                    self.send_response(HTTPStatus.OK)
+                    self._cors_headers()
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.connection.settimeout(2)
+                    while viewers.healthy and gateway.camera_is_enabled():
+                        chunk = response.read1(65536)
+                        if not chunk or not viewers.healthy or not gateway.camera_is_enabled():
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+            except (OSError, http.client.HTTPException):
+                self.close_connection = True
+            finally:
+                connection.close()
 
         def _write_json(self, status: HTTPStatus, body: dict[str, Any]) -> None:
             encoded = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -1750,6 +1899,8 @@ def parse_args() -> argparse.Namespace:
     serve = commands.add_parser("serve", help="Run the source-tree Studio gateway.")
     serve.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     serve.add_argument("--socket", default=DEFAULT_SOCKET)
+    serve.add_argument("--vision-socket", default="/tmp/orion-vision.sock")
+    serve.add_argument("--camera-preference-file", type=Path, default=Path.home() / ".config/orion/camera.json")
     serve.add_argument("--bind", default="127.0.0.1", help="Listen address; :: accepts IPv4 and IPv6 (default: IPv4 loopback).")
     serve.add_argument("--port", type=int, default=7447)
     serve.add_argument("--token-file", type=Path, required=True)
@@ -1786,6 +1937,8 @@ def main() -> None:
         calibration_file=args.calibration,
         trajectory_compiler=args.trajectory_compiler,
         hardware=args.hardware,
+        vision_socket=args.vision_socket,
+        camera_preference_file=args.camera_preference_file,
     )
     server = GatewayHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)

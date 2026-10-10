@@ -6,6 +6,9 @@ import socket
 import sys
 import tempfile
 import threading
+import time
+import socketserver
+from http.server import BaseHTTPRequestHandler
 import unittest
 import urllib.error
 import urllib.request
@@ -16,7 +19,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from gateway import GatewayError, GatewayHTTPServer, OrionGateway, make_handler  # noqa: E402
+from gateway import CameraViewers, GatewayError, GatewayHTTPServer, OrionGateway, make_handler  # noqa: E402
 
 JOINTS = (
     "base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint",
@@ -326,6 +329,15 @@ class HttpAuthenticationTests(unittest.TestCase):
             urllib.request.urlopen(self.request("/api/v2/status", authorized=False))
         self.assertEqual(context.exception.code, HTTPStatus.UNAUTHORIZED)
 
+    def test_every_camera_endpoint_requires_authentication(self):
+        for path in ('stream', 'snapshot', 'observations', 'enabled'):
+            with self.subTest(path=path):
+                document = {'camera_enabled': True} if path == 'enabled' else None
+                with self.assertRaises(urllib.error.HTTPError) as result:
+                    urllib.request.urlopen(self.request('/api/v2/camera/' + path, document=document, authorized=False))
+                self.assertEqual(result.exception.code, HTTPStatus.UNAUTHORIZED)
+                result.exception.close()
+
     def test_debug_logs_require_authentication(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:
             urllib.request.urlopen(self.request("/api/v2/debug/logs", authorized=False))
@@ -339,6 +351,139 @@ class HttpAuthenticationTests(unittest.TestCase):
         with urllib.request.urlopen(self.request("/api/v2/scenes", document=scene_document("http_scene"))) as response:
             published = json.load(response); self.assertEqual(response.status, HTTPStatus.CREATED)
         self.assertEqual(published["name"], "http_scene")
+
+
+class CameraProxyTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.vision_path = root / "vision.sock"
+        self.off = False
+        owner = self
+
+        class VisionHandler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_GET(self):
+                if owner.off:
+                    body = b'{"error":{"code":"camera_off","message":"Camera is disabled"}}'
+                    self.send_response(503); self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                elif self.path == '/stream':
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=orion-frame")
+                    self.end_headers()
+                    try:
+                        for _ in range(5):
+                            self.wfile.write(b'--orion-frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n')
+                            self.wfile.flush(); time.sleep(.04)
+                    except OSError: pass
+                else:
+                    body = b'JPEG' if self.path == '/frame.jpg' else b'[]'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg" if self.path == '/frame.jpg' else "application/json")
+                    self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+        class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+            daemon_threads = True
+        self.vision = UnixServer(str(self.vision_path), VisionHandler)
+        self.vision_thread = threading.Thread(target=self.vision.serve_forever, daemon=True); self.vision_thread.start()
+        self.client = Mock(); self.client.request.return_value = {"ok": True}
+        self.gateway = OrionGateway(self.client, hardware='v2', vision_socket=str(self.vision_path), camera_preference_file=root / 'camera.json')
+        self.server = GatewayHTTPServer(('127.0.0.1', 0), make_handler(self.gateway, 'a' * 32, ['tauri://localhost']))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
+        self.addCleanup(self.shutdown)
+
+    def shutdown(self):
+        self.server.shutdown(); self.server.server_close(); self.thread.join(1)
+        self.vision.shutdown(); self.vision.server_close(); self.vision_thread.join(1)
+
+    def request(self, path, document=None):
+        return urllib.request.Request(f'http://127.0.0.1:{self.server.server_port}/api/v2/camera/{path}',
+            data=json.dumps(document).encode() if document is not None else None,
+            headers={'Authorization': 'Bearer ' + 'a' * 32, 'Origin': 'tauri://localhost', 'Content-Type': 'application/json'})
+
+    def test_authenticated_snapshot_and_observations_are_proxied_without_marker(self):
+        for path, expected in (('snapshot', b'JPEG'), ('observations', b'[]')):
+            with urllib.request.urlopen(self.request(path)) as response:
+                self.assertEqual(response.read(), expected)
+                self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'tauri://localhost')
+        self.client.request.assert_not_called()
+
+    def test_vision_camera_off_error_is_passed_through_without_starting_marker(self):
+        self.off = True
+        for path in ('stream', 'snapshot', 'observations'):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(self.request(path))
+            self.assertEqual(error.exception.code, 503)
+            self.assertEqual(json.loads(error.exception.read())['error']['code'], 'camera_off')
+            error.exception.close()
+        self.client.request.assert_not_called()
+
+    def test_stream_starts_and_clears_marker_and_preserves_multipart(self):
+        with urllib.request.urlopen(self.request('stream')) as response:
+            self.assertIn('boundary=orion-frame', response.headers['Content-Type'])
+            self.assertIn(b'Content-Length: 4\r\n\r\nJPEG\r\n', response.read())
+        self.assertEqual(self.gateway.camera_viewers.clients, 0)
+        self.assertEqual([call.args[0] for call in self.client.request.call_args_list], ['camera-viewer 3', 'camera-viewer 0'])
+
+    def test_indicator_failure_prevents_streaming(self):
+        self.client.request.return_value = {'ok': False, 'error': 'Unavailable'}
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(self.request('stream'))
+        self.assertEqual(error.exception.code, 503)
+        self.assertEqual(json.loads(error.exception.read())['error']['code'], 'camera_indicator_unavailable')
+        error.exception.close()
+        self.assertEqual(self.gateway.camera_viewers.clients, 0)
+
+    def test_saved_toggle_is_strict_private_and_blocks_frames_immediately(self):
+        with urllib.request.urlopen(self.request('enabled', {'camera_enabled': False})) as response:
+            self.assertFalse(json.load(response)['camera_enabled'])
+        path = self.gateway.camera_preference_file
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(path.read_text()), {'camera_enabled': False})
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(self.request('snapshot'))
+        self.assertEqual(json.loads(error.exception.read())['error']['code'], 'camera_off'); error.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(self.request('enabled', {'camera_enabled': 'yes'}))
+        self.assertEqual(error.exception.code, 400); error.exception.close()
+        with urllib.request.urlopen(self.request('enabled', {'camera_enabled': True})) as response:
+            self.assertTrue(json.load(response)['camera_enabled'])
+        self.assertTrue(self.gateway.camera_is_enabled())
+
+
+class CameraViewerLeaseTests(unittest.TestCase):
+    def test_viewer_limit_does_not_leak_leases(self):
+        from contextlib import ExitStack
+        request = Mock(); viewers = CameraViewers(request)
+        with ExitStack() as stack:
+            for _ in range(8):
+                stack.enter_context(viewers.watching())
+            with self.assertRaisesRegex(GatewayError, 'Too many'):
+                stack.enter_context(viewers.watching())
+            self.assertEqual(viewers.clients, 8)
+        self.assertEqual(viewers.clients, 0)
+        self.assertEqual(request.call_args.args, ('camera-viewer 0',))
+
+    def test_last_viewer_clears_shared_lease(self):
+        request = Mock()
+        viewers = CameraViewers(request)
+        with viewers.watching():
+            with viewers.watching():
+                self.assertEqual(viewers.clients, 2)
+                request.assert_called_once_with('camera-viewer 3')
+            self.assertEqual(viewers.clients, 1)
+            self.assertTrue(viewers.healthy)
+        self.assertEqual(viewers.clients, 0)
+        self.assertFalse(viewers.healthy)
+        self.assertEqual([call.args[0] for call in request.call_args_list], ['camera-viewer 3', 'camera-viewer 0'])
+
+    def test_failed_renewal_marks_streams_unhealthy(self):
+        request = Mock(side_effect=GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'runtime_unavailable', 'Unavailable'))
+        viewers = CameraViewers(request); viewers.healthy = True
+        viewers._renew(Mock(wait=Mock(return_value=False), is_set=Mock(return_value=False)))
+        self.assertFalse(viewers.healthy)
 
 
 @unittest.skipUnless(socket.has_dualstack_ipv6(), "OS requires dual-stack IPv6 support")

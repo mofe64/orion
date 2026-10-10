@@ -1,4 +1,5 @@
 import type { CompiledTrajectoryPreview, GatewayCapabilities, GatewayStatus } from "../types";
+import { MultipartJpegParser, type CameraFrame } from "./cameraStream";
 
 export interface GatewayConnection {
   url: string;
@@ -63,7 +64,7 @@ export interface UserAssetSource {
 }
 
 export class GatewayError extends Error {
-  constructor(message: string, public readonly status: number) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
 }
 
 async function request<T>(connection: GatewayConnection, path: string, init?: RequestInit): Promise<T> {
@@ -79,8 +80,81 @@ async function request<T>(connection: GatewayConnection, path: string, init?: Re
     },
   });
   const body = await response.json();
-  if (!response.ok) throw new GatewayError(body.error?.message ?? `Gateway returned ${response.status}.`, response.status);
+  if (!response.ok) throw new GatewayError(body.error?.message ?? `Gateway returned ${response.status}.`, response.status, body.error?.code);
   return body as T;
+}
+
+export interface CameraObservation {
+  id: string | number;
+  class: string;
+  box: [number, number, number, number]; // Normalised x, y, width, height.
+}
+export type CameraStreamState = "connecting" | "live" | "reconnecting" | "off" | "unavailable";
+export const setCameraEnabled = (connection: GatewayConnection, camera_enabled: boolean) =>
+  request<{ camera_enabled: boolean }>(connection, "/api/v2/camera/enabled", { method: "POST", body: JSON.stringify({ camera_enabled }) });
+export const getCameraObservations = (connection: GatewayConnection, signal?: AbortSignal) =>
+  request<CameraObservation[]>(connection, "/api/v2/camera/observations", { signal });
+
+async function cameraResponse(connection: GatewayConnection, path: string, signal: AbortSignal) {
+  const response = await fetch(`${connection.url.replace(/\/$/, "")}/api/v2/camera/${path}`, {
+    headers: { Authorization: `Bearer ${connection.token}` }, signal, redirect: "error", cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = await response.json();
+    throw new GatewayError(body.error?.message ?? "Camera unavailable.", response.status, body.error?.code);
+  }
+  return response;
+}
+
+export async function getCameraSnapshot(connection: GatewayConnection, signal: AbortSignal = AbortSignal.timeout(5000)): Promise<Blob> {
+  return (await cameraResponse(connection, "snapshot", signal)).blob();
+}
+
+function cameraRetry(delay: number, signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+    const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+    const timer = setTimeout(finish, delay);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+export async function watchCamera(connection: GatewayConnection, onFrame: (frame: CameraFrame) => void | Promise<void>,
+  onState: (state: CameraStreamState, message?: string) => void, signal: AbortSignal, retryDelay = 1000): Promise<void> {
+  let reconnecting = false;
+  while (!signal.aborted) {
+    onState(reconnecting ? "reconnecting" : "connecting");
+    const idle = new AbortController();
+    const combined = AbortSignal.any([signal, idle.signal]);
+    let timer = setTimeout(() => idle.abort(), 8000);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await cameraResponse(connection, "stream", combined);
+      if (!response.body) throw new Error("Camera stream has no response body.");
+      reader = response.body.getReader();
+      const parser = new MultipartJpegParser(response.headers.get("Content-Type") ?? "");
+      while (!combined.aborted) {
+        const { value, done } = await reader.read();
+        if (done) { parser.finish(); break; }
+        clearTimeout(timer); timer = setTimeout(() => idle.abort(), 5000);
+        const frames = parser.push(value);
+        if (frames.length && !combined.aborted) { await onFrame(frames[frames.length - 1]); if (!combined.aborted) onState("live"); }
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      if (error instanceof GatewayError && error.code === "camera_off") { onState("off"); return; }
+      if (error instanceof GatewayError && (error.status === 401 || error.status === 403)) {
+        onState("unavailable", "Reconnect Orion to view its camera."); return;
+      }
+      onState("reconnecting", error instanceof Error ? error.message : "Camera connection dropped.");
+    } finally {
+      clearTimeout(timer);
+      await reader?.cancel().catch(() => {});
+      reader?.releaseLock();
+      idle.abort();
+    }
+    if (!signal.aborted) { reconnecting = true; onState("reconnecting"); await cameraRetry(retryDelay, signal); }
+  }
 }
 
 export interface PairingCodeResult {

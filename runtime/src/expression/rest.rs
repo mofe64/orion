@@ -334,6 +334,8 @@ pub struct RestLighting {
     frame: Vec<Rgbw8>,
     fade: Option<(f64, Vec<Rgbw8>)>,
     wake_pulse: Option<Rgbw8>,
+    camera_viewer: bool,
+    viewer_rendered: bool,
     now: f64,
 }
 
@@ -345,6 +347,8 @@ impl RestLighting {
             frame,
             fade: None,
             wake_pulse: None,
+            camera_viewer: false,
+            viewer_rendered: false,
             now: 0.0,
         }
     }
@@ -356,6 +360,12 @@ impl RestLighting {
         self.wake_pulse = color;
     }
 
+    /// A faint cyan pixel on the V2 ring. Keep it out of the saved/base frame
+    /// and below the rest mask so expiry restores the exact previous lighting.
+    pub fn set_camera_viewer(&mut self, active: bool) {
+        self.camera_viewer = active;
+    }
+
     pub fn update(&mut self, dark: bool, now: f64) -> Result<()> {
         self.now = now;
         if dark && self.fade.is_none() {
@@ -364,14 +374,15 @@ impl RestLighting {
         if !dark {
             self.fade = None;
         }
-        if dark {
+        if dark || self.camera_viewer || self.viewer_rendered {
             self.render(&self.frame.clone())?;
         }
         Ok(())
     }
 
     pub fn is_on(&self) -> bool {
-        self.wake_pulse.is_some_and(|color| color != Rgbw8::OFF)
+        self.viewer_rendered
+            || self.wake_pulse.is_some_and(|color| color != Rgbw8::OFF)
             || self.frame.iter().any(|color| *color != Rgbw8::OFF)
     }
 }
@@ -389,10 +400,18 @@ impl LightingDevice for RestLighting {
         } else {
             pixels.to_vec()
         };
+        self.viewer_rendered = self.camera_viewer && self.fade.is_none();
         if let (Some(color), Some(_)) = (self.wake_pulse, &self.fade) {
             self.device.render_uniform(color)?;
         } else {
-            self.device.render(&frame)?;
+            let mut output = frame.clone();
+            if self.viewer_rendered
+                && let Some(pixel) = output.first_mut()
+            {
+                pixel.green = pixel.green.max(8);
+                pixel.blue = pixel.blue.max(8);
+            }
+            self.device.render(&output)?;
         }
         self.frame = frame;
         Ok(())
@@ -407,6 +426,29 @@ mod tests {
         cell::{Cell, RefCell},
         rc::Rc,
     };
+
+    #[test]
+    fn viewer_marker_preserves_base_frame_and_rest_mask() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone())));
+        let base = Rgbw8::new(2, 3, 4, 5);
+        light.render(&[base]).unwrap();
+        light.set_camera_viewer(true);
+        light.update(false, 1.0).unwrap();
+        assert_eq!(*observed.borrow(), [Rgbw8::new(2, 8, 8, 5)]);
+        assert_eq!(light.frame, [base]);
+        light.set_camera_viewer(false);
+        light.update(false, 2.0).unwrap();
+        assert_eq!(*observed.borrow(), [base]);
+        light.set_camera_viewer(true);
+        light.update(true, 3.0).unwrap();
+        light.update(true, 3.0 + REST_FADE_SECONDS).unwrap();
+        assert_eq!(*observed.borrow(), [Rgbw8::OFF]);
+        assert!(!light.is_on());
+        light.set_wake_pulse(Some(Rgbw8::new(10, 2, 1, 0)));
+        light.update(true, 9.0).unwrap();
+        assert_eq!(*observed.borrow(), [Rgbw8::new(10, 2, 1, 0)]);
+    }
 
     struct ObservedLight(Rc<RefCell<Vec<Rgbw8>>>);
     impl LightingDevice for ObservedLight {

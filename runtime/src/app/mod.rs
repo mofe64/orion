@@ -1,3 +1,4 @@
+mod camera_viewer;
 mod client;
 mod commands;
 mod options;

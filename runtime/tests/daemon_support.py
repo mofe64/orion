@@ -39,10 +39,11 @@ def request(path, command):
 
 
 @contextlib.contextmanager
-def daemon(automatic_character=False, rest_after_seconds=600, following=False):
+def daemon(automatic_character=False, rest_after_seconds=600, following=False, hardware='v1'):
     with tempfile.TemporaryDirectory(prefix='orion-daemon-test-', dir='/tmp') as temporary:
         path = Path(temporary) / 'daemon.sock'
         arguments = [str(BINARY), '--serve', '--backend', 'mujoco', '--socket', str(path),
+                     '--hardware', hardware,
                      '--start-pose', 'home', '--python', str(PACKAGE / 'tests/fixtures/following_driver.py' if following else ROOT / '.venv/bin/python'),
                      '--rest-after-seconds', str(rest_after_seconds)]
         if not automatic_character:

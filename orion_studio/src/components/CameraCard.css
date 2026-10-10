@@ -1,0 +1,19 @@
+.camera-card { min-width: 0; padding: 1.35rem; border: 1px solid var(--line); border-radius: 1.2rem; background: var(--surface-1); }
+.camera-card header, .camera-actions { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+.camera-card h2 { display: flex; align-items: center; gap: .55rem; font-size: 1rem; margin: 0; }
+.camera-card .studio-switch { width: 2.65rem; height: 1.55rem; flex: 0 0 auto; padding: .15rem; border-radius: 2rem; background: var(--line); display: flex; align-items: center; border: 0; }
+.camera-card .studio-switch span { width: 1.25rem; height: 1.25rem; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #0003; }
+.camera-card .studio-switch[aria-checked="true"] { background: var(--accent); }
+.camera-card .studio-switch[aria-checked="true"] span { transform: translateX(1.1rem); }
+.camera-picture { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: .8rem; margin-top: 1rem; background: var(--bg); }
+.camera-picture canvas { display: block; width: 100%; height: 100%; }
+.camera-picture .camera-overlay, .camera-placeholder { position: absolute; inset: 0; }
+.camera-overlay { pointer-events: none; }
+.camera-placeholder { display: grid; place-content: center; text-align: center; padding: 1rem; color: var(--muted); background: var(--bg); }
+.camera-actions { margin-top: .7rem; flex-wrap: wrap; }
+.camera-actions p, .camera-help { color: var(--muted); font-size: .75rem; }
+.camera-help { line-height: 1.6; margin-bottom: 0; }
+.camera-error { color: var(--danger, #dc766c); font-size: .8rem; }
+.debug-camera { margin-top: 1rem; }
+.debug-camera-toggle { display: flex; align-items: center; gap: .5rem; margin-bottom: .7rem; font-size: .85rem; }
+.debug-camera-toggle input { width: 1rem; min-height: 1rem; padding: 0; margin: 0; }

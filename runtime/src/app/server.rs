@@ -246,6 +246,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut speaking_light_intensity = 0.0;
     let mut manual_light: Option<crate::lamp::LampProgram> = None;
     let mut light_mode = routines.mode();
+    let mut camera_viewer = super::camera_viewer::CameraViewer::default();
     while !stopping.load(Ordering::Relaxed) {
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
@@ -292,6 +293,10 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         if let Err(error) = routines.tick_audio(now_seconds, audio.as_mut()) {
             eprintln!("oriond: {error}");
         }
+        lighting.set_camera_viewer(camera_viewer.active(
+            now_seconds,
+            scenes.is_active() || speech.is_active() || routines.ringing(),
+        ));
         lighting.set_wake_pulse(if rest.dark() && rest.wake_acknowledgment_ready() {
             feedback.candidate_pulse(now_seconds)
         } else {
@@ -404,6 +409,13 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             }
         }
         server.serve_pending(|command| {
+            if let Some(response) = camera_viewer.command(
+                command,
+                now_seconds,
+                options.hardware == crate::HardwareVersion::V2,
+            ) {
+                return response;
+            }
             let response = dispatch_command(
                 command,
                 now_seconds,
