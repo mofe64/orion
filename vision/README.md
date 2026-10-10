@@ -1,9 +1,9 @@
-# Orion camera setup
+# Orion vision
 
 ## Setup on Ubuntu 24.04 / Raspberry Pi 5
 
-The commissioning scripts build a headless camera stack and measure the V2
-IMX708 Wide camera. No camera service is installed by these scripts.
+The service owns the V2 IMX708 Wide camera and keeps frames in memory. It
+serves HTTP on `/tmp/orion-vision.sock`; it performs no detection or movement.
 
 Run from the Orion checkout on the Pi, with camera applications stopped:
 
@@ -21,6 +21,7 @@ these Raspberry Pi releases into `/usr/local`:
 | libpisp | `v1.2.0` | `50426319aa1a9ba4672f91977429365ad4e335a2` |
 | libcamera | `v0.5.0+rpt20250429` | `d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b` |
 | rpicam-apps | `v1.7.0` | `5a3f5965aca96c2d575261e4e4045f0e0481279b` |
+| kms++ / pykms | pinned commit | `b91affd0725f2523e2563da4f6295a2977fd3945` |
 
 The libcamera build enables only the `rpi/pisp` pipeline and IPA (image
 processing algorithm), with Python bindings. The app build disables display
@@ -61,32 +62,74 @@ port or overlay check; a DMA allocation error needs a permissions or CMA
 (contiguous memory allocator) check. Do not change the CMA reservation without
 first recording the allocation failure.
 
-### Measurement environment
+## Service setup and development
 
-Picamera2 0.3.25 imports `pykms` even with preview disabled. Ubuntu 24.04
-does not provide Raspberry Pi OS's `python3-kms++` package. Build the binding
-from this pinned kms++ revision; no display is opened during measurement:
+Provision the native stack once with camera applications stopped, then create
+an environment that sees Ubuntu's source-built `libcamera` and `pykms`:
 
 ```bash
-sudo apt-get install -y --no-install-recommends libdrm-dev libfmt-dev
-camera_kms_build=$(mktemp -d /var/tmp/orion-camera-kms.XXXXXXXX)
-git -C "$camera_kms_build" init
-git -C "$camera_kms_build" fetch --depth 1 https://github.com/tomba/kmsxx.git \
-  b91affd0725f2523e2563da4f6295a2977fd3945
-git -C "$camera_kms_build" checkout --detach FETCH_HEAD
-test "$(git -C "$camera_kms_build" rev-parse HEAD)" = \
-  b91affd0725f2523e2563da4f6295a2977fd3945
-meson setup "$camera_kms_build/build" "$camera_kms_build" \
-  --prefix=/usr/local --libdir=lib --buildtype=release --wrap-mode=nodownload \
-  -Dpykms=enabled -Dlibutils=true -Dutils=true -Domap=disabled -Dkmscube=false
-meson compile -C "$camera_kms_build/build" -j 2
-sudo meson install -C "$camera_kms_build/build"
-sudo /usr/sbin/ldconfig
-python3 -c 'import pykms'
-rm -rf -- "$camera_kms_build"
+uv venv --python /usr/bin/python3 --system-site-packages vision/.venv
+uv sync --project vision --locked --python /usr/bin/python3
+uv run --project vision orion-vision --profile hardware/profiles/v2.json
 ```
 
-The camera installer's Python path bridge also exposes this binding.
+The Pi release builder performs the environment steps and installs the unit
+only for profiles with `camera.enabled: true`. Provision native libraries
+before deploying; release preparation does not replace shared libraries beneath
+running services. The V2 profile selects camera index 0 on CAM/DISP1 with both
+flips false. Retain the working `camera_auto_detect=1` boot configuration.
+
+The service runs as the Pi user with supplementary group `video`, `Nice=10`,
+`CPUQuota=60%`, and one OpenMP/OpenBLAS thread. The Unix socket is user-only
+(mode 0600). Stop other camera applications before starting it.
+
+| GET endpoint | Response |
+| --- | --- |
+| `/health` | Camera state, latest `capture_boottime_ns`, drops and connected streams |
+| `/frame.jpg` | Latest main frame resized to 640×360; timestamp in `X-Capture-Boottime-Ns` |
+| `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
+| `/observations` | Empty list; detection is not implemented |
+
+JPEGs are encoded on demand and cached across viewers at at most 15 fps.
+Disconnected viewers cause encoding to stop. Capture retains a single latest
+RGB buffer, so slow consumers drop frames rather than accumulating a queue.
+`Picamera2Source` uses 1280×720 `BGR888`, whose Python byte order is RGB.
+Callbacks copy that buffer and metadata; they do not encode or write frames.
+
+`capture_boottime_ns` names Linux `CLOCK_BOOTTIME`, which includes suspend.
+It is `SensorTimestamp` (exposure start) plus `ExposureTime * 1000 / 2`
+(microseconds to nanoseconds), rounded down. Missing/invalid metadata and
+non-increasing sensor or midpoint timestamps drop the frame. Host receipt time
+is never substituted. Matching these stamps to measured robot poses requires
+the runtime pose-history interface.
+
+The service watches `~/.config/orion/camera.json` every 100 ms. A missing file
+defaults to enabled; malformed or unreadable settings fail closed. Setting
+`camera_enabled` to false closes capture, purges buffers, ends existing streams
+and makes every GET endpoint return HTTP 503 with `error.code: camera_off`.
+Changing it to true reopens capture. No frames are saved. The setting is not
+replaced by deployment or rollback. See [configuration](../docs/configuration.md).
+
+Replay tests run on a workstation without Picamera2 or native Pi bindings:
+
+```bash
+uv run --project vision python -m unittest discover -s vision/tests -v
+# For a synthetic JPEG fixture directory:
+uv run --project vision orion-vision --profile hardware/profiles/v2.json \
+  --replay /path/to/synthetic-fixtures --socket /tmp/orion-vision-test.sock
+```
+
+`FrameSource.start(callback)` supplies RGB arrays and capture metadata;
+`close()` stops capture. `ReplaySource` reads only synthetic JPEG fixtures.
+`MujocoSource` raises an explicit not-implemented error. Picamera2 is restricted
+to Linux aarch64 in the manifest. uv's exact metadata entry for the Linux-only
+`python-prctl` sdist allows locking on a workstation; the Pi still builds it.
+
+### Measurement environment
+
+Picamera2 0.3.25 imports `pykms` even with preview disabled. The native
+installer builds that binding and its required utils library; no display is
+opened.
 
 Use a disposable benchmark environment with the system bindings visible.
 These packages belong to commissioning tooling; they do not establish a

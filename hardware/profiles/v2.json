@@ -1,6 +1,7 @@
 {
   "hardware": "v2",
   "mechanical_revision": "v2.1-r4-r2",
+  "camera": {"enabled": true, "index": 0, "port": "CAM/DISP1", "hflip": false, "vflip": false, "camera_auto_detect": 1},
   "lighting": {"layout": "ring", "pixel_count": 24, "width": 24, "height": 1, "white_temperature_k": 6000, "gpio_bcm": 12, "wire_order": "GRBW", "frequency_hz": 800000},
   "audio": {"backend": "xvf3800_usb", "card": "Array", "pcm": "plughw:CARD=Array,DEV=0", "capture_channels": 2, "processed_channel": 0},
   "calibration_file": "servo_calibration-v2.json",

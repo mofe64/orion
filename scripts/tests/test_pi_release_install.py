@@ -28,6 +28,7 @@ class Fixture(unittest.TestCase):
         self.units = self.base / 'units'; self.units.mkdir()
         self.project = self.home / 'dev/orion'; self.project.mkdir(parents=True)
         shutil.copytree(SCRIPTS / 'systemd', self.release / 'scripts/systemd')
+        shutil.copytree(SCRIPTS.parent / 'hardware/profiles', self.release / 'hardware/profiles')
         (self.release / 'release.json').write_text('{"revision":"new"}')
         self.env = self.home / '.config/orion/voice-stack.env'; self.env.parent.mkdir(parents=True)
 
@@ -43,6 +44,45 @@ class Fixture(unittest.TestCase):
 
 
 class ConfigurationTests(Fixture):
+    def test_camera_unit_is_profile_gated_and_does_not_change_privacy_preference(self):
+        privacy = self.env.parent / 'camera.json'
+        privacy.write_text('{"camera_enabled":false}')
+        self.assertNotIn(self.units / 'orion-vision.service', self.plan())
+        (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        plan = self.plan()
+        unit = plan[self.units / 'orion-vision.service']
+        self.assertIn(str(self.release / 'vision/.venv/bin/orion-vision'), unit)
+        self.assertIn(str(self.release / 'hardware/profiles/v2.json'), unit)
+        for setting in ('Nice=10', 'CPUQuota=60%', 'SupplementaryGroups=video',
+                        'Environment=OMP_NUM_THREADS=1', 'Environment=OPENBLAS_NUM_THREADS=1'):
+            self.assertIn(setting, unit)
+        self.assertNotIn(privacy, plan)
+        self.assertEqual(privacy.read_text(), '{"camera_enabled":false}')
+        profile_path = self.release / 'hardware/profiles/v2.json'
+        selected = json.loads(profile_path.read_text())
+        selected['camera']['enabled'] = False
+        profile_path.write_text(json.dumps(selected))
+        self.assertNotIn(self.units / 'orion-vision.service', self.plan())
+
+    def test_vision_readiness_accepts_privacy_off_but_requires_capture_when_enabled(self):
+        from unittest.mock import MagicMock
+        for status, body, accepted in ((503, {"error": {"code": "camera_off"}}, True),
+                                      (200, {"capture_boottime_ns": 123}, True),
+                                      (200, {"capture_boottime_ns": None}, False),
+                                      (503, {"error": {"code": "camera_unavailable"}}, False)):
+            with self.subTest(status=status, body=body):
+                response = MagicMock(status=status)
+                response.read.return_value = json.dumps(body).encode()
+                with patch.object(installer.http.client, 'HTTPConnection') as connection, \
+                     patch.object(installer.socket, 'socket'):
+                    connection.return_value.getresponse.return_value = response
+                    if accepted:
+                        installer.check_vision_health()
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            installer.check_vision_health()
+                    connection.return_value.close.assert_called_once()
+
     def test_new_listener_uses_active_threshold_on_both_hardware_versions(self):
         for hardware in ('v1', 'v2'):
             with self.subTest(hardware=hardware):
@@ -549,6 +589,7 @@ class FakeSystem:
     def __init__(self, units, existing=True):
         self.units = units
         self.states = {name: {'active': existing, 'enabled': 'enabled' if existing else 'not-found'} for name in SERVICES}
+        self.states['orion-vision'] = {'active': False, 'enabled': 'not-found'}
         self.calls = []
         self.failure = None
         self.fail_restore = False
@@ -600,6 +641,29 @@ class FakeSystem:
 
 
 class TransactionTests(Fixture):
+    def test_camera_activation_failure_removes_new_unit_and_restores_previous_states(self):
+        (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        self.manifest.write_text('{"release":"/old/release","hardware":"v2"}')
+        original = self.manifest.read_bytes()
+        self.system.failure = 'ready'
+        with self.assertRaisesRegex(RuntimeError, 'readiness'):
+            self.activate()
+        self.assertFalse((self.units / 'orion-vision.service').exists())
+        self.assertEqual(self.system.states, self.original_states)
+        self.assertEqual(self.manifest.read_bytes(), original)
+        self.assertIn(('start', 'orion-vision'), self.system.calls)
+
+    def test_non_camera_release_disables_existing_camera_without_deleting_preference(self):
+        self.write(self.units / 'orion-vision.service', '[Service]\nExecStart=/old/vision\n')
+        self.system.states['orion-vision'] = {'active': True, 'enabled': 'enabled'}
+        privacy = self.env.parent / 'camera.json'
+        privacy.write_text('{"camera_enabled":false}')
+        self.activate()
+        self.assertEqual(self.system.states['orion-vision'], {'active': False, 'enabled': 'disabled'})
+        self.assertEqual(privacy.read_text(), '{"camera_enabled":false}')
+        installer.rollback(self.root, self.system)
+        self.assertEqual(self.system.states['orion-vision'], {'active': True, 'enabled': 'enabled'})
+
     def setUp(self):
         super().setUp()
         self.installed_units()
@@ -692,6 +756,7 @@ class TransactionTests(Fixture):
         first = self.activate()
         previous_manifest = self.manifest.read_bytes()
         self.release = self.root / 'releases/failed'; self.release.mkdir()
+        shutil.copytree(SCRIPTS.parent / 'hardware/profiles', self.release / 'hardware/profiles')
         (self.release / 'release.json').write_text('{"revision":"failed"}')
         self.system.failure = 'ready'
         with self.assertRaises(RuntimeError): self.activate()

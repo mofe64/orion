@@ -19,6 +19,8 @@ flowchart LR
         codex[Codex App Server]
         gateway[Authenticated gateway]
         runtime[oriond: movement, light and playback]
+        vision[orion-vision: camera capture]
+        gateway <-->|Private Unix HTTP socket| vision
         listener <-->|Local WebSocket| host
         host <-->|Private pipes| asr
         host <-->|Private pipes| tts
@@ -32,7 +34,8 @@ flowchart LR
     codex <--> cloud
 ```
 
-The Pi uses four systemd services. Their processes have separate responsibilities
+The Pi uses four core systemd services and a camera service on profiles with
+`camera.enabled`. Their processes have separate responsibilities
 so model execution and network waits stay outside the 50 Hz movement loop.
 
 | Service | Responsibility |
@@ -41,6 +44,7 @@ so model execution and network waits stay outside the 50 Hz movement loop.
 | `orion-listener` | Microphone capture, Rustpotter wake candidates, Silero speech boundaries and voice-session state |
 | `orion-voice-stack` | Runs `orion-service`, which owns the coordinator, agent, speech workers and saved voice settings |
 | `orion-studio-gateway` | Authenticates requests, manages asset publication, forwards service controls and spools response audio |
+| `orion-vision` (camera profiles) | Owns camera capture and serves in-memory JPEGs and observations on `/tmp/orion-vision.sock` |
 
 The hardware and MuJoCo backends use the same movement lifecycle and trajectory
 compiler. Each backend supplies its own joint feedback. See the
@@ -55,6 +59,21 @@ calibration, compiles trajectories, checks measured movement completion, and
 coordinates scenes, speech animation, idle behavior, rest and scheduled alerts. Clients
 submit named poses, motions, scenes or other supported operations. Every movement
 passes through the runtime's limits and ownership checks.
+
+### Camera service
+
+On V2, `orion-vision` owns the camera independently of movement and speech.
+It retains one latest RGB frame and serves JPEGs over a user-only Unix HTTP
+socket. Encoding is shared across stream viewers and limited to 15 fps; frame
+capture and privacy control continue without viewers. No captured frame is
+written to disk. Inference and gaze movement are not implemented by this
+service skeleton.
+
+Vision observes the saved camera privacy setting outside camera callbacks.
+Disabling it purges frame/JPEG buffers and closes capture within one second;
+existing streams end and every endpoint returns `503 camera_off`. Capture
+stamps use the exposure midpoint in `CLOCK_BOOTTIME`, not host delivery time
+or `CLOCK_MONOTONIC`. See [vision setup and interfaces](../vision/README.md).
 
 ### Listener and voice service
 

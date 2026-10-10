@@ -21,6 +21,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.local/share/orion/reminders.json` | Next-conversation reminders; stored beside the configured `MEMORY.md` |
 | `.config/orion/routines.sounds.json` | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window |
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
+| `.config/orion/camera.json` | `{"camera_enabled": true}` or `false`; vision watches this privacy preference |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
 | `.local/share/orion/SOUL.md` | Saved personality choices and generated instructions |
@@ -30,6 +31,20 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 The runtime and gateway read assets from the existing catalog root, normally
 the checkout passed as `--root` (for example `/home/mofe/orion`). This is separate from the code release selected by systemd.
 See [assets and installed releases](system-architecture.md#assets-and-installed-releases).
+
+## Camera privacy and profile
+
+`camera_enabled` in `~/.config/orion/camera.json` controls capture independently
+of microphone mute. A missing file defaults to enabled; malformed or unreadable
+settings disable capture. Vision watches this file every 100 ms and closes the
+camera within one second of disabling it. Deployment and rollback leave the
+preference untouched.
+
+`hardware/profiles/v2.json` enables the service and selects camera index 0,
+CAM/DISP1, `hflip: false`, `vflip: false` and the retained
+`camera_auto_detect=1` boot configuration. The profile describes the fitted
+camera; the saved setting controls privacy. V1 has no camera service. See
+[vision setup](../vision/README.md#service-setup-and-development).
 
 ## Voice settings
 

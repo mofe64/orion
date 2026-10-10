@@ -1,0 +1,296 @@
+"""One latest-frame slot, a privacy watcher, and bounded Unix HTTP clients."""
+import argparse
+import json
+import logging
+import os
+from pathlib import Path
+import signal
+import socket
+import socketserver
+import stat
+from http.server import BaseHTTPRequestHandler
+from threading import Condition, Event, Lock, Semaphore, Thread
+import time
+
+import numpy as np
+import simplejpeg
+
+from .sources import Picamera2Source, ReplaySource
+
+LOG = logging.getLogger(__name__)
+BOUNDARY = "orion-frame"
+
+
+def camera_enabled(path):
+    try:
+        value = json.loads(Path(path).read_text())["camera_enabled"]
+        return value if type(value) is bool else False
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+        # Corrupt or unreadable preferences fail closed.
+        return False
+
+
+def exposure_midpoint(metadata):
+    timestamp, exposure = metadata.get("SensorTimestamp"), metadata.get("ExposureTime")
+    if type(timestamp) is not int or timestamp <= 0 or type(exposure) is not int or exposure < 0:
+        return None
+    return timestamp + exposure * 1000 // 2
+
+
+class Vision:
+    def __init__(self, source, preference_file, encoder=simplejpeg.encode_jpeg):
+        self.source, self.preference_file, self.encoder = source, Path(preference_file), encoder
+        self.changed = Condition()
+        self.encode_lock = Lock()
+        self.stop = Event()
+        self.enabled = False
+        self.error = None
+        self.latest = None
+        self.cached = None
+        self.last_encode = 0.
+        self.last_capture = 0
+        self.last_sensor = 0
+        self.generation = 0
+        self.dropped = 0
+        self.encodes = 0
+        self.clients = 0
+        self.thread = None
+
+    def start(self):
+        self.thread = Thread(target=self._watch, name="vision-privacy", daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        with self.changed:
+            self.changed.notify_all()
+        if self.thread is not None:
+            self.thread.join(timeout=2)
+
+    def _disable(self):
+        with self.changed:
+            self.enabled = False
+            self.generation += 1
+            self.latest = self.cached = None
+            self.last_capture = self.last_sensor = 0
+            self.changed.notify_all()
+        self.source.close()
+
+    def _watch(self):
+        retry_at = 0.
+        try:
+            while not self.stop.is_set():
+                wanted = camera_enabled(self.preference_file)
+                if not wanted and self.enabled:
+                    self._disable()
+                elif wanted and not self.enabled and time.monotonic() >= retry_at:
+                    with self.changed:
+                        self.enabled = True
+                        self.error = None
+                        generation = self.generation
+                    try:
+                        self.source.start(lambda capture: self.publish(capture, generation))
+                    except Exception as error:
+                        LOG.exception("Camera start failed")
+                        self._disable()
+                        self.error = str(error)
+                        retry_at = time.monotonic() + 1
+                self.stop.wait(.1)
+        finally:
+            self._disable()
+
+    def publish(self, capture, generation):
+        stamp = exposure_midpoint(capture.metadata)
+        sensor = capture.metadata.get("SensorTimestamp")
+        with self.changed:
+            if not self.enabled or generation != self.generation:
+                return
+            if stamp is None or sensor <= self.last_sensor or stamp <= self.last_capture:
+                self.dropped += 1
+                return
+            if capture.rgb.dtype != np.uint8 or capture.rgb.ndim != 3 or capture.rgb.shape[2] != 3:
+                self.dropped += 1
+                return
+            self.last_sensor, self.last_capture = sensor, stamp
+            self.latest = (stamp, capture.rgb)
+            self.changed.notify_all()
+
+    def status(self):
+        with self.changed:
+            if not camera_enabled(self.preference_file):
+                return 503, {"error": {"code": "camera_off", "message": "Camera is disabled"}}
+            if not self.enabled or self.error:
+                return 503, {"error": {"code": "camera_unavailable", "message": self.error or "Camera is starting"}}
+            return 200, {"camera_enabled": True, "capture_boottime_ns": self.last_capture or None,
+                         "clock": "CLOCK_BOOTTIME", "stream_clients": self.clients, "dropped_frames": self.dropped}
+
+    def jpeg(self, after=0):
+        # Shared cache and throttle: ten viewers do not cause ten encodes.
+        with self.encode_lock:
+            with self.changed:
+                if self.status()[0] != 200 or self.latest is None:
+                    return None
+                stamp, rgb = self.latest
+                if self.cached and (stamp == self.cached[0] or time.monotonic() - self.last_encode < 1 / 15):
+                    return self.cached if self.cached[0] > after else None
+                if stamp <= after:
+                    return None
+                generation = self.generation
+            height, width = rgb.shape[:2]
+            # Bounded nearest-neighbour sampling needs no additional image library.
+            resized = np.ascontiguousarray(rgb[np.arange(360) * height // 360][:, np.arange(640) * width // 640])
+            jpeg = self.encoder(resized, quality=85, colorspace="RGB", colorsubsampling="420")
+            with self.changed:
+                if self.status()[0] != 200 or generation != self.generation:
+                    return None
+                self.cached = (stamp, jpeg)
+                self.last_encode = time.monotonic()
+                self.encodes += 1
+                return self.cached
+
+
+class VisionServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, path, vision):
+        self.vision = vision
+        self.slots = Semaphore(16)
+        super().__init__(str(path), Handler)
+        os.chmod(path, 0o600)
+
+    def process_request(self, request, address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.slots.release()
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(1)
+
+    def log_message(self, format, *args):
+        pass
+
+    def respond(self, status, body, content_type="application/json"):
+        if content_type == "application/json":
+            body = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        vision = self.server.vision
+        try:
+            status, body = vision.status()
+            if status != 200:
+                return self.respond(status, body)
+            if self.path == "/health":
+                return self.respond(200, body)
+            if self.path == "/observations":
+                return self.respond(200, [])
+            if self.path not in ("/frame.jpg", "/stream"):
+                return self.respond(404, {"error": {"code": "not_found"}})
+            frame = vision.jpeg()
+            if frame is None:
+                status, body = vision.status()
+                return self.respond(status if status != 200 else 503,
+                    body if status != 200 else {"error": {"code": "no_frame", "message": "Waiting for capture"}})
+            if self.path == "/frame.jpg":
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(frame[1])))
+                self.send_header("X-Capture-Boottime-Ns", str(frame[0]))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(frame[1])
+                return
+            with vision.changed:
+                vision.clients += 1
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY}")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                last = 0
+                while not vision.stop.is_set() and vision.status()[0] == 200:
+                    # Detect a departing peer before doing another encode.
+                    import select
+                    if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1, socket.MSG_PEEK):
+                        break
+                    if frame is not None and frame[0] > last:
+                        stamp, jpeg = frame
+                        self.wfile.write((f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(jpeg)}\r\n"
+                                          f"X-Capture-Boottime-Ns: {stamp}\r\n\r\n").encode() + jpeg + b"\r\n")
+                        self.wfile.flush()
+                        last = stamp
+                    with vision.changed:
+                        vision.changed.wait(timeout=1 / 15)
+                    frame = vision.jpeg(after=last)
+            finally:
+                with vision.changed:
+                    vision.clients -= 1
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--socket", type=Path, default=Path("/tmp/orion-vision.sock"))
+    parser.add_argument("--preference-file", type=Path, default=Path.home() / ".config/orion/camera.json")
+    parser.add_argument("--profile", type=Path, required=True)
+    parser.add_argument("--replay", type=Path, help="Directory of synthetic JPEG test inputs")
+    args = parser.parse_args()
+    camera = json.loads(args.profile.read_text()).get("camera", {})
+    if camera.get("enabled") is not True:
+        parser.error("The hardware profile has no enabled camera")
+    source = ReplaySource(args.replay) if args.replay else Picamera2Source(
+        camera["index"], camera["hflip"], camera["vflip"])
+    logging.basicConfig(level=logging.INFO)
+    if args.socket.exists():
+        if not stat.S_ISSOCK(args.socket.stat().st_mode) or args.socket.stat().st_uid != os.getuid():
+            raise RuntimeError("Refusing to replace an unowned or non-socket path")
+        # Do not steal a socket from another running owner.
+        with socket.socket(socket.AF_UNIX) as probe:
+            try:
+                probe.connect(str(args.socket))
+            except ConnectionRefusedError:
+                args.socket.unlink()
+            else:
+                raise RuntimeError("Vision socket already has a running owner")
+    vision = Vision(source, args.preference_file)
+    server = VisionServer(args.socket, vision)
+    def stop(signum, frame):
+        vision.stop.set()
+        Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    vision.start()
+    try:
+        server.serve_forever(poll_interval=.1)
+    finally:
+        vision.close()
+        server.server_close()
+        args.socket.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()

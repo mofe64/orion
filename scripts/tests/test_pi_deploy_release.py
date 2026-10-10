@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -79,10 +80,25 @@ class DeploymentSnapshotTests(unittest.TestCase):
 
 
 class ReleaseBuildTests(unittest.TestCase):
+    def test_camera_build_uses_system_python_site_packages_and_locked_vision_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / 'release'; release.mkdir()
+            shutil.copytree(SCRIPTS.parent / 'hardware/profiles', release / 'hardware/profiles')
+            (release / 'release.json').write_text('{"revision":"fixture","hardware":"v2"}')
+            with patch.object(deploy_pi_release, 'run') as run, patch.object(deploy_pi_release.shutil, 'copy2'):
+                deploy_pi_release.build_release(release, root)
+        commands = [tuple(map(str, call.args)) for call in run.call_args_list]
+        self.assertIn(('uv', 'venv', '--python', '/usr/bin/python3', '--system-site-packages', str(release / 'vision/.venv')), commands)
+        self.assertIn(('uv', 'sync', '--project', str(release / 'vision'), '--locked', '--python', '/usr/bin/python3'), commands)
+        self.assertTrue(any(str(release / 'vision/tests') in command for command in commands))
+        self.assertFalse(any('install-camera-stack.sh' in argument for command in commands for argument in command))
+
     def test_pi_skips_both_native_simulations_and_keeps_other_runtime_tests(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             release = root / 'release'; release.mkdir()
+            shutil.copytree(SCRIPTS.parent / 'hardware/profiles', release / 'hardware/profiles')
             (release / 'release.json').write_text(json.dumps({'revision': 'fixture'}))
             with patch.object(deploy_pi_release, 'run') as run, \
                  patch.object(deploy_pi_release.shutil, 'copy2'):

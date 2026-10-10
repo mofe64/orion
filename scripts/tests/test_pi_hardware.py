@@ -27,6 +27,7 @@ class HardwareDeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory); home = base / 'home'; home.mkdir()
             release = base / 'release'; release.mkdir()
+            shutil.copytree(SCRIPTS.parent / 'hardware/profiles', release / 'hardware/profiles')
             project = base / 'project'; project.mkdir()
             units = base / 'units'; units.mkdir()
             shutil.copytree(SCRIPTS / 'systemd', release / 'scripts/systemd')

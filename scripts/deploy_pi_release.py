@@ -11,6 +11,7 @@ import tempfile
 import uuid
 
 from install_pi_voice_stack import deployment_lock
+from pi_service_config import services_for_release
 
 
 # Sources, two Python environments and binaries for one release.
@@ -45,6 +46,13 @@ def build_release(release, root):
     env['CARGO_TARGET_DIR'] = str(root / 'build')
     run('python3', '-m', 'unittest', 'discover', '-s', release / 'scripts/tests', '-q', cwd=release)
     run('python3', release / 'scripts/prepare_pi_voice_stack.py', '--root', root, env=env)
+    if 'orion-vision' in services_for_release(release):
+        # Native stack provisioning is explicit: never rebuild shared libraries
+        # beneath the live release while preparing its replacement.
+        run('/usr/bin/python3', '-c', 'import libcamera, pykms')
+        run('uv', 'venv', '--python', '/usr/bin/python3', '--system-site-packages', release / 'vision/.venv')
+        run('uv', 'sync', '--project', release / 'vision', '--locked', '--python', '/usr/bin/python3')
+        run(release / 'vision/.venv/bin/python', '-m', 'unittest', 'discover', '-s', release / 'vision/tests', '-q', cwd=release)
     for component in ('runtime', 'orion-service'):
         # Build beside the live voice services on an 8 GB Pi; limit peak memory.
         args = ['cargo', 'test', '--locked', '--manifest-path', str(release / component / 'Cargo.toml'), '--all-targets', '-j', '1']

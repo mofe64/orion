@@ -1,0 +1,28 @@
+[Unit]
+Description=Orion in-memory camera service
+Documentation=file://@PROJECT_ROOT@/vision/README.md
+After=network.target
+
+[Service]
+Type=simple
+User=@ORION_USER@
+SupplementaryGroups=video
+WorkingDirectory=@PROJECT_ROOT@
+Environment=HOME=@USER_HOME@
+Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+UMask=0077
+ExecStart=@PROJECT_ROOT@/vision/.venv/bin/orion-vision --profile @PROJECT_ROOT@/hardware/profiles/v2.json --preference-file @USER_HOME@/.config/orion/camera.json --socket /tmp/orion-vision.sock
+Nice=10
+CPUQuota=60%
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=false
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

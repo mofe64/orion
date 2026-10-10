@@ -33,6 +33,7 @@ libcamera_tag=v0.5.0+rpt20250429
 libcamera_commit=d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b
 rpicam_tag=v1.7.0
 rpicam_commit=5a3f5965aca96c2d575261e4e4045f0e0481279b
+kmsxx_commit=b91affd0725f2523e2563da4f6295a2977fd3945
 
 apt-get update
 # Enumerate installed names rather than passing apt a broad wildcard. Do not
@@ -52,7 +53,7 @@ apt-get install -y --no-install-recommends \
     build-essential git meson ninja-build pkg-config cmake \
     libboost-dev libboost-program-options-dev nlohmann-json3-dev \
     libgnutls28-dev libssl-dev libevent-dev libudev-dev libyaml-dev \
-    libjpeg-dev libtiff-dev libpng-dev libexif-dev \
+    libjpeg-dev libtiff-dev libpng-dev libexif-dev libdrm-dev libfmt-dev libcap-dev \
     python3-dev python3-jinja2 python3-yaml python3-ply python3-pybind11 pybind11-dev
 
 build_root=$(mktemp -d /var/tmp/orion-camera.XXXXXXXX)
@@ -89,6 +90,20 @@ build_release rpicam-apps "${rpicam_tag}" "${rpicam_commit}" \
     -Denable_hailo=disabled -Ddownload_hailo_models=false \
     -Denable_imx500=false -Ddownload_imx500_models=false
 
+# Picamera2 imports pykms even with preview disabled. Ubuntu has no kms++
+# Python package. Its Python __init__ also imports utils, so build both.
+kmsxx_source=${build_root}/kmsxx
+git init "${kmsxx_source}"
+git -C "${kmsxx_source}" fetch --depth 1 https://github.com/tomba/kmsxx.git "${kmsxx_commit}"
+git -C "${kmsxx_source}" checkout --detach FETCH_HEAD
+test "$(git -C "${kmsxx_source}" rev-parse HEAD)" = "${kmsxx_commit}"
+meson setup "${kmsxx_source}/build" "${kmsxx_source}" \
+    --prefix=/usr/local --libdir=lib --buildtype=release --wrap-mode=nodownload \
+    -Dpykms=enabled -Dlibutils=true -Dutils=true -Domap=disabled -Dkmscube=false
+meson compile -C "${kmsxx_source}/build" -j 2
+meson install -C "${kmsxx_source}/build"
+ldconfig
+
 # libcamera uses site-packages, while Ubuntu's Python searches dist-packages.
 # A .pth file bridges that path without replacing the distro Python packages.
 python_version=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -97,6 +112,7 @@ test -r "${binding_root}/libcamera/__init__.py"
 install -d "/usr/local/lib/python${python_version}/dist-packages"
 printf '%s\n' "${binding_root}" > "/usr/local/lib/python${python_version}/dist-packages/orion-libcamera.pth"
 /usr/bin/python3 -c 'import libcamera; print("libcamera bindings:", libcamera.__file__)'
+/usr/bin/python3 -c 'import pykms; print("pykms bindings:", pykms.__file__)'
 
 getent group video >/dev/null || groupadd --system video
 install -d /etc/udev/rules.d

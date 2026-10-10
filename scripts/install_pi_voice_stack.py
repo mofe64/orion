@@ -15,9 +15,11 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import http.client
 import uuid
 
-from pi_service_config import ACTIVE_WAKE_THRESHOLD, SERVICES, STOP_ORDER, read_env, render_plan
+from pi_service_config import (ACTIVE_WAKE_THRESHOLD, SERVICES, MANAGED_SERVICES,
+    MANAGED_STOP_ORDER, services_for_release, read_env, render_plan)
 from pi_catalog import catalog_plan
 from pi_hardware import profile, release_hardware, calibration_path
 
@@ -276,7 +278,7 @@ class System:
         last_error, attempts = None, 0
         while time.monotonic() < deadline:
             try:
-                waiting = [name for name in SERVICES if not self.state(name)['active']]
+                waiting = [name for name in services_for_release(release) if not self.state(name)['active']]
                 if waiting:
                     raise RuntimeError(f'Waiting for {", ".join(waiting)} to start')
                 # Read the running gateway's arguments, including locally chosen port/token/socket.
@@ -331,8 +333,10 @@ class System:
                     gateway = json.load(response)
                 if gateway.get('pid') != status.get('pid'):
                     raise RuntimeError('Gateway is connected to a different release')
+                if 'orion-vision' in services_for_release(release):
+                    check_vision_health()
                 return
-            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            except (OSError, ValueError, RuntimeError, http.client.HTTPException, subprocess.SubprocessError) as error:
                 last_error = error
                 attempts += 1
                 if attempts % 30 == 0:  # about every 15 s
@@ -340,6 +344,24 @@ class System:
                 time.sleep(.5)
         raise RuntimeError(f'Pi release did not become ready: {last_error}. Check runtime, Qwen, TTS, Codex '
                            f'and gateway logs.{journal_tail("orion-voice-stack")}')
+
+
+def check_vision_health(socket_path='/tmp/orion-vision.sock'):
+    connection = http.client.HTTPConnection('localhost', timeout=2)
+    connection.sock = socket.socket(socket.AF_UNIX)
+    connection.sock.settimeout(2)
+    try:
+        connection.sock.connect(socket_path)
+        connection.request('GET', '/health')
+        response = connection.getresponse()
+        body = json.loads(response.read(65536))
+        # Privacy-off is a healthy process, not a failed deployment.
+        if response.status != 200 and not (response.status == 503 and body.get('error', {}).get('code') == 'camera_off'):
+            raise RuntimeError(f'Vision is not ready: {body}')
+        if response.status == 200 and not body.get('capture_boottime_ns'):
+            raise RuntimeError('Vision has not captured a frame yet')
+    finally:
+        connection.close()
 
 
 def expected_tts(home):
@@ -403,7 +425,7 @@ def snapshot(root, files, system):
     folder = root / 'transactions' / uuid.uuid4().hex
     folder.mkdir(parents=True, mode=0o700)
     data = {'version': 2, 'status': 'prepared', 'files': [],
-            'services': {name: system.state(name) for name in SERVICES}}
+            'services': {name: system.state(name) for name in MANAGED_SERVICES}}
     for index, path in enumerate(files):
         if path.is_symlink():
             raise RuntimeError(f'Refusing to replace a symlink: {path}')
@@ -418,7 +440,8 @@ def snapshot(root, files, system):
 
 def restore(folder, data, system):
     # A new runtime may be holding torque after partial activation.
-    for name in STOP_ORDER:
+    stop_order = tuple(name for name in MANAGED_STOP_ORDER if name in data['services'])
+    for name in stop_order:
         if name == 'oriond' and system.state(name)['active']:
             system.rest_runtime()
         system.stop(name)
@@ -433,7 +456,7 @@ def restore(folder, data, system):
         else:
             system.remove(path)
     system.reload()
-    for name in SERVICES:
+    for name in data['services']:
         old = data['services'][name]
         # No enable/disable request for a now-missing service: its unit file is already gone.
         if system.state(name)['enabled'] != 'not-found':
@@ -442,7 +465,7 @@ def restore(folder, data, system):
             system.start(name)
     # Starting oriond pulls in its listener through Wants=. Restore intentionally
     # stopped companions after dependencies have had a chance to start them.
-    for name in STOP_ORDER:
+    for name in stop_order:
         if not data['services'][name]['active'] and system.state(name)['active']:
             if name == 'oriond':
                 system.rest_runtime()
@@ -460,21 +483,22 @@ def activate(root, release, home, files, system):
     if previous and previous.get('version') == 2 and previous.get('release') == str(release):
         raise RuntimeError('Release is already installed; build a new release directory for an update')
     replacing_hardware = previous and previous.get('hardware', 'v1') != release_hardware(release)
-    if replacing_hardware and any(system.state(name)['active'] for name in SERVICES):
+    if replacing_hardware and any(system.state(name)['active'] for name in MANAGED_SERVICES):
         raise RuntimeError('Stop the old hardware services before replacing the lamp; no services were changed')
     folder, data = snapshot(root, [*files, installed], system)
     data['release'] = str(release)
     atomic_json(folder / 'state.json', data)
     atomic_json(pending, {'transaction': str(folder)})
     switched = False
+    wanted_services = services_for_release(release)
     try:
         # Quiesce companions first. Failure to rest never forces termination of the runtime.
-        for name in STOP_ORDER[:-1]:
+        for name in MANAGED_STOP_ORDER[:-1]:
             system.stop(name)
         if data['services']['oriond']['enabled'] != 'not-found' and not replacing_hardware:
             if not data['services']['oriond']['active']:
                 system.start('oriond')
-                for name in STOP_ORDER[:-1]:
+                for name in MANAGED_STOP_ORDER[:-1]:
                     system.stop(name)
             print('Returning the current runtime to rest before updating code and YAML.', flush=True)
             system.rest_runtime(force=True)
@@ -489,16 +513,20 @@ def activate(root, release, home, files, system):
                         0o644 if str(path).startswith('/etc/') or path.suffix in ('.yaml', '.yml') else 0o600)
                 system.write(path, value.encode(), mode)
         system.reload()
-        for name in SERVICES:
+        for name in MANAGED_SERVICES:
+            if name not in wanted_services:
+                if system.state(name)['enabled'] != 'not-found':
+                    system.enable(name, 'disabled')
+                continue
             if data['services'][name]['enabled'] == 'not-found':
                 system.enable(name, 'enabled')
         system.start('oriond')
         # oriond Wants= the listener. Keep all voice/Studio companions quiet
         # until physical smoke playback has settled back to rest.
-        for name in STOP_ORDER[:-1]:
+        for name in MANAGED_STOP_ORDER[:-1]:
             system.stop(name)
         system.smoke_runtime(release)
-        for name in SERVICES[1:]:
+        for name in wanted_services[1:]:
             system.start(name)
         system.ready(release, home)
         atomic_json(installed, {'version': 2, 'release': str(release), 'hardware': release_hardware(release), 'rollback': str(folder)})
@@ -518,10 +546,10 @@ def activate(root, release, home, files, system):
                     f'Recovery could not finish; preserve {folder} and run --rollback'
                 ) from activation_error
         else:
-            for name in SERVICES[1:]:
+            for name in MANAGED_SERVICES[1:]:
                 if data['services'][name]['active']:
                     system.start(name)
-            for name in STOP_ORDER[:-1]:
+            for name in MANAGED_STOP_ORDER[:-1]:
                 if not data['services'][name]['active']:
                     system.stop(name)
             data['status'] = 'rolled_back'; atomic_json(folder / 'state.json', data)
@@ -593,6 +621,10 @@ def preflight(release, home, files, system):
         raise RuntimeError(f'Missing Studio pairing token: {token}. Create it with: '
                            f'python3 {release / "orion_studio/gateway.py"} create-token --token-file {token}')
     check_calibration(calibration, hardware)
+    if 'orion-vision' in services_for_release(release):
+        if not (release / 'vision/.venv/bin/orion-vision').is_file():
+            raise RuntimeError('Prepare the complete release first: vision/.venv/bin/orion-vision')
+        system.run(release / 'vision/.venv/bin/python', '-c', 'import libcamera, pykms, picamera2')
     stray = system.foreign_runtimes()
     if stray:
         raise RuntimeError(f'Stop the oriond started by hand (PID {", ".join(stray)}) before deploying; '

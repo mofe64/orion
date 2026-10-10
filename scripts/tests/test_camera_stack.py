@@ -296,6 +296,7 @@ elif [[ $1 == -C ]]; then
       */libpisp) echo 50426319aa1a9ba4672f91977429365ad4e335a2 ;;
       */libcamera) echo d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b ;;
       */rpicam-apps) echo 5a3f5965aca96c2d575261e4e4045f0e0481279b ;;
+      */kmsxx) echo b91affd0725f2523e2563da4f6295a2977fd3945 ;;
     esac
 fi
 '''.replace("echo 50426319aa1a9ba4672f91977429365ad4e335a2", "echo moved" if moved_tag else "echo 50426319aa1a9ba4672f91977429365ad4e335a2"))
@@ -333,6 +334,9 @@ fi
         self.assertNotIn("autoremove", log)
         self.assertIn("-Dpipelines=rpi/pisp -Dipas=rpi/pisp -Dpycamera=enabled", log)
         self.assertIn("-Denable_qt=disabled", log)
+        self.assertIn("fetch --depth 1 https://github.com/tomba/kmsxx.git b91affd0725f2523e2563da4f6295a2977fd3945", log)
+        self.assertIn("-Dpykms=enabled -Dlibutils=true -Dutils=true -Domap=disabled -Dkmscube=false", log)
+        self.assertIn("import pykms", log)
         self.assertEqual(log.count("usermod -a -G video camera-user"), 2)
         self.assertFalse(list(self.root.glob("build.*")))
 

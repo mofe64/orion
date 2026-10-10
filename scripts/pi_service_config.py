@@ -8,6 +8,14 @@ from pi_hardware import profile, release_hardware
 
 SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack')
 STOP_ORDER = tuple(reversed(SERVICES))
+MANAGED_SERVICES = (*SERVICES, 'orion-vision')
+MANAGED_STOP_ORDER = tuple(reversed(MANAGED_SERVICES))
+
+
+def services_for_release(release):
+    camera = profile(release_hardware(release), project=release).get('camera', {})
+    return MANAGED_SERVICES if camera.get('enabled') is True else SERVICES
+
 REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 # The reference model proposes candidates for the packaged acoustic verifier
 # (voice/models/verifier); the trained model remains packaged for comparison.
@@ -19,6 +27,7 @@ PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',
     'voice/.venv/bin/orion-listener', 'orion_studio/gateway.py',
+    'vision/.venv/bin/orion-vision',
     'voice/models/wake/hey_orion_trained_080.rpw',
     'voice/models/wake/hey_orion_reference.rpw',
     'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh',
@@ -145,7 +154,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
     selected = profile(hardware)
     calibration = home / ".config/orion" / selected["calibration_file"]
     files = {}
-    for name in SERVICES:
+    for name in services_for_release(release):
         path = unit_dir / f'{name}.service'
         if path.is_symlink():
             raise ValueError(f'Inspect symlinked service before deployment: {path}')
@@ -190,6 +199,9 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                         start = set_option(start, '--processed-channel', 0)
                 return start
             change_effective_start(contents, hardware_start)
+        if name == 'orion-vision':
+            change_effective_start(contents, lambda start: set_option(start, '--profile',
+                release / 'hardware/profiles' / f'{hardware}.json'))
 
         # A first onboard installation adds only missing defaults. Existing override values win.
         if name == 'orion-listener':
@@ -219,6 +231,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 value = re.sub(r'^WorkingDirectory=.*$', f'WorkingDirectory={directory}', value, flags=re.M)
             if name == 'orion-voice-stack':
                 value = re.sub(r'^Environment=ORION_PROJECT_ROOT=.*$', f'Environment=ORION_PROJECT_ROOT={release}', value, flags=re.M)
+            if name == 'orion-vision':
+                value = re.sub(r'^WorkingDirectory=.*$', f'WorkingDirectory={release}', value, flags=re.M)
             files[p] = value
     environment_path = home / '.config/orion/voice-stack.env'
     text = environment_path.read_text() if environment_path.exists() else ''

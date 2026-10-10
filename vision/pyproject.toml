@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orion-vision"
+version = "0.1.0"
+description = "Local camera capture and bounded in-memory JPEG streaming"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy==2.2.4",
+  "simplejpeg==1.9.0",
+  "picamera2==0.3.25; sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
+[project.scripts]
+orion-vision = "orion_vision.service:main"
+
+[tool.setuptools.packages.find]
+include = ["orion_vision*"]
+
+# The 1.8.1 sdist's setup.py declares no runtime dependencies, but aborts on
+# non-Linux hosts before producing metadata. Supply that exact metadata so
+# uv can lock Pi dependencies on a workstation; the Pi still builds prctl.
+[[tool.uv.dependency-metadata]]
+name = "python-prctl"
+version = "1.8.1"
+requires-dist = []
