@@ -34,6 +34,17 @@ Studio Settings saves preferences through the Pi gateway. The Pi defaults to
 `piper-alba-medium`. The Pi adapter loads Qwen GGUF files from the configured
 local folder. Piper Alba Medium is a fixed British English voice. Older saved
 voice selections are converted to Piper Alba when loaded.
+Studio’s **Voice** section waits for saved settings before displaying reply controls
+and the friendly voice name. Its Save button states that saving turns listening off
+and restarts the coordinator. Personality choices and valid memory edits autosave;
+local appearance and preview preferences autosave with inline **Saved** feedback.
+Debug retains model IDs, file paths, wake engine and
+speech-boundary details.
+A failed load shows a plain error, a **Please try again** hint and collapsed
+technical details. Studio does not offer local Mac speech-model folder selection.
+In browser development, native voice and profile commands are unavailable.
+Settings directs you to the desktop app and a connected Orion instead of retrying
+these commands.
 The Pi ASR adapter asks Qwen to transcribe in English rather than auto-detecting
 the language. Orion replies in English unless the user explicitly asks to switch.
 
@@ -106,7 +117,7 @@ release and rollback need.
 
 ## Studio gateway
 
-Enter the lamp's gateway address in Studio and choose **Get code**. The lamp
+Enter Orion’s gateway address in Studio and choose **Get code**. Orion
 speaks a six-digit code twice; enter it and choose **Pair**. The gateway exchanges
 the code for its existing bearer token, which Studio verifies and saves through
 the [saved pairing](#saved-pairing) flow.

@@ -1,6 +1,9 @@
 import type { CompiledTrajectoryPreview, MotionDefinition } from "../types";
 
 export interface MovementComponent { index: number; kind: "pose" | "delay" }
+export function updateMovementPart(motion: MotionDefinition, index: number, changes: Partial<MotionDefinition["keyframes"][number]>): MotionDefinition {
+  return { ...motion, keyframes: motion.keyframes.map((frame, i) => i === index ? { ...frame, ...changes } : frame) };
+}
 export function movementComponents(motion: MotionDefinition, trajectory?: CompiledTrajectoryPreview) {
   let start = 0;
   return motion.keyframes.flatMap((frame, index) => {

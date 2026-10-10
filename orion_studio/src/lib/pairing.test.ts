@@ -34,9 +34,9 @@ describe("pairing and reconnect", () => {
     expect(controller.current()).toMatchObject({ phase: "connected", connection: target });
   });
   it.each([
-    [403, "That code is wrong. 4 tries remain.", "Check the code spoken by the lamp. That code is wrong. 4 tries remain."],
-    [410, "Ask the lamp for a new code.", "That pairing code expired or was already used. Ask the lamp for a new code."],
-    [429, "pairing_busy", "The lamp is busy. Wait 15 seconds, then ask for a new code."],
+    [403, "That code is wrong. 4 tries remain.", "Check the code spoken by Orion. That code is wrong. 4 tries remain."],
+    [410, "Ask Orion for a new code.", "That pairing code expired or was already used. Ask Orion for a new code."],
+    [429, "pairing_busy", "Orion is busy. Wait 15 seconds, then ask for a new code."],
   ])("shows a friendly pairing-code error for HTTP %s", async (httpStatus, message, expected) => {
     const { controller, store } = setup(null);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: httpStatus, json: async () => ({ error: { message } }) }));
@@ -80,7 +80,7 @@ describe("pairing and reconnect", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({ error: { message: "pairing_busy" } }) }));
     expect(await controller.requestCode("other-orion.local")).toBeNull();
     expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities,
-      error: "The lamp is busy. Wait 15 seconds, then ask for a new code." });
+      error: "Orion is busy. Wait 15 seconds, then ask for a new code." });
     await vi.advanceTimersByTimeAsync(1000);
     expect(probe.status).toHaveBeenCalledTimes(2);
     expect(probe.status).toHaveBeenLastCalledWith(target);
@@ -91,7 +91,7 @@ describe("pairing and reconnect", () => {
     const { controller } = setup(null);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({ error: { message: "pairing_busy" } }) }));
     expect(await controller.requestCode(target.url)).toBeNull();
-    expect(controller.current().error).toBe("The lamp is busy. Wait 15 seconds, then ask for a new code.");
+    expect(controller.current().error).toBe("Orion is busy. Wait 15 seconds, then ask for a new code.");
   });
   it("ignores a late token exchange after forgetting the lamp", async () => {
     const { controller, store } = setup(null);

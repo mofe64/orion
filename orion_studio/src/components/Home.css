@@ -22,7 +22,7 @@
 .home-shell .mode-tabs button { min-width: 0; min-height: 2.75rem; border: 0; border-radius: .8rem; }
 .home-shell .mode-tabs button.active { background: var(--surface-2); }
 .home-shell .topbar-actions { align-items: center; flex-wrap: wrap; }
-.home-shell .topbar-actions button { border-radius: 2rem; }
+.home-shell .topbar-actions button, .home-shell .topbar-actions .connection-button { border-radius: 2rem; }
 .home-shell .home-theme-toggle { background: transparent; border-color: transparent; color: var(--muted); }
 .home-dashboard { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3rem) 1rem; }
 .home-dashboard h1 { font-size: clamp(2rem, 3.5vw, 2.6rem); font-weight: 500; line-height: 1.15; letter-spacing: -.045em; margin-bottom: .65rem; }
@@ -43,7 +43,7 @@
 .home-dashboard .viewport-orbit-controls { position: absolute; inset: auto 0 -2.5rem; height: 2.5rem; display: flex; align-items: center; justify-content: center; gap: .75rem; color: var(--muted); font-size: .7rem; background: var(--surface-1); }
 .home-dashboard .viewport-orbit-controls button { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); background: transparent; }
 .home-dashboard .oh-model-caption { font-size: .7rem; text-align: center; margin: .45rem 0 1rem; }
-.home-dashboard .oh-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
+.home-dashboard .oh-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
 .home-dashboard .oh-mode { display: flex; align-items: center; gap: .6rem; text-align: left; padding: .9rem .8rem; border: 1px solid transparent; border-radius: 1rem; background: var(--surface-2); }
 .home-dashboard .oh-mode[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-soft); opacity: 1; }
 .home-dashboard .oh-mode strong { display: block; font-weight: 550; font-size: .8rem; }
@@ -60,14 +60,13 @@
 .home-dashboard .oh-switch span { width: 1.5rem; height: 1.5rem; border-radius: 50%; background: white; transition: transform .18s var(--ease-out); }
 .home-dashboard .oh-switch[aria-checked="true"] { background: var(--accent); }
 .home-dashboard .oh-switch[aria-checked="true"] span { transform: translateX(1.05rem); }
-.home-dashboard .oh-dial { position: relative; display: grid; place-items: center; width: 13.5rem; max-width: 100%; aspect-ratio: 1; margin: 1.5rem auto .5rem; }
-.home-dashboard .oh-dial svg { position: absolute; width: 100%; height: 100%; transform: rotate(135deg); }
-.home-dashboard .oh-dial-track { stroke: var(--line-strong); }
-.home-dashboard .oh-dial-value { stroke: var(--accent); }
-.home-dashboard .oh-dial > div { text-align: center; }
-.home-dashboard .oh-dial output { font-size: 3.3rem; letter-spacing: -.06em; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.home-dashboard .oh-dial output small { font-size: 1.45rem; }
-.home-dashboard .oh-dial label { display: block; margin-top: .4rem; font-size: .7rem; font-weight: 400; }
+.home-dashboard .oh-brightness-label { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; margin: 1.5rem 0 .5rem; font-size: .8rem; }
+.home-dashboard .oh-brightness-label output { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.home-dashboard .oh-lamp .oh-note { margin-top: .5rem; padding-top: .5rem; }
+.home-dashboard .oh-rest-action { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.home-dashboard .oh-rest-action .oh-mode { width: 100%; }
+.home-dashboard .oh-mode-pause { margin-top: .75rem; }
+.home-dashboard .oh-disconnected { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; border-block: 1px solid var(--line); padding-block: 1.5rem; }
 .home-dashboard .oh-range { display: flex; align-items: center; gap: .75rem; color: var(--muted); margin: 0 .25rem 1.35rem; }
 .home-dashboard input[type="range"] { min-height: 1.8rem; accent-color: var(--accent); padding: 0; border: 0; background: transparent; }
 .home-dashboard .oh-light-moods { margin: 0 0 1rem; padding: 0; border: 0; min-width: 0; }
@@ -78,8 +77,6 @@
 .home-dashboard .oh-color { margin-bottom: 1.1rem; }
 .home-dashboard .oh-color > div { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .6rem; }
 .home-dashboard .oh-color label { font-size: .75rem; font-weight: 400; }
-.home-dashboard .oh-apply { width: 100%; border: 0; border-radius: .8rem; background: var(--accent); color: #081323; font-size: .8rem; font-weight: 650; padding: .85rem; }
-.home-shell[data-home-theme="light"] .oh-apply { color: white; }
 .home-dashboard .oh-note { margin-top: auto; padding-top: 1.25rem; font-size: .7rem; }
 .home-dashboard .oh-expressions { margin-top: 1.6rem; }
 .home-dashboard .oh-quick-actions { display: flex; gap: .75rem; margin-top: 1.5rem; }

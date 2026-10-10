@@ -15,6 +15,8 @@ describe("Orion sound settings", () => {
     expect(html).toContain('value="funny_alarm" selected=""');
     expect(html).not.toContain('disabled=""');
     expect(html).toContain("Alert sounds");
+    expect(html).toContain("an alert already ringing keeps its sound");
+    expect(html).toContain("Sounds stop after five minutes");
   });
   it("does not offer unconfirmed alarm choices on an older runtime", () => {
     const html = renderToStaticMarkup(<SoundSettings connected routines={{ mode: "idle" } as GatewayStatus["routines"]} onSound={vi.fn()} />);

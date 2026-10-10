@@ -1,9 +1,11 @@
+import { assetDisplayName } from "../lib/displayName";
 import { useEffect, useRef, useState } from "react";
 import { sceneDuration, triggerTime, type SceneTrajectoryPreviews } from "../lib/preview";
 import { movementComponents, type MovementComponent } from "../lib/movementComponents";
 import type { MotionDefinition, ProjectCatalog, SceneDefinition } from "../types";
 
 export type TrackSelection = { track: "motion" | "lighting" | "audio"; id: string; component?: MovementComponent };
+const itemLabels = { motion: "Movement", lighting: "Light", audio: "Sound", pose: "Pose", delay: "Delay" };
 interface TimelineProps {
   scene: SceneDefinition;
   catalog?: ProjectCatalog;
@@ -118,18 +120,19 @@ export function Timeline({ scene, catalog, onChangeMovement, onToggleParts, onDe
     element.onpointercancel = () => { drag.current = null; element.style.transform = ""; element.style.cursor = ""; element.onpointermove = null; element.onpointerup = null; };
   };
   const clip = (row: Row) => <button {...contextHandlers(row)} onPointerDown={event => startDrag(event, row)}
-    aria-label={`${row.component?.kind ?? row.track}: ${row.label.replaceAll("_", " ")}, ${row.at === null ? "timing pending" : `${row.at.toFixed(2)} seconds`}`}
+    aria-label={`${itemLabels[row.component?.kind ?? row.track]}: ${assetDisplayName(row.label)}, ${row.at === null ? "timing pending" : `${row.at.toFixed(2)} seconds`}`}
+    title={`${itemLabels[row.component?.kind ?? row.track]}: ${assetDisplayName(row.label)}`}
     aria-pressed={isSelected(row)}
     className={`track-clip ${row.at === null || row.duration === null && row.track === "motion" ? "component-pending" : ""} ${row.component?.kind ?? ""} ${row.track === "lighting" ? "light" : row.track} ${isSelected(row) ? "selected" : ""} ${row.track === "audio" ? "event-point" : ""}`}
     style={{ left: `${(row.at ?? 0) / duration * 100}%`, width: row.duration === null ? ".75rem" : `${row.duration / duration * 100}%` }}
     onClick={event => { event.stopPropagation(); onSelect({ track: row.track, id: row.id, component: row.component }); }}>
-    {row.component?.kind === "delay" ? `Delay ${row.duration?.toFixed(2)} s` : row.label.replaceAll("_", " ")}
+    <span className="track-clip-label">{row.component?.kind === "delay" ? `Delay ${row.duration?.toFixed(2)} s` : assetDisplayName(row.label)}</span>
   </button>;
   const renderRow = (row: Row) => <div key={rowKey(row)} className="track-row" {...contextHandlers(row)}>
-    <button className="track-event-label" aria-pressed={isSelected(row)} onClick={() => onSelect(row)}><small>{row.component?.kind ?? row.track}</small>{row.label.replaceAll("_", " ")}</button>
+    <button className="track-event-label" aria-pressed={isSelected(row)} onClick={() => onSelect(row)}><small>{itemLabels[row.component?.kind ?? row.track]}</small>{assetDisplayName(row.label)}</button>
     <div className="track-canvas">{clip(row)}{playhead()}</div>
   </div>;
-  return <section className="timeline" aria-label="Scene tracks">
+  return <section className={`timeline${Object.values(expanded).some(Boolean) ? " timeline-expanded" : ""}`} aria-label="Scene tracks">
     {menu && <div ref={menuContainer} className="movement-context-menu" role="menu" aria-label="Track item actions" style={{ left: menu.x, top: menu.y }} onKeyDown={event => {
       if (event.key === "Escape") setMenu(null);
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -138,27 +141,33 @@ export function Timeline({ scene, catalog, onChangeMovement, onToggleParts, onDe
         items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
       }
     }}>
-      {menu.track === "motion" && !menu.component && !scene.motion.find(event => event.id === menu.id)?.show_parts && catalog && onChangeMovement && onToggleParts && <button role="menuitem" ref={menuRef} onClick={() => { revealSplit.current = menu.id; onToggleParts(menu.id); onSelect({ track: "motion", id: menu.id, component: { index: 0, kind: "pose" } }); setMenu(null); }}>Split into components</button>}
+      {menu.track === "motion" && !menu.component && !scene.motion.find(event => event.id === menu.id)?.show_parts && catalog && onChangeMovement && onToggleParts && <button role="menuitem" ref={menuRef} onClick={() => { revealSplit.current = menu.id; onToggleParts(menu.id); onSelect({ track: "motion", id: menu.id, component: { index: 0, kind: "pose" } }); setMenu(null); }}>Split into poses</button>}
       {menu.track === "motion" && menu.component?.kind === "pose" && onEditPose && <button role="menuitem" ref={menuRef} onClick={() => { onEditPose(menu); setMenu(null); }}>Edit pose</button>}
       {onDelete && <button className="menu-delete" role="menuitem" ref={menu.track !== "motion" || !!menu.component || !onToggleParts ? menuRef : undefined} onClick={() => { onDelete({ track: menu.track, id: menu.id, component: menu.component }); setMenu(null); }}>Delete</button>}
     </div>}
 
     <header className="timeline-ruler"><strong>Scene timeline</strong><label>Zoom<select value={zoom} onChange={event => setZoom(Number(event.target.value))}><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label><span>{duration.toFixed(2)} s</span></header>
-    <p className="timeline-selection">{selected ? `${selected.component?.kind ?? selected.track} · ${selected.label.replaceAll("_", " ")} · ${selected.at === null ? selected.marker ? `waiting for ${selected.marker}` : "timing pending" : `${selected.at.toFixed(2)} s`}` : "Select an event to edit its timing and settings."}</p>
+    <p className="timeline-selection">{selected ? `${itemLabels[selected.component?.kind ?? selected.track]} · ${assetDisplayName(selected.label)} · ${selected.at === null ? selected.marker ? `waiting for ${selected.marker}` : "timing pending" : `${selected.at.toFixed(2)} s`}` : "Select an item to edit its timing and settings."}</p>
 
-    <div className="timeline-scroll"><div style={{ minWidth: `${zoom * 100}%` }}>
-      {(["motion", "lighting", "audio"] as const).map(track => {
+    <div className="timeline-scroll"><div className="timeline-content" style={{ minWidth: `${zoom * 100}%` }}>
+      <div className="timeline-overview">{(["motion", "lighting", "audio"] as const).map(track => {
         const trackRows = resolved.filter(row => row.track === track);
-        const title = { motion: "Motion", lighting: "Light", audio: "Sound" }[track];
+        const title = { motion: "Movement", lighting: "Light", audio: "Sound" }[track];
+        const count = scene[track].length;
+        const unit = { motion: count === 1 ? "movement" : "movements", lighting: count === 1 ? "light cue" : "light cues", audio: count === 1 ? "sound" : "sounds" }[track];
         return <section key={track} className="motion-track-group" aria-label={`${title} track`}>
           <div className="track-row motion-group-header">
-            <button className="track-event-label" ref={node => { if (track === "motion") for (const event of scene.motion) firstComponents.current[event.id] = node; }} aria-expanded={!!expanded[track]} aria-controls={`${track}-track-components`} onClick={() => setExpanded(value => ({ ...value, [track]: !value[track] }))}>{expanded[track] ? "▾" : "▸"} {title}<small>{trackRows.length} {trackRows.length === 1 ? "component" : "components"}</small></button>
-            <div className={`track-canvas motion-summary ${trackRows.some(row => row.at === null || row.duration === null) ? "untimed" : ""}`}>{!expanded[track] && trackRows.map(row => <span key={rowKey(row)} className="motion-summary-clip">{clip(row)}</span>)}{playhead()}</div>
+            <button className="track-event-label" ref={node => { if (track === "motion") for (const event of scene.motion) firstComponents.current[event.id] = node; }} aria-expanded={!!expanded[track]} aria-controls={`${track}-track-components`} onClick={() => setExpanded(value => ({ ...value, [track]: !value[track] }))}>{expanded[track] ? "▾" : "▸"} {title}<small>{count} {unit}</small></button>
+            <div className={`track-canvas motion-summary ${trackRows.some(row => row.at === null || row.duration === null) ? "untimed" : ""}`}>{trackRows.map(row => <span key={rowKey(row)} className="motion-summary-clip">{clip(row)}</span>)}{playhead()}</div>
           </div>
-          {expanded[track] && <div id={`${track}-track-components`} className="motion-group-children">{trackRows.map(renderRow)}</div>}
         </section>;
-      })}
+      })}</div>
+      <div className="timeline-details">{(["motion", "lighting", "audio"] as const).filter(track => expanded[track]).map(track => <div key={track} id={`${track}-track-components`} className="motion-group-children" role="group" aria-label={`${{ motion: "Movement", lighting: "Light", audio: "Sound" }[track]} items`}>
+        <h3 className="timeline-detail-heading">{{ motion: "Movement", lighting: "Light", audio: "Sound" }[track]} items</h3>
+        {resolved.filter(row => row.track === track).map(renderRow)}
+      </div>)}
+    {!!pending.length && <section className="pending-events" aria-label="Events awaiting compilation"><strong>Calculating scene timing</strong><p>Movements play in order. Orion must calculate their durations before placing linked light and sound.</p>{pending.map(row => <button key={rowKey(row)} {...contextHandlers(row)} aria-pressed={isSelected(row)} onClick={() => onSelect({ track: row.track, id: row.id, component: row.component })}>{assetDisplayName(row.label)} · {row.marker ? `linked to ${row.marker}` : row.track === "motion" ? "timing set automatically" : `starts at ${row.at?.toFixed(2)} s`}</button>)}</section>}
     </div></div>
-    {!!pending.length && <section className="pending-events" aria-label="Events awaiting compilation"><strong>Calculating scene timing</strong><p>Movements play in order. Connect Orion to calculate their durations and place linked light and sound.</p>{pending.map(row => <button key={rowKey(row)} {...contextHandlers(row)} aria-pressed={isSelected(row)} onClick={() => onSelect({ track: row.track, id: row.id, component: row.component })}>{row.label.replaceAll("_", " ")} · {row.marker ? `linked to ${row.marker}` : row.track === "motion" ? "timing set automatically" : `starts at ${row.at?.toFixed(2)} s`}</button>)}</section>}
+    </div>
   </section>;
 }

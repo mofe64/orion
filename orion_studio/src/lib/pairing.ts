@@ -111,7 +111,7 @@ export class PairingController {
     this.offline("connecting");
     try {
       const target = { url: normalizeGatewayUrl(address), token: token.trim() };
-      if (target.token.length < 32 || target.token.length > 4096) throw new Error("Enter Orion's complete pairing token.");
+      if (target.token.length < 32 || target.token.length > 4096) throw new Error("Enter Orion's complete connection token.");
       const [status, capabilities] = await Promise.all([this.probe.status(target), this.probe.capabilities(target)]);
       if (generation !== this.generation) return false;
       await this.write(() => this.store.save(target));
@@ -124,7 +124,7 @@ export class PairingController {
       return true;
     } catch (error) {
       if (generation === this.generation) this.offline("error", error instanceof GatewayError && [401, 403].includes(error.status)
-        ? "Orion rejected this token. Check the token and pair again."
+        ? "Orion rejected this token. Check the token and connect again."
         : String(error instanceof Error ? error.message : error));
       return false;
     }
@@ -154,15 +154,15 @@ export class PairingController {
   }
   private pairingCodeError(error: unknown): string {
     if (error instanceof GatewayError) {
-      if (error.status === 403) return `Check the code spoken by the lamp. ${error.message}`;
-      if (error.status === 410) return "That pairing code expired or was already used. Ask the lamp for a new code.";
-      if (error.status === 429) return "The lamp is busy. Wait 15 seconds, then ask for a new code.";
+      if (error.status === 403) return `Check the code spoken by Orion. ${error.message.replaceAll("the lamp", "Orion")}`;
+      if (error.status === 410) return "That pairing code expired or was already used. Ask Orion for a new code.";
+      if (error.status === 429) return "Orion is busy. Wait 15 seconds, then ask for a new code.";
     }
     return String(error instanceof Error ? error.message : error);
   }
   async changeAddress(address: string) {
     if (!this.target) {
-      this.offline("error", "Pair with Orion before changing its address.");
+      this.offline("error", "Connect to Orion before changing its address.");
       return false;
     }
     // Keep the previous target and credential if verification or persistence fails.
@@ -185,7 +185,7 @@ export class PairingController {
     } catch (error) {
       if (generation !== this.generation) return;
       if (error instanceof GatewayError && [401, 403].includes(error.status)) {
-        this.offline("auth_required", "Orion no longer accepts the saved token. Pair again.");
+        this.offline("auth_required", "Orion no longer accepts the saved token. Connect again.");
         return;
       }
       this.offline("reconnecting", "Orion is unavailable. Studio will reconnect automatically.");

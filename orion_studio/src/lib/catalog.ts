@@ -197,3 +197,33 @@ export function catalogForHardware(hardware: string | undefined): ProjectCatalog
 }
 
 export const projectCatalog: ProjectCatalog = catalogs.v1;
+
+/** Library/create choices only; keep all poses in the compiler and scene inspector. */
+export function isOwnerPose(pose: PoseDefinition): boolean {
+  // V1 supplies transition tags; V2 retains the same sub-pose names without them.
+  return !pose.owner_scene && !pose.tags.some(tag => ["calibration_reference", "shutdown_only", "transition"].includes(tag))
+    && !(pose.source === "built_in" && /_(anticipation|lean|overshoot)$/.test(pose.name));
+}
+
+// Asset descriptions are engineering records. These are presentation copy only;
+// unknown built-ins have no owner description, and owner-authored copy stays intact.
+const OWNER_DESCRIPTIONS: Record<"pose" | "scene", Record<string, string>> = {
+  pose: {
+    home: "A compact, forward-facing pose.", attentive: "An alert, attentive pose.",
+    thinking: "A thoughtful, tilted pose.", curious: "An open, curious pose.",
+    delight: "A gentle upward lift.", look_left: "Look to Orion’s left.", look_right: "Look to Orion’s right.",
+    attention_left: "A small turn to Orion’s left.", attention_right: "A small turn to Orion’s right.",
+  },
+  scene: {
+    acknowledge_left: "Turn left with a warm light and a short sound.",
+    acknowledge_right: "Turn right with a warm light and a short sound.",
+    return_home: "Return to the home pose with a warm glow.",
+    thinking: "A thoughtful gesture with drifting warm light.",
+    disagreement: "A small gesture of disagreement.", agreement: "A gentle gesture of agreement.",
+    delight: "A gentle lift with a brief sparkle.", curiosity: "A curious gesture with light and sound.",
+    attentive_entry: "A gentle movement into an attentive pose.",
+  },
+};
+export function ownerAssetDescription(kind: "pose" | "scene", asset: PoseDefinition | SceneDefinition): string {
+  return asset.source === "built_in" ? OWNER_DESCRIPTIONS[kind][asset.name] ?? "" : asset.description.trim();
+}

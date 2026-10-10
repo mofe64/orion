@@ -1,8 +1,8 @@
-import { JOINT_NAMES, LIGHTING_EFFECTS } from "../types";
+import { assetDisplayName } from "../lib/displayName";
+import { JOINT_NAMES } from "../types";
 import type { JointLimit, PoseDefinition } from "../types";
 
 interface PoseEditorProps {
-  compact?: boolean;
   pose: PoseDefinition;
   limits: JointLimit[];
   onChange: (pose: PoseDefinition) => void;
@@ -12,19 +12,12 @@ function label(name: string): string {
   return name.replace(/_joint$/, "").replaceAll("_", " ");
 }
 
-export function PoseEditor({ pose, limits, onChange, compact }: PoseEditorProps) {
+export function PoseEditor({ pose, limits, onChange }: PoseEditorProps) {
   const ranges = Object.fromEntries(limits.map((limit) => [limit.name, limit])) as Record<JointLimit["name"], JointLimit>;
   return (
     <aside className="inspector pose-inspector">
       <p className="eyebrow">Edit pose</p>
-      <h2>{pose.name.replaceAll("_", " ")}</h2>
-      {!compact && <><label>Description<textarea rows={3} value={pose.description} onChange={(event) => onChange({ ...pose, description: event.target.value })} /></label>
-      <label>Tags<input value={pose.tags.join(", ")} onChange={(event) => onChange({ ...pose, tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} /></label>
-      <div className="field-grid">
-        <label>Idle profile<input value={pose.idle_profile ?? ""} placeholder="None" onChange={(event) => onChange({ ...pose, idle_profile: event.target.value || undefined })} /></label>
-        <label>Default light<select value={pose.default_lighting ?? "off"} onChange={(event) => onChange({ ...pose, default_lighting: event.target.value as PoseDefinition["default_lighting"] })}>{LIGHTING_EFFECTS.map((effect) => <option key={effect}>{effect}</option>)}</select></label>
-      </div>
-      </>}
+      <h2>{assetDisplayName(pose.name)}</h2>
       <div className="joint-control-list">
         {JOINT_NAMES.map((name) => {
           const range = ranges[name];

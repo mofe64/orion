@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
-import { projectCatalog } from "./catalog";
+import { catalogs, isOwnerPose, ownerAssetDescription, projectCatalog } from "./catalog";
 
 describe("v2 project catalog", () => {
   it("keeps acknowledgement scenes and motion timing identical apart from direction", () => {
@@ -52,5 +52,28 @@ describe("v2 project catalog", () => {
       for (const event of scene.audio) expect(projectCatalog.cues).toContain(event.cue);
       expect(scene.finish).toEqual({ anchor: "final_pose", lighting: "pose_default" });
     }
+  });
+});
+
+describe("owner library presentation", () => {
+  it.each(["v1", "v2"] as const)("hides internal poses without removing %s movement dependencies", hardware => {
+    const catalog = catalogs[hardware];
+    const names = Object.values(catalog.poses).filter(isOwnerPose).map(pose => pose.name);
+    expect(names).toContain("home");
+    expect(names).toContain("look_left");
+    for (const name of ["zero_reference", "rest", "look_left_anticipation", "look_left_lean", "look_left_overshoot"]) {
+      expect(names).not.toContain(name);
+      expect(catalog.poses[name]).toBeDefined();
+    }
+    expect(isOwnerPose({ ...catalog.poses.home, name: "my_lean", source: "user", tags: [] })).toBe(true);
+    expect(isOwnerPose({ ...catalog.poses.home, owner_scene: "my_scene" })).toBe(false);
+  });
+  it("keeps engineering records intact and only supplies approved built-in copy", () => {
+    const home = catalogs.v2.poses.home;
+    expect(home.description).toContain("calibration zero");
+    expect(ownerAssetDescription("pose", home)).toBe("A compact, forward-facing pose.");
+    expect(ownerAssetDescription("pose", { ...home, name: "unknown_reference" })).toBe("");
+    expect(ownerAssetDescription("pose", { ...home, source: "user", description: "My reading pose." })).toBe("My reading pose.");
+    expect(ownerAssetDescription("scene", catalogs.v2.scenes.acknowledge_left)).toBe("Turn left with a warm light and a short sound.");
   });
 });

@@ -305,7 +305,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
           </div>
         </>
       ) : (
-        <div className="viewport-help">Drag to orbit · scroll to zoom</div>
+        <div className="viewport-help">Drag to rotate</div>
       )}
     </div>
   );

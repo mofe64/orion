@@ -57,3 +57,18 @@
 .settings-profile-section > h2 { margin: 0 0 1rem; font-size: 1.15rem; letter-spacing: -.02em; }
 .settings-profile-section .settings-columns { grid-template-columns: 1fr; }
 .settings-profile-section .agent-profile { margin-bottom: 0; }
+
+.settings-owner { width: min(52rem,100%); }
+.settings-owner > .settings-stack { gap: 1.5rem; }
+.settings-sounds,.profile-subsection + .profile-subsection { border-top: 1px solid var(--line); padding-top: 1.25rem; margin-top: .75rem; }
+.settings-sounds h3,.profile-subsection h3 { font-size: .95rem; margin: 0; }
+.profile-subsection > header { display: flex; gap: .7rem; align-items: start; margin-bottom: 1rem; }
+.profile-subsection > header svg { color: var(--accent); flex-shrink: 0; }
+.settings-owner .agent-profile { margin-bottom: 0; }
+.settings-voice-fields { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 1rem; }
+.settings-save { display: flex; align-items: center; gap: 1rem; margin-top: 1.25rem; }
+.settings-save button { flex-shrink: 0; }
+.settings-save p { margin: 0; }
+.settings-saved { margin-left: .75rem; }
+.debug-values code { display: inline-block; margin-left: .4rem; color: var(--muted); font-size: .75rem; }
+@media(max-width: 600px) { .settings-voice-fields { grid-template-columns: 1fr; gap: 0; } .settings-save { align-items: start; flex-direction: column; } .settings-row { flex-wrap: wrap; } }

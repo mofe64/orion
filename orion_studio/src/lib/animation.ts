@@ -4,7 +4,9 @@ import type { JointPositions, ProjectCatalog, SceneDefinition } from "../types";
 import { compileMotionPreview, type GatewayConnection } from "./gateway";
 import { sequenceSceneMotions, validateSceneMotionSchedule, type SceneTrajectoryPreviews } from "./preview";
 
-export const label = (name: string) => name.replaceAll("_", " ");
+import { assetDisplayName as label } from "./displayName";
+import { ownerAssetDescription } from "./catalog";
+export { label };
 export function samePose(a: JointPositions, b: JointPositions): boolean {
   return Object.keys(b).every(key => Math.abs(a[key as keyof JointPositions] - b[key as keyof JointPositions]) < 0.015);
 }
@@ -35,5 +37,5 @@ export function createSceneDraft(catalog: ProjectCatalog, kind: "scene" | "pose"
   let suffix = 2;
   while (catalog.scenes[draftName]) draftName = `my_${name}_${suffix++}`;
   const owned = renameScene(structuredClone(base), draftName);
-  return { ...owned, name: draftName, motion: owned.motion.map((event, index) => ({ ...event, id: `${id}-movement-${index}` })), lighting: base.lighting.map((event, index) => ({ ...event, id: `${id}-light-${index}` })), audio: base.audio.map((event, index) => ({ ...event, id: `${id}-sound-${index}` })), source: "draft", remote_revision: undefined, starting_pose: kind === "pose" ? name : "home" };
+  return { ...owned, description: kind === "scene" ? ownerAssetDescription("scene", base) : base.description, name: draftName, motion: owned.motion.map((event, index) => ({ ...event, id: `${id}-movement-${index}` })), lighting: base.lighting.map((event, index) => ({ ...event, id: `${id}-light-${index}` })), audio: base.audio.map((event, index) => ({ ...event, id: `${id}-sound-${index}` })), source: "draft", remote_revision: undefined, starting_pose: kind === "pose" ? name : "home" };
 }

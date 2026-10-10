@@ -10,14 +10,14 @@
 .animation-tabs button[aria-pressed="true"] { color: var(--text); background: var(--surface-1); box-shadow: 0 2px 8px #00000010; }
 .animation-library input { margin: 1rem 0 .3rem; border-radius: .85rem; }
 .animation-library h2 { font-size: .7rem; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 1.4rem .8rem .65rem; }
-.animation-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: .5rem; text-align: left; padding: .95rem .8rem; border: 1px solid transparent; background: transparent; border-radius: .85rem; font-size: .85rem; text-transform: capitalize; }
+.animation-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: .5rem; text-align: left; padding: .95rem .8rem; border: 1px solid transparent; background: transparent; border-radius: .85rem; font-size: .85rem; }
 .animation-item:hover { background: var(--surface-2); }
 .animation-item[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--line-strong); color: var(--accent); }
 .animation-item small { font-size: .65rem; color: var(--muted); }
 .animation-empty { padding: 0 .8rem; }
 .animation-preview { border: 1px solid var(--line); border-radius: 1.5rem; background: var(--surface-1); overflow: hidden; }
 .animation-preview > header { padding: 1.5rem 1.6rem 0; align-items: start; }
-.animation-preview h2 { text-transform: capitalize; font-size: 1.5rem; font-weight: 500; margin: .4rem 0; }
+.animation-preview h2 { font-size: 1.5rem; font-weight: 500; margin: .4rem 0; }
 .animation-preview > header p:last-child { max-width: 35rem; }
 .animation-model { height: clamp(13rem, 30vh, 25rem); margin: 1.2rem; position: relative; overflow: hidden; border-radius: 1.1rem; background: var(--bg); }
 .animation-model .robot-viewport { inset: 0 0 2.6rem; }
@@ -39,13 +39,6 @@
 .scene-dialog > p, .scene-dialog > .animation-tabs, .scene-dialog > label { margin: 1.2rem 0; }
 .scene-dialog h2 { font-weight: 500; font-size: 1.6rem; }
 .scene-dialog footer { margin-top: 1.5rem; }
-.scene-editor-heading { padding: 1.5rem 2rem; justify-content: start; }
-.scene-editor-heading h1 { font-size: 1.5rem; }
-.home-shell.create-shell .workspace { grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
-.home-shell.create-shell .stage, .home-shell.create-shell .inspector-panel, .home-shell.create-shell .authoring-dock { border-radius: 1.5rem; background: var(--surface-1); }
-.home-shell.create-shell .stage { min-height: 34rem; overflow: hidden; }
-.home-shell.create-shell .stage-header { background: var(--surface-1); }
-.home-shell.create-shell .transport { background: var(--surface-1); }
 @media (max-width: 760px) {
  .animation-page { padding: 1.25rem 1rem; }
  .animation-layout { grid-template-columns: 1fr; }
@@ -53,76 +46,100 @@
  .animation-heading { align-items: start; }
  .animation-preview > header { padding: 1rem; }
  .animation-model { height: 23rem; margin: .5rem; }
- .home-shell.create-shell .workspace { grid-template-columns: 1fr; }
  .animation-home strong { flex: 1; }
  .animation-play > button { flex: 1; }
 }
 
 @media (min-width: 761px) { .animation-library { max-height: calc(100dvh - 15rem); overflow-y: auto; } }
-.studio-shell.home-shell.create-shell { display: block; }
-.home-shell.create-shell .workspace { height: auto; gap: 1rem; margin: 0 1.5rem 1rem; }
-.home-shell.create-shell .stage { min-height: 30rem; }
-.home-shell.create-shell .authoring-dock { margin: 0 1.5rem 1rem; }
-.home-shell.create-shell .publish-bar { position: static; }
-.home-shell.create-shell .statusbar { min-height: 2.5rem; }
-
 .animation-home > span { color: var(--muted); font-size: .8rem; }
-/* Editor controls occupy their own rows, never the model's drawing area. */
-.home-shell.create-shell .scene-editor-heading { display: grid; gap: 1rem; padding: 1rem 1.5rem; }
-.editor-back { justify-self: start; }
-.editor-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
-.home-shell .editor-title { width: min(100%, 36rem); min-width: 0; font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 550; border: 1px solid transparent; background: transparent; padding: .3rem 0; text-transform: none; }
-.home-shell .editor-title:hover, .home-shell .editor-title:focus { border-color: var(--line-strong); }
-.editor-save-actions { display: flex; align-items: center; gap: .7rem; flex-shrink: 0; }
-.save-indicator { display: grid; place-items: center; color: var(--muted); }
-.home-shell.create-shell .stage { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
-.home-shell.create-shell .editor-viewport { position: relative; min-height: 0; grid-row: 2; }
-.home-shell.create-shell .stage-header { position: static; grid-row: 1; padding: .7rem 1rem; color: var(--muted); font-size: .8rem; }
-.home-shell.create-shell .transport { position: static; margin: .6rem; grid-row: 3; }
-.home-shell.create-shell .inspector-panel { max-height: 100%; }
-.movement-details:empty { display: none; }
 .track-clip.component-pending { position: static; width: calc(100% - 1rem) !important; margin: .5rem; min-height: 2.5rem; border: 1px dashed var(--line-strong); background: var(--surface-2); color: var(--muted); }
 .track-clip.delay { background: var(--surface-2); color: var(--text); border: 1px dashed var(--line-strong); }
-.movement-details { scroll-margin-top: 4rem; }
-.movement-details > button { margin: .3rem .8rem; }
-.movement-parts { padding: .75rem 1rem; background: var(--surface-2); border-radius: 1rem; margin: .5rem .8rem; }
-.movement-part { display: grid; grid-template-columns: 1.5rem minmax(10rem, 1fr) minmax(7rem, .4fr) minmax(7rem, .4fr); align-items: center; gap: .8rem; padding: .7rem 0; }
-.movement-parts p, .part-flow { color: var(--muted); font-size: .8rem; }
-.part-number { color: var(--accent); }
 .movement-context-menu { position: fixed; z-index: 150; min-width: 15rem; background: var(--surface-1); border: 1px solid var(--line-strong); border-radius: .8rem; padding: .4rem; box-shadow: 0 12px 32px #0005, 0 2px 6px #0003; }
 .movement-context-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: .7rem .8rem; color: var(--text); transition: background .12s ease; }
 .movement-context-menu button:hover, .movement-context-menu button:focus-visible { background: var(--accent-soft); color: var(--accent); outline: 2px solid transparent; }
 .movement-context-menu .menu-delete:hover, .movement-context-menu .menu-delete:focus-visible { background: #e0525226; color: var(--text); }
-@media (max-width: 760px) {
- .editor-title-row { flex-wrap: wrap; gap: .7rem; }
- .editor-save-actions { width: 100%; justify-content: flex-end; }
- .home-shell.create-shell .stage { height: auto; min-height: 28rem; grid-template-rows: auto minmax(20rem, 1fr) auto; }
- .movement-part { grid-template-columns: 1.5rem minmax(0, 1fr); }
- .movement-part label, .movement-part .part-flow { grid-column: 2; }
-}
-
-.home-shell.create-shell .scene-editor-heading { grid-template-columns: minmax(0, 1fr); justify-content: stretch; }
-.editor-title-row { width: 100%; }
-
-/* Budget the desktop editor as one screen, including the timeline. */
-@media (min-width: 769px) {
- .studio-shell.home-shell.create-shell { display: flex; flex-direction: column; height: 100dvh; min-height: 40rem; }
- .home-shell.create-shell > .topbar,
- .home-shell.create-shell > .scene-editor-heading,
- .home-shell.create-shell > .statusbar { flex-shrink: 0; }
- .home-shell.create-shell .scene-editor-heading { gap: .5rem; padding-block: .75rem; }
- .home-shell.create-shell .workspace { display: grid; flex: 1 1 0; min-height: 0; margin-bottom: .75rem; }
- .home-shell.create-shell .authoring-dock { flex: 0 0 clamp(18rem, 31dvh, 22rem); min-height: 0; overflow: auto; margin-bottom: .75rem; }
- .home-shell.create-shell .stage-header { padding-block: .35rem; }
- .home-shell.create-shell .transport { padding: .25rem; margin: .4rem; }
- .home-shell.create-shell .dock-toolbar { position: sticky; top: 0; z-index: 6; background: var(--surface-1); }
-}
-
 .track-event-label { scroll-margin-block: 4rem 1rem; }
 .motion-group-header > .track-event-label { font-weight: 650; }
 .motion-group-children { box-shadow: inset 3px 0 var(--accent); }
 .motion-group-children .track-event-label { padding-left: 1rem; }
-.motion-summary .track-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .motion-summary.untimed { display: flex; gap: .25rem; padding: .5rem; }
 .motion-summary.untimed .motion-summary-clip { flex: 1; min-width: 0; }
 .motion-summary.untimed .track-clip { position: static; width: 100% !important; margin: 0; min-height: 2.5rem; }
+
+.animation-delete-notice { padding: .5rem .75rem; color: var(--text); }
+
+/* One viewport budget: chrome, preview/inspector, then all three track summaries. */
+.studio-shell.home-shell.create-shell { display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; }
+.home-shell.create-shell > .topbar { flex-shrink: 0; min-height: 3.5rem; padding-inline: 1.5rem; gap: 1rem; }
+.home-shell.create-shell .brand-lockup small { display: none; }
+.home-shell.create-shell .scene-editor-heading { flex-shrink: 0; display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: .5rem; padding: .75rem 1.5rem; }
+.editor-title-row { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+.editor-back { flex-shrink: 0; }
+.editor-name { display: grid; flex: 1; min-width: 0; gap: .25rem; }
+.home-shell .editor-title { width: 100%; min-width: 0; min-height: 2.5rem; padding: .25rem .5rem; font-size: clamp(1.2rem, 2vw, 1.6rem); font-weight: 550; border-color: transparent; background: transparent; }
+.home-shell .editor-title:hover, .home-shell .editor-title:focus { border-color: var(--line-strong); }
+.save-indicator { color: var(--muted); font-size: .75rem; font-weight: 500; }
+.editor-save-actions { flex: 0 0 auto; display: grid; gap: .25rem; max-width: 18rem; }
+.editor-save-actions .field-help { max-width: 28ch; }
+.home-shell.create-shell .workspace { flex: 1 1 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem); gap: 1rem; min-height: 16rem; margin: 0 1.5rem .75rem; }
+.home-shell.create-shell .stage, .home-shell.create-shell .inspector-panel, .home-shell.create-shell .authoring-dock { border: 1px solid var(--line); border-radius: 1rem; background: var(--surface-1); }
+.home-shell.create-shell .stage { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.home-shell.create-shell .stage-header { flex-shrink: 0; position: static; padding: .5rem 1rem; color: var(--muted); font-size: .75rem; }
+.editor-viewport { flex: 1; position: relative; min-height: 10rem; }
+.editor-viewport .viewport-badge { top: .75rem; left: .75rem; }
+.editor-viewport .viewport-help { bottom: .75rem; }
+.home-shell.create-shell .transport { align-items: center; border: 1px solid var(--line); border-radius: .6rem; background: var(--surface-1); flex-shrink: 0; position: static; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: .5rem; padding: .25rem; margin: .5rem; }
+.home-shell.create-shell .transport output { color: var(--muted); font-size: .7rem; font-variant-numeric: tabular-nums; min-width: 0; white-space: nowrap; }
+.home-shell.create-shell .transport-play { font-size: .85rem; }
+.home-shell.create-shell .editor-feedback { flex-shrink: 0; margin: .25rem 1rem; }
+.home-shell.create-shell .inspector-panel { min-width: 0; min-height: 0; overflow-y: auto; }
+.inspector-panel .inspector { overflow: visible; max-height: none; border: 0; grid-column: auto; padding: 1rem 1rem 2rem; gap: .75rem; }
+.inspector-panel .field-help { scroll-margin-block: 1rem; }
+.inspector-panel .inspector > p, .inspector-panel label { overflow-wrap: anywhere; line-height: 1.5; }
+.inspector-panel .inspector > p:not(.eyebrow) { color: var(--muted); font-size: .8rem; }
+.inspector-panel .inspector h2 { font-size: 1.2rem; overflow-wrap: anywhere; }
+.home-shell.create-shell .authoring-dock { flex: 0 1 clamp(19rem, 34dvh, 21rem); display: flex; flex-direction: column; min-height: 0; overflow: hidden; margin: 0 1.5rem .75rem; }
+.home-shell.create-shell .authoring-dock:has(.timeline-expanded) { flex-basis: calc(clamp(19rem, 34dvh, 21rem) + 2.5rem); }
+.home-shell.create-shell .dock-toolbar { flex-shrink: 0; align-items: center; padding: .5rem 1rem; min-height: 3.5rem; }
+.dock-toolbar .preview-anchor { display: grid; gap: .25rem; }
+.preview-anchor label { font-size: .75rem; }
+.preview-anchor .field-help { font-weight: 400; }
+.home-shell.create-shell .timeline { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.home-shell.create-shell .timeline-ruler { flex-shrink: 0; padding: .25rem 1rem .25rem 10rem; font-size: .75rem; }
+.home-shell.create-shell .timeline-ruler select { min-height: 2rem; }
+.home-shell.create-shell .timeline-selection { flex-shrink: 0; padding: .25rem 1rem .5rem; font-size: .8rem; overflow-wrap: anywhere; }
+.home-shell.create-shell .timeline-scroll { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; }
+.timeline-content { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+/* Detail painting is clipped below the opaque overview, including its labels. */
+.timeline-overview { flex-shrink: 0; position: relative; isolation: isolate; background: var(--surface-1); }
+.timeline-details { min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.timeline-detail-heading { margin: 0; padding: .5rem .75rem; color: var(--muted); background: var(--surface-2); font-size: .75rem; font-weight: 600; }
+.home-shell.create-shell .track-row { grid-template-columns: 9rem minmax(0, 1fr); min-height: 3rem; }
+.home-shell.create-shell .track-canvas { min-height: 3rem; }
+.home-shell.create-shell .track-event-label { padding: .4rem .75rem; }
+.home-shell.create-shell .track-event-label small { margin: 0; text-transform: none; font-weight: 400; }
+.home-shell.create-shell .motion-summary.untimed { padding: .25rem; }
+.home-shell.create-shell .motion-summary.untimed .track-clip { min-height: 2.5rem; }
+.home-shell.create-shell > .run-feedback { flex-shrink: 0; position: static; }
+
+@media (max-width: 1100px) and (min-width: 769px) {
+ .home-shell.create-shell .workspace { grid-template-columns: minmax(0, 1fr) 20rem; }
+}
+@media (max-width: 768px) {
+ .studio-shell.home-shell.create-shell { height: auto; min-height: 100dvh; overflow: visible; }
+ .home-shell.create-shell .scene-editor-heading { padding: .75rem; }
+ .editor-title-row { flex-wrap: wrap; }
+ .editor-name { flex-basis: calc(100% - 12rem); }
+ .editor-save-actions { max-width: none; }
+ .home-shell.create-shell .workspace { flex: 0 0 auto; grid-template-columns: minmax(0, 1fr); margin-inline: .75rem; }
+ .home-shell.create-shell .stage { min-height: 24rem; }
+ .home-shell.create-shell .inspector-panel { max-height: 28rem; }
+ .home-shell.create-shell .authoring-dock { flex-basis: auto; height: 19rem; margin-inline: .75rem; }
+ .home-shell.create-shell .authoring-dock:has(.timeline-expanded) { flex-basis: auto; height: 21.5rem; }
+ .home-shell.create-shell .dock-toolbar { flex-direction: row; flex-wrap: wrap; }
+ .home-shell.create-shell .transport { grid-template-columns: auto minmax(0, 1fr); }
+ .home-shell.create-shell .transport output { grid-column: 1; }
+ .home-shell.create-shell .transport .primary-button { grid-column: 2; }
+ .home-shell.create-shell .timeline-ruler { padding-left: .75rem; }
+}
+.animation-content-hint { color: var(--muted); font-size: .8rem; line-height: 1.5; margin: .25rem 0 .75rem; }

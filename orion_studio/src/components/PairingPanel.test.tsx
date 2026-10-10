@@ -11,8 +11,10 @@ describe("saved pairing controls", () => {
     };
     const html = renderToStaticMarkup(<PairingPanel controller={new PairingController()} state={state} onClose={() => {}} />);
     expect(html).toContain("Get code");
+    expect(html).toContain("Connect to Orion");
+    expect(html).not.toContain("Pair with Orion");
     expect(html).toContain("Use a token instead");
-    expect(html).toContain("The lamp will say a 6-digit code. Type it here.");
+    expect(html).toContain("Orion will say a 6-digit code. Type it here.");
     expect(html).not.toContain('type="password"');
   });
   it.each(["connected", "reconnecting", "disconnected"] as const)("allows editing an address while %s", phase => {
@@ -23,6 +25,8 @@ describe("saved pairing controls", () => {
     const html = renderToStaticMarkup(<PairingPanel controller={new PairingController()}
       state={state} onClose={() => {}} />);
     expect(html).toContain('class="quiet-button">Change address</button>');
+    if (phase === "disconnected") expect(html).toContain(">Connect</button>");
+    expect(html).not.toContain(">Reconnect</button>");
     expect(html).not.toContain('type="password"');
   });
 
@@ -35,6 +39,6 @@ describe("saved pairing controls", () => {
     const html = renderToStaticMarkup(<PairingPanel controller={new PairingController()} state={state} onClose={() => {}} />);
     expect(html).toContain("Switch to orion.local");
     expect(html).not.toContain("Switch to ariadne-robot.local");
-    expect(html).toContain("Pair another lamp");
+    expect(html).toContain("Connect another Orion");
   });
 });

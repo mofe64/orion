@@ -12,6 +12,7 @@ describe("animation library", () => {
     copy.motion[0].at = 9;
     expect(projectCatalog.scenes.acknowledge_left).toEqual(original);
     expect(copy.source).toBe("draft");
+    expect(copy.description).not.toContain("marker-synchronised");
     expect(copy.name).not.toBe(original.name);
   });
   it("seeds a new scene with the chosen pose", () => {

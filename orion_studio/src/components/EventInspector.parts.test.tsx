@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { projectCatalog } from "../lib/catalog";
-import { MovementParts, updateMovementPart } from "./MovementParts";
+import { EventInspector } from "./EventInspector";
+import { updateMovementPart } from "../lib/movementComponents";
 describe("movement parts", () => {
   it("reveals all four poses and exposes pauses only at settled positions", () => {
     const motion = projectCatalog.motions.look_at_left_expressive;
-    const html = renderToStaticMarkup(<MovementParts motion={motion} catalog={projectCatalog} onChange={() => {}} />);
+    const scene = { ...projectCatalog.scenes.acknowledge_left, motion: [{ id: "move", at: 0, play: motion.name }] };
+    const html = motion.keyframes.map((_, index) => renderToStaticMarkup(<EventInspector scene={scene} catalog={projectCatalog} selection={{ track: "motion", id: "move", component: { index, kind: "pose" } }} markers={[]} onChange={() => {}} onDelete={() => {}} onChangeMovement={() => {}} />)).join("");
     expect((html.match(/Move duration \(s\)/g) ?? []).length).toBe(4);
     expect((html.match(/Continues smoothly/g) ?? []).length).toBe(3);
     expect((html.match(/Pause after \(s\)/g) ?? []).length).toBe(1);

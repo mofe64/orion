@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { forOwner } from "./feedback";
 export interface Personality { traits: string[]; behaviors: string[] }
 export interface PersonalityChoice { id: string; label: string; description: string }
 export interface MemoryEntry { id: string; created: string; text: string }
@@ -17,8 +18,8 @@ export type ProfileChange =
   | { type: "edit_memory"; expected: MemoryEntry; text: string }
   | { type: "delete_memory"; expected: MemoryEntry }
   | { type: "clear_memories"; expected: MemoryEntry[] };
-export const loadAgentProfile = () => invoke<AgentProfile>("load_agent_profile");
-export const changeAgentProfile = (change: ProfileChange) => invoke<AgentProfile>("change_agent_profile", { change });
+export const loadAgentProfile = () => forOwner(() => invoke<AgentProfile>("load_agent_profile"), "Studio couldn't load Orion's personality and memories. Please try again.");
+export const changeAgentProfile = (change: ProfileChange) => forOwner(() => invoke<AgentProfile>("change_agent_profile", { change }), "Studio couldn't save these changes. Your draft is preserved; please try again.");
 export function toggleSelection(personality: Personality, group: keyof Personality, id: string): Personality {
   return { ...personality, [group]: personality[group].includes(id) ? personality[group].filter(value => value !== id) : [...personality[group],id] };
 }
