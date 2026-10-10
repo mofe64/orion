@@ -162,18 +162,26 @@ The gateway protects all camera routes with the existing bearer token:
 | `GET /api/v2/camera/observations` | Proxy observation JSON |
 | `POST /api/v2/camera/enabled` | Save `{"camera_enabled": true}` or `false` |
 
-Camera-off responses retain HTTP 503 and `error.code: camera_off`. Studio uses
+Streams and snapshots return HTTP 503 with `error.code: camera_resting` while
+rest is `going_to_rest`, `resting`, `waking` or `fault`. Open streams end when
+rest starts; automatic reconnect resumes the feed after waking. Missing or
+unavailable rest telemetry also prevents viewing. Camera-off responses retain
+HTTP 503 and `error.code: camera_off`. Studio uses
 `fetch` with an Authorization header and incrementally parses parts by their
 Content-Length; it never places a token in an image URL. JPEG decoding and
 rendering keep the latest complete frame, and disconnecting aborts pending
-network work. The gateway accepts at most eight stream viewers.
+network work. The gateway accepts at most eight concurrent stream and snapshot
+requests.
 
 `--vision-socket` defaults to `/tmp/orion-vision.sock` and
 `--camera-preference-file` defaults to `~/.config/orion/camera.json`. The gateway
-and vision service must use the same preference path. A stream starts only
-after `oriond` accepts the viewer-marker lease. The gateway renews one shared
-lease while viewers remain and clears it when the last viewer leaves; failed
-renewal ends the feed. See the [runtime marker contract](../runtime/README.md#camera-viewer-indicator)
+and vision service must use the same preference path. Streams and snapshots
+are delivered only after `oriond` accepts the viewer-marker lease. The gateway
+checks rest every 100 ms and renews one shared lease once a second while
+viewers remain; failed renewal ends the feed. A snapshot renews the lease
+after delivery, retaining the indication for at least three seconds. The last
+viewer clears the marker only after that snapshot hold has elapsed; otherwise
+the runtime lease expires naturally. See the [runtime marker contract](../runtime/README.md#camera-viewer-indicator)
 and [vision setup](../vision/README.md#service-setup-and-development).
 
 ## Animation library and scene editor

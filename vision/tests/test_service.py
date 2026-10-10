@@ -45,7 +45,7 @@ class SocketTests(unittest.TestCase):
         self.thread.start()
         self.vision.start()
         self.addCleanup(self.shutdown)
-        eventually(lambda: self.vision.latest is not None)
+        eventually(lambda: self.vision.last_capture > 0)
 
     def shutdown(self):
         self.vision.close()
@@ -77,6 +77,7 @@ class SocketTests(unittest.TestCase):
 
     def test_replay_snapshot_health_and_observations(self):
         self.assertEqual(self.vision.encodes, 0)
+        self.assertIsNone(self.vision.latest)
         for path in ("/health", "/observations"):
             client, response = self.request(path)
             self.assertEqual(response.status, 200)
@@ -84,6 +85,7 @@ class SocketTests(unittest.TestCase):
             self.assertEqual(value, [] if path == "/observations" else value)
             if path == "/health":
                 self.assertEqual(value["clock"], "CLOCK_BOOTTIME")
+                self.assertGreater(value["capture_boottime_ns"], 0)
             client.close()
         self.assertEqual(self.vision.encodes, 0)
         client, response = self.request("/frame.jpg")
@@ -126,7 +128,46 @@ class SocketTests(unittest.TestCase):
                 self.assertEqual(json.loads(response.read())["error"]["code"], "camera_off")
                 client.close()
         self.preference.write_text('{"camera_enabled":true}')
-        eventually(lambda: self.vision.latest is not None)
+        eventually(lambda: self.vision.last_capture > 0)
+
+    def test_idle_snapshot_requests_rgb_then_returns_to_metadata_only(self):
+        clock = MagicMock(return_value=10)
+        self.vision.clock = clock
+        self.assertFalse(self.vision.wants_rgb())
+        client, response = self.request('/frame.jpg')
+        self.assertEqual(response.status, 200)
+        first_stamp = int(response.headers['X-Capture-Boottime-Ns'])
+        self.assertTrue(simplejpeg.is_jpeg(response.read()))
+        client.close()
+        self.assertEqual(self.vision.snapshot_until, 12)
+        self.assertTrue(self.vision.wants_rgb())
+        clock.return_value = 12
+        eventually(lambda: self.vision.latest is None)
+        self.assertFalse(self.vision.wants_rgb())
+        self.assertIsNone(self.vision.cached)
+        client, response = self.request('/frame.jpg')
+        self.assertEqual(response.status, 200)
+        self.assertGreater(int(response.headers['X-Capture-Boottime-Ns']), first_stamp)
+        self.assertTrue(simplejpeg.is_jpeg(response.read()))
+        client.close()
+
+    def test_first_stream_from_idle_requests_rgb_and_releases_demand_on_disconnect(self):
+        self.assertFalse(self.vision.wants_rgb())
+        client, response = self.request('/stream')
+        self.part(response)
+        self.assertTrue(self.vision.wants_rgb())
+        response.close(); client.close()
+        eventually(lambda: self.vision.clients == 0 and self.vision.latest is None)
+        self.assertFalse(self.vision.wants_rgb())
+
+    def test_stream_wait_timeout_does_not_leak_rgb_demand(self):
+        self.source.close()
+        client, response = self.request('/stream')
+        self.assertEqual(response.status, 503)
+        self.assertEqual(json.loads(response.read())['error']['code'], 'no_frame')
+        client.close()
+        self.assertEqual(self.vision.clients, 0)
+        self.assertFalse(self.vision.wants_rgb())
 
     def test_shared_encode_cache_for_two_viewers(self):
         client1, response1 = self.request("/stream")
@@ -175,7 +216,7 @@ class MetadataTests(unittest.TestCase):
         with patch.dict(sys.modules, picamera2=camera_module, libcamera=MagicMock()):
             source = Picamera2Source(0, False, False)
             publish = MagicMock()
-            source.start(publish)
+            source.start(publish, lambda: True)
             options = camera.create_video_configuration.call_args.kwargs
             self.assertEqual(options["main"]["format"], "BGR888")
             self.assertFalse(options["queue"])
@@ -183,11 +224,55 @@ class MetadataTests(unittest.TestCase):
             request.make_array.return_value = np.zeros((2, 2, 3), dtype=np.uint8)
             request.get_metadata.return_value = {"SensorTimestamp": 4, "ExposureTime": 0}
             camera.post_callback(request)
-            self.assertFalse(np.shares_memory(publish.call_args.args[0].rgb, request.make_array.return_value))
+            request.make_array.assert_called_once_with('main')
+            self.assertIs(publish.call_args.args[0].rgb, request.make_array.return_value)
             camera.start.assert_called_once_with(show_preview=False)
             source.close()
             camera.stop.assert_called_once()
             camera.close.assert_called_once()
+
+    def test_picamera_idle_callback_only_publishes_metadata_until_viewing_demand(self):
+        camera = MagicMock()
+        camera_module = MagicMock()
+        camera_module.Picamera2.return_value = camera
+        clock = MagicMock(return_value=10)
+        with patch.dict(sys.modules, picamera2=camera_module, libcamera=MagicMock()):
+            source = Picamera2Source()
+            self.addCleanup(source.close)
+            vision = Vision(source, Path('/nonexistent-preference'), clock=clock)
+            vision.enabled = True
+            source.start(lambda capture: vision.publish(capture, 0), vision.wants_rgb)
+            request = MagicMock()
+            request.make_array.return_value = np.zeros((2, 2, 3), dtype=np.uint8)
+
+            def capture(stamp):
+                request.get_metadata.return_value = {'SensorTimestamp': stamp, 'ExposureTime': 0}
+                camera.post_callback(request)
+
+            capture(1)
+            request.make_array.assert_not_called()
+            self.assertIsNone(vision.latest)
+            self.assertEqual(vision.status()[1]['capture_boottime_ns'], 1)
+            with vision.viewing():
+                capture(2)
+                request.make_array.assert_called_once_with('main')
+                self.assertIs(vision.latest[1], request.make_array.return_value)
+            request.make_array.reset_mock()
+            capture(3)
+            request.make_array.assert_not_called()
+            with vision.viewing(snapshot=True):
+                capture(4)
+            request.make_array.reset_mock()
+            clock.return_value = 11.99
+            capture(5)
+            request.make_array.assert_called_once_with('main')
+            request.make_array.reset_mock()
+            clock.return_value = 12
+            capture(6)
+            request.make_array.assert_not_called()
+            self.assertIsNone(vision.latest)
+            self.assertEqual(vision.status()[1]['capture_boottime_ns'], 6)
+            self.assertEqual(vision.dropped, 0)
 
 
 if __name__ == "__main__":

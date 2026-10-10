@@ -91,10 +91,15 @@ The service runs as the Pi user with supplementary group `video`, `Nice=10`,
 | `/observations` | Empty list; detection is not implemented |
 
 JPEGs are encoded on demand and cached across viewers at at most 15 fps.
-Disconnected viewers cause encoding to stop. Capture retains a single latest
-RGB buffer, so slow consumers drop frames rather than accumulating a queue.
+Disconnected viewers cause encoding to stop. Capture converts RGB only while
+a stream client is connected or a snapshot was requested in the last two
+seconds. Idle callbacks publish metadata only, so health timestamps continue
+without full-frame copies. The first viewing request waits up to one second
+for an RGB frame. Capture retains a single latest RGB buffer, so slow consumers
+drop frames rather than accumulating a queue.
 `Picamera2Source` uses 1280×720 `BGR888`, whose Python byte order is RGB.
-Callbacks copy that buffer and metadata; they do not encode or write frames.
+`make_array("main")` supplies the one owned copy when RGB is requested;
+callbacks do not encode or write frames.
 
 `capture_boottime_ns` names Linux `CLOCK_BOOTTIME`, which includes suspend.
 It is `SensorTimestamp` (exposure start) plus `ExposureTime * 1000 / 2`
@@ -119,8 +124,9 @@ uv run --project vision orion-vision --profile hardware/profiles/v2.json \
   --replay /path/to/synthetic-fixtures --socket /tmp/orion-vision-test.sock
 ```
 
-`FrameSource.start(callback)` supplies RGB arrays and capture metadata;
-`close()` stops capture. `ReplaySource` reads only synthetic JPEG fixtures.
+`FrameSource.start(callback, wants_rgb)` supplies capture metadata and an RGB
+array only when the demand callback returns true; otherwise `Capture.rgb` is
+`None`. `close()` stops capture. `ReplaySource` reads only synthetic JPEG fixtures.
 `MujocoSource` raises an explicit not-implemented error. Picamera2 is restricted
 to Linux aarch64 in the manifest. uv's exact metadata entry for the Linux-only
 `python-prctl` sdist allows locking on a workstation; the Pi still builds it.

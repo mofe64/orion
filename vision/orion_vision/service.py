@@ -1,5 +1,6 @@
 """One latest-frame slot, a privacy watcher, and bounded Unix HTTP clients."""
 import argparse
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -40,8 +41,9 @@ def exposure_midpoint(metadata):
 
 
 class Vision:
-    def __init__(self, source, preference_file, encoder=simplejpeg.encode_jpeg):
+    def __init__(self, source, preference_file, encoder=simplejpeg.encode_jpeg, clock=time.monotonic):
         self.source, self.preference_file, self.encoder = source, Path(preference_file), encoder
+        self.clock = clock
         self.changed = Condition()
         self.encode_lock = Lock()
         self.stop = Event()
@@ -56,6 +58,7 @@ class Vision:
         self.dropped = 0
         self.encodes = 0
         self.clients = 0
+        self.snapshot_until = 0.
         self.thread = None
 
     def start(self):
@@ -75,6 +78,7 @@ class Vision:
             self.generation += 1
             self.latest = self.cached = None
             self.last_capture = self.last_sensor = 0
+            self.snapshot_until = 0.
             self.changed.notify_all()
         self.source.close()
 
@@ -91,7 +95,7 @@ class Vision:
                         self.error = None
                         generation = self.generation
                     try:
-                        self.source.start(lambda capture: self.publish(capture, generation))
+                        self.source.start(lambda capture: self.publish(capture, generation), self.wants_rgb)
                     except Exception as error:
                         LOG.exception("Camera start failed")
                         self._disable()
@@ -110,12 +114,39 @@ class Vision:
             if stamp is None or sensor <= self.last_sensor or stamp <= self.last_capture:
                 self.dropped += 1
                 return
-            if capture.rgb.dtype != np.uint8 or capture.rgb.ndim != 3 or capture.rgb.shape[2] != 3:
+            if capture.rgb is not None and (capture.rgb.dtype != np.uint8 or capture.rgb.ndim != 3 or capture.rgb.shape[2] != 3):
                 self.dropped += 1
                 return
             self.last_sensor, self.last_capture = sensor, stamp
-            self.latest = (stamp, capture.rgb)
+            self.latest = (stamp, capture.rgb) if capture.rgb is not None else None
+            if capture.rgb is None:
+                self.cached = None
             self.changed.notify_all()
+
+    def wants_rgb(self):
+        # This callback does no I/O or encoding. Stream admission happens
+        # before waiting for its first frame, so idle capture can serve it.
+        with self.changed:
+            return self.enabled and (self.clients > 0 or self.clock() < self.snapshot_until)
+
+    @contextmanager
+    def viewing(self, snapshot=False):
+        with self.changed:
+            if snapshot:
+                self.snapshot_until = self.clock() + 2
+            else:
+                self.clients += 1
+        try:
+            yield
+        finally:
+            if not snapshot:
+                with self.changed:
+                    self.clients -= 1
+
+    def wait_for_jpeg(self):
+        with self.changed:
+            self.changed.wait_for(lambda: self.latest is not None or not self.enabled, timeout=1)
+        return self.jpeg()
 
     def status(self):
         with self.changed:
@@ -209,23 +240,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, [])
             if self.path not in ("/frame.jpg", "/stream"):
                 return self.respond(404, {"error": {"code": "not_found"}})
-            frame = vision.jpeg()
-            if frame is None:
-                status, body = vision.status()
-                return self.respond(status if status != 200 else 503,
-                    body if status != 200 else {"error": {"code": "no_frame", "message": "Waiting for capture"}})
-            if self.path == "/frame.jpg":
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(frame[1])))
-                self.send_header("X-Capture-Boottime-Ns", str(frame[0]))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(frame[1])
-                return
-            with vision.changed:
-                vision.clients += 1
-            try:
+            with vision.viewing(snapshot=self.path == "/frame.jpg"):
+                frame = vision.wait_for_jpeg()
+                if frame is None:
+                    status, body = vision.status()
+                    return self.respond(status if status != 200 else 503,
+                        body if status != 200 else {"error": {"code": "no_frame", "message": "Waiting for capture"}})
+                if self.path == "/frame.jpg":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(frame[1])))
+                    self.send_header("X-Capture-Boottime-Ns", str(frame[0]))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(frame[1])
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY}")
                 self.send_header("Cache-Control", "no-store")
@@ -245,9 +274,6 @@ class Handler(BaseHTTPRequestHandler):
                     with vision.changed:
                         vision.changed.wait(timeout=1 / 15)
                     frame = vision.jpeg(after=last)
-            finally:
-                with vision.changed:
-                    vision.clients -= 1
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             pass
 

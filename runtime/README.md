@@ -483,9 +483,9 @@ agent through `get_lighting`. Starting the character clears the manual program.
 
 On V2, `camera-viewer 3` leases a faint cyan marker on the first ring pixel for
 three seconds; `camera-viewer 0` clears it. Other lease values and V1 requests
-are rejected. The authenticated gateway renews the lease once a second while
-at least one Studio stream is connected. A lost gateway therefore cannot
-leave a permanent marker.
+are rejected. The authenticated gateway manages the leases for
+[streams and snapshots](../orion_studio/README.md#camera-feed). A lost gateway
+cannot leave a permanent marker.
 
 The marker does not change manual lamp preferences, routines, torque or motion.
 It is below scenes, speech and ringing alerts, and passes through the existing

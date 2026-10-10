@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import argparse
 import hashlib
@@ -187,19 +187,23 @@ class UnixOrionClient:
 
 
 class CameraViewers:
-    """One renewable runtime lease shared by all authenticated stream clients."""
-    def __init__(self, request):
+    """Shared viewing lease, rest monitor and minimum snapshot indication."""
+    def __init__(self, request, require_awake=lambda: None, clock=time.monotonic):
         self.request = request
+        self.require_awake = require_awake
+        self.clock = clock
         self.lock = threading.Lock()
         self.clients = 0
         self.healthy = False
         self.stop = threading.Event()
+        self.snapshot_until = 0.
 
     @contextmanager
-    def watching(self):
+    def watching(self, snapshot=False):
         with self.lock:
             if self.clients >= 8:
                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_busy", "Too many camera viewers.")
+            self.require_awake()
             if self.clients and not self.healthy:
                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable", "Orion's camera viewer indicator is unavailable.")
             if self.clients == 0:
@@ -217,21 +221,40 @@ class CameraViewers:
         finally:
             with self.lock:
                 self.clients -= 1
+                if snapshot and self.healthy:
+                    try:
+                        # Renew after delivery, so even a slow snapshot leaves
+                        # three seconds of indication. Other viewers cannot
+                        # clear this lease early when they disconnect.
+                        self.request("camera-viewer 3")
+                    except GatewayError:
+                        self.healthy = False
+                    finally:
+                        # Even if renewal fails, do not explicitly clear the
+                        # existing lease immediately after delivering a frame.
+                        self.snapshot_until = self.clock() + 3
                 if self.clients == 0:
                     self.stop.set()
                     self.healthy = False
-                    try:
-                        self.request("camera-viewer 0")
-                    except GatewayError:
-                        pass  # The runtime lease expires even if cleanup cannot reach it.
+                    if self.clock() >= self.snapshot_until:
+                        try:
+                            self.request("camera-viewer 0")
+                        except GatewayError:
+                            pass  # The runtime lease expires if cleanup cannot reach it.
 
     def _renew(self, stop):
-        while not stop.wait(1):
+        renew_at = self.clock() + 1
+        while not stop.wait(.1):
             with self.lock:
                 if stop.is_set():
                     return
                 try:
-                    self.request("camera-viewer 3")
+                    # One shared status poll, independent of frame rate and
+                    # viewer count. Rest or unavailable telemetry ends feeds.
+                    self.require_awake()
+                    if self.clock() >= renew_at:
+                        self.request("camera-viewer 3")
+                        renew_at = self.clock() + 1
                 except GatewayError:
                     self.healthy = False
                     return
@@ -262,7 +285,20 @@ class OrionGateway:
         self.scene_write_lock = threading.Lock()
         self.vision_socket = vision_socket
         self.camera_preference_file = camera_preference_file or Path.home() / ".config/orion/camera.json"
-        self.camera_viewers = CameraViewers(self._checked)
+        self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
+
+    def require_camera_awake(self):
+        try:
+            rest = self._checked("character status").get("rest")
+        except GatewayError as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable",
+                "Could not verify Orion's camera viewer indicator.") from error
+        state = rest.get("state") if isinstance(rest, dict) else None
+        if state in ("going_to_rest", "resting", "waking", "fault"):
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_resting", "Camera viewing is unavailable while Orion rests or wakes.")
+        if state not in ("awake", "disabled"):
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable",
+                "Could not verify Orion's rest state.")
 
     def camera_is_enabled(self):
         try:
@@ -299,6 +335,8 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "This Orion has no camera.")
         if not self.camera_is_enabled():
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_off", "Camera is disabled.")
+        if path in ("/stream", "/frame.jpg"):
+            self.require_camera_awake()
         connection = http.client.HTTPConnection("localhost", timeout=2)
         connection.sock = socket.socket(socket.AF_UNIX)
         connection.sock.settimeout(2)
@@ -1796,19 +1834,28 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
             try:
                 content_type = response.getheader("Content-Type", "application/json")
                 if path != "/stream" or response.status != 200:
-                    body = response.read(MAX_RESPONSE_BYTES + 1)
-                    if len(body) > MAX_RESPONSE_BYTES:
-                        raise GatewayError(HTTPStatus.BAD_GATEWAY, "camera_response_too_large", "Camera response exceeds 1 MiB.")
-                    self.send_response(response.status)
-                    self._cors_headers()
-                    self.send_header("Content-Type", content_type)
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header("Cache-Control", "no-store")
-                    stamp = response.getheader("X-Capture-Boottime-Ns")
-                    if stamp:
-                        self.send_header("X-Capture-Boottime-Ns", stamp)
-                    self.end_headers()
-                    self.wfile.write(body)
+                    snapshot = path == "/frame.jpg" and response.status == 200
+                    lease = gateway.camera_viewers.watching(snapshot=True) if snapshot else nullcontext()
+                    with lease as viewers:
+                        body = response.read(MAX_RESPONSE_BYTES + 1)
+                        if len(body) > MAX_RESPONSE_BYTES:
+                            raise GatewayError(HTTPStatus.BAD_GATEWAY, "camera_response_too_large", "Camera response exceeds 1 MiB.")
+                        if snapshot:
+                            gateway.require_camera_awake()
+                            if not gateway.camera_is_enabled():
+                                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_off", "Camera is disabled.")
+                            if not viewers.healthy:
+                                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable", "Orion's camera viewer indicator is unavailable.")
+                        self.send_response(response.status)
+                        self._cors_headers()
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Cache-Control", "no-store")
+                        stamp = response.getheader("X-Capture-Boottime-Ns")
+                        if stamp:
+                            self.send_header("X-Capture-Boottime-Ns", stamp)
+                        self.end_headers()
+                        self.wfile.write(body)
                     return
                 with gateway.camera_viewers.watching() as viewers:
                     self.send_response(HTTPStatus.OK)

@@ -1,4 +1,4 @@
-"""Sources deliver RGB buffers; the service validates exposure timestamps."""
+"""Sources deliver metadata and requested RGB; the service validates timestamps."""
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
@@ -11,12 +11,12 @@ import simplejpeg
 
 @dataclass(frozen=True)
 class Capture:
-    rgb: np.ndarray
+    rgb: np.ndarray | None
     metadata: dict
 
 
 class FrameSource(Protocol):
-    def start(self, publish: Callable[[Capture], None]) -> None: ...
+    def start(self, publish: Callable[[Capture], None], wants_rgb: Callable[[], bool]) -> None: ...
     def close(self) -> None: ...
 
 
@@ -25,7 +25,7 @@ class Picamera2Source:
         self.index, self.hflip, self.vflip = index, hflip, vflip
         self.camera = None
 
-    def start(self, publish):
+    def start(self, publish, wants_rgb):
         from picamera2 import Picamera2
         from libcamera import Transform
 
@@ -39,7 +39,11 @@ class Picamera2Source:
             self.camera.configure(config)
 
             def completed(request):
-                publish(Capture(request.make_array("main").copy(), request.get_metadata()))
+                metadata = request.get_metadata()
+                # make_array already owns a copy of the camera buffer. Idle
+                # capture publishes metadata without converting the main frame.
+                rgb = request.make_array("main") if wants_rgb() else None
+                publish(Capture(rgb, metadata))
 
             self.camera.post_callback = completed
             self.camera.start(show_preview=False)
@@ -67,13 +71,13 @@ class ReplaySource:
         self.stop = Event()
         self.thread = None
 
-    def start(self, publish):
+    def start(self, publish, wants_rgb):
         self.stop.clear()
 
         def replay():
             index = 0
             while not self.stop.is_set():
-                rgb = simplejpeg.decode_jpeg(self.paths[index % len(self.paths)].read_bytes())
+                rgb = simplejpeg.decode_jpeg(self.paths[index % len(self.paths)].read_bytes()) if wants_rgb() else None
                 # On Linux this is the same clock as SensorTimestamp; Replay is
                 # test input on hosts without CLOCK_BOOTTIME as well.
                 clock = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
@@ -92,7 +96,7 @@ class ReplaySource:
 
 
 class MujocoSource:
-    def start(self, publish):
+    def start(self, publish, wants_rgb):
         raise NotImplementedError("MuJoCo camera capture is not implemented")
 
     def close(self):

@@ -64,9 +64,10 @@ passes through the runtime's limits and ownership checks.
 
 On V2, `orion-vision` owns the camera independently of movement and speech.
 It retains one latest RGB frame and serves JPEGs over a user-only Unix HTTP
-socket. Encoding is shared across stream viewers and limited to 15 fps; frame
-capture and privacy control continue without viewers. No captured frame is
-written to disk. Inference and gaze movement are not implemented by this
+socket. Encoding is shared across stream viewers and limited to 15 fps. Capture
+metadata and privacy control continue without viewers, while RGB conversion
+follows viewing demand. No captured frame is written to disk. Inference and
+gaze movement are not implemented by this
 service skeleton.
 
 Vision observes the saved camera privacy setting outside camera callbacks.
