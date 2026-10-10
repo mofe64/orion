@@ -3,9 +3,7 @@
 ## Setup on Ubuntu 24.04 / Raspberry Pi 5
 
 The commissioning scripts build a headless camera stack and measure the V2
-IMX708 Wide camera. Installation, capture, model execution and the watched
-calibrated cable sweep have passed on the assembled V2 lamp. No camera service
-is installed by these scripts.
+IMX708 Wide camera. No camera service is installed by these scripts.
 
 Run from the Orion checkout on the Pi, with camera applications stopped:
 
