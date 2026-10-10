@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Source-built, headless camera stack for Ubuntu 24.04 on Raspberry Pi 5.
+set -euo pipefail
+
+if [[ ${1:-} == --help ]]; then
+    echo "Usage: sudo $0 [video-group-user]"
+    exit 0
+fi
+if (( $# > 1 )); then
+    echo "Usage: sudo $0 [video-group-user]" >&2
+    exit 2
+fi
+if (( EUID != 0 )); then
+    echo "Run this installer with sudo." >&2
+    exit 1
+fi
+# Do not purge packages on an unrelated host.
+source /etc/os-release
+if [[ ${ID:-} != ubuntu || ${VERSION_ID:-} != 24.04 || $(uname -m) != aarch64 ]] \
+    || ! grep -q 'Raspberry Pi 5' /proc/device-tree/model; then
+    echo "Requires Ubuntu 24.04 aarch64 on Raspberry Pi 5." >&2
+    exit 1
+fi
+camera_user=${1:-${SUDO_USER:-}}
+if [[ -n ${camera_user} ]]; then
+    id "${camera_user}" >/dev/null
+fi
+
+# Pin tags AND commits: fail if an upstream tag is moved.
+libpisp_tag=v1.2.0
+libpisp_commit=50426319aa1a9ba4672f91977429365ad4e335a2
+libcamera_tag=v0.4.0+rpt20250213
+libcamera_commit=29156679717bec7cc4784aeba3548807f2c27fca
+rpicam_tag=v1.7.0
+rpicam_commit=5a3f5965aca96c2d575261e4e4045f0e0481279b
+
+apt-get update
+# Enumerate installed names rather than passing apt a broad wildcard. Do not
+# autoremove: other Orion components may depend on orphaned packages.
+conflicts=()
+while IFS= read -r package; do
+    conflicts+=("${package}")
+done < <(
+    dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' \
+        'libcamera*' 'rpicam-apps*' 'python3-libcamera' 2>/dev/null \
+        | awk '$2 ~ /^ii/ { print $1 }'
+)
+if (( ${#conflicts[@]} )); then
+    apt-get purge -y "${conflicts[@]}"
+fi
+apt-get install -y --no-install-recommends \
+    build-essential git meson ninja-build pkg-config cmake \
+    libboost-dev libboost-program-options-dev nlohmann-json3-dev \
+    libgnutls28-dev libssl-dev libevent-dev libudev-dev libyaml-dev \
+    libjpeg-dev libtiff-dev libpng-dev libexif-dev \
+    python3-dev python3-jinja2 python3-yaml python3-ply python3-pybind11 pybind11-dev
+
+build_root=$(mktemp -d /var/tmp/orion-camera.XXXXXXXX)
+trap 'rm -rf -- "${build_root}"' EXIT
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}
+# Prefer the Ubuntu Python/compiler tools, even under a customised sudo PATH.
+export PATH=/usr/bin:/bin:/usr/local/bin
+
+build_release() {
+    local project=$1 tag=$2 expected=$3
+    shift 3
+    local source_root=${build_root}/${project}
+    git clone --depth 1 --branch "${tag}" "https://github.com/raspberrypi/${project}.git" "${source_root}"
+    if [[ $(git -C "${source_root}" rev-parse HEAD) != "${expected}" ]]; then
+        echo "Pinned commit mismatch for ${project} ${tag}; refusing to build." >&2
+        exit 1
+    fi
+    meson setup "${source_root}/build" "${source_root}" \
+        --prefix=/usr/local --libdir=lib --buildtype=release --wrap-mode=nodownload "$@"
+    # Two build jobs leave room for other Pi processes and limit build memory.
+    meson compile -C "${source_root}/build" -j 2
+    meson install -C "${source_root}/build"
+    ldconfig
+}
+
+build_release libpisp "${libpisp_tag}" "${libpisp_commit}" -Dlogging=disabled -Dexamples=false
+build_release libcamera "${libcamera_tag}" "${libcamera_commit}" \
+    -Dpipelines=rpi/pisp -Dipas=rpi/pisp -Dpycamera=enabled \
+    -Dcam=disabled -Dqcam=disabled -Dgstreamer=disabled \
+    -Ddocumentation=disabled -Dtest=false -Dlc-compliance=disabled -Dtracing=disabled
+build_release rpicam-apps "${rpicam_tag}" "${rpicam_commit}" \
+    -Denable_libav=disabled -Denable_drm=disabled -Denable_egl=disabled \
+    -Denable_qt=disabled -Denable_opencv=disabled -Denable_tflite=disabled \
+    -Denable_hailo=disabled -Ddownload_hailo_models=false \
+    -Denable_imx500=false -Ddownload_imx500_models=false
+
+# libcamera uses site-packages, while Ubuntu's Python searches dist-packages.
+# A .pth file bridges that path without replacing the distro Python packages.
+python_version=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+binding_root=/usr/local/lib/python${python_version}/site-packages
+test -r "${binding_root}/libcamera/__init__.py"
+install -d "/usr/local/lib/python${python_version}/dist-packages"
+printf '%s\n' "${binding_root}" > "/usr/local/lib/python${python_version}/dist-packages/orion-libcamera.pth"
+/usr/bin/python3 -c 'import libcamera; print("libcamera bindings:", libcamera.__file__)'
+
+getent group video >/dev/null || groupadd --system video
+install -d /etc/udev/rules.d
+printf '%s\n' 'SUBSYSTEM=="dma_heap", GROUP="video", MODE="0660"' \
+    > /etc/udev/rules.d/70-orion-camera.rules
+udevadm control --reload-rules
+udevadm trigger --subsystem-match=dma_heap
+if [[ -n ${camera_user} ]]; then
+    usermod -a -G video "${camera_user}"
+fi
+
+echo "Installed libpisp ${libpisp_tag}, libcamera ${libcamera_tag}, rpicam-apps ${rpicam_tag}."
+echo "Configure the IMX708 overlay for the fitted CSI port, reboot, and run vision/scripts/verify-camera-stack.sh."
+echo "Use a fresh login after changing video-group membership."
