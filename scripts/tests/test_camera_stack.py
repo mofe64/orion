@@ -204,7 +204,7 @@ sys.exit(measure.main(["--yunet", "x", "--yolo-param", "y", "--yolo-bin", "z"]))
         net.create_extractor.return_value.extract.return_value = (0, "result")
         detector = measure.YoloNCNN(cv2, ncnn, Path("model.param"), Path("model.bin"), 2, "in0", "out0")
         detector.run("yuv")
-        cv2.copyMakeBorder.assert_called_once_with(cv2.cvtColor.return_value, 40, 40, 0, 0,
+        cv2.copyMakeBorder.assert_called_once_with(cv2.cvtColor.return_value.__getitem__.return_value, 40, 40, 0, 0,
                                                    cv2.BORDER_CONSTANT, value=(114, 114, 114))
         ncnn.Mat.from_pixels.assert_called_once_with(cv2.copyMakeBorder.return_value,
                                                     ncnn.Mat.PixelType.PIXEL_BGR2RGB, 320, 320)
@@ -212,6 +212,29 @@ sys.exit(measure.main(["--yunet", "x", "--yolo-param", "y", "--yolo-bin", "z"]))
         net.create_extractor.return_value.extract.return_value = (1, None)
         with self.assertRaisesRegex(RuntimeError, "NCNN output"):
             detector.run("yuv")
+
+    def test_both_detectors_remove_isp_padding_after_yuv_conversion(self):
+        class PaddedBgr:
+            def __getitem__(self, slices):
+                # Cropping here preserves the packed YUV chroma planes: they
+                # have already been decoded by cvtColor at the padded stride.
+                self_slices.append(slices)
+                return "320px BGR"
+        self_slices = []
+        cv2, ncnn = MagicMock(), MagicMock()
+        cv2.cvtColor.return_value = PaddedBgr()
+        face = measure.YuNet(cv2, Path("face.onnx"), 1)
+        face.run("384px padded I420")
+        face.detector.detect.assert_called_once_with("320px BGR")
+        net = ncnn.Net.return_value
+        net.load_param.return_value = net.load_model.return_value = 0
+        net.create_extractor.return_value.input.return_value = 0
+        net.create_extractor.return_value.extract.return_value = (0, "result")
+        yolo = measure.YoloNCNN(cv2, ncnn, Path("model.param"), Path("model.bin"), 1, "in0", "out0")
+        yolo.run("384px padded I420")
+        cv2.copyMakeBorder.assert_called_once_with("320px BGR", 40, 40, 0, 0,
+                                                  cv2.BORDER_CONSTANT, value=(114, 114, 114))
+        self.assertEqual(self_slices, [(slice(None), slice(None, 320))] * 2)
 
 
 class StackScriptTests(unittest.TestCase):
@@ -271,7 +294,7 @@ if [[ $1 == clone ]]; then
 elif [[ $1 == -C ]]; then
     case "$2" in
       */libpisp) echo 50426319aa1a9ba4672f91977429365ad4e335a2 ;;
-      */libcamera) echo 29156679717bec7cc4784aeba3548807f2c27fca ;;
+      */libcamera) echo d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b ;;
       */rpicam-apps) echo 5a3f5965aca96c2d575261e4e4045f0e0481279b ;;
     esac
 fi
@@ -286,7 +309,8 @@ fi
         source = (SCRIPTS / "install-camera-stack.sh").read_text()
         source = source.replace("if (( EUID != 0 )); then", "if false; then")
         source = source.replace("/etc/os-release", str(release)).replace("/proc/device-tree/model", str(model))
-        source = source.replace("export PATH=/usr/bin:/bin:/usr/local/bin", "# Retain the mock PATH")
+        source = source.replace("export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/sbin",
+                                "# Retain the mock PATH")
         source = source.replace("/usr/bin/python3", str(python)).replace("/usr/local", str(self.prefix))
         source = source.replace("/etc/udev/rules.d", str(self.root / "rules"))
         source = source.replace("/var/tmp/orion-camera.XXXXXXXX", str(self.root / "build.XXXXXXXX"))
@@ -317,6 +341,23 @@ fi
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Requires Ubuntu", result.stderr)
         self.assertNotIn("apt-get", self.log.read_text())
+
+    def test_installer_path_finds_administrative_tools(self):
+        # Model Ubuntu's split bin/sbin layout without inheriting the host PATH.
+        # The original installer hid ldconfig after successfully installing PiSP.
+        source = (SCRIPTS / "install-camera-stack.sh").read_text()
+        path_line = next(line for line in source.splitlines() if line.startswith("export PATH="))
+        entries = path_line.removeprefix("export PATH=").split(":")
+        path_line = "export PATH=" + ":".join(
+            str(self.root / entry.lstrip("/")) for entry in entries
+        )
+        admin = self.root / "usr/sbin/ldconfig"
+        admin.parent.mkdir(parents=True)
+        admin.write_text("#!/bin/bash\nexit 0\n")
+        admin.chmod(0o755)
+        result = subprocess.run(["bash", "-c", path_line + "\nldconfig"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_moved_release_tag_is_rejected_before_build(self):
         result = self.installer(moved_tag=True)

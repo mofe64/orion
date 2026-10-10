@@ -143,6 +143,13 @@ class LatestFrame:
             return phase
 
 
+def lores_bgr(cv2, yuv):
+    # PiSP may pad the 320px stream to a wider stride (384px on the lamp).
+    # Convert the complete I420 planes first: cropping packed YUV columns would
+    # corrupt U/V row packing. Then remove only the BGR padding columns.
+    return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)[:, :320]
+
+
 class YuNet:
     def __init__(self, cv2, path, threads):
         self.cv2 = cv2
@@ -153,7 +160,7 @@ class YuNet:
         )
 
     def run(self, yuv):
-        bgr = self.cv2.cvtColor(yuv, self.cv2.COLOR_YUV2BGR_I420)
+        bgr = lores_bgr(self.cv2, yuv)
         self.detector.detect(bgr)
 
 
@@ -175,7 +182,7 @@ class YoloNCNN:
             raise RuntimeError("could not load YOLO11n NCNN param/bin")
 
     def run(self, yuv):
-        bgr = self.cv2.cvtColor(yuv, self.cv2.COLOR_YUV2BGR_I420)
+        bgr = lores_bgr(self.cv2, yuv)
         # 320x240 lores -> 320x320 square without stretching the image.
         square = self.cv2.copyMakeBorder(
             bgr, 40, 40, 0, 0, self.cv2.BORDER_CONSTANT, value=(114, 114, 114)

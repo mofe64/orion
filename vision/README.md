@@ -3,8 +3,9 @@
 ## Setup on Ubuntu 24.04 / Raspberry Pi 5
 
 The commissioning scripts build a headless camera stack and measure the V2
-IMX708 Wide camera. Installation and performance remain unverified on the
-assembled lamp. No camera service is installed by these scripts.
+IMX708 Wide camera. Installation, capture, model execution and the watched
+calibrated cable sweep have passed on the assembled V2 lamp. No camera service
+is installed by these scripts.
 
 Run from the Orion checkout on the Pi, with camera applications stopped:
 
@@ -20,7 +21,7 @@ these Raspberry Pi releases into `/usr/local`:
 | Component | Tag | Commit |
 | --- | --- | --- |
 | libpisp | `v1.2.0` | `50426319aa1a9ba4672f91977429365ad4e335a2` |
-| libcamera | `v0.4.0+rpt20250213` | `29156679717bec7cc4784aeba3548807f2c27fca` |
+| libcamera | `v0.5.0+rpt20250429` | `d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b` |
 | rpicam-apps | `v1.7.0` | `5a3f5965aca96c2d575261e4e4045f0e0481279b` |
 
 The libcamera build enables only the `rpi/pisp` pipeline and IPA (image
@@ -35,7 +36,9 @@ with system Python. The DMA buffer rule gives group `video` access to
 `/dev/dma_heap/*`; the optional installer argument joins that user to `video`.
 Start a fresh login after the group change.
 
-Set the camera overlay in `/boot/firmware/config.txt` for the fitted port.
+If the sensor is already detected with automatic camera detection, retain the
+working boot configuration. Otherwise, set the camera overlay in
+`/boot/firmware/config.txt` for the fitted port.
 Use one explicit overlay, in the applicable `[all]` section, and disable
 automatic camera detection when using it:
 
@@ -62,6 +65,31 @@ first recording the allocation failure.
 
 ### Measurement environment
 
+Picamera2 0.3.25 imports `pykms` even with preview disabled. Ubuntu 24.04
+does not provide Raspberry Pi OS's `python3-kms++` package. Build the binding
+from this pinned kms++ revision; no display is opened during measurement:
+
+```bash
+sudo apt-get install -y --no-install-recommends libdrm-dev libfmt-dev
+camera_kms_build=$(mktemp -d /var/tmp/orion-camera-kms.XXXXXXXX)
+git -C "$camera_kms_build" init
+git -C "$camera_kms_build" fetch --depth 1 https://github.com/tomba/kmsxx.git \
+  b91affd0725f2523e2563da4f6295a2977fd3945
+git -C "$camera_kms_build" checkout --detach FETCH_HEAD
+test "$(git -C "$camera_kms_build" rev-parse HEAD)" = \
+  b91affd0725f2523e2563da4f6295a2977fd3945
+meson setup "$camera_kms_build/build" "$camera_kms_build" \
+  --prefix=/usr/local --libdir=lib --buildtype=release --wrap-mode=nodownload \
+  -Dpykms=enabled -Dlibutils=true -Dutils=true -Domap=disabled -Dkmscube=false
+meson compile -C "$camera_kms_build/build" -j 2
+sudo meson install -C "$camera_kms_build/build"
+sudo /usr/sbin/ldconfig
+python3 -c 'import pykms'
+rm -rf -- "$camera_kms_build"
+```
+
+The camera installer's Python path bridge also exposes this binding.
+
 Use a disposable benchmark environment with the system bindings visible.
 These packages belong to commissioning tooling; they do not establish a
 vision-service dependency lockfile:
@@ -73,9 +101,19 @@ uv venv --python /usr/bin/python3 --system-site-packages \
 uv pip install --python "$HOME/.cache/orion/camera-benchmark/bin/python" \
   picamera2==0.3.25 numpy==2.2.4 \
   opencv-python-headless==4.11.0.86 ncnn==1.0.20250503
+# NCNN pulls in the desktop wheel, which shares cv2 with the headless one.
+uv pip uninstall --python "$HOME/.cache/orion/camera-benchmark/bin/python" opencv-python
+uv pip install --python "$HOME/.cache/orion/camera-benchmark/bin/python" \
+  --reinstall-package opencv-python-headless opencv-python-headless==4.11.0.86
 ```
 
-Picamera2 is installed without its desktop extras. Provide a local OpenCV
+Picamera2 is installed without its desktop extras. NCNN's metadata declares
+`opencv-python`; replacing that wheel with `opencv-python-headless` supplies
+the same `cv2` API without requiring `libGL`. A dependency check will report
+the intentionally absent desktop distribution. Avoid reinstalling NCNN
+in this environment without repeating the replacement.
+
+Provide a local OpenCV
 YuNet ONNX model and a local **YOLO11n NCNN export made with `imgsz=320`**.
 The export must have `in0` and `out0` blobs, or supply their names with
 `--yolo-input` and `--yolo-output`. Models must already be on the Pi; the
@@ -105,6 +143,7 @@ sensor frame rate is reported separately from host delivery rate.
 
 Inference consumes only the latest lores buffer. When it is slow, older
 frames are replaced rather than queued. Timing includes YUV conversion and
+removal of ISP stride padding after conversion to BGR, then
 model execution; YuNet includes its detection postprocessing, while YOLO
 includes 320×320 letterboxing and its forward pass but excludes NMS
 (non-maximum suppression). Compare each model across thread counts rather
@@ -116,7 +155,7 @@ temperature is sampled once a second; unavailable readings are `null`.
 Failures emit `ok: false` and return a nonzero exit status.
 
 `SensorTimestamp` is used directly, with no host-time fallback. The pinned
-[libcamera control contract](https://github.com/raspberrypi/libcamera/blob/v0.4.0%2Brpt20250213/src/libcamera/control_ids_core.yaml)
+[libcamera control contract](https://github.com/raspberrypi/libcamera/blob/v0.5.0%2Brpt20250429/src/libcamera/control_ids_core.yaml)
 uses `CLOCK_BOOTTIME`, which includes suspend time; it must not be assumed
 equal to `CLOCK_MONOTONIC`. Reports include both host clocks and the
 sensor-to-delivery interval. Exact exposure timing and clock alignment still

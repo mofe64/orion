@@ -29,8 +29,8 @@ fi
 # Pin tags AND commits: fail if an upstream tag is moved.
 libpisp_tag=v1.2.0
 libpisp_commit=50426319aa1a9ba4672f91977429365ad4e335a2
-libcamera_tag=v0.4.0+rpt20250213
-libcamera_commit=29156679717bec7cc4784aeba3548807f2c27fca
+libcamera_tag=v0.5.0+rpt20250429
+libcamera_commit=d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b
 rpicam_tag=v1.7.0
 rpicam_commit=5a3f5965aca96c2d575261e4e4045f0e0481279b
 
@@ -59,7 +59,7 @@ build_root=$(mktemp -d /var/tmp/orion-camera.XXXXXXXX)
 trap 'rm -rf -- "${build_root}"' EXIT
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}
 # Prefer the Ubuntu Python/compiler tools, even under a customised sudo PATH.
-export PATH=/usr/bin:/bin:/usr/local/bin
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/sbin
 
 build_release() {
     local project=$1 tag=$2 expected=$3
@@ -109,5 +109,5 @@ if [[ -n ${camera_user} ]]; then
 fi
 
 echo "Installed libpisp ${libpisp_tag}, libcamera ${libcamera_tag}, rpicam-apps ${rpicam_tag}."
-echo "Configure the IMX708 overlay for the fitted CSI port, reboot, and run vision/scripts/verify-camera-stack.sh."
+echo "Run vision/scripts/verify-camera-stack.sh. If the sensor is missing, configure its IMX708 overlay for the fitted CSI port and reboot."
 echo "Use a fresh login after changing video-group membership."
