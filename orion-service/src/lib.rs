@@ -63,7 +63,14 @@ pub enum Request {
     LoadSettings,
     SaveSettings(settings::VoiceSettings),
     ModelLocations(settings::VoiceSettings),
+    Geocode {
+        query: String,
+    },
     Profile(Option<orion_agent::profile::ProfileChange>),
+    Lists {
+        list: orion_agent::lists::ListName,
+        change: Option<orion_agent::lists::ListChange>,
+    },
 }
 
 pub struct Host {
@@ -195,6 +202,14 @@ impl Host {
             }
             Request::ModelLocations(settings) => {
                 serde_json::to_value(settings::voice_model_locations(settings)?)
+                    .map_err(|e| e.to_string())
+            }
+            Request::Lists { list, change } => {
+                serde_json::to_value(self.agent.profile_handle()?.lists(list, change).await?)
+                    .map_err(|e| e.to_string())
+            }
+            Request::Geocode { query } => {
+                serde_json::to_value(orion_agent::weather::geocode(&query).await?)
                     .map_err(|e| e.to_string())
             }
             Request::Profile(change) => {

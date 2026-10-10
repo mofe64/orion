@@ -22,7 +22,7 @@ from .verifier import AcousticVerifier
 from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
 from .wake_debug import CaptureReadStats, WakeDebugRecorder
 
-PROTOCOL = 1
+PROTOCOL = 2
 FRAME_BYTES = 640  # 20 ms of mono signed little-endian PCM16 at 16 kHz
 MAX_UTTERANCE_BYTES = 33 * 32000
 CONVERSATION_WINDOW_SECONDS = 5.0
@@ -54,6 +54,7 @@ class SatelliteSession:
 
     def reset(self, preserve_listening=False):
         self.session_id = None
+        self.announcement_id = None
         self.phase = "listening"
         if not preserve_listening:
             self.pre_roll = bytearray()
@@ -86,6 +87,22 @@ class SatelliteSession:
             self.verifier.cancel()
         if self.wake_debug is not None:
             self.wake_debug.cancel()
+
+    def start_announcement(self, announcement):
+        if self.session_id or self.phase != "listening" or self.alarm_active:
+            return []
+        self.session_id = uuid.uuid4().hex
+        self.announcement_id = announcement["id"]
+        self.phase = "processing"
+        # Waiting for foreground replies is bounded and remains wake-interruptible.
+        self.expires_at = self.clock() + 60
+        return [self.message("announcement", **announcement)]
+
+    def announcement_ready(self, identity):
+        # A cue may finish after wake/alarm reset this session.
+        if self.session_id == identity and self.announcement_id is not None and self.phase == "processing":
+            return [self.message("announcement.ready")]
+        return []
 
     def set_alarm(self, active):
         if active == self.alarm_active: return None
@@ -207,7 +224,18 @@ class SatelliteSession:
             event = self.message("session.expired")
             self.reset()
             return [event]
+        if self.announcement_id is not None and self.phase == "processing":
+            self.pre_roll.extend(audio)
+            del self.pre_roll[:-3 * 32000]
+            detection = self.wake.process(audio)
+            if detection is not None:
+                interrupted = self.message("session.interrupted", reason="announcement_wake")
+                self.reset(preserve_listening=True)
+                return [interrupted, *self.start_wake(detection)]
+            return []
         if self.phase == "playing":
+            if self.announcement_id is not None and self.wake.process(audio) is not None:
+                return [self.message("announcement.dismiss", id=self.announcement_id)]
             if self.barge_in and self.verifier_active():
                 self.pre_roll.extend(audio)
                 del self.pre_roll[:-3 * 32000]
@@ -350,7 +378,9 @@ class SatelliteSession:
             self.utterance.clear()
             return []
         if kind in {"session.finish", "session.reject", "session.cancel"}:
+            announcement = self.announcement_id is not None
             self.reset()
+            if announcement: self.alarm_guard_until = self.clock() + ECHO_GUARD_SECONDS
             return []
         if kind == "wake.confirmed" and self.phase == "confirming":
             followup = message.get("followup")
@@ -531,6 +561,19 @@ async def serve(args):
         for message in messages:
             if isinstance(message, dict):
                 kind = message["type"]
+                if kind == "announcement.dismiss":
+                    try:
+                        request = json.dumps({"action": "dismiss_announcement", "id": message["id"]})
+                        result = await daemon_command(f'routines {request}', args.daemon_socket)
+                        if result.get("ok") is True:
+                            identity = session.session_id
+                            expression("cancel", identity)
+                            session.reset()
+                            session.alarm_guard_until = session.clock() + ECHO_GUARD_SECONDS
+                            await deliver([{"type":"session.interrupted","sessionId":identity,"reason":"announcement"}])
+                    except (OSError, ValueError, asyncio.TimeoutError):
+                        pass
+                    continue
                 if kind == "alarm.dismiss":
                     try:
                         result = await daemon_command('routines {"action":"stop"}', args.daemon_socket)
@@ -633,13 +676,25 @@ async def serve(args):
         while True:
             try:
                 result = await daemon_command("routines status", args.daemon_socket)
-                active = result.get("routines", {}).get("ringing")
+                routines = result.get("routines", {})
+                active = routines.get("ringing")
                 if type(active) is bool and active != session.alarm_active:
                     interrupted = session.session_id
                     cancel_turn()
                     session.set_alarm(active)
                     if interrupted and outgoing is not None:
                         await deliver([{"type":"session.interrupted", "sessionId":interrupted, "reason":"alarm"}])
+                if session.announcement_id is not None:
+                    item = next((a for a in routines.get("alerts", []) if a.get("id") == session.announcement_id), None)
+                    if item is not None and item.get("state") != "announcing" and not item.get("dismissal_notice"):
+                        identity = session.session_id
+                        expression("cancel", identity)
+                        session.reset()
+                        await deliver([{"type":"session.interrupted","sessionId":identity,"reason":"announcement"}])
+                if not active and not muted and outgoing is not None and not session.session_id:
+                    pending = routines.get("announcements", [])
+                    if pending:
+                        await deliver(session.start_announcement(pending[0]))
             except (OSError, ValueError, asyncio.TimeoutError):
                 pass
             await asyncio.sleep(0.2)
@@ -721,6 +776,23 @@ async def serve(args):
                     observation = session.observation.copy()
                     observed_at = session.observed_at
                     skip_attention = session.barge_in_session
+                    if message["type"] == "announcement.start" and session.announcement_id is not None:
+                        session.expires_at = session.clock() + 180
+                        announcement_id = session.announcement_id
+                        try:
+                            opened = await daemon_command(f"voice {identity} announcement", args.daemon_socket)
+                            if opened.get("ok") is not True:
+                                raise ValueError("Runtime rejected announcement ownership")
+                        except (OSError, ValueError, asyncio.TimeoutError) as error:
+                            # Keep the reservation until the coordinator reports the
+                            # failure to the scheduler and cancels this session.
+                            if session.session_id == identity and session.announcement_id == announcement_id:
+                                await deliver([session.message("announcement.failed", id=announcement_id,
+                                    reason=str(error) or type(error).__name__)])
+                            continue
+                        await asyncio.sleep(0.5)  # notice_warm finishes before speech starts
+                        await deliver(session.announcement_ready(identity))
+                        continue
                     result = session.control(message)
                     if message["type"] == "session.playing":
                         expression("playing")

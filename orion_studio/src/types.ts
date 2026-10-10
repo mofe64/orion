@@ -256,7 +256,7 @@ export interface GatewayStatus {
     ring_sound?: string | null;
     remaining_ring_seconds: number | null;
     error: string | null;
-    alerts: Array<{ id: number; kind: "timer" | "alarm"; label: string; due_unix: number; state: string }>;
+    alerts: Array<{ id: number; kind: "timer" | "alarm" | "reminder"; label: string; due_unix: number; state: string; repeat?: { days: string[]; time: string } | null }>;
   } | null;
   rest?: {
     mode?: "idle" | "lamp";

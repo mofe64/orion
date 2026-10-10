@@ -78,7 +78,7 @@ async fn connect(
     let (output, mut input) = socket.split();
     let pi = Pi(Arc::new(Mutex::new(output)));
     let mut hello =
-        json!({"type":"hello", "protocol":1, "token":config.pi_token, "wakePrefix":true});
+        json!({"type":"hello", "protocol":2, "token":config.pi_token, "wakePrefix":true});
     if control {
         hello["role"] = "control".into();
     }
@@ -190,7 +190,43 @@ pub(crate) async fn run(
     }
 }
 
+pub const MORNING_BRIEFING: &str = "Give the user a short morning briefing: greeting and time, weather for today, today's reminders and alarms, and how many items are on the to-do list.";
+
+async fn acknowledge_announcement(gateway: &Gateway, hub: &Hub, sid: &str, id: u64) {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
+        }
+        match gateway
+            .robot_operation(
+                json!({"operation":"routines","request":{"action":"announced","id":id}}),
+                sid,
+            )
+            .await
+        {
+            Ok(_) => return,
+            Err(reason) => {
+                eprintln!(
+                    "{}",
+                    json!({"event":"voice.announcement_ack_failed","session_id":sid,"id":id,"attempt":attempt + 1,"reason":reason})
+                );
+                if attempt == 2 {
+                    event(hub, sid, error("announcement_ack_failed", &reason, true));
+                }
+            }
+        }
+    }
+}
+
 enum Completed {
+    AnnouncementPlayed {
+        id: u64,
+        attempt: u64,
+        reply: Option<orion_agent::AgentReply>,
+    },
+    Announcement {
+        id: u64,
+    },
     Transcript {
         sid: String,
         purpose: String,
@@ -199,6 +235,7 @@ enum Completed {
     },
     Response {
         sleep: bool,
+        reply: orion_agent::AgentReply,
     },
 }
 
@@ -220,7 +257,7 @@ async fn connected(
         result = connection => result.map_err(|_| "Pi connection timed out")??,
     };
     if ready["type"] != "ready"
-        || ready["protocol"] != 1
+        || ready["protocol"] != 2
         || ready["sampleRate"] != 16000
         || ready["channels"] != 1
         || ready["encoding"] != "pcm_s16le"
@@ -234,6 +271,11 @@ async fn connected(
         json!({"type":"ready", "protocol":7, "muted":ready["muted"], "asr":models["asr"],
         "tts":models["tts"], "wake":ready["wake"], "agent":agent_info}),
     );
+    let mut announcements = std::collections::VecDeque::<Value>::new();
+    let mut announced = std::collections::HashMap::new();
+    let mut announcement_ready: Option<(String, tokio::sync::oneshot::Sender<Result<(), String>>)> =
+        None;
+    let mut active_announcement: Option<u64> = None;
     let mut session: Option<Session> = None;
     let mut followup: Option<String> = None;
     let mut jobs = JoinSet::<Result<Completed, String>>::new();
@@ -244,6 +286,40 @@ async fn connected(
     let mut active: ActiveRun = Arc::new(Mutex::new(None));
     let result = async {
         loop {
+            if session.is_none() && jobs.is_empty() && retiring.is_empty()
+                && let Some(message) = announcements.pop_front() {
+                    let sid = message["sessionId"].as_str().ok_or("Announcement needs a session")?.to_owned();
+                    let id = message["id"].as_u64().ok_or("Announcement needs an alert ID")?;
+                    let attempt = message["attempt"].as_u64().ok_or("Announcement needs an attempt")?;
+                    let briefing = message["purpose"] == "briefing";
+                    let text = message["text"].as_str().ok_or("Announcement needs text")?.to_owned();
+                    active_announcement = Some(id);
+                    session = Some(Session::new(&sid, Phase::Responding)?); followup = None;
+                    *next_request += 1;
+                    let (ready_send, ready_receive) = tokio::sync::oneshot::channel();
+                    announcement_ready = Some((sid.clone(), ready_send));
+                    pi.send(json!({"type":"announcement.start","sessionId":sid})).await?;
+                    let agent = agent.clone();
+                    let speech = speech.clone(); let gateway = gateway.clone(); let pi = pi.clone();
+                    let hub = hub.clone(); let active = active.clone(); let request = *next_request;
+                    jobs.spawn(async move {
+                        // The listener acknowledges runtime ownership after the cue.
+                        tokio::time::timeout(Duration::from_secs(5), ready_receive).await.map_err(|_| "Announcement session did not open")?.map_err(|_| "Announcement session was cancelled")??;
+                        let mut delivered_reply = None;
+                        if briefing {
+                            if !text.ends_with(": ") {
+                                speak(&speech,&gateway,&pi,&hub,&sid,request,text,active.clone(),true).await?;
+                                pi.send(json!({"type":"session.processing","sessionId":sid})).await?;
+                            }
+                            let (_keep, interrupted) = watch::channel(false);
+                            let (_, reply) = response(&agent,&speech,&gateway,&pi,&hub,&sid,request,MORNING_BRIEFING,active,tool_feedback,interrupted).await?;
+                            delivered_reply = Some(reply);
+                        } else {
+                            speak(&speech,&gateway,&pi,&hub,&sid,request,text,active,false).await?;
+                        }
+                        Ok(Completed::AnnouncementPlayed { id, attempt, reply: delivered_reply })
+                    });
+            }
             tokio::select! {
                 biased;
                 _ = stop.changed() => return Ok(()),
@@ -257,6 +333,11 @@ async fn connected(
                     let sid = current.id.clone();
                     match result.map_err(|e| e.to_string())? {
                         Err(message) => {
+                            if let Some(id) = active_announcement.take()
+                                && let Err(reason) = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":id}}), &sid).await {
+                                event(hub, &sid, error("announcement_failure_report_failed", &reason, true));
+                            }
+                            announcement_ready = None;
                             gateway.cancel(&active).await;
                             pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
                             event(hub, &sid, error("voice_request_failed", &message, true));
@@ -314,9 +395,29 @@ async fn connected(
                             let hub = hub.clone(); let pi = pi.clone(); let active = active.clone(); let request = *next_request;
                             let (interrupt, interrupted) = watch::channel(false);
                             response_stop = Some(interrupt);
-                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback, interrupted).await.map(|sleep| Completed::Response {sleep}) });
+                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback, interrupted).await.map(|(sleep,reply)| Completed::Response {sleep,reply}) });
                         },
-                        Ok(Completed::Response {sleep}) => {
+                        Ok(Completed::AnnouncementPlayed {id, attempt, reply}) => {
+                            // Playback is irreversible. Record it before any fallible
+                            // acknowledgement, including if wake cancels the retries.
+                            active_announcement = None;
+                            announcement_ready = None;
+                            announced.insert((id, attempt), sid.clone());
+                            if let Some(reply) = &reply { agent.confirm_playback(reply); }
+                            let gateway = gateway.clone(); let hub = hub.clone();
+                            jobs.spawn(async move {
+                                acknowledge_announcement(&gateway, &hub, &sid, id).await;
+                                Ok(Completed::Announcement { id })
+                            });
+                        },
+                        Ok(Completed::Announcement {id}) => {
+                            active_announcement = None;
+                            announcement_ready = None;
+                            session = None; followup = None;
+                            pi.send(json!({"type":"session.finish","sessionId":sid})).await?;
+                            event(hub, &sid, json!({"type":"announcement.completed","id":id}));
+                        },
+                        Ok(Completed::Response {sleep,reply}) => {
                             response_stop = None;
                             let window = window && !sleep;
                             let request = *next_request;
@@ -325,13 +426,39 @@ async fn connected(
                             if window { finish["conversationWindow"] = true.into(); }
                             pi.send(finish).await?;
                             event(hub, &sid, json!({"type":"speech.completed", "requestId":request}));
+                            agent.confirm_playback(&reply);
                         }
                     }
                 },
                 message = pi.receive(&mut input) => {
                     let message = decode(message?)?;
+                    if message["type"] == "announcement.ready" || message["type"] == "announcement.failed" {
+                        let failed = message["type"] == "announcement.failed";
+                        if announcement_ready.as_ref().is_some_and(|(expected, _)| message["sessionId"].as_str() == Some(expected.as_str()))
+                            && (!failed || message["id"].as_u64() == active_announcement) {
+                            let (_, send) = announcement_ready.take().unwrap();
+                            let result = if failed { Err(message["reason"].as_str().unwrap_or("Announcement ownership failed").to_owned()) } else { Ok(()) };
+                            let _ = send.send(result);
+                        } else {
+                            eprintln!("{}", json!({"event":if failed {"voice.announcement_failure_ignored"} else {"voice.announcement_ready_ignored"},"session_id":message["sessionId"]}));
+                        }
+                        continue;
+                    }
                     let sid = message["sessionId"].as_str().ok_or("Pi event has no session ID")?;
                     match message["type"].as_str().ok_or("Pi event has no type")? {
+                        "announcement" => {
+                            let id = message["id"].as_u64().ok_or("Announcement needs an alert ID")?;
+                            let attempt = message["attempt"].as_u64().ok_or("Announcement needs an attempt")?;
+                            if !matches!(message["purpose"].as_str(),Some("announcement"|"briefing")) || message["text"].as_str().is_none_or(|text| text.trim().is_empty() || text.chars().count()>512) || !crate::session::valid_session(sid) { return Err("Invalid announcement".into()); }
+                            if let Some(delivered_sid) = announced.get(&(id,attempt)) {
+                                // Release a fresh listener reservation for speech
+                                // already delivered, without replaying it.
+                                if delivered_sid != sid { pi.send(json!({"type":"session.finish","sessionId":sid})).await?; }
+                            } else if !announcements.iter().any(|queued| queued["id"]==id && queued["attempt"]==attempt) && !session.as_ref().is_some_and(|s| s.id==sid) {
+                                if announcements.len()>=64 { return Err("Announcement queue is full".into()); }
+                                announcements.push_back(message);
+                            }
+                        },
                         "wake.candidate" | "command.candidate" => {
                             if session.is_some() || !jobs.is_empty() { return Err("Overlapping Pi voice session".into()); }
                             let continuation = message["type"] == "command.candidate";
@@ -393,6 +520,10 @@ async fn connected(
                             });
                         },
                         "session.interrupted" => {
+                            // Waiting announcements can be cancelled while another reply retires.
+                            let queued = announcements.iter().any(|a| a["sessionId"] == sid);
+                            announcements.retain(|a| a["sessionId"] != sid);
+                            if queued && session.as_ref().map(|s| s.id.as_str()) != Some(sid) { continue; }
                             if session.as_ref().map(|session| session.id.as_str()) != Some(sid) && followup.as_deref() != Some(sid) { continue; }
                             let reason = message["reason"].as_str().ok_or("Interruption needs a reason")?;
                             match reason {
@@ -415,19 +546,30 @@ async fn connected(
                                     });
                                     agent.report_interruption();
                                 },
-                                "alarm" => {
+                                "alarm" | "announcement" | "announcement_wake" => {
                                     jobs.abort_all(); while jobs.join_next().await.is_some() {}
                                     retiring.abort_all(); while retiring.join_next().await.is_some() {}
                                     response_stop = None;
                                 },
                                 _ => return Err("Unknown interruption reason".into()),
                             }
+                            announcement_ready = None;
+                            active_announcement = None;
                             gateway.cancel(&active).await;
                             active = Arc::new(Mutex::new(None));
                             event(hub, sid, json!({"type":"session.interrupted","reason":reason}));
                             session = None; followup = None;
                         },
                         "session.expired" => {
+                            if let Some(index) = announcements.iter().position(|a| a["sessionId"] == sid) {
+                                let expired = announcements.remove(index).unwrap();
+                                let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":expired["id"]}}), sid).await;
+                                continue;
+                            }
+                            announcement_ready = None;
+                            if let Some(id) = active_announcement.take() {
+                                let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":id}}), sid).await;
+                            }
                             if session.as_ref().map(|session| session.id.as_str()) != Some(sid) { return Err("Stale Pi expiry".into()); }
                             jobs.abort_all(); while jobs.join_next().await.is_some() {}
                             retiring.abort_all(); while retiring.join_next().await.is_some() {}
@@ -509,7 +651,7 @@ async fn response(
     active: ActiveRun,
     tool_feedback: bool,
     interrupted: watch::Receiver<bool>,
-) -> Result<bool, String> {
+) -> Result<(bool, orion_agent::AgentReply), String> {
     event(
         hub,
         sid,
@@ -617,8 +759,9 @@ async fn response(
         Ok::<String, String>(prefix)
     };
     let agent_turn = async {
-        let (text, prefix) =
-            tokio::try_join!(agent.respond_with_events(command, Some(send)), activity)?;
+        let (reply, prefix) =
+            tokio::try_join!(agent.respond_for_playback(command, Some(send)), activity)?;
+        let text = &reply.text;
         let remaining = text
             .strip_prefix(&prefix)
             .ok_or("Final answer changed streamed speech")?
@@ -629,13 +772,13 @@ async fn response(
                 .map_err(|_| "Speech renderer stopped")?;
         }
         drop(text_send);
-        let (text, cues) = response_metadata(&text);
+        let (text, cues) = response_metadata(text);
         event(
             hub,
             sid,
             json!({"type":"agent.response", "requestId":request, "text":text, "cues":cues, "durationMs":started.elapsed().as_secs_f64()*1000.}),
         );
-        Ok::<(), String>(())
+        Ok::<orion_agent::AgentReply, String>(reply)
     };
     let spoken = async {
         let mut stopped = interrupted.clone();
@@ -661,8 +804,11 @@ async fn response(
     {
         agent.report_delivery_failure(reason);
     }
-    result?;
-    Ok(sleep_requested.load(std::sync::atomic::Ordering::Relaxed))
+    let (reply, ()) = result?;
+    Ok((
+        sleep_requested.load(std::sync::atomic::Ordering::Relaxed),
+        reply,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

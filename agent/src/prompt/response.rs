@@ -14,6 +14,8 @@ pub(crate) fn spoken_response(text: &str) -> Result<String, String> {
     while let Some(start) = rest.find('[') {
         tagged.push_str(&rest[..start]);
         let Some(end) = rest[start..].find(']') else {
+            tagged.push_str(&rest[start + 1..]);
+            rest = "";
             break;
         };
         let content = &rest[start + 1..start + end];
@@ -70,7 +72,8 @@ mod tests {
                 "[ AGREE ] [nod] Yes. [shake] No.",
                 "[agree] Yes. [disagree] No.",
             ),
-            ("Yes. [agr", "Yes."),
+            ("Yes. [agr", "Yes. agr"),
+            ("Press the [ key to continue", "Press the key to continue"),
         ] {
             assert_eq!(spoken_response(input).unwrap(), expected);
         }

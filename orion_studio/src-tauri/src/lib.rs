@@ -9,6 +9,7 @@ pub fn run() {
         .manage(orion_service::Backend)
         .invoke_handler(tauri::generate_handler![
             coordinator::start_voice_worker,
+            agent::geocode_location,
             agent::load_agent_profile,
             agent::change_agent_profile,
             settings::load_voice_settings,

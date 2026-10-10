@@ -148,6 +148,38 @@ async fn service_authentication_single_owner_and_clean_shutdown() {
             0o700
         );
     }
+    use orion_agent::lists::{ListChange, ListName};
+    let items = process
+        .call(Request::Lists {
+            list: ListName::Shopping,
+            change: Some(ListChange::Add {
+                text: "Milk".into(),
+            }),
+        })
+        .await;
+    assert_eq!(items[0]["text"], "Milk");
+    assert_eq!(
+        process
+            .call(Request::Lists {
+                list: ListName::Shopping,
+                change: None
+            })
+            .await,
+        items
+    );
+    let expected = serde_json::from_value(items).unwrap();
+    assert_eq!(
+        process
+            .call(Request::Lists {
+                list: ListName::Shopping,
+                change: Some(ListChange::Clear {
+                    expected,
+                    confirmed: true
+                })
+            })
+            .await,
+        json!([])
+    );
     process.terminate().await;
     assert!(
         rpc::call(&process.directory, &Request::Status)
@@ -261,7 +293,7 @@ async fn headless_process_runs_voice_without_ui_and_reuses_owner_for_observers()
         .await
         .unwrap()
         .unwrap();
-    send(&mut pi, json!({"type":"ready","protocol":1,"sampleRate":16000,"channels":1,"encoding":"pcm_s16le","muted":false,
+    send(&mut pi, json!({"type":"ready","protocol":2,"sampleRate":16000,"channels":1,"encoding":"pcm_s16le","muted":false,
         "conversationWindow":true,"toolFeedback":true,"wake":{"provider":"rustpotter","model":"fixture","threshold":0.4}})).await;
     assert_eq!(connection, process.call(Request::Start(options)).await);
     assert!(receiver.try_recv().is_err());

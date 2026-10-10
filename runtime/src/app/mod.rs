@@ -962,6 +962,22 @@ mod tests {
     }
 
     #[test]
+    fn manual_lighting_and_character_start_cancel_light_routines() {
+        let mut h = DispatchFixture::new(600.);
+        h.ok(r#"routines {"action":"start_light_routine","routine":"focus","minutes":5}"#);
+        assert_eq!(
+            h.routines.status(0., 0.)["light_routine"]["routine"],
+            "focus"
+        );
+        h.ok(r#"lamp-effect {"brightness":0.2,"colors":[[1,2,3,4]],"transition_seconds":30}"#);
+        assert!(h.routines.status(0., 0.)["light_routine"].is_null());
+        assert_eq!(h.routines.status(0., 0.)["alerts"][0]["state"], "cancelled");
+        let mut startup = DispatchFixture::new(600.);
+        startup.ok(r#"lamp-effect {"brightness":0.2,"transition_seconds":30}"#);
+        startup.ok("character start");
+        assert!(startup.manual.is_none());
+    }
+    #[test]
     fn wake_candidate_cues_once_and_confirmation_does_not_repeat_it() {
         let mut h = DispatchFixture::new(600.0);
         let rejected = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

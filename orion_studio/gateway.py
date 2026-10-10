@@ -283,6 +283,52 @@ class OrionGateway:
             },
         }
 
+    @staticmethod
+    def _validate_routines(request):
+        fields = {
+            "list": set(), "stop": set(), "set_mode": {"mode"},
+            "set_sound": {"kind", "sound"}, "timer": {"seconds", "label"},
+            "alarm": {"due_unix", "label", "repeat", "briefing", "sunrise_minutes"},
+            "reminder": {"due_unix", "seconds", "label", "repeat"},
+            "start_light_routine": {"routine", "minutes"}, "stop_light_routine": set(),
+            "cancel": {"id", "series"}, "announced": {"id"}, "announce_failed": {"id"},
+            "dismiss_announcement": {"id"}, "snooze": {"minutes"},
+        }
+        action = request.get("action")
+        if not isinstance(action, str) or action not in fields or set(request) - {"action"} - fields[action]:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Unknown action or routines fields.")
+        if action == "cancel" and "series" in request and type(request["series"]) is not bool:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Series must be true or false.")
+        if action == "alarm" and "briefing" in request and type(request["briefing"]) is not bool:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Briefing must be true or false.")
+        if action in {"alarm", "reminder"}:
+            triggers = ("due_unix", "repeat") if action == "alarm" else ("due_unix", "seconds", "repeat")
+            if sum(request.get(key) is not None for key in triggers) != 1:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Choose exactly one alert trigger.")
+            label = request.get("label")
+            limit = 200 if action == "reminder" else 80
+            if not isinstance(label, str) or len(label) > limit or (action == "reminder" and not label.strip()) or any(ord(c) < 32 for c in label):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Use printable alert text within the length limit.")
+            repeat = request.get("repeat")
+            if repeat is not None:
+                import re
+                if (not isinstance(repeat, dict) or set(repeat) != {"days", "time"}
+                        or not isinstance(repeat["days"], list) or not 1 <= len(repeat["days"]) <= 7
+                        or any(not isinstance(day, str) or day not in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"} for day in repeat["days"])
+                        or len(set(repeat["days"])) != len(repeat["days"])
+                        or not isinstance(repeat["time"], str) or re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", repeat["time"]) is None):
+                    raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Use unique repeat days and HH:MM time.")
+        if action == "alarm" and request.get("sunrise_minutes") is not None:
+            if type(request["sunrise_minutes"]) is not int or not 5 <= request["sunrise_minutes"] <= 60:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Sunrise must be 5–60 minutes.")
+        if action == "start_light_routine":
+            bounds = {"wind_down": (10, 60), "focus": (5, 120)}.get(request.get("routine")) if isinstance(request.get("routine"), str) else None
+            if bounds is None or type(request.get("minutes")) is not int or not bounds[0] <= request["minutes"] <= bounds[1]:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Invalid light routine duration.")
+        if action == "snooze" and request.get("minutes") is not None:
+            if type(request["minutes"]) is not int or not 1 <= request["minutes"] <= 60:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Snooze must be 1–60 minutes.")
+
     def submit(self, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
         if not isinstance(payload, dict):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
@@ -361,6 +407,7 @@ class OrionGateway:
         elif operation == "routines":
             if set(payload) != {"operation", "request"} or not isinstance(payload["request"], dict):
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Expected a routines request object.")
+            self._validate_routines(payload["request"])
             try:
                 body = json.dumps(payload["request"], ensure_ascii=True, separators=(",", ":"), allow_nan=False)
             except (ValueError, TypeError) as error:
@@ -377,8 +424,11 @@ class OrionGateway:
             response = self._checked("character rest")
         elif operation == "lamp_effect":
             settings = payload.get("settings")
-            if not isinstance(settings, dict) or not settings or set(settings) - {"brightness", "effect", "colors"}:
+            if not isinstance(settings, dict) or not settings or set(settings) - {"brightness", "effect", "colors", "transition_seconds"}:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Invalid lamp settings.")
+            transition = settings.get("transition_seconds")
+            if transition is not None and (type(transition) not in {int, float} or not 0 <= transition <= 3600):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Transition must be 0–3600 seconds.")
             brightness = settings.get("brightness")
             if brightness is not None and (type(brightness) not in {int, float} or not 0 <= brightness <= 1):
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Brightness must be 0–1.")
@@ -1453,7 +1503,7 @@ def voice_service_directory() -> Path:
 def voice_service_request(request: dict[str, Any]) -> Any:
     """Bridge allowlisted controls to the private headless owner, never to Codex directly."""
     if not isinstance(request, dict) or request.get("method") not in {
-        "status", "observe", "history", "start_saved", "load_settings", "save_settings", "model_locations", "profile", "microphone",
+        "status", "observe", "history", "start_saved", "load_settings", "save_settings", "model_locations", "profile", "lists", "geocode", "microphone",
     }:
         raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_request", "Unsupported voice control.")
     try:

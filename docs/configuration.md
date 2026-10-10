@@ -14,7 +14,11 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/voice-settings.json` | Agent model and effort, speech models, optional model/cache paths and voice preset |
 | `.config/orion/voice-stack.env` | Environment for the onboard voice and agent service |
 | `.config/orion/voice.env` | Listener overrides, including microphone spacing, channel orientation and capture gain |
-| `.config/orion/routines.json` | Idle/lamp mode, pending timers and one-time alarms, recent alert results and ringing deadline |
+| `.config/orion/routines.json.pre-reminders` | One-time legacy alert snapshot for [runtime rollback](../runtime/README.md#roll-back-to-a-runtime-without-reminders) |
+| `.config/orion/routines.json` | Idle/lamp mode, timers, reminders, recurring alarms, recent results and announcement/ringing deadlines |
+| `.local/share/orion/weather.json` | Saved weather location and optional temperature units; beside the configured `MEMORY.md` |
+| `.local/share/orion/lists.json` | Shopping and to-do lists; stored beside the configured `MEMORY.md` |
+| `.local/share/orion/reminders.json` | Next-conversation reminders; stored beside the configured `MEMORY.md` |
 | `.config/orion/routines.sounds.json` | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window |
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
@@ -253,3 +257,7 @@ Qwen still confirms the wake phrase after Rustpotter detection. Household noise,
 distant speech and speaker pickup require physical validation. See
 [capture and session behavior](voice-architecture.md#capture-ownership-and-session-lifecycle)
 and [audio setup](../hardware/audio/README.md).
+
+`weather.json`, beside the configured `MEMORY.md`, contains `location` (name, latitude, longitude, IANA timezone) and optional `temperature_unit` (`celsius` or `fahrenheit`). Studio stores a selected geocoding match with a snapshot check. Explicit units override an explicit weather preference in memory; otherwise Celsius applies. Alarms persist optional `briefing` (default false).
+
+Alarm `sunrise_minutes` defaults to absent and accepts integers 5–60. Lamp `transition_seconds` defaults to zero and accepts finite numbers 0–3600. Light routine durations are 10–60 minutes for `wind_down`, 5–120 for `focus`. Transitions and light routine ownership are not persisted; the focus timer persists normally, and a temporary routine mode never changes the saved idle/lamp preference.

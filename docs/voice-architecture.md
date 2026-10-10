@@ -422,8 +422,9 @@ inputs, retaining the 120-second per-input audio sanity guard.
 
 The service's 135-second RPC read, 130-second dispatch and 140-second remote
 request deadlines cover control/profile requests, not voice playback. The agent's
-120-second deadline covers a Codex turn and tool results; final synthesis and
-playback continue independently after it finishes. See [agent conversation](#agent-conversation-and-memory)
+45-second inactivity deadline applies between complete Codex events, with a
+ten-minute outer cap for a turn and its tools. Final synthesis and playback
+continue independently after the turn finishes. See [agent conversation](#agent-conversation-and-memory)
 for failure recovery. Every turn includes UTC time, local time with an offset and
 a discovered IANA zone. If no zone is known, both the context and `list_alerts`
 say `unknown; use the local UTC offset above`. Today's offset is known even when
@@ -433,7 +434,10 @@ Gateway validation reasons reach the agent through `error.message` or the
 runtime's `result.error`, with an HTTP status fallback and credential/URL redaction.
 `get_lighting` reads manual brightness in percent, effect and RGBW colors; null
 means no manual override. `set_lighting` explains that scenes/speech reject changes
-and character startup clears a manual light.
+and character startup clears a manual light. Alert tool results add local due
+times and remaining seconds at the agent boundary. Calls after final speech
+starts receive a tool error without executing or resetting the conversation.
+Successful direct sleep leaves a notice for the next model turn.
 
 The coordinator uploads mono 24 kHz PCM16 WAV through the gateway.
 `POST /api/v2/speech/stream` creates a runtime run,
@@ -518,11 +522,12 @@ to investigate a failed turn.
 ## Local interaction feedback
 
 Wake, verification, endpoint and processing events carry the voice session ID.
-The runtime rejects stale transitions and bounds their lifetime. A candidate
-plays the existing wake chime once and starts amber, teal and purple
-acknowledgement pulses, each lasting 300 ms. The body reaction remains unchanged
-until Qwen confirmation. The pulse clock starts at the candidate; Qwen does not
-replay it after a slow verification or fallback.
+The runtime rejects stale transitions and bounds their lifetime. Its `wake`
+event plays the existing wake chime once and starts amber, teal and purple
+acknowledgement pulses, each lasting 300 ms. The listener gates this event as
+described in [confirmed waking](#confirmed-waking). The body reaction remains
+unchanged until wake confirmation. The pulse clock starts at the runtime `wake`
+event; later confirmation does not replay it.
 Afterward, capture uses the dim listening light and endpointed commands use
 thinking feedback. An unconfirmed endpoint remains silent.
 
@@ -549,3 +554,51 @@ session cannot replace the alert. Rustpotter continues listening during the soun
 a detection sends a local `routines` stop request and consumes the wake phrase.
 Qwen and Codex do not participate in dismissal. See
 [timer and alarm behavior](system-architecture.md#timers-and-alarms).
+
+## Scheduled announcements
+
+Pi listener protocol 2 adds `announcement { sessionId, id, attempt, purpose,
+text }`, `announcement.start`, `announcement.ready` and
+`announcement.failed { sessionId, id, reason }`. The satellite opens an
+announcement session only when listening is idle. The coordinator also waits
+for response jobs, including interrupted turns, to finish. After start, the
+satellite opens runtime announcement ownership, plays `notice_warm` and reports
+ready. The ordinary `speak_sequence` path owns audio upload, keepalives, echo
+handling and playback completion; late readiness is discarded for a reset session and logged/ignored by the coordinator. Runtime ownership permits audio at rest
+without a confirmed user wake or motor activity.
+
+Runtime ownership refusal, daemon errors and daemon timeouts produce
+`announcement.failed` on the existing listener connection. The coordinator
+reports `routines` `announce_failed { id }` before cancelling the reservation;
+the runtime owns bounded retries and backoff. Other pre-completion announcement
+failures use the same reporting path.
+
+Completed playback is recorded before the coordinator sends `routines`
+`announced { id }`. An acknowledgement failure retries twice, after 100 ms and
+200 ms. Exhausted retries log `voice.announcement_ack_failed` and finish the
+session without reporting a delivery failure or opening a conversation window.
+The coordinator suppresses the same alert/attempt for the life of that listener
+connection, including when wake interrupts acknowledgement retries. A fresh
+listener reservation for already delivered speech receives `session.finish`.
+
+During announcement playback, “Hey Orion” sends the local runtime request
+`dismiss_announcement { id }`, acknowledging only the playing reminder or
+clearing that alarm label/briefing notice, then sends `session.interrupted` with
+reason `announcement`. Ring dismissal leaves unspoken reminders scheduled;
+see the [runtime alert lifecycle](../runtime/README.md).
+The normal speaker-tail guard then restores listening. Timed reminders, retries,
+recurrence and snooze remain in the runtime scheduler. See
+[timers and alarms](system-architecture.md#timers-and-alarms).
+
+Shopping and to-do tool calls use the agent’s `lists.json` store without a robot
+operation. Studio reaches the same store through the private service’s `lists`
+request. File locks and original-item/list comparisons prevent lost writes. List
+text stays outside memory retrieval and cannot authorize further tool actions.
+
+Three seconds after dismissal, an alarm with `briefing: true` can reserve an announcement session with purpose `briefing`. The coordinator waits for user replies to finish, starts a system agent turn with the morning briefing instruction, and acknowledges after successful speech playback. The listener’s announcement authorization permits playback while resting without counting it as user activity. Echo handling and wake dismissal use the existing scoped session.
+
+Light routine commands follow the existing agent → coordinator → gateway → runtime tool path. Wind-down requests deferred sleep from the runtime’s scheduler; it waits for foreground speech and confirmed voice activity to end. It does not fabricate a voice session. Focus rings through the ordinary timer path. Sunrise light during mechanical rest does not authorize motion, speech, or user activity.
+
+Announcement waiting and thinking accept “Hey Orion”: the listener cancels the reservation and starts ordinary command capture, leaving the runtime notice pending for a later idle session. Waiting expires after 60 seconds; an opened reply uses normal processing and playback leases. Interruption preserves the original two-minute snooze window. Late readiness for a reset session is discarded; the coordinator logs and ignores stale or session-less readiness. Playback wake dismissal still acknowledges the notice locally.
+
+Next-conversation reminder snapshots travel with generated agent replies and are acknowledged only in the coordinator’s completed-playback branch (`speech.completed` for user replies). Interrupted or failed playback leaves the snapshot pending. Reminder storage errors are logged without failing speech and exposed in the agent profile for Studio.

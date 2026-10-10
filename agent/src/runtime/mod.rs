@@ -6,15 +6,35 @@ use serde_json::json;
 use std::{thread::JoinHandle, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
+pub(crate) const TURN_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(90);
+pub(crate) const TURN_OUTER_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Cloneable in-process client. Each call has its own reply channel; dropping
 /// that call cancels it without delivering its result to another caller.
 #[derive(Clone)]
 pub struct AgentHandle(
     mpsc::Sender<Request>,
     std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    std::sync::Arc<AgentConfig>,
 );
 
+/// Reply generation and physical delivery have different completion points.
+/// The private snapshot identifies exactly which reminders reached generation.
+pub struct AgentReply {
+    pub text: String,
+    reminders: Vec<crate::memory::Entry>,
+}
+
 impl AgentHandle {
+    pub async fn lists(
+        &self,
+        list: crate::lists::ListName,
+        change: Option<crate::lists::ListChange>,
+    ) -> Result<Vec<crate::lists::Item>, String> {
+        // List edits don't alter model instructions or memory context. The store
+        // lock serializes tools and Studio, and snapshot checks protect stale UI.
+        crate::lists::request(&self.2, list, change)
+    }
     pub fn same_runtime(&self, other: &Self) -> bool {
         self.0.same_channel(&other.0)
     }
@@ -92,6 +112,16 @@ impl AgentHandle {
         text: &str,
         events: Option<mpsc::Sender<crate::AgentEvent>>,
     ) -> Result<String, String> {
+        self.respond_for_playback(text, events)
+            .await
+            .map(|reply| reply.text)
+    }
+
+    pub async fn respond_for_playback(
+        &self,
+        text: &str,
+        events: Option<mpsc::Sender<crate::AgentEvent>>,
+    ) -> Result<AgentReply, String> {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
             return Err("Agent input is empty or too large".into());
         }
@@ -106,6 +136,17 @@ impl AgentHandle {
             _ => Err("Invalid agent text response".into()),
         }
     }
+
+    /// Called only after the coordinator observes completed playback. A failed
+    /// store write leaves notices pending and cannot turn successful speech into an error.
+    pub fn confirm_playback(&self, reply: &AgentReply) {
+        if let Err(reason) = crate::reminders::delivered(&self.2, &reply.reminders) {
+            eprintln!(
+                "{}",
+                json!({"event":"agent.reminder_delivery_failed","reason":reason})
+            );
+        }
+    }
 }
 
 struct Request {
@@ -118,7 +159,7 @@ struct Request {
 enum Reply {
     Profile(crate::profile::Profile),
     Info(AgentInfo),
-    Text(String),
+    Text(AgentReply),
 }
 
 /// Owns the independent agent executor and Codex child. No local network server.
@@ -140,6 +181,9 @@ impl AgentService {
             .map_err(|e| e.to_string())?;
         let (send, mut receive) = mpsc::channel::<Request>(8);
         let (stop, mut stopped) = oneshot::channel();
+        let store_config = std::sync::Arc::new(config.clone());
+        let notices = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let pending_notices = std::sync::Arc::clone(&notices);
         let thread = std::thread::Builder::new().name("orion-agent".into()).spawn(move || runtime.block_on(async move {
             let mut client = None;
             loop {
@@ -153,7 +197,7 @@ impl AgentService {
                     biased;
                     _ = &mut stopped => break,
                     _ = reply.closed() => continue,
-                    result = tokio::time::timeout(Duration::from_secs(120), dispatch(&config, &mut client, text, events, direct_sleep, profile)) =>
+                    result = tokio::time::timeout(TURN_OUTER_TIMEOUT, dispatch(&config, &mut client, text, events, direct_sleep, profile, &pending_notices)) =>
                         result.unwrap_or_else(|_| Err("Agent request timed out; conversation reset".into())),
                 };
                 let _ = reply.send(result);
@@ -161,7 +205,7 @@ impl AgentService {
             if let Some(mut client) = client { client.close().await; }
         })).map_err(|e| e.to_string())?;
         Ok(Self {
-            handle: AgentHandle(send, Default::default()),
+            handle: AgentHandle(send, notices, store_config),
             stop: Some(stop),
             thread: Some(thread),
         })
@@ -178,6 +222,7 @@ async fn dispatch(
     events: Option<mpsc::Sender<crate::AgentEvent>>,
     direct_sleep: bool,
     profile: Option<Option<crate::profile::ProfileChange>>,
+    notices: &std::sync::Mutex<Option<String>>,
 ) -> Result<Reply, String> {
     if let Some(change) = profile {
         if let Some(change) = change {
@@ -210,25 +255,61 @@ async fn dispatch(
                 .await
                 .map_err(|_| "Coordinator stopped")?;
         }
-        return Ok(Reply::Text(
-            if success {
+        if success {
+            *notices.lock().unwrap() =
+                Some("Earlier, the user asked Orion to sleep and it went to rest".into());
+        }
+        return Ok(Reply::Text(AgentReply {
+            text: if success {
                 "Good night. I'll go to sleep now."
             } else {
                 "I couldn't go to sleep. Please try again."
             }
             .into(),
-        ));
+            reminders: vec![],
+        }));
     }
     // Cancellation owns and drops an uncertain child before another turn starts.
     let mut client = match slot.take() {
         Some(client) => client,
         None => providers::connect(config).await?,
     };
+    let pending = if text.is_some() {
+        crate::reminders::pending(config).unwrap_or_else(|reason| {
+            eprintln!(
+                "{}",
+                json!({"event":"agent.reminder_read_failed","reason":reason})
+            );
+            vec![]
+        })
+    } else {
+        vec![]
+    };
     let result = match text {
-        Some(text) => client
-            .respond(&text, events.as_ref())
-            .await
-            .map(Reply::Text),
+        Some(text) => {
+            let notices = pending
+                .iter()
+                .map(|entry| {
+                    format!(
+                        "Pending reminder for the user: {}. Mention it naturally.",
+                        entry.text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let input = if notices.is_empty() {
+                text
+            } else {
+                format!("{notices}\nUser request: {text}")
+            };
+            let result = client.respond(&input, events.as_ref()).await;
+            result.map(|text| {
+                Reply::Text(AgentReply {
+                    text,
+                    reminders: pending,
+                })
+            })
+        }
         None => Ok(Reply::Info(client.info())),
     };
     if result.is_ok() || !client.requires_reset() {

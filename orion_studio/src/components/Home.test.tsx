@@ -16,7 +16,7 @@ describe("Home control availability", () => {
     expect(html.indexOf("Orion listening is off.")).toBeGreaterThan(html.indexOf('aria-label="Orion listening"'));
     expect(html.indexOf("Orion listening is off.")).toBeLessThan(html.indexOf('aria-label="Lamp controls"'));
   });
-  it.each([["Go to rest", "mode"], ["Lamp mode", "mode"], ["Pause mode", "mode"], ["Resume mode", "mode"], ["Warm white light", "lamp"], ["Custom color", "lamp"], ["Light off", "lamp"], ["Cancel alert", "alert"], ["Acknowledge left", "expression"]])("keeps %s feedback in the %s control area", (action, area) => {
+  it.each([["Go to rest", "mode"], ["Lamp mode", "mode"], ["Pause mode", "mode"], ["Resume mode", "mode"], ["Warm white light", "lamp"], ["Custom color", "lamp"], ["Light off", "lamp"], ["Cancel alert", "alert"], ["Cancel alert series", "alert"], ["Acknowledge left", "expression"]])("keeps %s feedback in the %s control area", (action, area) => {
     expect(homeFeedbackArea(action)).toBe(area);
   });
   it("shows runtime rest and light power instead of a stale lamp command", () => {
@@ -80,4 +80,18 @@ it.each(["scene", "speech", "motion", "alarm"])("blocks owner Expressions during
   const expressions=html.split('class="oh-expression-list"')[1];
   expect(expressions).toContain("Owner wave");
   expect(expressions.match(/disabled=""/g)).toHaveLength(3);
+});
+
+it("shows reminder recurrence, a form, and recent missed reminders", () => {
+  const status = {character:{enabled:false},runtime:{motion:null},scene:{active:null},speech:{active:null},routines:{ringing:false,alerts:[{id:1,kind:"reminder",label:"Stretch",state:"pending",due_unix:Date.now()/1000+60,repeat:{days:["mon","tue"],time:"09:00"}},{id:2,kind:"reminder",label:"Missed bins",state:"missed",due_unix:Date.now()/1000-3600},{id:3,kind:"reminder",label:"Old reminder",state:"missed",due_unix:Date.now()/1000-90000}]}} as unknown as GatewayStatus;
+  const html = renderToStaticMarkup(<Home {...props} connection={{url:"http://test",token:"test"}} status={status} />);
+  expect(html).toContain("mon, tue at 09:00"); expect(html).toContain("Missed bins"); expect(html).not.toContain("Old reminder");
+  expect(html).toContain('aria-label="New reminder"');
+});
+
+it("offers distinct occurrence and series cancellation for repeating alerts", () => {
+  const status = { character: {enabled: true}, runtime: {motion: null}, scene: {active: null}, speech: {active: null}, routines: { mode: "idle", ringing: true, alerts: [{ id: 1, kind: "alarm", label: "Gym", due_unix: 101, state: "ringing", repeat: { days: ["mon"], time: "07:00" } }] } } as unknown as GatewayStatus;
+  const html = renderToStaticMarkup(<Home {...props} status={status} connection={{ url: "http://test", token: "test" }} />);
+  expect(html).toContain(">Cancel occurrence</button>");
+  expect(html).toContain('aria-label="Cancel series Gym"');
 });

@@ -14,6 +14,7 @@ pub struct VoiceFeedback {
     session: Option<String>,
     phase: String,
     confirmed: bool,
+    announcement: bool,
     verifying_wake: bool,
     processing_cued: bool,
     acknowledgment_since: Option<f64>,
@@ -39,6 +40,13 @@ impl VoiceFeedback {
 
     pub fn confirmed_activity(&self) -> bool {
         self.session.is_some() && self.confirmed && self.phase != "unavailable"
+    }
+
+    pub fn announcement(&self) -> bool {
+        self.session.is_some() && self.announcement
+    }
+    pub fn playback_authorized(&self) -> bool {
+        self.confirmed_activity() || self.announcement()
     }
 
     pub fn reaction(&self) -> &'static str {
@@ -77,6 +85,7 @@ impl VoiceFeedback {
     }
     pub fn clear(&mut self) {
         self.confirmed = false;
+        self.announcement = false;
         self.verifying_wake = false;
         self.acknowledgment_since = None;
         if let Some(id) = self.session.take() {
@@ -104,6 +113,18 @@ impl VoiceFeedback {
     ) -> Result<Option<(&'static str, Option<&'static str>)>, &'static str> {
         if id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
             return Err("Invalid voice session ID");
+        }
+        if event == "announcement" {
+            if self.session.is_some() || self.retired.iter().any(|old| old == id) {
+                return Err("Announcement needs an idle voice owner");
+            }
+            self.session = Some(id.into());
+            self.announcement = true;
+            self.phase = "thinking".into();
+            self.since = now;
+            self.deadline = now + 180.;
+            self.record(event, now);
+            return Ok(Some(("neutral", Some("notice_warm"))));
         }
         if matches!(event, "wake" | "continue") {
             if self.session.is_some() || self.retired.iter().any(|old| old == id) {
@@ -299,6 +320,19 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn announcement_authorizes_playback_without_confirmed_user_activity() {
+        let mut feedback = VoiceFeedback::default();
+        assert_eq!(
+            feedback.event(ID, "announcement", 0.).unwrap(),
+            Some(("neutral", Some("notice_warm")))
+        );
+        assert!(feedback.playback_authorized());
+        assert!(!feedback.confirmed_activity());
+        feedback.playback_started(1.);
+        feedback.event(ID, "finish", 2.).unwrap();
+        assert!(!feedback.playback_authorized());
+    }
     #[test]
     fn keepalives_preserve_feedback_through_long_wait_and_playback_then_expire() {
         let mut feedback = VoiceFeedback::default();

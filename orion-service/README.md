@@ -45,3 +45,11 @@ Tests exercise a real service process with fake speech, agent and gateway peers.
 They cover authentication, duplicate-owner rejection, complete voice turns,
 shutdown cancellation and desktop errors when the Pi is unavailable. Native
 keychain testing is opt-in and ignored by default.
+
+The `lists` request accepts `params: { list, change }`, where `list` is `shopping`
+or `todo`. A null change reads items. Changes are `add { text }`, `remove { expected }`
+or `clear { expected, confirmed }`, each tagged by `type`. The agent’s file lock
+and snapshot checks serialize Studio and tool writes. List edits preserve agent
+conversation context. The gateway allow-list exposes this request to Studio.
+
+Profile requests include weather settings. `geocode {query}` fetches up to ten matching locations through the agent’s fixed Open-Meteo endpoint without starting a model turn. Studio selects a match before a snapshot-checked profile write.

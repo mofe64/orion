@@ -8,17 +8,26 @@ from daemon_support import DaemonTestCase, daemon, request
 
 
 class RestDaemonTests(DaemonTestCase):
-    def test_prefix_stays_silent_until_confirmed_at_rest_then_wakes_before_endpoint(self):
+    def test_candidate_acknowledges_once_at_rest_then_confirmation_wakes_before_endpoint(self):
         with daemon(automatic_character=True, following=True) as path:
             self.wait_for_rest(path, 'awake')
             self.ok(path, 'character rest')
             self.wait_for_rest(path, 'resting')
             session = '9' * 32
+            # This injects the runtime event directly. The satellite sends it
+            # only after acoustic acceptance when a verifier is loaded.
             self.voice(path, session, 'wake')
             history = request(path, 'voice status')['voice']['history']
-            self.assertNotIn('acknowledgment_start', [event for sid, event, at in history if sid == session])
+            self.assertEqual([event for sid, event, at in history if sid == session].count('acknowledgment_start'), 1)
+            status = self.wait_for(path, 'character status', lambda s: s['rest']['light_on'])
+            self.assertEqual(status['rest']['state'], 'resting')
+            self.assertIsNone(status['rest']['last_confirmed_at'])
             self.assertFalse(request(path, 'status')['torque_enabled'])
             self.assertFalse(request(path, f'voice {session} confirmed')['ok'])
+            # The candidate pulse ends at rest; confirmation must not replay it.
+            status = self.wait_for(path, 'character status', lambda s: not s['rest']['light_on'])
+            self.assertEqual(status['rest']['state'], 'resting')
+            self.assertFalse(request(path, 'status')['torque_enabled'])
             self.voice(path, session, 'verify', 'confirmed')
             history = request(path, 'voice status')['voice']['history']
             self.assertEqual([event for sid, event, at in history if sid == session].count('acknowledgment_start'), 1)
@@ -28,6 +37,8 @@ class RestDaemonTests(DaemonTestCase):
             self.voice(path, session, 'endpoint', 'confirmed')
             self.assertEqual(request(path, 'character status')['rest']['last_confirmed_at'], confirmed)
             self.assertEqual(request(path, 'character status')['character']['state'], 'thinking')
+            history = request(path, 'voice status')['voice']['history']
+            self.assertEqual([event for sid, event, at in history if sid == session].count('acknowledgment_start'), 1)
 
     def test_idle_rest_darkness_torque_release_and_confirmed_wake_on_real_daemon(self):
         with daemon(automatic_character=True, rest_after_seconds=2, following=True) as path:
@@ -38,11 +49,19 @@ class RestDaemonTests(DaemonTestCase):
 
             self.assertFalse(request(path, 'character status')['rest']['light_on'])
             session = 'c' * 32
-            for command in ['lamp 255 255 255 255', f'voice {session} wake', f'voice {session} endpoint']:
-                self.assertTrue(request(path, command)['ok'])
-            time.sleep(.1)
-            self.assertEqual(request(path, 'character status')['rest']['state'], 'resting')
+            self.ok(path, 'lamp 255 255 255 255')
             self.assertFalse(request(path, 'character status')['rest']['light_on'])
+            # Runtime wake feedback follows the satellite's acoustic gate;
+            # it can pulse at mechanical rest without enabling torque.
+            self.voice(path, session, 'wake', 'endpoint')
+            status = self.wait_for(path, 'character status', lambda s: s['rest']['light_on'])
+            self.assertEqual(status['rest']['state'], 'resting')
+            self.assertIsNone(status['rest']['last_confirmed_at'])
+            self.assertFalse(request(path, 'status')['torque_enabled'])
+            history = request(path, 'voice status')['voice']['history']
+            self.assertEqual([event for sid, event, at in history if sid == session].count('acknowledgment_start'), 1)
+            status = self.wait_for(path, 'character status', lambda s: not s['rest']['light_on'])
+            self.assertEqual(status['rest']['state'], 'resting')
             self.assertFalse(request(path, 'status')['torque_enabled'])
             self.assertTrue(request(path, f'voice {session} confirmed')['ok'])
             self.assertTrue(request(path, f'voice {session} followup')['ok'])

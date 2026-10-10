@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
+    pub weather: crate::weather::Settings,
     pub soul: Soul,
     pub traits: Vec<Choice>,
     pub behaviors: Vec<Choice>,
     pub preview: String,
+    pub reminder_error: Option<String>,
     pub memories: Vec<MemoryEntry>,
     pub memory_enabled: bool,
     pub personality_enabled: bool,
@@ -18,6 +20,10 @@ pub struct Profile {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProfileChange {
+    Weather {
+        expected: crate::weather::Settings,
+        settings: crate::weather::Settings,
+    },
     Personality {
         expected_revision: String,
         personality: Personality,
@@ -44,10 +50,12 @@ pub(crate) fn load(config: &AgentConfig) -> Result<Profile, String> {
         .transpose()?
         .unwrap_or_default();
     Ok(Profile {
+        weather: crate::weather::load(config)?,
         preview: soul.personality.instructions()?,
         soul,
         traits: personality::TRAITS.to_vec(),
         behaviors: personality::BEHAVIORS.to_vec(),
+        reminder_error: crate::reminders::pending(config).err(),
         memories: config
             .memory_path
             .as_deref()
@@ -60,6 +68,9 @@ pub(crate) fn load(config: &AgentConfig) -> Result<Profile, String> {
 }
 pub(crate) fn change(config: &AgentConfig, change: ProfileChange) -> Result<(), String> {
     match change {
+        ProfileChange::Weather { expected, settings } => {
+            crate::weather::save(config, expected, settings)
+        }
         ProfileChange::Personality {
             expected_revision,
             personality,

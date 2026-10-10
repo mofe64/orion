@@ -71,8 +71,11 @@ The user prefers temperatures in Celsius.
 
 The handler assigns UUIDs and UTC timestamps, rejects delimiter injection,
 locks writes, and atomically replaces the document. Entries are limited to
-2,000 bytes and the file to 1 MiB. Search ranks keyword matches and returns at
-most eight entries. Personal memories stay outside
+2,000 bytes and the file to 1 MiB. Search matches lowercase whole words, drops single letters and common stop words,
+and joins simple singular/plural pairs. It returns at most eight entries, ranking
+by matched words and then newest first. `forget_memory` deletes a searched ID with
+the same original-entry conflict check as Studio edits; clarify multiple matches
+and confirm only after success. Personal memories stay outside
 the repository. Retrieved memories are sent to Codex when used. Studio Settings supports viewing, adding, editing, deleting, and clearing memories.
 Edits compare the original entry before writing; clearing compares the complete
 list, so a stale screen cannot silently erase a newer append. Automatic memory
@@ -84,7 +87,8 @@ result channel.
 Clear immediate sleep phrases use the same validated `go_to_sleep` tool from the
 agent executor before returning spoken acknowledgement. The model cannot merely
 promise rest for these phrases. A rejected sleep request gets an honest failure
-reply; longer or conditional requests still go to the model.
+reply; longer or conditional requests still go to the model. A successful direct
+sleep leaves a notice for the next model turn using the interruption-notice path.
 `respond(text)` still works for text and memory/search tools; lighting fails
 explicitly if no coordinator is attached, as do mode, sleep and alert tools. There
 is no direct hardware client inside this crate.
@@ -112,10 +116,13 @@ The mode and alert tools use `src/tools/routines.rs`:
 | `set_mode` | `mode`: `idle` or `lamp` |
 | `go_to_sleep` | No arguments; rest after the spoken reply |
 | `set_timer` | `seconds`: 1–604800; `label`: up to 80 characters |
-| `set_alarm` | `at`: future RFC3339 timestamp with UTC offset; `label` |
+| `set_alarm` | Exactly one of `at` (RFC3339 with offset) or `repeat` (`days`, `time`); `label` |
 | `list_alerts` | No arguments; returns Pi local time, active and recent alerts |
-| `cancel_alert` | `id` from a previous tool result |
+| `cancel_alert` | `id` from a previous tool result; optional `series: true` to cancel future occurrences |
 | `stop_alert` | No arguments; silences alerts ringing now |
+| `set_reminder` | `text` (1–200 characters); exactly one of `at`, `in_seconds`, `repeat`, or `when: next_conversation` |
+| `snooze_alert` | Optional `minutes`: 1–60, default 9; within two minutes of dismissal |
+| `set_alert_sound` | `kind`: `alarm` or `timer`; `sound`: `two_tone`, `club_alarm`, or `funny_alarm` |
 
 Every turn includes UTC time, local time with its offset, and a discovered IANA
 zone. POSIX `TZ` settings fall through to system timezone files. When discovery
@@ -123,6 +130,13 @@ fails, the context and `list_alerts` say `unknown; use the local UTC offset abov
 For a future alarm date, clarify an offset that cannot be determined. A speech
 sanity-limit failure is included in the next model turn without starting extra
 inference after playback fails.
+
+Agent results for listing, creating and cancelling alerts include `due_local`
+(RFC3339 in the Pi local zone) and nonnegative `remaining_seconds`. Studio
+continues using the runtime timestamps without this enrichment. Codex reads allow
+90 seconds of inactivity between complete events; a ten-minute outer cap bounds
+a turn. A tool call after final speech starts receives a tool error and the turn
+continues without executing it.
 
 Duplicate calls or calls beyond the per-turn budget return a tool error without
 repeating the action or resetting a completed conversation.
@@ -132,7 +146,7 @@ phase-less message wins; those legacy messages are never streamed early.
 
 Read `list_alerts` before choosing a clock-alarm timestamp. Clarify ambiguous
 times and cancellation targets. Clock alarms must fall within the next 366 days;
-recurring alarms are unsupported. Runtime validation returns errors to the agent,
+alarms can repeat on selected weekdays at a Pi local `HH:MM` time. Runtime validation returns errors to the agent,
 which confirms a change only after success. See
 [timer and alarm behavior](../docs/system-architecture.md#timers-and-alarms).
 
@@ -166,3 +180,31 @@ personality into fresh context. This also prevents deleted memories persisting
 in the current thread. The coordinator keeps its handle and speech models.
 Failed validation or revision conflicts preserve the existing conversation.
 Deleting local memories does not erase information already sent to Codex.
+
+Next-conversation reminders live in `reminders.json` beside `MEMORY.md`. Writes
+use the memory file-lock and atomic-replacement mechanism. The next model turn
+includes pending reminder notices; only the coordinator’s completed-playback acknowledgement removes the included snapshot. Generated, failed or interrupted replies retain them. Unreadable storage is logged and skipped without failing the turn; profile status exposes the error to Studio. Failed delivery bookkeeping is logged and keeps notices pending. Reminder text stays outside memory
+search. Timed reminders use the runtime scheduler.
+
+## Shopping and to-do lists
+
+`lists.json` lives beside the configured `MEMORY.md`. Fixed `shopping` and `todo`
+lists each hold at most 200 items, with UUIDs, UTC creation times and 1–200 printable
+characters. `add_list_item` returns an existing case-insensitive duplicate;
+`list_items` reads items; `remove_list_item` removes a searched ID; `clear_list`
+requires `confirmed: true` after asking the user. List text is data and stays
+outside memory search. Writes lock and atomically replace the file. Removal
+compares the original item; clearing compares the original list.
+
+`AgentHandle::lists` exposes the same store to Studio through the service. These
+edits use file locking without resetting the Codex conversation, because list
+contents do not contribute to the base instructions.
+
+Weather preferences live in `weather.json` beside `MEMORY.md`, with locked atomic writes and snapshot conflict checks. `get_weather` uses reqwest with rustls, fixed Open-Meteo endpoints and a five-second timeout. It returns current conditions and selected daily forecasts. Explicit Settings units win over a saved explicit weather temperature preference, then Celsius; results identify the source. The crate has an outbound weather network dependency, with no gateway or hardware dependency. [Open-Meteo forecast](https://open-meteo.com/en/docs) and [geocoding](https://open-meteo.com/en/docs/geocoding-api) need no API key.
+
+`set_lighting` accepts optional `transition_seconds` (0–3600), and every successful lighting change cancels a running light routine. `set_alarm` accepts `sunrise_minutes` (5–60). `start_light_routine` supports `wind_down` (10–60 minutes) and `focus` (5–120); `stop_light_routine` cancels the focus timer and restores the prior lamp. The runtime owns all deadlines and completion actions.
+
+`cancel_alert` cancels one occurrence by default. For a recurring alert, clarify whether the user wants one occurrence or the series; pass `series: true` only for the latter. Snoozes are independent one-time alarms without a briefing or sunrise.
+
+
+Every complete App Server event counts as progress, including reasoning summary/text deltas and thread status changes. Status changes are transitions, not periodic heartbeats, so quiet reasoning may take the full 90-second allowance. The ten-minute outer limit still bounds a chatty or stalled turn. These event types were checked against the installed 0.144.4 schema and [official App Server documentation](https://learn.chatgpt.com/docs/app-server).

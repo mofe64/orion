@@ -351,3 +351,10 @@ export function setAlertSound(connection: GatewayConnection, kind: "alarm" | "ti
 export function updateRoutines(connection: GatewayConnection, action: Record<string, unknown>): Promise<unknown> {
   return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "routines", request: action }) });
 }
+
+export interface ListItem { id: string; text: string; created: string }
+export type ListName = "shopping" | "todo";
+export type ListChange = { type: "add"; text: string } | { type: "remove"; expected: ListItem } | { type: "clear"; expected: ListItem[]; confirmed: boolean };
+export function agentLists(connection: GatewayConnection, list: ListName, change?: ListChange): Promise<ListItem[]> {
+  return request(connection, "/api/v2/voice/request", { method: "POST", body: JSON.stringify({ method: "lists", params: { list, change: change ?? null } }) });
+}

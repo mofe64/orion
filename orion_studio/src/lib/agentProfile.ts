@@ -3,16 +3,21 @@ import { forOwner } from "./feedback";
 export interface Personality { traits: string[]; behaviors: string[] }
 export interface PersonalityChoice { id: string; label: string; description: string }
 export interface MemoryEntry { id: string; created: string; text: string }
+export interface WeatherLocation { name: string; latitude: number; longitude: number; timezone: string }
+export interface WeatherSettings { location: WeatherLocation | null; temperature_unit: "celsius" | "fahrenheit" | null }
 export interface AgentProfile {
+  weather: WeatherSettings;
   soul: { revision: string; personality: Personality };
   traits: PersonalityChoice[];
   behaviors: PersonalityChoice[];
   preview: string;
+  reminderError?: string | null;
   memories: MemoryEntry[];
   memoryEnabled: boolean;
   personalityEnabled: boolean;
 }
 export type ProfileChange =
+  | { type: "weather"; expected: WeatherSettings; settings: WeatherSettings }
   | { type: "personality"; expected_revision: string; personality: Personality }
   | { type: "add_memory"; text: string }
   | { type: "edit_memory"; expected: MemoryEntry; text: string }
@@ -29,3 +34,5 @@ export function samePersonality(a: Personality,b: Personality) {
 export function validMemory(text: string) {
   return !!text.trim() && new TextEncoder().encode(text.trim()).length <= 2000 && !text.includes("<!--") && !text.includes("-->") && !text.includes("\0");
 }
+
+export const geocodeLocation = (query: string) => invoke<WeatherLocation[]>("geocode_location", { query });

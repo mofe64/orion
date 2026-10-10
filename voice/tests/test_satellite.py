@@ -73,6 +73,46 @@ class SatelliteTests(unittest.TestCase):
             if result: return result
         self.fail('No endpoint')
 
+    def test_announcement_uses_playback_session_and_wake_acknowledges_it(self):
+        messages = self.session.start_announcement({'id':3,'attempt':0,'purpose':'announcement','text':'Reminder: bins.'})
+        sid = self.session.session_id
+        self.assertEqual(messages[0]['type'], 'announcement')
+        self.assertEqual(self.session.start_announcement({'id':4}), [])
+        self.session.control({'type':'session.playing','sessionId':sid})
+        self.wake.next = True
+        messages = self.session.accept_stereo(frame())
+        self.assertEqual(messages[0]['type'], 'announcement.dismiss')
+        self.assertEqual(messages[0]['id'], 3)
+        self.session.control({'type':'session.finish','sessionId':sid})
+        self.assertGreater(self.session.alarm_guard_until, self.now)
+
+    def test_wake_interrupts_waiting_and_thinking_announcements_and_stale_ready_is_dropped(self):
+        for thinking in (False, True):
+            with self.subTest(thinking=thinking):
+                self.session.reset()
+                self.session.start_announcement({'id':3,'attempt':0,'purpose':'briefing','text':'Morning'})
+                old = self.session.session_id
+                self.assertEqual(self.session.expires_at, self.now + 60)
+                if thinking:
+                    self.session.control({'type':'session.processing','sessionId':old})
+                    self.assertEqual(self.session.expires_at, self.now + 180)
+                self.wake.next = True
+                events = self.session.accept_stereo(frame())
+                self.assertEqual([e['type'] for e in events], ['session.interrupted', 'wake.candidate'])
+                self.assertEqual(events[0]['sessionId'], old)
+                self.assertEqual(events[0]['reason'], 'announcement_wake')
+                self.assertNotEqual(self.session.session_id, old)
+                self.assertIsNone(self.session.announcement_id)
+                self.assertEqual(self.session.announcement_ready(old), [])
+                self.assertEqual(self.endpoint()[0]['purpose'], 'wake_and_command')
+
+    def test_waiting_announcement_expires_after_sixty_seconds(self):
+        self.session.start_announcement({'id':3,'attempt':0,'purpose':'briefing','text':'Morning'})
+        old = self.session.session_id
+        self.now = 60
+        self.assertEqual(self.session.accept_stereo(frame())[0], {'type':'session.expired','sessionId':old})
+        self.assertEqual(self.session.announcement_ready(old), [])
+
     def test_keepalives_preserve_long_wait_and_playback_then_expire(self):
         sid = self.trigger(); self.endpoint()
         self.session.control({'type':'wake.confirmed','sessionId':sid,'followup':False})

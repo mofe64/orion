@@ -100,4 +100,25 @@ cargo clippy --manifest-path coordinator/Cargo.toml --all-targets -- -D warnings
 
 Integration tests use `python3`, local sockets, and fake listener, gateway, speech
 and Codex peers. They cover orchestration without model downloads or account
-usage. Physical microphone, echo and playback checks require the Pi.
+usage. Scheduler integration regressions use the runtime crate in memory as a test dependency to exercise actual backoff and snooze state. Physical microphone, echo and playback checks require the Pi.
+
+Scheduled announcements use Pi listener protocol 2. The satellite supplies an
+`announcement` with a fresh session ID, alert ID, attempt, purpose and text.
+The coordinator queues it until voice sessions and response jobs finish, sends
+`announcement.start`, and waits for `announcement.ready` after runtime ownership
+and the `notice_warm` cue. Normal synthesis, upload, keepalive and playback checks
+then apply. `announcement.failed` routes listener ownership and daemon failures
+through the same runtime `announce_failed` path as failed playback. Completed
+playback is recorded before the separate `announced` acknowledgement stage;
+acknowledgement errors keep the connection and cannot replay delivered speech.
+See [scheduled announcement recovery](../docs/voice-architecture.md#scheduled-announcements)
+for retries and duplicate handling. Wake dismissal cancels announcement playback.
+
+Shopping and to-do tools execute in the agent store. They need no robot event or
+hardware access; successful tool results remain visible in voice history.
+
+Announcements with purpose `briefing` enter the same idle-only queue as reminder announcements. After listener readiness, they start one agent turn with the morning briefing instruction, then acknowledge the alert after playback. They create no user transcript or conversation window.
+
+Light routine tools use the ordinary request-scoped robot operation path. The coordinator forwards validated requests and confirms only after runtime success; it owns no light scheduler.
+
+Wake can cancel a queued or thinking announcement so a user command takes priority. The notice remains pending in the runtime. Interruption clears readiness; late readiness is logged and ignored without reconnecting.

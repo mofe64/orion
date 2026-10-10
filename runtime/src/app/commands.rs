@@ -473,7 +473,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         .unwrap_or_default()
         .as_secs_f64();
     if command == "lamp-status" {
-        return serde_json::json!({"ok":true,"lamp":manual_light.as_ref().map(LampProgram::status)}).to_string();
+        return serde_json::json!({"ok":true,"lamp":manual_light.as_ref().map(|lamp|lamp.status_at(now_seconds))}).to_string();
     }
     if command == "routines status" {
         return serde_json::json!({"ok":true,"routines":routines.status(wall, now_seconds)})
@@ -482,6 +482,52 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     if let Some(body) = command.strip_prefix("routines ") {
         let result = (|| -> Result<serde_json::Value, String> {
             let request: Request = serde_json::from_str(body).map_err(|e| e.to_string())?;
+            match request {
+                Request::StartLightRoutine { routine, minutes } => {
+                    let bounds = match routine {
+                        crate::expression::routines::LightRoutine::WindDown => 10..=60,
+                        crate::expression::routines::LightRoutine::Focus => 5..=120,
+                    };
+                    if !bounds.contains(&minutes) {
+                        return Err("Invalid light routine duration".into());
+                    }
+                    if rest.failed()
+                        || scenes.is_active()
+                        || speech.is_active()
+                        || routines.ringing()
+                    {
+                        return Err(
+                            "Finish the scene, speech or alert before starting a light routine"
+                                .into(),
+                        );
+                    }
+                    if !character.status().enabled {
+                        character
+                            .start(now_seconds, core)
+                            .map_err(|e| e.to_string())?;
+                        rest.started();
+                    }
+                    let result = routines.start_light(
+                        routine,
+                        minutes,
+                        wall,
+                        now_seconds,
+                        manual_light,
+                        audio,
+                    )?;
+                    rest.set_mode(routines.mode(), now_seconds);
+                    return Ok(result);
+                }
+                Request::StopLightRoutine => {
+                    let prior_mode = routines.mode();
+                    routines.stop_light(wall, now_seconds, manual_light, audio)?;
+                    if prior_mode != routines.mode() {
+                        rest.set_mode(routines.mode(), now_seconds);
+                    }
+                    return Ok(routines.status(wall, now_seconds));
+                }
+                _ => {}
+            }
             let mode = if let Request::SetMode { mode } = &request {
                 Some(*mode)
             } else {
@@ -493,6 +539,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 );
             }
             if mode.is_some() {
+                routines.stop_light(wall, now_seconds, manual_light, audio)?;
                 if !character.status().enabled {
                     character
                         .start(now_seconds, core)
@@ -531,7 +578,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             command,
             "stop" | "disable" | "character stop" | "character rest"
         ) {
-            if let Err(error) = routines.stop("dismissed", audio) {
+            if let Err(error) = routines.stop("dismissed", now_seconds, audio) {
                 routines.error = Some(error);
             }
         } else if command.starts_with("voice ") && command != "voice status" {
@@ -608,6 +655,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                     let _ = character.set_reaction(reaction, now_seconds, core);
                 }
                 let cue_ready = rest.reactions_ready()
+                    || (cue == Some("notice_warm")
+                        && feedback.announcement()
+                        && rest.wake_acknowledgment_ready())
                     || (cue == Some("voice_wake") && rest.wake_acknowledgment_ready());
                 if cue_ready && !speech.is_active() && !scenes.is_active() && !routines.ringing() {
                     if let Some(cue) = cue {
@@ -652,11 +702,18 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 manual_light
                     .clone()
                     .unwrap_or_default()
-                    .updated(patch)
+                    .updated_at(patch, now_seconds)
                     .map_err(|e| e.to_string())
             });
         return match result {
             Ok(program) => {
+                let prior_mode = routines.mode();
+                if let Err(error) = routines.stop_light(wall, now_seconds, manual_light, audio) {
+                    return serde_json::json!({"ok":false,"error":error}).to_string();
+                }
+                if prior_mode != routines.mode() {
+                    rest.set_mode(routines.mode(), now_seconds);
+                }
                 *manual_light = Some(program);
                 serde_json::json!({"ok":true,"command":"lamp_effect"}).to_string()
             }
@@ -677,6 +734,13 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         };
         return match result {
             Ok(color) => {
+                let prior_mode = routines.mode();
+                if let Err(error) = routines.stop_light(wall, now_seconds, manual_light, audio) {
+                    return serde_json::json!({"ok":false,"error":error}).to_string();
+                }
+                if prior_mode != routines.mode() {
+                    rest.set_mode(routines.mode(), now_seconds);
+                }
                 *manual_light = Some(crate::lamp::LampProgram::from_color(color));
                 serde_json::json!({"ok": true, "command": "lamp"}).to_string()
             }
@@ -710,6 +774,12 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     };
     if let Some(value) = cue_value {
         normalized.push_str(&format!(" cues={value}"));
+    }
+    if command == "character start"
+        && !character.status().enabled
+        && let Err(error) = routines.stop_light(wall, now_seconds, manual_light, audio)
+    {
+        return serde_json::json!({"ok":false,"error":error}).to_string();
     }
     let response = handle_daemon_command_with_character(
         &normalized,

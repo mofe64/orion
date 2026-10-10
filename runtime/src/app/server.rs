@@ -245,6 +245,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut next_sample = started_at;
     let mut speaking_light_intensity = 0.0;
     let mut manual_light: Option<crate::lamp::LampProgram> = None;
+    let mut light_mode = routines.mode();
     while !stopping.load(Ordering::Relaxed) {
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
@@ -269,6 +270,25 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             }
             _ => {}
         }
+        let wind_down_complete = match routines.light_tick(
+            wall_time(),
+            now_seconds,
+            &mut manual_light,
+            !scenes.is_active() && !speech.is_active(),
+        ) {
+            Ok(done) => done,
+            Err(error) => {
+                routines.error = Some(error);
+                false
+            }
+        };
+        if routines.mode() != light_mode {
+            light_mode = routines.mode();
+            rest.set_mode(light_mode, now_seconds);
+        }
+        if wind_down_complete {
+            rest.request_sleep("light_routine");
+        }
         if let Err(error) = routines.tick_audio(now_seconds, audio.as_mut()) {
             eprintln!("oriond: {error}");
         }
@@ -277,7 +297,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         } else {
             None
         });
-        lighting.update(rest.dark(), now_seconds)?;
+        lighting.update(rest.dark() && !routines.sunrise_active(), now_seconds)?;
         scenes.tick(now_seconds, &mut core, &mut lighting, audio.as_mut())?;
         if !routines.ringing() && !scenes.is_active() && !speech.is_active() {
             let _ = audio.update();
@@ -305,8 +325,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         speech.tick_when_ready(
             audio.as_mut(),
             !routines.ringing()
-                && rest.speech_ready(&character)
-                && (!scoped_voice || feedback.confirmed_activity()),
+                && (rest.speech_ready(&character)
+                    || feedback.announcement() && rest.wake_acknowledgment_ready())
+                && (!scoped_voice || feedback.playback_authorized()),
         );
         let current_playing = speech
             .active_status()
@@ -349,7 +370,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         } else {
             None
         });
-        lighting.update(rest.dark(), now_seconds)?;
+        lighting.update(rest.dark() && !routines.sunrise_active(), now_seconds)?;
         if character_just_stopped(character_was_enabled, character.status().enabled) {
             lighting.clear()?;
             speaking_light_intensity = 0.0;

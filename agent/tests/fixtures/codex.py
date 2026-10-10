@@ -28,7 +28,7 @@ for line in sys.stdin:
         assert params['sandbox'] == 'read-only'
         assert params['ephemeral'] is True
         assert 'set_lighting' in params['baseInstructions']
-        assert {tool['name'] for tool in params['dynamicTools']} == {'append_memory', 'search_memories', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
+        assert {tool['name'] for tool in params['dynamicTools']} == {'start_light_routine', 'stop_light_routine', 'get_weather', 'append_memory', 'search_memories', 'forget_memory', 'set_alert_sound', 'set_reminder', 'snooze_alert', 'add_list_item', 'list_items', 'remove_list_item', 'clear_list', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
         assert params['config']['web_search'] == 'live'
         result = {'thread': {'id': thread_id}}
     elif method == 'turn/start':
@@ -49,6 +49,8 @@ for line in sys.stdin:
         if text == 'crash':
             sys.exit(1)
         emit({'id': request['id'], 'result': {'turn': {'id': turn_id}}})
+        if text.startswith('Give the user a short morning briefing:'):
+            time.sleep(0.5)  # Keep the thinking interruption test deterministic.
         if text == 'hang':
             continue
         if text == 'approval':
@@ -128,8 +130,11 @@ for line in sys.stdin:
             if text == 'tool-after-speech':
                 emit({'id':'late-tool','method':'item/tool/call','params':{'threadId':thread_id,'turnId':turn_id,
                       'callId':'late','tool':'list_alerts','arguments':{}}})
-                continue
-            response = '' if text == 'empty-after-stream' else 'Changed speech.'
+                reply = json.loads(sys.stdin.readline())
+                assert reply['id'] == 'late-tool'
+                assert reply['result']['success'] is False
+                assert 'Speech has already started; do not call tools now.' in reply['result']['contentItems'][0]['text']
+            response = 'Original speech. No tools were called.' if text == 'tool-after-speech' else '' if text == 'empty-after-stream' else 'Changed speech.'
         if text == 'many-sentences-fixture':
             emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,
                   'item':{'type':'agentMessage','id':'final','phase':'final_answer'}}})
@@ -181,7 +186,7 @@ for line in sys.stdin:
                           'itemId':'final','delta':piece}})
             response = ' '.join(sentences)
         completed = {'method': 'turn/completed' , 'params': {'threadId': thread_id,
-                     'turn': {'id': turn_id, 'status': 'failed' if text == 'fail' else 'completed',
+                     'turn': {'id': turn_id, 'status': 'failed' if text == 'fail' or text.endswith('User request: fail') else 'completed',
                               'error': {'message':'fixture failure'} if text == 'fail' else None,
                               'items': []}}}
         emit({'method':'item/completed', 'params': {'threadId':thread_id, 'turnId':turn_id,

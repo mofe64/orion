@@ -219,11 +219,7 @@ impl Codex {
 
     async fn read(&mut self) -> Result<Value, String> {
         let mut bytes = Vec::new();
-        (&mut self.output)
-            .take(MAX_EVENT_BYTES + 1)
-            .read_until(b'\n', &mut bytes)
-            .await
-            .map_err(|e| e.to_string())?;
+        read_event_bytes(&mut self.output, &mut bytes).await?;
         if bytes.is_empty() {
             return Err("Codex process closed its output".into());
         }
@@ -309,9 +305,6 @@ impl Codex {
             };
             let params = &message["params"];
             if message["method"] == "item/tool/call" {
-                if !sentences.emitted.is_empty() {
-                    return Err("Unexpected tool call after final speech began".into());
-                }
                 if params["threadId"] != self.info.conversation_id
                     || params["turnId"] != turn_id
                     || !params["namespace"].is_null()
@@ -324,7 +317,9 @@ impl Codex {
                 let name = params["tool"].as_str().unwrap_or_default().to_owned();
                 let arguments = params["arguments"].clone();
                 let started = Instant::now();
-                let result = if rejected {
+                let result = if !sentences.emitted.is_empty() {
+                    Err("Speech has already started; do not call tools now.".into())
+                } else if rejected {
                     Err("Duplicate or excessive tool calls".into())
                 } else {
                     crate::tools::execute(&self.config, &name, arguments.clone(), events).await
@@ -474,6 +469,20 @@ impl Codex {
     }
 }
 
+async fn read_event_bytes(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    bytes: &mut Vec<u8>,
+) -> Result<(), String> {
+    tokio::time::timeout(
+        crate::runtime::TURN_INACTIVITY_TIMEOUT,
+        reader.take(MAX_EVENT_BYTES + 1).read_until(b'\n', bytes),
+    )
+    .await
+    .map_err(|_| "Codex was silent for 90 seconds; conversation reset")?
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn final_message(item: &Value) -> Option<&str> {
     (item["type"] == "agentMessage" && (item["phase"].is_null() || item["phase"] == "final_answer"))
         .then(|| item["text"].as_str())
@@ -484,6 +493,71 @@ fn final_message(item: &Value) -> Option<&str> {
 mod tests {
     use super::*;
 
+    #[tokio::test(start_paused = true)]
+    async fn steady_fake_turn_survives_120_seconds_but_silence_fails() {
+        use tokio::io::AsyncWriteExt;
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let mut reader = tokio::io::BufReader::new(reader);
+        let producer = tokio::spawn(async move {
+            for _ in 0..6 {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                writer.write_all(b"{}\n").await.unwrap();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        });
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(crate::runtime::TURN_OUTER_TIMEOUT, async {
+            for _ in 0..6 {
+                read_event_bytes(&mut reader, &mut Vec::new())
+                    .await
+                    .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert!(started.elapsed() > std::time::Duration::from_secs(120));
+        assert!(
+            read_event_bytes(&mut reader, &mut Vec::new())
+                .await
+                .unwrap_err()
+                .contains("silent")
+        );
+        producer.abort();
+    }
+    #[tokio::test(start_paused = true)]
+    async fn reasoning_and_status_events_count_as_progress_across_quiet_minutes() {
+        use tokio::io::AsyncWriteExt;
+        let (mut writer, reader) = tokio::io::duplex(2048);
+        let mut reader = tokio::io::BufReader::new(reader);
+        let producer = tokio::spawn(async move {
+            for method in [
+                "item/reasoning/summaryTextDelta",
+                "item/reasoning/textDelta",
+                "thread/status/changed",
+            ] {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                writer
+                    .write_all(format!("{{\"method\":\"{method}\",\"params\":{{}}}}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            tokio::time::sleep(Duration::from_secs(120)).await;
+        });
+        for _ in 0..3 {
+            let mut bytes = vec![];
+            read_event_bytes(&mut reader, &mut bytes).await.unwrap();
+            assert!(serde_json::from_slice::<Value>(&bytes).unwrap()["method"].is_string());
+        }
+        let quiet = tokio::time::Instant::now();
+        assert!(
+            read_event_bytes(&mut reader, &mut vec![])
+                .await
+                .unwrap_err()
+                .contains("90 seconds")
+        );
+        assert_eq!(quiet.elapsed(), Duration::from_secs(90));
+        producer.abort();
+    }
     #[tokio::test]
     #[ignore = "Requires an installed signed-in Codex runtime; reads catalog and creates an ephemeral thread, without inference"]
     async fn installed_runtime_handshake() {

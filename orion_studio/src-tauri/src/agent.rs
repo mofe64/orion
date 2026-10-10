@@ -13,3 +13,11 @@ pub async fn change_agent_profile(
 ) -> Result<serde_json::Value, String> {
     backend.request(Request::Profile(Some(change))).await
 }
+
+#[tauri::command]
+pub async fn geocode_location(
+    query: String,
+    backend: tauri::State<'_, Backend>,
+) -> Result<serde_json::Value, String> {
+    backend.request(Request::Geocode { query }).await
+}

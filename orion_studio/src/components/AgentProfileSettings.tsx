@@ -82,6 +82,7 @@ export function AgentProfileSettings({ onboard = false, connectionScope, connect
   return <section className="agent-profile" aria-label="Personality and memories">
     <div className="profile-status" aria-live="polite">{loading && <p>Loading personality and memories…</p>}{pending && <p>{PROFILE_SAVING_NOTICE}</p>}{notice && <p>{notice}</p>}</div>
     {error && <div className="profile-error"><FailureNotice value={error} />{!profile && <button className="quiet-button" disabled={loading} onClick={() => void refresh()}>Try again</button>}{profile && <><p>Your draft is preserved.</p>{(dirty || editor) && <button className="quiet-button" disabled={pending} onClick={() => { if (editor) commitMemory(); else void save({type:"personality",expected_revision:profile.soul.revision,personality}); }}>Try again</button>}</>}</div>}
+    {profile?.reminderError && <div className="profile-error"><FailureNotice value={{ message: "Orion couldn't read next-conversation reminders. Replies will continue without them.", detail: profile.reminderError }} /><button className="quiet-button" disabled={loading || pending} onClick={() => void refresh()}>Refresh</button></div>}
     {profile && <div className="settings-stack">
       <section className="profile-subsection personality-settings"><header><Sparkles size={20}/><div><h3>Personality</h3><p>Choose how Orion sounds and responds.</p></div></header>
         <p className="settings-help">Mix the traits that feel right. Tool permissions and privacy rules always stay in place.</p>

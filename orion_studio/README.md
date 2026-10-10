@@ -296,3 +296,21 @@ matching runtime, gateway, listener and voice host. The deployment preserves sav
 settings and the existing asset catalog and checks readiness before accepting the
 release. The [motion architecture](../docs/motion-architecture.md)
 describes the runtime contracts used by previews and hardware execution.
+
+Home shows pending reminders, repeat weekdays and time, and missed reminders for
+24 hours. **New reminder** saves through the runtime `routines` operation. A
+one-time date/time uses the Studio device timezone; repeating times use Orion’s
+local timezone. Gateway validation rejects unknown fields and multiple triggers.
+
+Home’s **Lists** card reads and edits shopping and to-do lists on Orion. Tick an
+item to remove it, confirm before clearing all items, and use **Copy list** for
+plain text. **Refresh list** picks up edits made by voice. The gateway’s private
+service bridge forwards `lists`; stale snapshots cannot erase newer items.
+
+Settings → Location searches Open-Meteo through the Pi service and asks you to select a match. The selected name, coordinates and IANA timezone save on the Pi, beside memory in `weather.json`. Temperature units can follow memory (otherwise Celsius) or an explicit Settings preference. Home’s alarm form supports recurring days and a morning briefing after dismissal.
+
+Home’s alarm form includes sunrise light (5–60 minutes before the alarm). Structured lamp operations accept `transition_seconds` (0–3600). Gateway validation rejects invalid fade durations, sunrise values and light routine durations before forwarding the runtime request.
+
+Recurring alerts on Home offer **Cancel occurrence** and **Cancel series**. Cancelling a snooze preserves the original recurring alarm.
+
+Settings reports unreadable next-conversation reminder storage with error details and Refresh. Agent replies continue while that storage needs repair.

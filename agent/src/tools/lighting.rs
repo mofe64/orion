@@ -33,6 +33,7 @@ const VINTAGE_GOLD: [u8; 4] = [255, 100, 0, 80];
 #[serde(deny_unknown_fields)]
 struct Request {
     brightness: Option<f64>,
+    transition_seconds: Option<f64>,
     mood: Option<String>,
     effect: Option<String>,
     colors: Option<Vec<String>>,
@@ -53,6 +54,12 @@ fn color(name: &str) -> Result<[u8; 4], String> {
 }
 pub(crate) fn resolve(value: Value) -> Result<Value, String> {
     let request: Request = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    if request
+        .transition_seconds
+        .is_some_and(|s| !s.is_finite() || !(0. ..=3600.).contains(&s))
+    {
+        return Err("Transition must be 0–3600 seconds".into());
+    }
     if request
         .brightness
         .is_some_and(|b| !b.is_finite() || !(0.0..=100.0).contains(&b))
@@ -103,10 +110,16 @@ pub(crate) fn resolve(value: Value) -> Result<Value, String> {
     if request.brightness.is_none() && effect.is_none() && rgbw.is_none() {
         return Err("Specify brightness, mood, effect, or colors".into());
     }
-    Ok(json!({"brightness":request.brightness.map(|b| b / 100.0),"effect":effect,"colors":rgbw}))
+    let mut result =
+        json!({"brightness":request.brightness.map(|b| b / 100.0),"effect":effect,"colors":rgbw});
+    if let Some(seconds) = request.transition_seconds {
+        result["transition_seconds"] = json!(seconds);
+    }
+    Ok(result)
 }
 pub(crate) fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"properties":{
+        "transition_seconds":{"type":"number","minimum":0,"maximum":3600,"description":"Fade brightness and RGBW over this many seconds. Effect changes immediately."},
         "brightness":{"type":"number","minimum":0,"maximum":100,"description":"Absolute brightness percent; alone preserves current colors and effect."},
         "mood":{"type":"string","enum":MOODS,"description":"ambient=deep vintage golden bulb glow (same as amber and orange); warm=warm white; cool=cool white+blue; warm_red=warm white+red."},
         "effect":{"type":"string","enum":EFFECTS,"description":"Omit for a steady color. Animated effects default to warm white plus a random accent; do not ask for colors."},
@@ -148,6 +161,11 @@ mod tests {
         assert_eq!(animated["colors"].as_array().unwrap().len(), 2);
         assert!(resolve(json!({"colors":["unknown"]})).is_err());
         assert!(resolve(json!({"brightness":101})).is_err());
+        assert!(resolve(json!({"brightness":50,"transition_seconds":3601})).is_err());
+        assert_eq!(
+            resolve(json!({"brightness":50,"transition_seconds":30})).unwrap()["transition_seconds"],
+            30.
+        );
         assert!(resolve(json!({"mood":"warm","colors":["red"]})).is_err());
         assert_eq!(
             resolve(json!({"mood":"warm_red"})).unwrap()["colors"][1],

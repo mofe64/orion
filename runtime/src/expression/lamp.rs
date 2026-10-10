@@ -10,11 +10,20 @@ pub struct LampPatch {
     pub brightness: Option<f64>,
     pub effect: Option<String>,
     pub colors: Option<Vec<[u8; 4]>>,
+    pub transition_seconds: Option<f64>,
 }
 #[derive(Clone)]
 pub struct LampProgram {
     brightness: f64,
     effect: String,
+    colors: Vec<Rgbw8>,
+    transition: Option<Transition>,
+}
+#[derive(Clone)]
+struct Transition {
+    start: f64,
+    seconds: f64,
+    brightness: f64,
     colors: Vec<Rgbw8>,
 }
 impl Default for LampProgram {
@@ -28,13 +37,25 @@ impl LampProgram {
             brightness: 1.0,
             effect: "solid".into(),
             colors: vec![color],
+            transition: None,
         }
     }
     pub fn updated(&self, patch: LampPatch) -> Result<Self> {
+        self.updated_at(patch, 0.)
+    }
+    pub fn updated_at(&self, patch: LampPatch, now: f64) -> Result<Self> {
+        let seconds = patch.transition_seconds.unwrap_or(0.);
+        if !seconds.is_finite() || !(0. ..=3600.).contains(&seconds) {
+            return Err(Error::InvalidArgument(
+                "Transition must be 0–3600 seconds".into(),
+            ));
+        }
+        let current = self.sample(now)?;
         if patch.brightness.is_none() && patch.effect.is_none() && patch.colors.is_none() {
             return Err(Error::InvalidArgument("Empty lamp update".into()));
         }
-        let mut next = self.clone();
+        let mut next = current.clone();
+        next.transition = None;
         if let Some(brightness) = patch.brightness {
             if !brightness.is_finite() || !(0.0..=1.0).contains(&brightness) {
                 return Err(Error::InvalidArgument("Brightness must be 0–1".into()));
@@ -58,8 +79,46 @@ impl LampProgram {
                 .map(|c| Rgbw8::new(c[0], c[1], c[2], c[3]))
                 .collect();
         }
+        if seconds > 0. {
+            next.transition = Some(Transition {
+                start: now,
+                seconds,
+                brightness: current.brightness,
+                colors: current.colors,
+            });
+        }
         Ok(next)
     }
+    fn sample(&self, now: f64) -> Result<Self> {
+        let mut current = self.clone();
+        current.transition = None;
+        if let Some(t) = &self.transition {
+            let amount = ((now - t.start) / t.seconds).clamp(0., 1.);
+            if amount >= 1. {
+                return Ok(current);
+            }
+            current.brightness = t.brightness + (self.brightness - t.brightness) * amount;
+            current.colors = (0..t.colors.len().max(self.colors.len()))
+                .map(|i| {
+                    t.colors[i.min(t.colors.len() - 1)]
+                        .interpolate(self.colors[i.min(self.colors.len() - 1)], amount)
+                })
+                .collect::<Result<Vec<_>>>()?;
+        }
+        Ok(current)
+    }
+    pub fn finish(&self) -> Self {
+        let mut target = self.clone();
+        target.transition = None;
+        target
+    }
+    pub fn freeze(&self, now: f64) -> Result<Self> {
+        self.sample(now)
+    }
+    pub fn status_at(&self, now: f64) -> serde_json::Value {
+        self.sample(now).unwrap_or_else(|_| self.clone()).status()
+    }
+
     pub fn status(&self) -> serde_json::Value {
         serde_json::json!({"brightness":self.brightness * 100.0, "effect":self.effect,
             "colors":self.colors.iter().map(|c| [c.red,c.green,c.blue,c.white]).collect::<Vec<_>>()})
@@ -68,6 +127,9 @@ impl LampProgram {
         self.render_for_pixels(now, ORION_LIGHT_PIXEL_COUNT)
     }
     pub fn render_for_pixels(&self, now: f64, pixel_count: usize) -> Result<Vec<Rgbw8>> {
+        if self.transition.is_some() {
+            return self.sample(now)?.render_for_pixels(now, pixel_count);
+        }
         if self.brightness == 0.0 || self.effect == "off" {
             return Ok(vec![Rgbw8::OFF; pixel_count]);
         }
@@ -103,6 +165,31 @@ mod tests {
     use super::*;
     fn patch(value: serde_json::Value) -> LampPatch {
         serde_json::from_value(value).unwrap()
+    }
+    #[test]
+    fn transitions_interpolate_and_new_commands_start_from_the_current_frame() {
+        let start = LampProgram::from_color(Rgbw8::new(0, 0, 0, 0));
+        let fade=start.updated_at(patch(serde_json::json!({"brightness":0.5,"colors":[[100,200,40,80]],"transition_seconds":100})),10.).unwrap();
+        assert_eq!(fade.status_at(60.)["brightness"], 75.);
+        assert_eq!(
+            fade.status_at(60.)["colors"][0],
+            serde_json::json!([50, 100, 20, 40])
+        );
+        let cancelled = fade
+            .updated_at(patch(serde_json::json!({"brightness":0.2})), 60.)
+            .unwrap();
+        assert_eq!(cancelled.status_at(200.)["brightness"], 20.);
+        assert_eq!(
+            cancelled.status_at(200.)["colors"][0],
+            serde_json::json!([50, 100, 20, 40])
+        );
+        assert!(
+            fade.updated_at(
+                patch(serde_json::json!({"brightness":1,"transition_seconds":3601})),
+                0.
+            )
+            .is_err()
+        );
     }
     #[test]
     fn status_exposes_the_manual_palette_effect_and_percent_brightness() {

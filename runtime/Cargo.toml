@@ -26,6 +26,8 @@ serde_yaml = "0.9"
 rustypot = "=1.6.0"
 serialport = {version = "4", default-features = false}
 signal-hook = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono-tz = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

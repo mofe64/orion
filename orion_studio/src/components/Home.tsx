@@ -12,6 +12,9 @@ import { useScopedFeedback } from "../hooks/useScopedNotice";
 import { assetDisplayName } from "../lib/displayName";
 import { orionStateLabel } from "../lib/orionMode";
 import { quickExpressions } from "../lib/quickExpressions";
+import { ListsCard } from "./ListsCard";
+import { AlarmForm } from "./AlarmForm";
+import { ReminderForm } from "./ReminderForm";
 import { alertTime } from "../lib/alertTime";
 
 const RobotViewport = lazy(() => import("./RobotViewport").then(module => ({ default: module.RobotViewport })));
@@ -40,7 +43,7 @@ type FeedbackArea = "mode" | "lamp" | "expression" | "alert";
 export function homeFeedbackArea(label: string): FeedbackArea {
   if (["Idle mode", "Lamp mode", "Pause mode", "Resume mode", "Go to rest"].includes(label)) return "mode";
   if (["Warm white light", "Custom color", "Light off"].includes(label)) return "lamp";
-  if (["Stop alarm", "Cancel alert"].includes(label)) return "alert";
+  if (["Stop alarm", "Cancel alert", "Cancel alert series", "New reminder"].includes(label)) return "alert";
   return "expression";
 }
 export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvailable = false, connection, status, onConnect, onVoice, onCreate, onDiagnostics, onRefresh, voiceNotice, voiceError, onRun }: Props) {
@@ -75,12 +78,14 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
 
   const act = async (label: string, work: (value: GatewayConnection) => Promise<unknown>, onAccepted?: () => void) => {
     if (!connection || request.current) return false;
+    let succeeded = false;
     const id = Symbol(label);
     request.current = id;
     setPending(label); setResult(null);
     try {
       const response = await work(connection);
       if (request.current !== id) return true;
+      succeeded = true;
       onAccepted?.();
       const run = acceptedRun(response, label === "Go to rest" ? "movement" : "scene", label);
       if (run) onRun(run);
@@ -94,7 +99,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
     } finally {
       if (request.current === id) { request.current = null; setPending(null); void commitLamp.flush(); }
     }
-    return true;
+    return succeeded;
   };
   const applyLight = (setting: ManualLampSetting) => {
     return act(setting.enabled ? setting.mood === "Warm white" ? "Warm white light" : "Custom color" : "Light off",
@@ -112,7 +117,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   const disabled = !connection || pending !== null;
   const userMode = status?.routines?.mode ?? status?.rest?.mode ?? "idle";
   const ringing = status?.routines?.ringing ?? false;
-  const activeAlerts = status?.routines?.alerts.filter(alert => ["pending", "ringing"].includes(alert.state)) ?? [];
+  const activeAlerts = status?.routines?.alerts.filter(alert => ["pending", "ringing", "announcing"].includes(alert.state) || alert.kind === "reminder" && alert.state === "missed" && Date.now()/1000 - alert.due_unix <= 86400) ?? [];
   const foregroundBusy = ringing || !!(status?.scene.active || status?.speech.active || (status?.runtime.motion && !status.runtime.motion.name?.startsWith("idle_")));
   const characterLabel = orionStateLabel(status);
   if (!connection) return <section className="home-dashboard" id="workspace" aria-label="Orion home">
@@ -157,13 +162,16 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         <p className="oh-note" id="lamp-command-help">{status?.rest ? "The switch shows runtime light power. Rest keeps the light off; your lamp setting is saved." : "The switch shows your last lamp command. Idle mode, Lamp mode and speech can temporarily take over the light."}</p>
       </section>
     </div>
-    {status?.routines && <section className="oh-alerts" aria-label="Timers and alarms">
-      <header className="oh-panel-heading"><h2>Timers and alarms</h2>{ringing && <button className="quiet-button" disabled={disabled} onClick={() => void act("Stop alarm", value => updateRoutines(value, { action: "stop" }))}>Stop sound</button>}</header>
+    {status?.routines && <section className="oh-alerts" aria-label="Timers, alarms and reminders">
+      <header className="oh-panel-heading"><h2>Timers, alarms and reminders</h2>{ringing && <button className="quiet-button" disabled={disabled} onClick={() => void act("Stop alarm", value => updateRoutines(value, { action: "stop" }))}>Stop sound</button>}</header>
       {ringing && <p role="alert">Say “Hey Orion” to stop the sound. It stops automatically after five minutes.</p>}
-      {activeAlerts.length ? <ul>{activeAlerts.map(alert => <li key={alert.id}><span>{alert.label || (alert.kind === "timer" ? "Timer" : "Alarm")} · {alert.state === "ringing" ? "Ringing" : alertTime(alert.due_unix)}</span><button className="quiet-button" disabled={disabled} aria-label={`Cancel ${alert.label || `${alert.kind} ${alert.id}`}`} onClick={() => void act("Cancel alert", value => updateRoutines(value, { action: "cancel", id: alert.id }))}>Cancel</button></li>)}</ul> : <p>Ask Orion to set a timer or an alarm.</p>}
+      {activeAlerts.length ? <ul>{activeAlerts.map(alert => <li key={alert.id}><span>{alert.label || (alert.kind === "timer" ? "Timer" : "Alarm")} · {alert.state === "ringing" ? "Ringing" : alert.state === "missed" ? "Missed" : alert.state === "announcing" ? "Announcing" : alertTime(alert.due_unix)}{alert.repeat && ` · ${alert.repeat.days.join(", ")} at ${alert.repeat.time}`}</span>{alert.state !== "missed" && <button className="quiet-button" disabled={disabled} aria-label={`Cancel ${alert.label || `${alert.kind} ${alert.id}`}`} onClick={() => void act("Cancel alert", value => updateRoutines(value, { action: "cancel", id: alert.id }))}>{alert.repeat ? "Cancel occurrence" : "Cancel"}</button>}{alert.repeat && alert.state !== "missed" && <button className="quiet-button" disabled={disabled} aria-label={`Cancel series ${alert.label || alert.id}`} onClick={() => void act("Cancel alert series", value => updateRoutines(value, { action: "cancel", id: alert.id, series: true }))}>Cancel series</button>}</li>)}</ul> : <p>Ask Orion to set a timer or an alarm.</p>}
+      <AlarmForm disabled={disabled} onSave={request => act("New alarm", value => updateRoutines(value, request))} />
+      <ReminderForm disabled={disabled} onSave={request => act("New reminder", value => updateRoutines(value, request))} />
       {status.routines.error && <p role="alert">{status.routines.error}</p>}
       {feedback("alert")}
     </section>}
+    <ListsCard connection={connection} />
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>See all <ArrowUpRight size={15} /></button></header>
       <div className="oh-expression-list">{quickExpressions(catalog).map(({name}) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(assetDisplayName(name), value => runScene(value, name))}><span className="oh-expression-icon"><Sparkles size={16} /></span>{assetDisplayName(name)}<Play className="oh-arrow" size={14} /></button>)}</div>
       {feedback("expression")}

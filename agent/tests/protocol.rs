@@ -74,7 +74,6 @@ async fn failures_reset_uncertain_session_and_next_request_recovers() {
         "multiple-terminal-finals",
         "changed-speech",
         "empty-after-stream",
-        "tool-after-speech",
     ] {
         let before = agent.info().await.unwrap().conversation_id;
         assert!(agent.respond(input).await.is_err());
@@ -518,5 +517,220 @@ async fn interruption_notice_is_delivered_once_and_preserves_direct_sleep_detect
     assert_eq!(
         agent.respond("go to sleep").await.unwrap_err(),
         "No robot coordinator is attached"
+    );
+}
+
+#[tokio::test]
+async fn late_tool_is_answered_without_action_or_conversation_reset() {
+    let service = service();
+    let agent = service.handle();
+    let before = agent.info().await.unwrap().conversation_id;
+    let (send, mut receive) = tokio::sync::mpsc::channel(8);
+    assert_eq!(
+        agent
+            .respond_with_events("tool-after-speech", Some(send))
+            .await
+            .unwrap(),
+        "Original speech. No tools were called."
+    );
+    assert!(matches!(
+        receive.recv().await,
+        Some(orion_agent::AgentEvent::FinalSpeech(_))
+    ));
+    assert!(matches!(
+        receive.recv().await,
+        Some(orion_agent::AgentEvent::ToolCall { success: false, .. })
+    ));
+    assert!(receive.recv().await.is_none());
+    assert_eq!(agent.info().await.unwrap().conversation_id, before);
+}
+
+#[tokio::test]
+async fn successful_direct_sleep_is_known_to_the_next_model_turn_once() {
+    let service = service();
+    let agent = service.handle();
+    let (send, mut receive) = tokio::sync::mpsc::channel(8);
+    let sleep = agent.respond_with_events("go to sleep", Some(send));
+    let robot = async {
+        let Some(orion_agent::AgentEvent::RobotOperation { parameters, reply }) =
+            receive.recv().await
+        else {
+            panic!("Expected sleep");
+        };
+        assert_eq!(parameters["operation"], "sleep");
+        reply.send(Ok(serde_json::json!({"ok":true}))).unwrap();
+        while receive.recv().await.is_some() {}
+    };
+    let (answer, ()) = tokio::join!(sleep, robot);
+    assert!(answer.unwrap().contains("Good night"));
+    assert!(
+        agent
+            .respond("What happened?")
+            .await
+            .unwrap()
+            .contains("Earlier, the user asked Orion to sleep and it went to rest")
+    );
+    assert_eq!(
+        agent.respond("Continue").await.unwrap(),
+        "Reply 2: Continue"
+    );
+}
+
+#[tokio::test]
+async fn next_conversation_reminder_is_kept_on_failure_and_delivered_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = AgentService::start(AgentConfig {
+        memory_path: Some(dir.path().join("MEMORY.md")),
+        soul_path: None,
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    })
+    .unwrap();
+    let agent = service.handle();
+    assert!(agent.respond(r#"tool:{"name":"set_reminder","arguments":{"text":"call Mum","when":"next_conversation"}}"#).await.unwrap().contains("true"));
+    assert!(agent.respond("fail").await.is_err());
+    assert!(
+        std::fs::read_to_string(dir.path().join("reminders.json"))
+            .unwrap()
+            .contains("call Mum")
+    );
+    let reply = agent.respond_for_playback("Hello", None).await.unwrap();
+    assert!(
+        reply
+            .text
+            .contains("Pending reminder for the user: call Mum. Mention it naturally.")
+    );
+    assert!(
+        agent
+            .respond("Not played yet")
+            .await
+            .unwrap()
+            .contains("Pending reminder")
+    );
+    agent.confirm_playback(&reply);
+    assert!(
+        !agent
+            .respond("Again")
+            .await
+            .unwrap()
+            .contains("Pending reminder")
+    );
+}
+
+#[tokio::test]
+async fn list_tools_persist_and_require_explicit_clear_confirmation() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = AgentService::start(AgentConfig {
+        memory_path: Some(dir.path().join("MEMORY.md")),
+        soul_path: None,
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    })
+    .unwrap();
+    let agent = service.handle();
+    assert!(
+        agent
+            .respond(
+                r#"tool:{"name":"add_list_item","arguments":{"list":"shopping","text":"Milk"}}"#
+            )
+            .await
+            .unwrap()
+            .contains("Milk")
+    );
+    let before = std::fs::read_to_string(dir.path().join("lists.json")).unwrap();
+    assert!(
+        agent
+            .respond(
+                r#"tool:{"name":"clear_list","arguments":{"list":"shopping","confirmed":false}}"#
+            )
+            .await
+            .unwrap()
+            .contains("false")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("lists.json")).unwrap(),
+        before
+    );
+    assert!(
+        agent
+            .respond(
+                r#"tool:{"name":"clear_list","arguments":{"list":"shopping","confirmed":true}}"#
+            )
+            .await
+            .unwrap()
+            .contains("true")
+    );
+    assert!(
+        agent
+            .lists(orion_agent::lists::ListName::Shopping, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn corrupt_and_oversized_reminders_do_not_break_turns_and_are_reported_in_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = AgentService::start(AgentConfig {
+        memory_path: Some(dir.path().join("MEMORY.md")),
+        soul_path: None,
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    })
+    .unwrap();
+    let agent = service.handle();
+    for invalid in [
+        "not JSON".to_string(),
+        "x".repeat(1024 * 1024 + 1),
+        serde_json::json!(vec![
+            serde_json::json!({"id":"x","created":"now","text":"call Mum"});
+            201
+        ])
+        .to_string(),
+    ] {
+        std::fs::write(dir.path().join("reminders.json"), invalid).unwrap();
+        assert!(agent.respond("Hello").await.unwrap().contains("Hello"));
+        assert!(agent.profile(None).await.unwrap().reminder_error.is_some());
+    }
+}
+
+#[tokio::test]
+async fn failed_delivery_bookkeeping_keeps_the_successful_reply_and_reminder() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = AgentService::start(AgentConfig {
+        memory_path: Some(dir.path().join("MEMORY.md")),
+        soul_path: None,
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    })
+    .unwrap();
+    let agent = service.handle();
+    agent.respond(r#"tool:{"name":"set_reminder","arguments":{"text":"call Mum","when":"next_conversation"}}"#).await.unwrap();
+    let reply = agent.respond_for_playback("Hello", None).await.unwrap();
+    let lock = dir.path().join("reminders.json.lock");
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::create_dir(&lock).unwrap();
+    agent.confirm_playback(&reply); // Log the failure without failing the delivered reply.
+    assert!(reply.text.contains("call Mum"));
+    assert!(
+        agent
+            .respond("Again")
+            .await
+            .unwrap()
+            .contains("Pending reminder")
+    );
+    std::fs::remove_dir(lock).unwrap();
+    agent.confirm_playback(&reply);
+    assert!(
+        !agent
+            .respond("Done")
+            .await
+            .unwrap()
+            .contains("Pending reminder")
     );
 }

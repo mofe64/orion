@@ -134,7 +134,7 @@ pub(crate) fn clear(path: &Path, expected: &[Entry]) -> Result<(), String> {
     }
     write(path, &[])
 }
-struct EditLock(std::fs::File);
+pub(crate) struct EditLock(std::fs::File);
 impl Drop for EditLock {
     fn drop(&mut self) {
         // A concurrently spawned process can briefly inherit this descriptor
@@ -144,7 +144,7 @@ impl Drop for EditLock {
     }
 }
 
-fn edit_lock(path: &Path) -> Result<EditLock, String> {
+pub(crate) fn edit_lock(path: &Path) -> Result<EditLock, String> {
     let parent = path.parent().ok_or("Invalid memory path")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let file = std::fs::OpenOptions::new()
@@ -152,7 +152,10 @@ fn edit_lock(path: &Path) -> Result<EditLock, String> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(path.with_extension("md.lock"))
+        .open(path.with_extension(format!(
+            "{}.lock",
+            path.extension().and_then(|s| s.to_str()).unwrap_or("json")
+        )))
         .map_err(|e| e.to_string())?;
     file.try_lock()
         .map_err(|_| "Memory is being edited; retry shortly")?;
@@ -163,28 +166,64 @@ pub(crate) fn search(path: &Path, query: &str) -> Result<Vec<Entry>, String> {
     if query.trim().is_empty() || query.len() > 500 {
         return Err("Search requires 1–500 bytes".into());
     }
-    let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
+    let terms = words(query);
     let mut matches: Vec<_> = read(path)?
         .into_iter()
         .filter_map(|entry| {
-            let text = entry.text.to_lowercase();
-            let score = terms
-                .iter()
-                .filter(|term| text.contains(term.as_str()))
-                .count();
+            let text = words(&entry.text);
+            let score = terms.iter().filter(|term| text.contains(*term)).count();
             (score > 0).then_some((score, entry))
         })
         .collect();
-    matches.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    matches.sort_by(|(score_a, a), (score_b, b)| {
+        score_b.cmp(score_a).then_with(|| b.created.cmp(&a.created))
+    });
     Ok(matches
         .into_iter()
         .take(8)
         .map(|(_, entry)| entry)
         .collect())
 }
+// Normalize whole words; a trailing s joins simple singular/plural pairs.
+fn words(text: &str) -> std::collections::HashSet<String> {
+    const STOP: &[&str] = &[
+        "the", "a", "an", "is", "are", "am", "do", "does", "did", "to", "of", "in", "on", "at",
+        "and", "or", "for", "me", "my", "where", "what", "who", "how",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() > 1 && !STOP.contains(word))
+        .map(|word| {
+            if word.len() > 3 && word.ends_with('s') && !word.ends_with("ss") {
+                word[..word.len() - 1].to_owned()
+            } else {
+                word.to_owned()
+            }
+        })
+        .collect()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn whole_words_rescue_the_ninth_result_and_sort_ties_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("MEMORY.md");
+        let mut entries = (0..20)
+            .map(|i| Entry {
+                id: i.to_string(),
+                created: format!("2026-01-{:02}T00:00:00Z", i + 1),
+                text: "I do enjoy dominoes and films".into(),
+            })
+            .collect::<Vec<_>>();
+        entries[8].text = "You live in Woking with two cats".into();
+        write(&path, &entries).unwrap();
+        assert_eq!(search(&path, "where do I live").unwrap()[0].id, "8");
+        assert_eq!(search(&path, "cat").unwrap()[0].id, "8");
+        assert!(search(&path, "dom").unwrap().is_empty());
+        assert_eq!(search(&path, "films").unwrap()[0].id, "19");
+        assert!(search(&path, "I do").unwrap().is_empty());
+    }
     #[test]
     fn finishing_an_edit_unlocks_even_with_an_inherited_descriptor() {
         let dir = tempfile::tempdir().unwrap();

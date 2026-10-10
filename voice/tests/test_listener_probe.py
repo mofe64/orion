@@ -12,7 +12,7 @@ class ListenerProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_expected_authentication_rejection_is_ready(self):
         async def listener(ws):
             hello = json.loads(await ws.recv())
-            self.assertEqual(hello['protocol'], 1)
+            self.assertEqual(hello['protocol'], 2)
             self.assertEqual(hello['token'], 'invalid-deployment-probe')
             await ws.close(4003, 'Invalid listener handshake')
         async with serve(listener, '127.0.0.1', 0) as server:

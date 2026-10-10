@@ -7,6 +7,7 @@ import type { StudioPreferences } from "../lib/preferences";
 import type { GatewayStatus } from "../types";
 import "./Settings.css";
 import { AgentProfileSettings } from "./AgentProfileSettings";
+import { LocationSettings } from "./LocationSettings";
 import { SoundSettings } from "./SoundSettings";
 import { FailureNotice } from "./FailureNotice";
 import { useScopedFeedback } from "../hooks/useScopedNotice";
@@ -48,6 +49,7 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
         <button className="quiet-button" onClick={onConnect}>Manage connection</button>
       </section>
       <section className="settings-card"><header><Sparkles size={20} /><div><h2>Personality and memory</h2><p>Changes save automatically and start a fresh conversation on Orion’s next request.</p></div></header><AgentProfileSettings onboard desktop={desktop} connected={connected} connectionScope={connectionScope} /></section>
+      <LocationSettings desktop={desktop} connected={connected} connectionScope={connectionScope} />
       <section className="settings-card"><header><AudioLines size={20} /><div><h2>Voice</h2><p>Speech recognition and voices run on Orion.</p></div></header>
         {!desktop ? <p className="settings-help">Open Orion Studio’s desktop app and connect Orion to view or change voice settings.</p> : !connected ? <p className="settings-help">Connect Orion to view or change voice settings.</p> : !voice.loaded ? voice.loadError ? <FailureNotice value={voice.loadError} /> : <p role="status">Loading Orion’s voice settings…</p> : <form onSubmit={event => {
           event.preventDefault(); if (!canSave) return;

@@ -378,6 +378,42 @@ class DualStackHttpTests(unittest.TestCase):
 
 
 class HomeOperationTests(unittest.TestCase):
+    def test_fades_sunrise_and_light_routine_boundaries(self):
+        client=FakeOrionClient(); gateway=OrionGateway(client)
+        gateway.submit({"operation":"lamp_effect","settings":{"brightness":1,"transition_seconds":3600}})
+        self.assertEqual(json.loads(client.commands[-1].removeprefix("lamp-effect "))["transition_seconds"],3600)
+        for value in [-1,3601,True,float("nan")]:
+            with self.subTest(value=value),self.assertRaises(GatewayError): gateway.submit({"operation":"lamp_effect","settings":{"brightness":1,"transition_seconds":value}})
+        OrionGateway._validate_routines({"action":"start_light_routine","routine":"focus","minutes":120})
+        OrionGateway._validate_routines({"action":"alarm","label":"wake","due_unix":100,"sunrise_minutes":30})
+        for request in [{"action":"start_light_routine","routine":"wind_down","minutes":9},{"action":"start_light_routine","routine":"focus","minutes":121},{"action":"alarm","label":"wake","due_unix":100,"sunrise_minutes":4}]:
+            with self.assertRaises(GatewayError): OrionGateway._validate_routines(request)
+
+    def test_briefing_alarm_requires_a_boolean(self):
+        OrionGateway._validate_routines({"action":"alarm","label":"gym","due_unix":100,"briefing":True})
+        with self.assertRaises(GatewayError):
+            OrionGateway._validate_routines({"action":"alarm","label":"gym","due_unix":100,"briefing":"yes"})
+
+    def test_reminder_validation_is_strict_and_snooze_is_bounded(self):
+        OrionGateway._validate_routines({"action":"reminder","label":"stretch","repeat":{"days":["mon"],"time":"09:00"}})
+        for request in [
+            {"action":"reminder","label":"bins"},
+            {"action":"reminder","label":"bins","due_unix":1,"seconds":10},
+            {"action":"reminder","label":"bins","repeat":{"days":["mon","mon"],"time":"09:00"}},
+            {"action":"reminder","label":"bins","repeat":{"days":["mon"],"time":"9:00"}},
+            {"action":"snooze","minutes":61}, {"action":"snooze","minutes":True},
+            {"action":"stop","extra":True},
+        ]:
+            with self.subTest(request=request), self.assertRaises(GatewayError): OrionGateway._validate_routines(request)
+
+    def test_series_cancel_is_explicit_and_boolean(self):
+        OrionGateway._validate_routines({"action":"cancel","id":1})
+        OrionGateway._validate_routines({"action":"cancel","id":1,"series":True})
+        OrionGateway._validate_routines({"action":"announce_failed","id":1})
+        OrionGateway._validate_routines({"action":"dismiss_announcement","id":1})
+        with self.assertRaises(GatewayError):
+            OrionGateway._validate_routines({"action":"cancel","id":1,"series":"yes"})
+
     def test_routines_use_structured_commands_and_sleep_requires_session_identity(self):
         self.client = FakeOrionClient(); self.gateway = OrionGateway(self.client)
         _, result = self.gateway.submit({'operation':'routines','request':{'action':'timer','seconds':60,'label':'Tea'}})

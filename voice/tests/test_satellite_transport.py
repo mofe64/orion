@@ -35,6 +35,117 @@ class FakeCapture:
         return np.full((320,2),2000 if self.frames<25 else 0,dtype='<i2').tobytes()
 
 class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_playback_wake_dismisses_only_the_playing_announcement_id(self):
+        wake_now = False
+        class ControlledWake(FakeWake):
+            def process(self, pcm):
+                nonlocal wake_now
+                if wake_now:
+                    wake_now = False
+                    return SimpleNamespace(name='hey_orion', score=.8)
+                return None
+        with tempfile.TemporaryDirectory() as directory:
+            token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+            args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+                wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+                daemon_socket=str(Path(directory) / 'no-robot.sock'))
+            pending = True; playing = asyncio.Event(); requests = []
+            async def daemon(command, path):
+                nonlocal pending
+                if command == 'routines status':
+                    return {'ok': True, 'routines': {'ringing': False,
+                        'announcements': ([{'id': 7, 'attempt': 0, 'purpose': 'announcement',
+                            'text': 'Reminder: stretch'}] if pending else []),
+                        'alerts': [{'id': 7, 'state': 'announcing'}, {'id': 8, 'state': 'announcing'}]}}
+                if command.startswith('routines '):
+                    requests.append(json.loads(command.removeprefix('routines ')))
+                    pending = False
+                if command.endswith(' playing'): playing.set()
+                return {'ok': True}
+            with patch('orion_voice.satellite.RustpotterWakeDetector', ControlledWake), \
+                 patch('orion_voice.satellite.StereoCapture', FakeCapture), \
+                 patch('orion_voice.satellite.daemon_command', daemon):
+                task = asyncio.create_task(serve(args))
+                try:
+                    for _ in range(100):
+                        try:
+                            client = await connect(f'ws://127.0.0.1:{port}'); break
+                        except OSError: await asyncio.sleep(.01)
+                    else: self.fail('Listener did not start')
+                    async with client:
+                        await client.send(json.dumps(dict(type='hello', protocol=2, token='a'*32)))
+                        await client.recv()
+                        notice = json.loads(await asyncio.wait_for(client.recv(), 2)); sid = notice['sessionId']
+                        await client.send(json.dumps({'type': 'announcement.start', 'sessionId': sid}))
+                        self.assertEqual(json.loads(await asyncio.wait_for(client.recv(), 2))['type'], 'announcement.ready')
+                        await client.send(json.dumps({'type': 'session.playing', 'sessionId': sid}))
+                        await asyncio.wait_for(playing.wait(), 2)
+                        wake_now = True
+                        interrupted = json.loads(await asyncio.wait_for(client.recv(), 2))
+                        self.assertEqual(interrupted['reason'], 'announcement')
+                        self.assertEqual(requests, [{'action': 'dismiss_announcement', 'id': 7}])
+                finally:
+                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
+    async def test_announcement_ownership_errors_report_failure_and_keep_the_listener_connected(self):
+        class QuietWake(FakeWake):
+            def process(self, pcm): return None
+        for failure in ('refused', 'socket', 'timeout'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                token_file = Path(directory) / 'token'; token_file.write_text('a' * 32)
+                with socket.socket() as reservation:
+                    reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+                args = SimpleNamespace(token_file=token_file, host='127.0.0.1', port=port,
+                    wake_model=Path('unused'), threshold=.4, device='fake', mic_spacing=0, channel_sign=0,
+                    daemon_socket=str(Path(directory) / 'no-robot.sock'))
+                attempts = 0; failures = 0
+                async def daemon(command, path):
+                    nonlocal attempts
+                    if command == 'routines status':
+                        return {'ok': True, 'routines': {'ringing': False,
+                            'announcements': ([{'id': 7, 'attempt': failures, 'purpose': 'announcement',
+                                'text': 'Reminder: stretch'}] if failures < 3 else []),
+                            'alerts': [{'id': 7, 'state': 'announcing'}]}}
+                    if command.endswith(' announcement'):
+                        attempts += 1
+                        if failure == 'socket': raise OSError('daemon unavailable')
+                        if failure == 'timeout': raise asyncio.TimeoutError()
+                        return {'ok': False}
+                    return {'ok': True}
+                with patch('orion_voice.satellite.RustpotterWakeDetector', QuietWake), \
+                     patch('orion_voice.satellite.StereoCapture', FakeCapture), \
+                     patch('orion_voice.satellite.daemon_command', daemon):
+                    task = asyncio.create_task(serve(args))
+                    try:
+                        for _ in range(100):
+                            try:
+                                client = await connect(f'ws://127.0.0.1:{port}'); break
+                            except OSError: await asyncio.sleep(.01)
+                        else: self.fail('Listener did not start')
+                        async with client:
+                            await client.send(json.dumps(dict(type='hello', protocol=2, token='a'*32)))
+                            self.assertEqual(json.loads(await client.recv())['type'], 'ready')
+                            for _ in range(3):
+                                notice = json.loads(await asyncio.wait_for(client.recv(), 2))
+                                self.assertEqual(notice['type'], 'announcement')
+                                await client.send(json.dumps({'type': 'announcement.start', 'sessionId': notice['sessionId']}))
+                                reported = json.loads(await asyncio.wait_for(client.recv(), 2))
+                                self.assertEqual(reported['type'], 'announcement.failed')
+                                self.assertEqual(reported['id'], 7)
+                                self.assertEqual(reported['sessionId'], notice['sessionId'])
+                                # The coordinator applies the runtime's cutoff, then releases the reservation.
+                                failures += 1
+                                await client.send(json.dumps({'type': 'session.cancel', 'sessionId': notice['sessionId']}))
+                            with self.assertRaises(asyncio.TimeoutError):
+                                await asyncio.wait_for(client.recv(), .3)
+                            self.assertEqual(attempts, 3)
+                            await asyncio.wait_for(await client.ping(), 1)
+                            self.assertTrue(FakeCapture.instances[-1].opened)
+                    finally:
+                        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
     async def test_alarm_wake_dismissal_works_without_a_coordinator_connection(self):
         with tempfile.TemporaryDirectory() as directory:
             token_file=Path(directory)/'token'; token_file.write_text('a'*32)
@@ -84,7 +195,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                         except OSError: await asyncio.sleep(.01)
                     else: self.fail('Listener did not start')
                     async with client:
-                        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, wakePrefix=True)))
+                        await client.send(json.dumps(dict(type='hello', protocol=2, token='a'*32, wakePrefix=True)))
                         self.assertTrue(json.loads(await client.recv())['wakePrefix'])
                         candidate = json.loads(await client.recv()); sid = candidate['sessionId']
                         prefix = json.loads(await client.recv()); await client.recv()
@@ -133,7 +244,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
             except OSError: await asyncio.sleep(.01)
         else: self.fail('Listener did not start')
         self.addAsyncCleanup(client.close)
-        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, wakePrefix=True)))
+        await client.send(json.dumps(dict(type='hello', protocol=2, token='a'*32, wakePrefix=True)))
         ready = json.loads(await client.recv())
         self.assertEqual(ready['wake']['verifier']['provider'], 'openwakeword')
         candidate = json.loads(await client.recv())
@@ -171,7 +282,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
             except OSError: await asyncio.sleep(.01)
         else: self.fail('Listener did not start')
         self.addAsyncCleanup(client.close)
-        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32)))
+        await client.send(json.dumps(dict(type='hello', protocol=2, token='a'*32)))
         await client.recv()  # Listener readiness.
         candidate = json.loads(await client.recv()); sid = candidate['sessionId']
         full = json.loads(await asyncio.wait_for(client.recv(), 3)); await client.recv()
@@ -289,7 +400,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                         except OSError: await asyncio.sleep(.01)
                     else: self.fail('Listener did not start')
                     async with client:
-                        await client.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, role='control')))
+                        await client.send(json.dumps(dict(type='hello', protocol=2, token='a'*32, role='control')))
                         self.assertTrue(json.loads(await client.recv())['muted'])
                         await client.send(json.dumps(dict(type='microphone.mute', muted=False)))
                         reply = asyncio.create_task(client.recv())
@@ -337,7 +448,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                             except OSError: await asyncio.sleep(.01)
                         else: self.fail('Listener did not start')
                         async with client:
-                            await client.send(json.dumps(dict(type='hello', protocol=1, token='a' * 32)))
+                            await client.send(json.dumps(dict(type='hello', protocol=2, token='a' * 32)))
                             await client.recv()
                             candidate = json.loads(await asyncio.wait_for(client.recv(), 2))
                             await client.recv(); await client.recv()
@@ -384,14 +495,14 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                             await asyncio.sleep(.01)
                     else:
                         self.fail('Listener did not start')
-                    await client.send(json.dumps(dict(type='hello', protocol=1, token='a' * 32, role='control')))
+                    await client.send(json.dumps(dict(type='hello', protocol=2, token='a' * 32, role='control')))
                     self.assertFalse(json.loads(await client.recv())['muted'])
                     client.transport.abort()
                     await client.wait_closed()
                     await asyncio.sleep(.03)
                     self.assertTrue(FakeCapture.instances[-1].opened)
                     async with connect(f'ws://127.0.0.1:{port}') as controller:
-                        await controller.send(json.dumps(dict(type='hello', protocol=1, token='a' * 32, role='control')))
+                        await controller.send(json.dumps(dict(type='hello', protocol=2, token='a' * 32, role='control')))
                         self.assertFalse(json.loads(await controller.recv())['muted'])
                         await controller.send(json.dumps(dict(type='microphone.mute', muted=True)))
                         self.assertTrue(json.loads(await controller.recv())['muted'])
@@ -424,16 +535,16 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(.04)
                     self.assertTrue(any(command.endswith(' wake') for command in expressions), 'wake feedback must precede processor authentication')
                     async with first:
-                        await first.send(json.dumps(dict(type='hello',protocol=1,token='bad')))
+                        await first.send(json.dumps(dict(type='hello',protocol=2,token='bad')))
                         with self.assertRaises(ConnectionClosed): await first.recv()
                     self.assertTrue(FakeCapture.instances[-1].opened)
                     async with connect(f'ws://127.0.0.1:{port}') as client:
-                        await client.send(json.dumps(dict(type='hello',protocol=1,token='a'*32)))
+                        await client.send(json.dumps(dict(type='hello',protocol=2,token='a'*32)))
                         ready=json.loads(await client.recv())
                         self.assertEqual(ready['wake']['provider'],'rustpotter')
                         self.assertTrue(FakeCapture.instances[-1].opened)
                         async with connect(f'ws://127.0.0.1:{port}') as extra:
-                            await extra.send(json.dumps(dict(type='hello',protocol=1,token='a'*32)))
+                            await extra.send(json.dumps(dict(type='hello',protocol=2,token='a'*32)))
                             with self.assertRaises(ConnectionClosed): await extra.recv()
                         candidate=json.loads(await asyncio.wait_for(client.recv(),2))
                         self.assertEqual(candidate['type'],'wake.candidate')
@@ -448,7 +559,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(.03)
                     self.assertTrue(FakeCapture.instances[-1].opened)
                     async with connect(f'ws://127.0.0.1:{port}') as controller:
-                        await controller.send(json.dumps(dict(type='hello', protocol=1, token='a'*32, role='control')))
+                        await controller.send(json.dumps(dict(type='hello', protocol=2, token='a'*32, role='control')))
                         self.assertFalse(json.loads(await controller.recv())['muted'])
                         await controller.send(json.dumps(dict(type='microphone.mute', muted=True)))
                         self.assertTrue(json.loads(await controller.recv())['muted'])
@@ -487,7 +598,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                         if started.is_set(): break
                         await asyncio.sleep(.01)
                     async with connect(f'ws://127.0.0.1:{port}') as client:
-                        await client.send(json.dumps(dict(type='hello',protocol=1,token='a'*32,role='control')))
+                        await client.send(json.dumps(dict(type='hello',protocol=2,token='a'*32,role='control')))
                         await client.recv()
                         await client.send(json.dumps(dict(type='microphone.mute',muted=True)))
                         acknowledged=asyncio.create_task(client.recv())

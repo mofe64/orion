@@ -49,7 +49,7 @@ describe("profile readiness", () => {
     expect(html).not.toContain("<details open");
   });
   it("shows loaded cards and preserves memory privacy copy after a save failure", () => {
-    const profile: AgentProfile = { soul: { revision: "test", personality: { traits: [], behaviors: [] } }, traits: [], behaviors: [], preview: "", memories: [], personalityEnabled: true, memoryEnabled: true };
+    const profile: AgentProfile = { weather: {location:null,temperature_unit:null}, soul: { revision: "test", personality: { traits: [], behaviors: [] } }, traits: [], behaviors: [], preview: "", memories: [], personalityEnabled: true, memoryEnabled: true };
     const html = markup(profile, { message: "Studio couldn't save these changes.", detail: "save error" });
     expect(html).toContain("<h3>Personality</h3>");
     expect(html).toContain("<h3>Memories</h3>");
@@ -59,4 +59,13 @@ describe("profile readiness", () => {
     expect(html).not.toContain("Save personality");
     expect(html).not.toContain("Save memory");
   });
+});
+
+it("shows reminder corruption as a recoverable storage error while keeping profile controls", () => {
+  const profile: AgentProfile = { weather: {location:null,temperature_unit:null}, soul: { revision: "test", personality: {traits:[],behaviors:[]} }, traits:[], behaviors:[], preview:"", memories:[], memoryEnabled:true, personalityEnabled:true, reminderError:"Invalid reminder file" };
+  const html = markup(profile);
+  expect(html).toContain("Replies will continue without them.");
+  expect(html).toContain("Invalid reminder file");
+  expect(html).toContain('role="alert"');
+  expect(html).toContain("<h3>Memories</h3>");
 });

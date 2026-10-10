@@ -31,6 +31,12 @@ struct GatewayState {
     allow_complete: bool,
     runs: u64,
     fail_playback: bool,
+    reject_announced: usize,
+    routines: Option<(
+        orion_runtime::expression::routines::Routines,
+        orion_runtime::RecordingAudioDevice,
+        f64,
+    )>,
     lighting: Vec<Value>,
     robot_operations: Vec<Value>,
     reject_lighting: bool,
@@ -135,6 +141,9 @@ where
 }
 impl Harness {
     async fn new() -> Self {
+        Self::with_memory(None).await
+    }
+    async fn with_memory(memory_path: Option<PathBuf>) -> Self {
         let mut tasks = JoinSet::new();
         let gateway = Arc::new(Mutex::new(GatewayState {
             allow_complete: true,
@@ -184,7 +193,7 @@ impl Harness {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let agent = AgentService::start(AgentConfig {
             soul_path: None,
-            memory_path: None,
+            memory_path,
             model: "test-model".into(),
             effort: "high".into(),
             codex_bin: Some(root.join("../agent/tests/fixtures/codex.py")),
@@ -211,7 +220,7 @@ impl Harness {
             .await
             .unwrap()
             .unwrap();
-        send(&mut pi, json!({"type":"ready", "protocol":1, "sampleRate":16000, "channels":1, "encoding":"pcm_s16le", "muted":false,
+        send(&mut pi, json!({"type":"ready", "protocol":2, "sampleRate":16000, "channels":1, "encoding":"pcm_s16le", "muted":false,
             "conversationWindow":true,"toolFeedback":true, "wake":{"provider":"rustpotter","model":"pi.rpw","threshold":0.4}})).await;
         let (mut observer, _) = connect_async(&connection.url).await.unwrap();
         send(
@@ -305,9 +314,20 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
             json!({"accepted":true,"result":{"ok":true,"lamp":{"brightness":35,"effect":"solid","colors":[[255,0,0,0]]}}})
         } else if value["operation"] == "sleep" || value["operation"] == "routines" {
             state.robot_operations.push(value.clone());
-            if let Some(reason) = &state.reject_robot {
+            if value["request"]["action"] == "announced" && state.reject_announced > 0 {
+                state.reject_announced -= 1;
+                status = "503 Service Unavailable";
+                json!({"error":{"message":"Announcement acknowledgement unavailable"}})
+            } else if let Some(reason) = &state.reject_robot {
                 status = "409 Conflict";
                 json!({"error":{"message":reason}})
+            } else if value["operation"] == "routines" && state.routines.is_some() {
+                let (routines, audio, wall) = state.routines.as_mut().unwrap();
+                let request = serde_json::from_value(value["request"].clone()).unwrap();
+                let result = routines
+                    .request(request, *wall, *wall - 100., audio)
+                    .unwrap();
+                json!({"accepted":true,"result":{"ok":true,"result":result}})
             } else {
                 json!({"accepted":true,"result":{"ok":true,"sleep_after_reply":value["operation"]=="sleep"}})
             }
@@ -794,7 +814,7 @@ async fn pi_disconnect_cancels_playback_and_reconnect_preserves_agent_conversati
         .unwrap()
         .unwrap();
     assert_eq!(h.gateway.lock().await.cancellations, vec![1]);
-    send(&mut pi, json!({"type":"ready", "protocol":1, "sampleRate":16000, "channels":1, "encoding":"pcm_s16le", "muted":false,
+    send(&mut pi, json!({"type":"ready", "protocol":2, "sampleRate":16000, "channels":1, "encoding":"pcm_s16le", "muted":false,
         "conversationWindow":true,"toolFeedback":true, "wake":{"provider":"rustpotter","model":"pi.rpw","threshold":0.4}})).await;
     h.pi = pi;
     h.gateway.lock().await.allow_complete = true;
@@ -1403,4 +1423,534 @@ async fn a_queued_complete_burst_keeps_uploading_when_playback_starts_midway() {
     }
     until(&mut h.pi, "session.finish").await;
     h.stop().await;
+}
+
+#[tokio::test]
+async fn announcement_waits_for_reply_and_acknowledges_playback_exactly_once() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, active reply").await;
+    until(&mut h.pi, "session.playing").await;
+    let notice = json!({"type":"announcement","sessionId":NEXT,"id":23,"attempt":0,"purpose":"announcement","text":"Reminder: stretch."});
+    send(&mut h.pi, notice.clone()).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+            .await
+            .is_err()
+    );
+    assert!(h.gateway.lock().await.robot_operations.is_empty());
+    h.gateway.lock().await.allow_complete = true;
+    until(&mut h.pi, "session.finish").await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.pi, "session.finish").await;
+    let state = h.gateway.lock().await;
+    assert_eq!(
+        state
+            .robot_operations
+            .iter()
+            .filter(|v| v["request"]["action"] == "announced" && v["request"]["id"] == 23)
+            .count(),
+        1
+    );
+    drop(state);
+    send(&mut h.pi, notice).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+            .await
+            .is_err()
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn briefing_waits_for_reply_and_starts_agent_once_per_dismissal() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, active reply").await;
+    until(&mut h.pi, "session.playing").await;
+    let notice = json!({"type":"announcement","sessionId":NEXT,"id":23,"attempt":0,"purpose":"briefing","text":"That was your 7 o’clock alarm: gym."});
+    send(&mut h.pi, notice.clone()).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+            .await
+            .is_err()
+    );
+    assert!(h.gateway.lock().await.robot_operations.is_empty());
+    h.gateway.lock().await.allow_complete = true;
+    until(&mut h.pi, "session.finish").await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.pi, "session.finish").await;
+    let state = h.gateway.lock().await;
+    assert_eq!(
+        state
+            .robot_operations
+            .iter()
+            .filter(|v| v["request"]["action"] == "announced" && v["request"]["id"] == 23)
+            .count(),
+        1
+    );
+    drop(state);
+    send(&mut h.pi, notice).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+            .await
+            .is_err()
+    );
+    let answer = h.agent.handle().respond("after briefing").await.unwrap();
+    assert!(
+        answer.starts_with("Reply 3:"),
+        "briefing must start exactly one agent turn: {}",
+        answer
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn a_reminder_due_during_an_alarm_plays_after_dismissal_and_snooze_keeps_the_alarm() {
+    use orion_runtime::expression::routines::{Request, Routines};
+    let mut h = Harness::new().await;
+    let mut routines = Routines::load(None, 100., 0.).unwrap();
+    let mut audio = orion_runtime::RecordingAudioDevice::default();
+    for request in [
+        json!({"action":"alarm","label":"","due_unix":101.}),
+        json!({"action":"reminder","label":"stretch","due_unix":102.}),
+    ] {
+        routines
+            .request(
+                serde_json::from_value(request).unwrap(),
+                100.,
+                0.,
+                &mut audio,
+            )
+            .unwrap();
+    }
+    routines.due(101., 1., &mut audio).unwrap();
+    routines.due(102., 2., &mut audio).unwrap();
+    routines
+        .request(Request::Stop, 103., 3., &mut audio)
+        .unwrap();
+    assert!(
+        routines.status(105.9, 5.9)["announcements"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut notice = routines.status(106., 6.)["announcements"][0].clone();
+    assert_eq!(notice["id"], 2);
+    assert_eq!(notice["text"], "Reminder: stretch");
+    h.gateway.lock().await.routines = Some((routines, audio, 106.));
+    notice["type"] = "announcement".into();
+    notice["sessionId"] = NEXT.into();
+    send(&mut h.pi, notice).await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.pi, "session.playing").await;
+    until(&mut h.pi, "session.finish").await;
+    let mut state = h.gateway.lock().await;
+    assert!(!state.uploads.is_empty());
+    let (routines, audio, _) = state.routines.as_mut().unwrap();
+    assert_eq!(routines.status(106., 6.)["alerts"][1]["announcements"], 1);
+    let snoozed = routines
+        .request(Request::Snooze { minutes: None }, 107., 7., audio)
+        .unwrap();
+    assert_eq!(snoozed["alert"]["kind"], "alarm");
+    drop(state);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn completed_briefing_retries_acknowledgement_without_failure_or_replay() {
+    for failures in [1, usize::MAX] {
+        let mut h = Harness::new().await;
+        h.gateway.lock().await.reject_announced = failures;
+        let notice = json!({"type":"announcement","sessionId":NEXT,"id":23,"attempt":0,"purpose":"briefing","text":"That was your alarm: "});
+        send(&mut h.pi, notice.clone()).await;
+        until(&mut h.pi, "announcement.start").await;
+        send(
+            &mut h.pi,
+            json!({"type":"announcement.ready","sessionId":NEXT}),
+        )
+        .await;
+        until(&mut h.pi, "session.playing").await;
+        until(&mut h.pi, "session.finish").await;
+        {
+            let state = h.gateway.lock().await;
+            assert_eq!(
+                state
+                    .robot_operations
+                    .iter()
+                    .filter(|v| v["request"]["action"] == "announced")
+                    .count(),
+                if failures == 1 { 2 } else { 3 }
+            );
+            assert!(
+                !state
+                    .robot_operations
+                    .iter()
+                    .any(|v| v["request"]["action"] == "announce_failed")
+            );
+        }
+        let mut duplicate = notice;
+        duplicate["sessionId"] = "cccccccccccccccccccccccccccccccc".into();
+        send(&mut h.pi, duplicate.clone()).await;
+        let finish = next(&mut h.pi).await;
+        assert_eq!(finish["type"], "session.finish");
+        assert_eq!(finish["sessionId"], duplicate["sessionId"]);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+                .await
+                .is_err()
+        );
+        h.wake("Hey Orion, still connected").await;
+        until(&mut h.pi, "session.finish").await;
+        let answer = h
+            .agent
+            .handle()
+            .respond("after briefing and user reply")
+            .await
+            .unwrap();
+        assert!(
+            answer.starts_with("Reply 3:"),
+            "one briefing and one user reply were expected: {answer}"
+        );
+        h.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn wake_during_completed_briefing_acknowledgement_does_not_report_failure_or_replay() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.reject_announced = usize::MAX;
+    let notice = json!({"type":"announcement","sessionId":NEXT,"id":23,"attempt":0,"purpose":"briefing","text":"That was your alarm: "});
+    send(&mut h.pi, notice.clone()).await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.pi, "session.playing").await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if h.gateway
+                .lock()
+                .await
+                .robot_operations
+                .iter()
+                .any(|v| v["request"]["action"] == "announced")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":NEXT,"reason":"announcement_wake"}),
+    )
+    .await;
+    until(&mut h.observer, "session.interrupted").await;
+    h.wake("Hey Orion, interrupt acknowledgement").await;
+    until(&mut h.pi, "session.finish").await;
+    assert!(
+        !h.gateway
+            .lock()
+            .await
+            .robot_operations
+            .iter()
+            .any(|v| v["request"]["action"] == "announce_failed")
+    );
+    let mut duplicate = notice;
+    duplicate["sessionId"] = "cccccccccccccccccccccccccccccccc".into();
+    send(&mut h.pi, duplicate).await;
+    assert_eq!(next(&mut h.pi).await["type"], "session.finish");
+    let answer = h
+        .agent
+        .handle()
+        .respond("after interrupted acknowledgement")
+        .await
+        .unwrap();
+    assert!(
+        answer.starts_with("Reply 3:"),
+        "completed briefing must not replay: {answer}"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn failed_announcement_playback_reports_failure_to_the_runtime() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.fail_playback = true;
+    send(&mut h.pi, json!({"type":"announcement","sessionId":NEXT,"id":23,"attempt":0,"purpose":"announcement","text":"Reminder: stretch."})).await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.pi, "session.cancel").await;
+    let state = h.gateway.lock().await;
+    assert_eq!(
+        state
+            .robot_operations
+            .iter()
+            .filter(|v| v["request"]["action"] == "announce_failed" && v["request"]["id"] == 23)
+            .count(),
+        1
+    );
+    assert!(
+        !state
+            .robot_operations
+            .iter()
+            .any(|v| v["request"]["action"] == "announced")
+    );
+    drop(state);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn wake_interrupts_briefing_thinking_and_late_ready_does_not_disconnect() {
+    let mut h = Harness::new().await;
+    let mut routines = orion_runtime::expression::routines::Routines::load(None, 100., 0.).unwrap();
+    let mut audio = orion_runtime::RecordingAudioDevice::default();
+    routines
+        .request(
+            serde_json::from_value(
+                json!({"action":"alarm","due_unix":101.,"label":"gym","briefing":true}),
+            )
+            .unwrap(),
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+    routines.due(101., 1., &mut audio).unwrap();
+    routines
+        .request(
+            serde_json::from_value(json!({"action":"stop"})).unwrap(),
+            102.,
+            2.,
+            &mut audio,
+        )
+        .unwrap();
+    h.gateway.lock().await.routines = Some((routines, audio, 105.));
+    let notice = json!({"type":"announcement","sessionId":NEXT,"id":1,"attempt":0,"purpose":"briefing","text":"That was your alarm: "});
+    send(&mut h.pi, notice.clone()).await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.observer, "agent.started").await;
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":NEXT,"reason":"announcement_wake"}),
+    )
+    .await;
+    for stale in [Value::Null, json!(NEXT)] {
+        send(
+            &mut h.pi,
+            json!({"type":"announcement.ready","sessionId":stale}),
+        )
+        .await;
+    }
+    h.wake(r#"Hey Orion, tool:{"name":"snooze_alert","arguments":{"minutes":9}}"#)
+        .await;
+    until(&mut h.pi, "session.finish").await;
+    {
+        let state = h.gateway.lock().await;
+        assert!(
+            state
+                .robot_operations
+                .iter()
+                .any(|v| v["request"]["action"] == "snooze")
+        );
+        let (routines, _, _) = state.routines.as_ref().unwrap();
+        let status = routines.status(105., 5.);
+        assert_eq!(status["alerts"][1]["due_unix"], 645.);
+        assert_eq!(status["announcements"].as_array().unwrap().len(), 1);
+        assert!(
+            !state
+                .robot_operations
+                .iter()
+                .any(|v| v["request"]["action"] == "announced"
+                    || v["request"]["action"] == "announce_failed")
+        );
+    }
+    // The runtime can submit the still-pending notice with a fresh listener session.
+    send(&mut h.pi, notice).await;
+    until(&mut h.pi, "announcement.start").await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":NEXT}),
+    )
+    .await;
+    until(&mut h.pi, "session.finish").await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn queued_announcement_can_be_cancelled_without_cancelling_the_active_reply() {
+    let mut h = Harness::new().await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, active reply").await;
+    until(&mut h.pi, "session.playing").await;
+    send(&mut h.pi, json!({"type":"announcement","sessionId":NEXT,"id":23,"attempt":0,"purpose":"announcement","text":"Reminder: stretch."})).await;
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":NEXT,"reason":"announcement_wake"}),
+    )
+    .await;
+    send(
+        &mut h.pi,
+        json!({"type":"announcement.ready","sessionId":null}),
+    )
+    .await;
+    h.gateway.lock().await.allow_complete = true;
+    until(&mut h.pi, "session.finish").await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+            .await
+            .is_err()
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn next_conversation_reminder_survives_interruption_until_completed_playback() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("reminders.json");
+    std::fs::write(
+        &path,
+        json!([{"id":"notice","created":"2026-10-10T00:00:00Z","text":"call Mum"}]).to_string(),
+    )
+    .unwrap();
+    let mut h = Harness::with_memory(Some(dir.path().join("MEMORY.md"))).await;
+    h.gateway.lock().await.allow_complete = false;
+    h.wake("Hey Orion, hello").await;
+    until(&mut h.pi, "session.playing").await;
+    assert!(std::fs::read_to_string(&path).unwrap().contains("call Mum"));
+    send(
+        &mut h.pi,
+        json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
+    )
+    .await;
+    until(&mut h.observer, "session.interrupted").await;
+    assert!(std::fs::read_to_string(&path).unwrap().contains("call Mum"));
+    h.gateway.lock().await.allow_complete = true;
+    h.wake("Hey Orion, again").await;
+    until(&mut h.observer, "speech.completed").await;
+    // The completion event and acknowledgement execute in the same coordinator branch.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while std::fs::read_to_string(&path).unwrap().contains("call Mum") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[]");
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn permanently_failing_ownership_tts_or_playback_makes_only_three_attempts_across_five_hz_polling()
+ {
+    for failure in ["ownership", "tts", "playback"] {
+        let mut h = Harness::new().await;
+        let mut routines =
+            orion_runtime::expression::routines::Routines::load(None, 100., 0.).unwrap();
+        let mut audio = orion_runtime::RecordingAudioDevice::default();
+        routines
+        .request(
+            serde_json::from_value(json!({"action":"reminder","due_unix":101.,"label":if failure == "tts" {"tts-fail"} else {"stretch"}}))
+                .unwrap(),
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+        {
+            let mut state = h.gateway.lock().await;
+            state.fail_playback = failure == "playback";
+            state.routines = Some((routines, audio, 100.));
+        }
+        let mut attempts = 0;
+        let mut attempt_times = vec![];
+        for tick in 0..2000 {
+            let notice = {
+                let mut state = h.gateway.lock().await;
+                let (routines, audio, wall) = state.routines.as_mut().unwrap();
+                *wall = 101. + f64::from(tick) / 5.;
+                routines.due(*wall, *wall - 100., audio).unwrap();
+                routines.status(*wall, *wall - 100.)["announcements"]
+                    .as_array()
+                    .unwrap()
+                    .first()
+                    .cloned()
+            };
+            if let Some(mut notice) = notice {
+                attempts += 1;
+                attempt_times.push(101. + f64::from(tick) / 5.);
+                assert!(
+                    attempts <= 3,
+                    "a permanently failed announcement must stop retrying"
+                );
+                let sid = format!("{tick:032x}");
+                notice["type"] = "announcement".into();
+                notice["sessionId"] = sid.clone().into();
+                send(&mut h.pi, notice).await;
+                until(&mut h.pi, "announcement.start").await;
+                if failure == "ownership" {
+                    send(&mut h.pi, json!({"type":"announcement.failed","sessionId":sid,"id":1,"reason":"Runtime rejected announcement ownership"})).await;
+                } else {
+                    send(
+                        &mut h.pi,
+                        json!({"type":"announcement.ready","sessionId":sid}),
+                    )
+                    .await;
+                }
+                until(&mut h.pi, "session.cancel").await;
+            }
+        }
+        assert_eq!(attempts, 3);
+        assert_eq!(attempt_times, [101., 131., 251.]);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), h.receive_pi.recv())
+                .await
+                .is_err(),
+            "the listener connection must not be replaced"
+        );
+        h.gateway.lock().await.fail_playback = false;
+        h.wake("Hey Orion, still connected").await;
+        until(&mut h.pi, "session.finish").await;
+        assert_eq!(
+            h.gateway
+                .lock()
+                .await
+                .routines
+                .as_ref()
+                .unwrap()
+                .0
+                .status(600., 500.)["alerts"][0]["state"],
+            "missed"
+        );
+        h.stop().await;
+    }
 }

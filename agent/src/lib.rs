@@ -8,11 +8,14 @@ mod types;
 
 pub use config::{AgentConfig, DEFAULT_EFFORT, DEFAULT_MODEL};
 pub use prompt::ORION_INSTRUCTIONS;
-pub use runtime::{AgentHandle, AgentService};
+pub use runtime::{AgentHandle, AgentReply, AgentService};
 pub use types::{AgentInfo, ModelInfo};
 
+pub mod lists;
 mod memory;
+mod reminders;
 pub mod tools;
+pub mod weather;
 pub use tools::AgentEvent;
 
 mod personality;

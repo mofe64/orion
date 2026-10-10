@@ -200,10 +200,30 @@ a separate torque-release command after verified arrival. See
 
 ## Timers and alarms
 
-The runtime owns one-time timers and clock alarms. Once created, they run without
+The runtime owns timers, timed reminders and one-time or recurring clock alarms. Once created, they run without
 Studio, Codex or a network connection. Timers use elapsed time while the daemon
 runs; clock alarms use an explicit timestamp. On restart, the runtime reconstructs
 timer deadlines from saved wall-clock times, so an accurate Pi clock matters.
+Recurring rules save selected weekdays, a local `HH:MM` time and the Pi IANA zone.
+Each firing saves its next occurrence atomically. DST spring gaps skip that day;
+autumn folds use the earlier occurrence once. The store caps active alerts at 32
+and total alerts at 64, reserving a next-occurrence slot for recurring creation.
+
+A reminder chimes and speaks through an announcement voice session, waiting for
+active replies to finish. Saying “Hey Orion” during it acknowledges the reminder.
+Without acknowledgement it repeats once after two minutes, then becomes missed.
+After downtime, reminders up to twelve hours late announce their earlier time;
+older reminders become missed. The coordinator acknowledges completed playback
+through `announced`, so a failed delivery does not start the retry clock.
+After dismissal, a labelled alarm speaks its label through the same path.
+Snooze recreates the most recently dismissed ringing alarm or timer as a relative countdown with
+its label and kind, within a two-minute window (default nine minutes, range 1–60).
+Next-conversation reminders live in the agent’s separate reminder store and are
+removed only after the model turn that includes them succeeds.
+
+Alarms can request a morning briefing after dismissal. The persisted dismissal notice uses the announcement queue; the coordinator starts an agent turn only when no reply is active. The agent reads weather, today’s alerts and the to-do list through tools. Weather location preferences are separate from memory in `weather.json`; fixed Open-Meteo requests use a five-second timeout.
+
+The runtime scheduler also owns sunrise eligibility and light routine deadlines. Manual lamp programs interpolate brightness and RGBW using monotonic time; scenes/speech retain foreground ownership. Ordinary fades remain masked during rest; sunrise alone may illuminate while mechanically resting. Wind-down enters the existing rest lifecycle after foreground activity ends. Focus uses a persisted timer and a temporary mode override, restoring the saved mode after ringing. See [runtime light controls](../runtime/README.md) for bounds, colors, cancellation and restart behaviour.
 
 A due alert interrupts scene audio and speech, then repeats the selected sound
 through the normal audio device. The default two-tone signal includes short gaps
@@ -214,7 +234,7 @@ without enabling torque or moving home. Ringing defers automatic rest while Orio
 is awake.
 
 Studio **Settings → Voice and sounds** saves separate alarm and timer defaults on
-the Pi. The runtime chooses a sound when an alert starts, including alerts scheduled
+the Pi; the agent exposes the same choice through `set_alert_sound`. The runtime chooses a sound when an alert starts, including alerts scheduled
 before the setting changed. Overlapping alerts share the sound chosen by the first
 alert to ring. Changing a default while ringing applies to a later alert group.
 
@@ -261,3 +281,13 @@ returns home smoothly, retains speech captured while waking, and plays clear
 audio. Microphone direction, echo and cable clearance also require the robot.
 See the [runtime tests](../runtime/README.md#build-and-test) and
 [hardware setup](../hardware/servo_setup/README.md).
+
+## Shopping and to-do storage
+
+The agent owns `lists.json` beside `MEMORY.md`, separate from memory search and
+the runtime scheduler. Items have stable IDs, text and UTC creation times. The
+store locks mutations and atomically replaces the file; removal checks an item
+snapshot and clearing checks the complete list after explicit confirmation.
+Studio calls the private service through the gateway, while voice tools read and
+write the same store. Neither path adds a second scheduler or resets personality
+context.

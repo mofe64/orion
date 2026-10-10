@@ -14,6 +14,7 @@ impl Sentences {
         self.raw.push_str(delta);
         let chars: Vec<_> = self.raw.char_indices().collect();
         let mut citation = false;
+        let mut bracket = false;
         let mut boundary = None;
         for (index, &(offset, ch)) in chars.iter().enumerate() {
             if ch == '' {
@@ -22,7 +23,14 @@ impl Sentences {
             if ch == '' {
                 citation = false;
             }
+            if ch == '[' {
+                bracket = true;
+            }
+            if ch == ']' {
+                bracket = false;
+            }
             if !citation
+                && !bracket
                 && matches!(ch, '.' | '!' | '?')
                 && chars
                     .get(index + 1)
@@ -51,6 +59,17 @@ impl Sentences {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn holds_unclosed_bracket_until_final_normalization() {
+        let mut stream = Sentences::default();
+        assert_eq!(
+            stream.push("Ready. Press the [ key. Continue. ").unwrap(),
+            Some("Ready.".into())
+        );
+        let final_text = spoken_response("Ready. Press the [ key. Continue. ").unwrap();
+        assert_eq!(final_text, "Ready. Press the key. Continue.");
+        assert!(final_text.starts_with(&stream.emitted));
+    }
     #[test]
     fn holds_split_reaction_tags_and_preserves_final_prefix() {
         let mut stream = Sentences::default();

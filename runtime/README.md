@@ -509,3 +509,47 @@ names, and `ring_sound` identifies the active sound. Supported IDs are `two_tone
 preference and takes effect when a later alert group starts. See
 [timer and alarm behavior](../docs/system-architecture.md#timers-and-alarms) and
 [saved state](../docs/configuration.md#saved-files).
+
+## Reminders and recurring alerts
+
+The `routines` JSON command accepts `reminder` with `label` and exactly one of
+`due_unix`, `seconds`, or `repeat`; `alarm` accepts `label` and exactly one of
+`due_unix` or `repeat`. A repeat contains unique weekday names (`mon` through
+`sun`) and `time: HH:MM`. The runtime discovers and saves the Pi IANA zone.
+A time in a spring-forward gap rings at the first valid minute after the gap (01:30 in London rings at 02:00 local). Autumn folds use the earlier occurrence and ring once that day. Firing and
+saving the next occurrence share one atomic write. Old alert files load with
+new fields defaulted; older runtime releases cannot read the extended file.
+
+Reminders enter `announcing`; `announced { id }` starts a two-minute acknowledgement
+window. An unacknowledged reminder announces once more, then becomes `missed`.
+`announce_failed { id }` records delivery failures. The runtime retries after 30 seconds, then two minutes, and stops after three failures: reminders become `missed`, and alarm notices or briefings are dropped. Counts and backoff survive restart. Offline delays up to twelve hours announce late. Relative reminder and retry
+deadlines use elapsed time while running. `stop` dismisses only ringing alarms
+and timers. Unspoken reminders remain pending for delivery after a three-second
+dismissal delay; a longer retry backoff stays intact. Cancelling the last ringing
+alert uses the same delay and preserves reminders. Only a dismissed ringing alarm
+or timer becomes the snooze target. `dismiss_announcement { id }` acknowledges
+the specific reminder or clears the alarm notice interrupted during playback.
+Wake while an announcement is waiting or thinking preserves it for later delivery.
+A labelled dismissed alarm queues its label for speech.
+Cancellation affects one occurrence; use `cancel { id, series: true }` to cancel the recurring series as well. A snooze has its own series and never repeats a briefing or sunrise. `snooze` accepts optional `minutes` (1–60, default 9) within two minutes of dismissal;
+it creates a relative countdown preserving kind and label. Storage allows 32 active
+and 64 total alerts; recurring creation reserves space for its next occurrence. Missed, cancelled and dismissed reminders release their in-memory acknowledgement deadlines.
+
+Announcement voice ownership authorizes audio while resting without confirming
+user activity or enabling torque. See [voice architecture](../docs/voice-architecture.md).
+
+Alarms accept optional `briefing: true`. Dismissal creates a persisted announcement with purpose `briefing` after a three-second delay, including for an empty label; `announced` clears that notice. The coordinator supplies its agent response through the existing announcement playback session.
+
+`lamp-effect` accepts optional `transition_seconds` (0–3600). Brightness and RGBW interpolate from the current manual state using monotonic time; the target effect applies immediately. Another lamp command cancels the fade. Scenes and speech retain foreground ownership while fades keep advancing. Ordinary fades advance behind the rest darkness mask. Explicit `character start` cancels a light routine and clears its manual light.
+
+Alarms accept `sunrise_minutes` (5–60). The earliest eligible alarm fades from 3% amber `[255,100,0,80]` to full warm white `[40,20,4,210]`. Sunrise bypasses only the rest light mask, without motion or user activity. Dismissal leaves full warm white on until a lamp command or character start changes it; cancellation restores the previous manual lamp. A manual change stops an active sunrise without restarting it on the next tick.
+
+`routines {"action":"start_light_routine","routine":"wind_down","minutes":20}` fades to 8% warm white then requests the ordinary deferred sleep lifecycle: speech, scenes and confirmed voice activity finish before rest. Focus (5–120 minutes) selects full cool white `[150,190,255,110]` and creates a persisted timer labelled `Focus session`; ringing changes the lamp to warm white. The temporary lamp-mode override ends after ringing, restoring the saved mode. Starting another routine, a manual lamp command or explicit character start cancels the routine and its focus timer. `stop_light_routine` restores the previous manual lamp. Fades/routine ownership are ephemeral: restarting cancels wind-down without requesting delayed rest and drops focus light ownership while the persisted focus timer retains its deadline and sound; the saved mode is never overwritten by a routine. `start_light_routine` discloses restart cancellation in its tool description.
+
+
+
+### Roll back to a runtime without reminders
+
+Before the first save that adds reminder/recurrence fields, Orion preserves the exact legacy file at `~/.config/orion/routines.json.pre-reminders`. The backup is created once and never replaced; if it cannot be secured, the alert-state save fails and the legacy file stays intact. A fresh installation, or a file already written in the extended format, has no legacy snapshot to preserve.
+
+Stop `oriond` before rollback. Keep a separate copy of the extended `routines.json`, restore `routines.json.pre-reminders` over `routines.json`, deploy the older runtime, and restart it. Alerts and changes made after the backup are absent from the restored snapshot. The sound companion file may remain; its ringing-window key prevents stale sound state from changing restored alerts. An older runtime rejects the extended file's unknown fields, so changing only the executable is insufficient.

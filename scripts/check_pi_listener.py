@@ -10,7 +10,7 @@ async def main(url="ws://127.0.0.1:7448"):
         while True:
             try:
                 async with connect(url, open_timeout=2) as listener:
-                    await listener.send(json.dumps(dict(type='hello', protocol=1, token='invalid-deployment-probe')))
+                    await listener.send(json.dumps(dict(type='hello', protocol=2, token='invalid-deployment-probe')))
                     try:
                         await listener.recv()
                     except ConnectionClosed as error:
