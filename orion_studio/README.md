@@ -56,6 +56,11 @@ Background connection attempts leave address editing, pairing and saved-lamp
 switching available. **Cancel connection** stops the current attempt without
 forgetting saved lamps. **Cancel request** stops waiting for a spoken code and
 keeps an already connected lamp active.
+The panel distinguishes code verification, checking Orion and saving the
+connection. Credential-store access can wait for a system permission dialog.
+On macOS, find the **orion-studio** Keychain dialog, enter your login Keychain
+password and choose **Allow** to continue. Check other displays if the dialog
+is hidden. This password is entered in the macOS dialog, never in Studio.
 Browser development keeps the connection in memory for the current tab.
 See [saved pairing](../docs/configuration.md#saved-pairing) for storage and limits.
 

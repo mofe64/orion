@@ -27,8 +27,11 @@ export const nativePairingStore: PairingStore = {
 };
 
 export type ConnectionPhase = "loading" | "unpaired" | "connecting" | "connected" | "reconnecting" | "disconnected" | "auth_required" | "error";
+export type ConnectionStep = "credentials" | "code" | "verification" | "saving";
 export interface ConnectionSnapshot {
   phase: ConnectionPhase;
+  /** The pending connection operation; credential access may need OS permission. */
+  step?: ConnectionStep | null;
   persistent: boolean;
   paired: boolean;
   address: string | null;
@@ -39,7 +42,7 @@ export interface ConnectionSnapshot {
   /** Every lamp saved on this computer, including the active one. */
   lamps?: SavedLamp[];
 }
-const INITIAL: ConnectionSnapshot = { phase: "loading", persistent: true, paired: false, address: null,
+const INITIAL: ConnectionSnapshot = { phase: "loading", step: null, persistent: true, paired: false, address: null,
   connection: null, status: null, capabilities: null, error: null, lamps: [] };
 
 export function normalizeGatewayUrl(value: string): string {
@@ -83,8 +86,8 @@ export class PairingController {
     clearTimeout(this.timer); this.timer = undefined; this.failures = 0;
     return ++this.generation;
   }
-  private offline(phase: ConnectionPhase, error: string | null = null) {
-    this.publish({ phase, error, connection: null, status: null, capabilities: null });
+  private offline(phase: ConnectionPhase, error: string | null = null, step: ConnectionStep | null = null) {
+    this.publish({ phase, step, error, connection: null, status: null, capabilities: null });
   }
   private write(operation: () => Promise<void>) {
     const result = this.writes.then(operation);
@@ -93,7 +96,7 @@ export class PairingController {
   }
   async start() {
     const generation = this.reset();
-    this.offline("loading");
+    this.offline("loading", null, "credentials");
     try {
       await this.writes;
       if (generation !== this.generation) return;
@@ -104,7 +107,7 @@ export class PairingController {
       await this.refreshLamps(generation);
       if (generation !== this.generation) return;
       if (!target) { this.offline("unpaired"); return; }
-      this.offline("connecting");
+      this.offline("connecting", null, "verification");
       await this.poll(generation);
     } catch (error) {
       if (generation === this.generation) this.offline("error", String(error instanceof Error ? error.message : error));
@@ -112,19 +115,20 @@ export class PairingController {
   }
   async pair(address: string, token: string) {
     const generation = this.reset();
-    this.offline("connecting");
+    this.offline("connecting", null, "verification");
     try {
       const target = { url: normalizeGatewayUrl(address), token: token.trim() };
       if (target.token.length < 32 || target.token.length > 4096) throw new Error("Enter Orion's complete connection token.");
       const [status, capabilities] = await Promise.all([this.probe.status(target), this.probe.capabilities(target)]);
       if (generation !== this.generation) return false;
+      this.publish({ step: "saving" });
       await this.write(() => this.store.save(target));
       if (generation !== this.generation) return false;
-      this.target = target;
-      this.publish({ phase: "connected", paired: true, address: target.url,
-        connection: target, status, capabilities, error: null });
       await this.refreshLamps(generation);
       if (generation !== this.generation) return false;
+      this.target = target;
+      this.publish({ phase: "connected", step: null, paired: true, address: target.url,
+        connection: target, status, capabilities, error: null });
       this.schedule(generation, 1000);
       return true;
     } catch (error) {
@@ -153,7 +157,7 @@ export class PairingController {
   cancelCodeRequest() { this.codeRequest?.abort(); this.codeRequest = undefined; }
   async pairWithCode(address: string, code: string) {
     const generation = this.reset();
-    this.offline("connecting");
+    this.offline("connecting", null, "code");
     try {
       const result = await exchangePairingCode(normalizeGatewayUrl(address), code);
       if (generation !== this.generation) return false;
@@ -192,7 +196,7 @@ export class PairingController {
         this.snapshot.capabilities ?? this.probe.capabilities(target)]);
       if (generation !== this.generation) return;
       this.failures = 0;
-      this.publish({ phase: "connected", connection: target, status, capabilities, error: null });
+      this.publish({ phase: "connected", step: null, connection: target, status, capabilities, error: null });
       this.schedule(generation, 1000);
     } catch (error) {
       if (generation !== this.generation) return;
@@ -207,7 +211,7 @@ export class PairingController {
   reconnect() {
     if (!this.target) return this.start();
     const generation = this.reset();
-    this.offline("connecting");
+    this.offline("connecting", null, "verification");
     return this.poll(generation);
   }
   disconnect() { this.reset(); this.offline("disconnected"); }
@@ -236,7 +240,7 @@ export class PairingController {
   async switchTo(url: string) {
     if (!this.store.select) return;
     const generation = this.reset();
-    this.offline("connecting");
+    this.offline("connecting", null, "credentials");
     try {
       await this.write(() => this.store.select!(url));
       if (generation !== this.generation) return;

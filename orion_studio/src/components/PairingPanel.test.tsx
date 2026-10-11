@@ -4,6 +4,21 @@ import { PairingController, type ConnectionSnapshot } from "../lib/pairing";
 import { PairingPanel } from "./PairingPanel";
 
 describe("saved pairing controls", () => {
+  it.each([
+    ["credentials", "Waiting for secure credential storage. Check for a system permission dialog."],
+    ["saving", "Saving the connection securely. Check for a system permission dialog."],
+    ["code", "Checking the pairing code with Orion…"],
+    ["verification", "Checking Orion’s status and capabilities…"],
+  ] as const)("shows the actual %s wait ahead of pairing instructions", (step, message) => {
+    const state: ConnectionSnapshot = {
+      phase: "connecting", step, persistent: true, paired: false, address: "http://orion.local:7447",
+      connection: null, status: null, capabilities: null, error: null,
+    };
+    const html = renderToStaticMarkup(<PairingPanel controller={new PairingController()} state={state} onClose={() => {}} />);
+    expect(html).toContain(message);
+    expect(html).not.toContain("Orion will say a 6-digit code. Type it here.");
+    expect(html).toContain("Cancel connection");
+  });
   it("offers spoken-code pairing first with a manual token fallback", () => {
     const state: ConnectionSnapshot = {
       phase: "unpaired", persistent: true, paired: false, address: "http://orion.local:7447",

@@ -21,6 +21,46 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("pairing and reconnect", () => {
+  it("identifies a credential-store wait during startup and clears it on cancellation", async () => {
+    const { controller, store, probe } = setup();
+    const pending = deferred<typeof target | null>();
+    store.load.mockReturnValueOnce(pending.promise);
+    const starting = controller.start();
+    await vi.waitFor(() => expect(store.load).toHaveBeenCalled());
+    expect(controller.current()).toMatchObject({ phase: "loading", step: "credentials" });
+    controller.disconnect();
+    expect(controller.current()).toMatchObject({ phase: "disconnected", step: null });
+    pending.resolve(target);
+    await starting;
+    expect(controller.current()).toMatchObject({ phase: "disconnected", step: null });
+    expect(probe.status).not.toHaveBeenCalled();
+  });
+  it("distinguishes code exchange, robot verification and a pending credential save", async () => {
+    const { store, probe } = setup(null);
+    const listing = deferred<[]>();
+    const list = vi.fn(() => listing.promise);
+    const controller = new PairingController({ ...store, list }, probe);
+    const exchange = deferred<{ api_version: number; token: string }>();
+    const verification = deferred<GatewayStatus>();
+    const saving = deferred<void>();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => exchange.promise }));
+    probe.status.mockReturnValueOnce(verification.promise);
+    store.save.mockReturnValueOnce(saving.promise);
+    const pairing = controller.pairWithCode(target.url, "012345");
+    expect(controller.current()).toMatchObject({ phase: "connecting", step: "code" });
+    exchange.resolve({ api_version: 2, token: target.token });
+    await vi.waitFor(() => expect(probe.status).toHaveBeenCalled());
+    expect(controller.current()).toMatchObject({ phase: "connecting", step: "verification" });
+    verification.resolve(status);
+    await vi.waitFor(() => expect(store.save).toHaveBeenCalled());
+    expect(controller.current()).toMatchObject({ phase: "connecting", step: "saving", connection: null });
+    saving.resolve();
+    await vi.waitFor(() => expect(list).toHaveBeenCalled());
+    expect(controller.current()).toMatchObject({ phase: "connecting", step: "saving", connection: null });
+    listing.resolve([]);
+    expect(await pairing).toBe(true);
+    expect(controller.current()).toMatchObject({ phase: "connected", step: null });
+  });
   it("exchanges a spoken code and saves the returned token through the existing store", async () => {
     const { controller, store, probe } = setup(null);
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 2, token: target.token }) });

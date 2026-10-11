@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Link2, Plus, Unplug, X } from "lucide-react";
-import type { ConnectionSnapshot, PairingController } from "../lib/pairing";
+import type { ConnectionSnapshot, ConnectionStep, PairingController } from "../lib/pairing";
+
+const connectionMessages: Record<ConnectionStep, string> = {
+  credentials: "Waiting for secure credential storage. Check for a system permission dialog.",
+  code: "Checking the pairing code with Orion…",
+  verification: "Checking Orion’s status and capabilities…",
+  saving: "Saving the connection securely. Check for a system permission dialog.",
+};
+const connectionLabels: Record<ConnectionStep, string> = {
+  credentials: "Checking saved connections…", code: "Checking code…",
+  verification: "Checking Orion…", saving: "Saving connection…",
+};
 
 export function PairingPanel({ controller, state, onClose }: {
   controller: PairingController; state: ConnectionSnapshot; onClose: () => void;
@@ -77,7 +88,7 @@ export function PairingPanel({ controller, state, onClose }: {
         : "This browser connection lasts for this tab only. Use the desktop app to connect once and remember Orion."
       : state.address}</p>
     <p role="status" aria-live="polite" className={state.error ? "voice-error" : "field-help"}>
-      {requestingCode ? "Listen to Orion…" : state.error ?? codeMessage ?? (needsPairing && !changingAddress
+      {requestingCode ? "Listen to Orion…" : state.error ?? (state.step ? connectionMessages[state.step] : null) ?? codeMessage ?? (needsPairing && !changingAddress
         ? useToken ? "Use the token provided during Orion setup." : "Orion will say a 6-digit code. Type it here."
         : state.phase === "connected" ? state.persistent ? "Connected · connection saved" : "Connected · this session only" : state.phase === "disconnected"
         ? state.persistent ? "Disconnected for this session. Your connection is still saved." : "Disconnected for this session." : busy || backgroundConnecting ? "Connecting…" : "Use the token provided during Orion setup.")}</p>
@@ -91,7 +102,7 @@ export function PairingPanel({ controller, state, onClose }: {
       {!changingAddress && (useToken
         ? <label>Connection token<input type="password" value={token} required minLength={32} maxLength={4096} autoComplete="off" spellCheck={false} onChange={(event) => setToken(event.target.value)} /></label>
         : codeRequested && <label>Pairing code<input value={code} required minLength={6} maxLength={6} pattern="[0-9]{6}" inputMode="numeric" autoComplete="one-time-code" spellCheck={false} onChange={(event) => setCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))} /></label>)}
-      <button className="primary-button" type="submit" disabled={busy}><Link2 size={15} />{requestingCode ? "Listen to Orion…" : busy ? "Connecting…" : changingAddress ? "Save address and connect" : useToken
+      <button className="primary-button" type="submit" disabled={busy}><Link2 size={15} />{requestingCode ? "Listen to Orion…" : busy ? state.step ? connectionLabels[state.step] : "Connecting…" : changingAddress ? "Save address and connect" : useToken
         ? state.persistent ? "Connect and remember Orion" : "Connect for this session" : codeRequested ? "Pair" : "Get code"}</button>
       {!changingAddress && !useToken && codeRequested && <button className="quiet-button" type="button" disabled={busy} onClick={() => { void requestCode(); }}>Say it again</button>}
       {!changingAddress && <button className="quiet-button" type="button" disabled={busy} onClick={() => { setUseToken(!useToken); setToken(""); resetCode(); }}>{useToken ? "Use a spoken code instead" : "Use a token instead"}</button>}
