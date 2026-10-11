@@ -7,6 +7,7 @@ import { SettingToggle } from "./Settings";
 const controls: Array<[BehaviourKey, string, string]> = [
   ["object_glances", "Object glances", "Occasionally direct an idle glance toward an object on the desk."],
   ["mutual_gaze", "Mutual gaze", "Acknowledge a sustained look with a small, silent response."],
+  ["arrival_notice", "Arrival notice", "Give a silent welcome after the room has been empty for ten minutes."],
 ];
 const noSubscription = () => () => {};
 const emptySnapshot = () => emptyBehaviours;

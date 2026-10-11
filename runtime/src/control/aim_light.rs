@@ -50,6 +50,57 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .1;
         comfort.validate_sequence(&sequence)
     }
+    pub(crate) fn prepare_arrival_motion(
+        &self,
+        anchor: &JointPositions,
+        azimuth: f64,
+        elevation: f64,
+    ) -> Result<MotionDefinition> {
+        let model = self
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("V2 geometry unavailable".into()))?;
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let limits = self.driver.joint_limits()?;
+        let centre = self.measured_positions();
+        let mut target = self.poses.pose("attentive")?.clone();
+        let delta = azimuth - centre["base_yaw_joint"];
+        target.insert(
+            "base_yaw_joint".into(),
+            centre["base_yaw_joint"] + delta.sin().atan2(delta.cos()).clamp(-0.35, 0.35),
+        );
+        let (target, clamped) =
+            crate::expression::gaze::solve_aim(model, &target, azimuth, elevation, &limits)?;
+        if clamped {
+            return Err(Error::InvalidState(
+                "Arrival is outside calibrated gaze reach".into(),
+            ));
+        }
+        let target = comfort.project(&centre, &target)?.0;
+        let head =
+            crate::expression::gaze::solve_aim(model, &centre, azimuth, elevation, &limits)?.0;
+        let head = comfort.project(&centre, &head)?.0;
+        let mut definition = self.motions.motion("arrival_notice")?.clone();
+        for frame in &mut definition.keyframes {
+            let pose = match frame.marker.as_deref() {
+                Some("arrival_head") => Some(&head),
+                Some("arrival_attentive") => Some(&target),
+                _ => None,
+            };
+            if let Some(pose) = pose {
+                frame.target = pose
+                    .iter()
+                    .map(|(joint, position)| (joint.clone(), position - anchor[joint]))
+                    .collect();
+            }
+        }
+        self.validate_curiosity_motion(&definition, anchor, None)?;
+        Ok(definition)
+    }
+
     pub fn configure_comfort_box(&mut self, config: ComfortBoxConfig) -> Result<()> {
         let comfort = ComfortBox::from_config(&config, &self.poses, &self.driver.joint_limits()?)?;
         self.comfort = Some((config, comfort));

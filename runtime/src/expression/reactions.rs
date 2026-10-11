@@ -48,6 +48,35 @@ impl MutualPolicy {
         None
     }
 }
+#[derive(Debug, Default)]
+pub(super) struct ArrivalPolicy {
+    empty_since: Option<f64>,
+    last: Option<f64>,
+}
+impl ArrivalPolicy {
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+    fn observe(&mut self, faces: &[SeenFace], now: f64) -> Option<SeenFace> {
+        if self.last.is_some_and(|last| now - last > 2.0) {
+            self.clear();
+        }
+        self.last = Some(now);
+        if faces.is_empty() {
+            self.empty_since.get_or_insert(now);
+            return None;
+        }
+        let empty_since = self.empty_since.take();
+        empty_since
+            .filter(|since| now - since >= 600.0)
+            .map(|_| faces[0].clone())
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReactionKind {
+    Mutual,
+    Arrival,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Notice,
@@ -57,6 +86,7 @@ enum Stage {
 }
 #[derive(Debug)]
 pub(super) struct Reaction {
+    kind: ReactionKind,
     track: u64,
     started: f64,
     deadline: f64,
@@ -96,6 +126,9 @@ impl CharacterCoordinator {
             .or(self.gaze.status().track_id);
         let candidate = self.surroundings.mutual.observe(faces, now, pinned);
         if let Some(reaction) = self.surroundings.reaction.as_ref() {
+            if reaction.kind != ReactionKind::Mutual {
+                return Ok(());
+            }
             if now >= reaction.deadline {
                 return self.settle_reaction(now, core);
             }
@@ -204,6 +237,7 @@ impl CharacterCoordinator {
         self.preempt_idle_or_thinking(now, core)?;
         let run = core.play_generated_anchored_relative(definition, anchor, now)?;
         self.surroundings.reaction = Some(Reaction {
+            kind: ReactionKind::Mutual,
             track,
             started: now,
             deadline: now + 8.0,
@@ -215,6 +249,82 @@ impl CharacterCoordinator {
         self.reset_timers(now);
         Ok(())
     }
+    pub(super) fn observe_arrival<D: RuntimeDriver>(
+        &mut self,
+        faces: &[SeenFace],
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<()> {
+        if !self.surroundings.settings.arrival_notice {
+            self.surroundings.arrival.clear();
+            return Ok(());
+        }
+        let Some(face) = self.surroundings.arrival.observe(faces, now) else {
+            return Ok(());
+        };
+        if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
+            return Ok(());
+        }
+        let anchor = self
+            .status
+            .active_anchor
+            .clone()
+            .ok_or_else(|| Error::InvalidState("Arrival needs an anchor".into()))?;
+        let definition = core.prepare_arrival_motion(&anchor, face.azimuth, face.elevation)?;
+        let context = CuriosityContext {
+            enabled: true,
+            camera_on: true,
+            tracking_on: true,
+            powered_and_awake: true,
+            character_available: true,
+            ..Default::default()
+        };
+        if self
+            .surroundings
+            .budget
+            .try_spend(
+                now,
+                &format!("face:{}", face.track_id),
+                CuriosityKind::Gesture,
+                context,
+            )
+            .is_err()
+        {
+            return Ok(());
+        }
+        self.preempt_idle_or_thinking(now, core)?;
+        let run = core.play_generated_anchored_relative(definition, anchor.clone(), now)?;
+        self.surroundings.reaction = Some(Reaction {
+            kind: ReactionKind::Arrival,
+            track: face.track_id,
+            started: now,
+            deadline: now + 8.0,
+            run: Some(run),
+            stage: Stage::Notice,
+            centre: anchor,
+        });
+        self.status.active_clip = Some("arrival_notice".into());
+        self.reset_timers(now);
+        Ok(())
+    }
+    pub(crate) fn curiosity_light_intensity(&self, now: f64) -> f64 {
+        self.surroundings
+            .reaction
+            .as_ref()
+            .filter(|reaction| {
+                reaction.kind == ReactionKind::Arrival
+                    && reaction.stage != Stage::Returning
+                    && self.surroundings.runtime_allowed
+                    && self.surroundings.fresh(now)
+            })
+            .map_or(0.55, |reaction| {
+                0.55 + 0.25
+                    * (std::f64::consts::PI * ((now - reaction.started) / 3.0).clamp(0.0, 1.0))
+                        .sin()
+                        .powi(2)
+            })
+    }
+
     fn social_clip<D: RuntimeDriver>(
         &self,
         name: &str,
@@ -261,6 +371,7 @@ impl CharacterCoordinator {
             && let Some(phase) = terminal_phase(core, run)
         {
             if phase != MovementPhase::Completed
+                || reaction.kind == ReactionKind::Arrival
                 || matches!(reaction.stage, Stage::Away | Stage::Returning)
             {
                 self.surroundings.reaction = None;
@@ -275,7 +386,10 @@ impl CharacterCoordinator {
             || !self.surroundings.runtime_allowed
             || !self.status.enabled
             || !self.gaze.status().enabled
-            || !self.surroundings.settings.mutual_gaze;
+            || !match reaction.kind {
+                ReactionKind::Mutual => self.surroundings.settings.mutual_gaze,
+                ReactionKind::Arrival => self.surroundings.settings.arrival_notice,
+            };
         if !invalid || reaction.stage == Stage::Returning {
             return Ok(());
         }
@@ -328,6 +442,26 @@ mod tests {
         }
     }
     #[test]
+    fn arrival_requires_ten_minutes_of_observed_emptiness_and_never_replays() {
+        let mut policy = ArrivalPolicy::default();
+        assert!(policy.observe(&[face(1, true)], 0.0).is_none());
+        for second in 1..=600 {
+            assert!(policy.observe(&[], second as f64).is_none());
+        }
+        assert_eq!(policy.observe(&[face(1, true)], 601.0).unwrap().track_id, 1);
+        assert!(policy.observe(&[face(2, true)], 602.0).is_none());
+        for second in 603..=1202 {
+            policy.observe(&[], second as f64);
+        }
+        // A camera stall is unknown time, not proof of an empty room.
+        assert!(policy.observe(&[face(3, true)], 1205.0).is_none());
+        for second in 1206..=1806 {
+            policy.observe(&[], second as f64);
+        }
+        policy.clear();
+        assert!(policy.observe(&[face(3, true)], 1807.0).is_none());
+    }
+    #[test]
     fn mutual_requires_continuity_tracks_one_person_and_fires_once_per_look() {
         let mut policy = MutualPolicy::default();
         for at in [0.0, 0.5, 1.0] {
@@ -351,7 +485,12 @@ mod execution_tests {
     fn social_catalogue_variants_compile_at_v2_powered_anchors() {
         let (core, _, _) = crate::expression::gaze::tests::following();
         let limits = core.driver().joint_limits().unwrap();
-        for name in ["mutual_gaze_notice", "mutual_gaze_hi", "mutual_gaze_away"] {
+        for name in [
+            "arrival_notice",
+            "mutual_gaze_notice",
+            "mutual_gaze_hi",
+            "mutual_gaze_away",
+        ] {
             let definition = core.motions().motion(name).unwrap();
             assert_eq!(definition.space, MotionSpace::AnchorRelative);
             assert!(definition.return_to_anchor);
@@ -391,6 +530,92 @@ mod execution_tests {
                     assert!((end[joint] - position).abs() < 1e-8);
                 }
             }
+        }
+    }
+    #[test]
+    fn arrival_faces_a_real_bearing_lifts_light_and_restores_its_anchor() {
+        let (mut core, _, boot) = crate::expression::gaze::tests::following();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let profile: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("hardware/profiles/v2.json")).unwrap(),
+        )
+        .unwrap();
+        core.configure_comfort_box(serde_json::from_value(profile["comfort_box"].clone()).unwrap())
+            .unwrap();
+        let mut character = CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        for step in 1..=250 {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        character.set_curiosity_available(true);
+        let anchor = character.status.active_anchor.clone().unwrap();
+        let bearing = crate::control::camera_rays::Bearing::from_direction(
+            core.camera_kinematics()
+                .unwrap()
+                .fk(&anchor)
+                .unwrap()
+                .camera
+                .rotate_vector([0.0, 0.0, 1.0]),
+        );
+        let observe = |now: f64,
+                       present: bool,
+                       character: &mut CharacterCoordinator,
+                       core: &mut RuntimeCore<_>| {
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            let faces = if present {
+                serde_json::json!([{"track_id":1, "azimuth":bearing.azimuth + 0.15,
+                "elevation":bearing.elevation, "frontal":true}])
+            } else {
+                serde_json::json!([])
+            };
+            let value = serde_json::from_value(
+                serde_json::json!({"capture_boottime_ns":boot.load(Ordering::Relaxed),
+                "camera_on":true,"tracking_mode":"faces","settings":{"arrival_notice":true},
+                "objects":[],"faces":faces,"looking_away":null}),
+            )
+            .unwrap();
+            character.observe_surroundings(value, now, core).unwrap();
+        };
+        for step in 0..1200 {
+            observe(5.0 + step as f64 * 0.5, false, &mut character, &mut core);
+        }
+        assert!(character.surroundings.reaction.is_none());
+        observe(605.0, true, &mut character, &mut core);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("arrival_notice")
+        );
+        assert_eq!(character.curiosity_light_intensity(605.0), 0.55);
+        assert!((character.curiosity_light_intensity(606.5) - 0.8).abs() < 1e-9);
+        let mut reached_attentive = false;
+        for step in 1..=500 {
+            let now = 605.0 + step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            if step % 25 == 0 {
+                observe(now, true, &mut character, &mut core);
+            }
+            reached_attentive |= core.snapshot().joints.iter().any(|joint| {
+                joint.name == "shoulder_pitch_joint" && joint.position < anchor[&joint.name] - 0.04
+            });
+        }
+        assert!(reached_attentive);
+        assert!(character.surroundings.reaction.is_none());
+        assert_eq!(character.curiosity_light_intensity(615.), 0.55);
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+        for joint in &core.snapshot().joints {
+            assert!((joint.position - anchor[&joint.name]).abs() < 0.01);
         }
     }
     #[test]

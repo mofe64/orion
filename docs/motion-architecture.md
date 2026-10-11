@@ -146,10 +146,34 @@ disabled settings and quiet hours close admission. A caller reserves budget
 after checking its candidate and motion; failed execution does not refund it.
 
 The policy has bounded in-memory state and no detector, motion or servo IO.
-Object idle glances and mutual gaze use this policy. The remaining optional behaviours are
-pending. The runtime closes admission during active lamp routines (including
+Object idle glances, mutual gaze and arrival notice use this policy. New-object
+peek, Hands mode and presence deferral are pending. The runtime closes admission during active lamp routines (including
 wind-down and sunrise), alerts and rest; it has no independent clock-based
 quiet-hours schedule.
+
+### Arrival notice
+
+With `arrival_notice` enabled, a face appearing after ten minutes of continuous
+empty observations can receive a silent attentive entry and a warm light lift.
+A camera gap over two seconds, privacy change or tracking change resets the
+empty-room evidence. Startup and re-enabling a preference never imply an empty
+room. The arrival is consumed even when higher-priority activity prevents the
+response; it is not replayed later.
+
+The head turns first using the observed base-frame bearing, then the arm follows
+into the authored attentive posture. The planner projects its drawings into the
+comfort box and validates the complete calibrated trajectory, including the
+return to the unchanged character anchor. The shared budget and the same
+`face:TRACK_ID` habituation key used by mutual gaze govern admission. A brief
+three-second intensity lift accompanies the existing warm background effect.
+There is no audio. Manual light, scenes, voice, Stop and rest retain priority.
+
+Arrival notice never enables torque or wakes a resting lamp. With the default
+ten-minute automatic-rest timeout, an empty room can already have led to rest;
+the welcome then remains suppressed. It can run while Orion is still awake,
+for example in Lamp mode or with a longer configured rest timeout. Privacy and
+mode changes use the same owned return as mutual gaze. This behaviour is
+lamp-unverified.
 
 ### Mutual gaze
 

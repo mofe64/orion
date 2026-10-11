@@ -414,7 +414,11 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             && manual_light.is_none()
             && let Some(effect) = character.background_lighting_effect(&core)
         {
-            lighting.render_effect(&effect, now_seconds, 0.55)?;
+            lighting.render_effect(
+                &effect,
+                now_seconds,
+                character.curiosity_light_intensity(now_seconds),
+            )?;
         }
         if !scenes.is_active() && !speech.is_active() {
             if let Some(program) = &manual_light {

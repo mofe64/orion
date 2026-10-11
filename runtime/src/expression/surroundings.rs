@@ -61,6 +61,7 @@ pub(super) struct SurroundingsState {
     active_object: bool,
     pub(super) runtime_allowed: bool,
     pub(super) mutual: super::reactions::MutualPolicy,
+    pub(super) arrival: super::reactions::ArrivalPolicy,
     pub(super) reaction: Option<super::reactions::Reaction>,
 }
 impl SurroundingsState {
@@ -69,6 +70,7 @@ impl SurroundingsState {
         self.glance = None;
         self.settings = BehaviourSettings::default();
         self.mutual.clear();
+        self.arrival.clear();
         // Budget and last target survive privacy/mode changes.
     }
     pub(super) fn fresh(&self, now: f64) -> bool {
@@ -148,6 +150,9 @@ impl CharacterCoordinator {
             .surroundings
             .budget
             .observe_focus(now, value.looking_away);
+        if let Err(error) = self.observe_arrival(&value.faces, now, core) {
+            eprintln!("oriond: arrival notice declined: {error}");
+        }
         if let Err(error) = self.observe_mutual(&value.faces, now, core) {
             eprintln!("oriond: mutual gaze declined: {error}");
         }

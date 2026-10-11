@@ -407,8 +407,8 @@ Settings reports unreadable next-conversation reminder storage with error detail
 
 ### Character behaviour preferences
 
-On V2, Settings includes **Character behaviours** with **Object glances** and
-**Mutual gaze** switches. It reads the saved Pi preference and saves changes immediately through
+On V2, Settings includes **Character behaviours** with **Object glances**,
+**Mutual gaze** and **Arrival notice** switches. It reads the saved Pi preference and saves changes immediately through
 the authenticated gateway. A failed save reverts the switch and retains an
 explanatory notice; older polling responses cannot overwrite a save. Camera
 privacy and Tracking Off suppress the behaviour without changing its saved

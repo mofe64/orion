@@ -50,10 +50,10 @@ poses:
       head_pitch_joint: -0.14
     idle_profile: home
   attentive:
-    description: 'V1 attentive intent on V2: arm and head-pitch offsets from V1 home, neck
-      swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Head-led attentive posture; arrival variants turn toward the observed person. Lamp playback unverified.
     tags:
-    - simulation_preview
+    - powered
+    - idle_anchor
     default_lighting: warm_idle_breathe
     positions:
       base_yaw_joint: -0.24

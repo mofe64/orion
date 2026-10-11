@@ -1329,3 +1329,32 @@ original character anchor for every final settle. All three are lamp-unverified.
     shared habituation, voice preemption and calibrated catalogue tests.
     Visual MuJoCo and lamp checks remain owed, especially the small nod at home
     and the return during a look-away.
+
+### Silent arrival entry
+
+`arrival_notice` is a normal V2 anchor-relative variant of `attentive_entry`.
+The `attentive` pose is a powered catalogue anchor. Runtime substitutes the
+observed arrival bearing into the head-leading and attentive drawings and
+returns to the original character anchor. The pose and variant are lamp-unverified.
+
+1. Idea and lead: notice an arrival; the head leads, with shoulder and elbow
+   opening the attentive silhouette afterward.
+2. Silhouette: the head faces the arrival above the slightly opened arm.
+3. Anticipation: the 0.4-second head turn announces the body entry.
+4. Followers: the arm follows over 0.9 seconds; the base catches up by at most
+   0.35 radians. A small warm light lift supports the same idea without audio.
+5. Settle: the head lead, the 0.6-second attentive hold and the final anchor each
+   settle. These stops prevent tangent motion from starting the arm too early.
+6. Arc: each drawing uses a common calibrated curve, with projected targets
+   and sampled shoulder–elbow hull validation.
+7. Weight: a measured entry and 1.4-second return use the `return_home` style;
+   no overshoot is added, and the full-curve check includes the style’s joint lag.
+8. Anchors: powered idle anchors inside the comfort box; unreachable or unsafe
+   variants are declined before spending budget or interrupting motion.
+9. Interruption: the shared owned-return path handles camera/mode changes,
+   stale evidence and setting changes; higher-priority controls win. A failed
+   or blocked arrival is consumed and does not become a delayed greeting.
+10. Checks: ten-minute evidence, outage/reset, V2 catalogue compilation,
+    measured entry, bounded light and unchanged-anchor return tests. Visual
+    MuJoCo and lamp checks remain owed for facing direction, silhouette,
+    shoulder load, contact and the warm lift.
