@@ -1,0 +1,34 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { BehaviourPreference } from "./behaviourPreference";
+import type { BehaviourResponse } from "./gateway";
+const connection = { url: "http://orion", token: "secret" };
+const off: BehaviourResponse = { behaviours: { object_glances: false, mutual_gaze: false, arrival_notice: false, new_object_peek: false, presence_defers_rest: false } };
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+afterEach(() => vi.useRealTimers());
+it("optimistically saves one key, reverts on failure, and retains the useful error", async () => {
+  vi.useFakeTimers();
+  let reject!: (error: Error) => void;
+  const save = vi.fn(() => new Promise<BehaviourResponse>((_, fail) => { reject = fail; }));
+  const model = new BehaviourPreference(connection, { read: vi.fn().mockResolvedValue(off), save });
+  model.start(); await flush();
+  const saving = model.choose("object_glances", true);
+  expect(model.snapshot().values?.object_glances).toBe(true);
+  await model.choose("mutual_gaze", true); expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(connection, { object_glances: true }, expect.any(AbortSignal));
+  reject(new Error("disk full")); await saving;
+  expect(model.snapshot()).toMatchObject({ values: off.behaviours, pending: false, notice: "", error: { detail: "disk full" } });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(model.snapshot().error?.detail).toBe("disk full"); model.stop();
+});
+it("does not replace an acknowledged save with an older poll or a disconnected request", async () => {
+  vi.useFakeTimers();
+  let oldRead!: (value: BehaviourResponse) => void;
+  const read = vi.fn().mockResolvedValueOnce(off).mockImplementation(() => new Promise<BehaviourResponse>(resolve => { oldRead = resolve; }));
+  const on = { behaviours: { ...off.behaviours, object_glances: true } };
+  const model = new BehaviourPreference(connection, { read, save: vi.fn().mockResolvedValue(on) });
+  model.start(); await flush(); await vi.advanceTimersByTimeAsync(2000);
+  await model.choose("object_glances", true); oldRead(off); await flush();
+  expect(model.snapshot()).toMatchObject({ values: on.behaviours, notice: "Saved on Orion." });
+  await vi.advanceTimersByTimeAsync(2000); model.stop(); oldRead(off); await flush();
+  expect(model.snapshot().values).toEqual(on.behaviours);
+});

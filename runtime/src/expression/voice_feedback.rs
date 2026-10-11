@@ -26,6 +26,9 @@ pub struct VoiceFeedback {
     vision_until: Option<f64>,
 }
 impl VoiceFeedback {
+    pub fn session_active(&self) -> bool {
+        self.session.is_some()
+    }
     pub fn vision_session(&self, now: f64) -> Option<&str> {
         (self.confirmed_activity()
             && self.phase == "thinking"

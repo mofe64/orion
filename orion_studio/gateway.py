@@ -293,6 +293,8 @@ class OrionGateway:
         self.vision_socket = vision_socket
         self.camera_preference_file = camera_preference_file or Path.home() / ".config/orion/camera.json"
         self.tracking_preference_file = tracking_preference_file or self.camera_preference_file.with_name('tracking.json')
+        self.behaviours_file = self.camera_preference_file.with_name('behaviours.json')
+        self.behaviours_lock = threading.Lock()
         self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
 
     def require_camera_awake(self):
@@ -337,6 +339,44 @@ class OrionGateway:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
+
+    BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest')
+
+    def get_behaviours(self):
+        if self.hardware != 'v2':
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
+        off = dict.fromkeys(self.BEHAVIOURS, False)
+        try:
+            value = json.loads(self.behaviours_file.read_text())
+            if not isinstance(value, dict) or any(type(item) is not bool for item in value.values()):
+                value = off
+        except (OSError, ValueError):
+            value = off
+        return {'api_version': API_VERSION, 'behaviours': {key: value.get(key, False) for key in self.BEHAVIOURS}}
+
+    def set_behaviours(self, payload):
+        if (not isinstance(payload, dict) or not payload or any(
+                key not in self.BEHAVIOURS or type(value) is not bool for key, value in payload.items())):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_behaviour_setting', 'Supply known behaviour names with boolean values.')
+        with self.behaviours_lock:
+            saved = self.get_behaviours()['behaviours']
+            saved.update(payload)
+            path, temporary = self.behaviours_file, None
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.behaviours-', delete=False) as output:
+                    temporary = Path(output.name)
+                    json.dump(saved, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                temporary.replace(path)
+            except OSError as error:
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'behaviour_setting_unavailable',
+                    'Could not save character behaviours.') from error
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            return {'api_version': API_VERSION, 'behaviours': saved}
 
     def tracking_mode(self):
         try:
@@ -1878,6 +1918,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
+            if path == '/api/v2/behaviours':
+                return HTTPStatus.OK, gateway.get_behaviours()
             if path == '/api/v2/tracking/mode':
                 return HTTPStatus.OK, gateway.get_tracking_mode()
             camera_paths = {"/api/v2/camera/stream": "/stream", "/api/v2/camera/snapshot": "/frame.jpg",
@@ -1917,6 +1959,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == '/api/v2/behaviours':
+                return HTTPStatus.OK, gateway.set_behaviours(self._read_json())
             if path == '/api/v2/tracking/mode':
                 return HTTPStatus.OK, gateway.set_tracking_mode(self._read_json())
             if path == "/api/v2/camera/enabled":

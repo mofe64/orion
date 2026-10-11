@@ -581,6 +581,21 @@ class CameraProxyTests(unittest.TestCase):
         self.assertEqual(self.vision_requests, [])
         self.client.request.assert_not_called()
 
+    def test_behaviour_routes_require_auth_and_save_without_camera_viewer(self):
+        url = f'http://127.0.0.1:{self.server.server_port}/api/v2/behaviours'
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(url)
+        self.assertEqual(error.exception.code, 401)
+        error.exception.close()
+        headers = {'Authorization': 'Bearer ' + 'a' * 32, 'Content-Type': 'application/json'}
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers,
+                data=b'{"object_glances":true}')) as response:
+            self.assertTrue(json.load(response)['behaviours']['object_glances'])
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
+            self.assertTrue(json.load(response)['behaviours']['object_glances'])
+        self.assertEqual(self.vision_requests, [])
+        self.client.request.assert_not_called()
+
 
 class TrackingPreferenceTests(unittest.TestCase):
     def setUp(self):
@@ -976,3 +991,24 @@ class SceneOwnedAssetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class BehaviourPreferenceTests(unittest.TestCase):
+    def test_defaults_partial_updates_corruption_and_atomic_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = OrionGateway(Mock(), hardware='v2', camera_preference_file=Path(directory) / 'camera.json')
+            off = dict.fromkeys(gateway.BEHAVIOURS, False)
+            self.assertEqual(gateway.get_behaviours()['behaviours'], off)
+            gateway.set_behaviours({'object_glances': True})
+            gateway.set_behaviours({'mutual_gaze': True})
+            self.assertTrue(gateway.get_behaviours()['behaviours']['object_glances'])
+            self.assertEqual(gateway.behaviours_file.stat().st_mode & 0o777, 0o600)
+            with patch('gateway.os.fsync', side_effect=OSError('disk full')):
+                with self.assertRaises(GatewayError):
+                    gateway.set_behaviours({'object_glances': False})
+            self.assertTrue(gateway.get_behaviours()['behaviours']['object_glances'])
+            self.assertEqual(list(Path(directory).glob('.behaviours-*')), [])
+            for value in ('bad', 'null', '[]', '{"object_glances":true,"mutual_gaze":1}'):
+                gateway.behaviours_file.write_text(value)
+                self.assertEqual(gateway.get_behaviours()['behaviours'], off)
+            for value in ({}, None, {'object_glances': 1}, {'surprise': True}):
+                with self.assertRaises(GatewayError): gateway.set_behaviours(value)

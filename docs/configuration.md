@@ -22,6 +22,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/routines.sounds.json` | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window |
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/camera.json` | `{"camera_enabled": true}` or `false`; vision watches this privacy preference |
+| `.config/orion/behaviours.json` | Opt-in camera behaviours; missing or corrupt settings disable them |
 | `.config/orion/tracking.json` | `{"tracking_mode": "off"}` or `"faces"`; saved independently of camera privacy |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
@@ -32,6 +33,22 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 The runtime and gateway read assets from the existing catalog root, normally
 the checkout passed as `--root` (for example `/home/mofe/orion`). This is separate from the code release selected by systemd.
 See [assets and installed releases](system-architecture.md#assets-and-installed-releases).
+
+## Character behaviours
+
+`~/.config/orion/behaviours.json` stores boolean keys `object_glances`,
+`mutual_gaze`, `arrival_notice`, `new_object_peek` and `presence_defers_rest`.
+Missing files or keys mean off. Invalid JSON, a non-object or any non-boolean
+value disables all behaviours. The gateway's authenticated `GET /api/v2/behaviours`
+returns the complete setting map; `POST` accepts a partial map of known boolean
+keys, serializes concurrent edits and atomically replaces the file with mode
+0600. A failed write preserves the previous preferences.
+
+Object glances are implemented and lamp-unverified. The other four settings are
+reserved for their pending behaviours. Studio exposes each control when its
+behaviour is implemented. Vision watches the file beside its camera preference;
+changing it invalidates pending autonomous observations without resetting the
+runtime's curiosity budget. Settings survive deployment and rollback.
 
 ## Camera privacy and profile
 

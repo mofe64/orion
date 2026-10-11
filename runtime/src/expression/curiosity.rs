@@ -57,6 +57,7 @@ pub enum CuriosityDenied {
     Capacity,
 }
 
+#[derive(Debug)]
 struct Interest {
     last_reaction: f64,
     repetitions: u32,
@@ -64,7 +65,7 @@ struct Interest {
 
 /// One instance is shared by every autonomous vision behaviour for the lifetime
 /// of the character. Camera/mode changes must not reset spent budget or interest.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CuriosityBudget {
     gestures: VecDeque<f64>,
     targets: BTreeMap<String, Interest>,

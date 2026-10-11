@@ -437,6 +437,9 @@ impl Routines {
         }
         Ok(())
     }
+    pub fn curiosity_quiet(&self) -> bool {
+        self.light_run.is_some() || self.sunrise_active() || self.ringing()
+    }
     pub fn sunrise_active(&self) -> bool {
         self.sunrise.is_some() || self.sunrise_latched
     }

@@ -5,6 +5,7 @@ import time
 from .gaze_client import boottime_ns
 from .tracker import MAX_AGE_NS, Tracker, choose_track
 from .find import FindError, FindJob, locate
+from .behaviours import KEYS, ObjectMap, overlaps
 
 IDLE_HZ, VOICE_HZ = 10, 3
 GAZE_RETRY_SECONDS = 3.
@@ -43,6 +44,10 @@ class FacePipeline:
         self.objects = objects
         self.camera_enabled = False
         self.find_job = None
+        self.behaviours = dict.fromkeys(KEYS, False)
+        self.object_map = ObjectMap()
+        self.next_object_pass = 0.
+        self.next_surroundings = 0.
 
     def start(self):
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
@@ -61,13 +66,65 @@ class FacePipeline:
             self.latest_preview = None
             self.preview_generation += 1
             self.tracker.clear()
+            self.object_map.clear()
             self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
             self.speaker_track_id = None
             self.speaker_until = 0.
             self.changed.notify_all()
-        if not enabled:
-            with self.commands:
+        with self.commands:
+            try:
+                self.client.clear_surroundings()
+            except (OSError, ValueError, AttributeError):
+                pass
+            if not enabled:
                 self._clear_target()
+
+    def configure_behaviours(self, value):
+        with self.changed:
+            if value == self.behaviours:
+                return
+            self.behaviours = value.copy()
+            self.object_map.clear()
+            # Invalidate detector work in flight without resetting the cooldown.
+            self.generation += 1
+            self.pending = None
+            self.next_surroundings = 0.
+        with self.commands:
+            try:
+                self.client.clear_surroundings()
+            except (OSError, ValueError, AttributeError):
+                pass
+
+    def _background_objects(self, stamp, buffer, faces, generation):
+        now = self.clock()
+        with self.changed:
+            wanted = self.enabled and self.behaviours['object_glances'] and self.objects is not None
+        if not wanted or now < self.next_object_pass:
+            return
+        # This shares the inference worker with YuNet and explicit /find.
+        # A refusal also backs off; switches cannot create inference bursts.
+        self.next_object_pass = now + 60.
+        if not self.client.background_ready() or not self.client.find_allowed():
+            return
+        camera = self.client.camera_pose(stamp)
+        objects = self.objects.detect(buffer)
+        candidates = locate([obj for obj in objects if obj.category != 'person'
+            and not any(overlaps(obj.box, face.box) for face in faces)], self.intrinsics, camera, stamp)
+        if not self.client.find_allowed() or not self.client.background_ready():
+            return
+        with self.changed:
+            if self.enabled and generation == self.generation and self.behaviours['object_glances']:
+                self.object_map.update(candidates, stamp)
+
+    def _surroundings(self, stamp, tracks):
+        if self.clock() < self.next_surroundings:
+            return
+        self.next_surroundings = self.clock() + .5
+        self.client.surroundings({'capture_boottime_ns': stamp,
+            'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
+            'tracking_mode': 'faces' if self.enabled else 'off',
+            'objects': self.object_map.snapshot(self.boot_clock()),
+            'looking_away': not any(track.face.looking_at_orion for track in tracks) if tracks else None})
 
     def close(self):
         self.reset(False)
@@ -327,6 +384,14 @@ class FacePipeline:
                         if not self.enabled or generation != self.generation:
                             continue
                     self._send_gaze(chosen)
+                    try:
+                        self._surroundings(stamp, fresh)
+                    except (OSError, ValueError, AttributeError):
+                        pass
+                try:
+                    self._background_objects(stamp, buffer, faces, generation)
+                except (OSError, ValueError, AttributeError):
+                    pass
                 with self.changed:
                     self.error = None
             except Exception as error:

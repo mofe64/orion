@@ -644,7 +644,7 @@ fn angle_difference(a: f64, b: f64) -> f64 {
 
 /// Two orientation degrees of freedom solved against URDF FK, at most four
 /// seeds × eight Newton steps. Seeded limit branches choose the nearer reach.
-fn solve_aim(
+pub(crate) fn solve_aim(
     model: &Kinematics,
     start: &JointPositions,
     azimuth: f64,
@@ -708,7 +708,7 @@ fn solve_aim(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::control::camera_rays::BoottimeClock;
     use crate::{JointState, MotionLibrary, MujocoDriver, ORION_JOINT_NAMES, PoseLibrary};
@@ -761,7 +761,7 @@ mod tests {
             })
             .collect()
     }
-    struct FollowingDriver {
+    pub(crate) struct FollowingDriver {
         positions: JointPositions,
         writes: Vec<JointPositions>,
         next_velocity: Arc<AtomicU64>,
@@ -839,7 +839,7 @@ mod tests {
         }
         (core, boot)
     }
-    fn following() -> (RuntimeCore<FollowingDriver>, JointPositions, Arc<AtomicU64>) {
+    pub(crate) fn following() -> (RuntimeCore<FollowingDriver>, JointPositions, Arc<AtomicU64>) {
         let (poses, motions) = libraries();
         let anchor = poses.pose("home").unwrap().clone();
         let driver = FollowingDriver {

@@ -333,8 +333,8 @@ the full response when synthesis is slower than playback.
 
 ## Settings and Debug
 
-Settings has one ordered column: **Orion**, **Personality and memory**, **Voice**,
-**Studio**, then **Developer tools**. Orion contains mode, listening and alert sounds.
+Settings has one ordered column: **Orion**, **Personality and memory**,
+**Character behaviours**, **Location**, **Voice**, **Studio**, then **Developer tools**. Orion contains mode, listening and alert sounds.
 Appearance, preview sound, reduced UI motion and debug visibility save on this
 computer with inline **Saved** feedback. Listening and alert sounds apply on the Pi
 immediately; each sound choice applies when its next alert starts. An alert already
@@ -404,3 +404,12 @@ Home’s alarm form includes sunrise light (5–60 minutes before the alarm). St
 Recurring alerts on Home offer **Cancel occurrence** and **Cancel series**. Cancelling a snooze preserves the original recurring alarm.
 
 Settings reports unreadable next-conversation reminder storage with error details and Refresh. Agent replies continue while that storage needs repair.
+
+### Character behaviour preferences
+
+On V2, Settings includes **Character behaviours** with an **Object glances**
+switch. It reads the saved Pi preference and saves changes immediately through
+the authenticated gateway. A failed save reverts the switch and retains an
+explanatory notice; older polling responses cannot overwrite a save. Camera
+privacy and Tracking Off suppress the behaviour without changing its saved
+preference. See [configuration](../docs/configuration.md#character-behaviours).

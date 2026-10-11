@@ -525,6 +525,38 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
+    if command.starts_with("gaze surroundings ") {
+        character.set_curiosity_available(
+            rest.reactions_ready()
+                && !feedback.session_active()
+                && !speech.is_active()
+                && !scenes.is_active()
+                && !routines.curiosity_quiet(),
+        );
+        if command == "gaze surroundings status" {
+            return serde_json::json!({"ok":true,"ready":character.curiosity_ready(core)})
+                .to_string();
+        }
+        if command == "gaze surroundings clear" {
+            return match character.clear_surroundings(now_seconds, core) {
+                Ok(()) => serde_json::json!({"ok":true}).to_string(),
+                Err(error) => serde_json::json!({"ok":false,"error":error.to_string()}).to_string(),
+            };
+        }
+        let result = serde_json::from_str::<crate::expression::character::Surroundings>(
+            command.strip_prefix("gaze surroundings ").unwrap(),
+        )
+        .map_err(|error| error.to_string())
+        .and_then(|value| {
+            character
+                .observe_surroundings(value, now_seconds, core)
+                .map_err(|error| error.to_string())
+        });
+        return match result {
+            Ok(()) => serde_json::json!({"ok":true}).to_string(),
+            Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+        };
+    }
     if command == "lamp-status" {
         return serde_json::json!({"ok":true,"lamp":manual_light.as_ref().map(|lamp|lamp.status_at(now_seconds))}).to_string();
     }

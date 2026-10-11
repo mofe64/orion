@@ -18,6 +18,7 @@ import numpy as np
 import simplejpeg
 
 from .sources import Picamera2Source, ReplaySource
+from .behaviours import settings as behaviour_settings
 
 LOG = logging.getLogger(__name__)
 BOUNDARY = "orion-frame"
@@ -113,6 +114,8 @@ class Vision:
             while not self.stop.is_set():
                 wanted = camera_enabled(self.preference_file)
                 mode = tracking_mode(self.tracking_file)
+                if self.pipeline and hasattr(self.pipeline, "configure_behaviours"):
+                    self.pipeline.configure_behaviours(behaviour_settings(self.preference_file.with_name("behaviours.json")))
                 now = self.clock()
                 with self.changed:
                     tracking_changed = mode != self.tracking_mode

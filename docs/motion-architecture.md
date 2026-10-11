@@ -146,7 +146,36 @@ disabled settings and quiet hours close admission. A caller reserves budget
 after checking its candidate and motion; failed execution does not refund it.
 
 The policy has bounded in-memory state and no detector, motion or servo IO.
-Behaviour integration is pending; adding the policy alone enables no movement.
+Object idle glances use this policy. The remaining optional behaviours are
+pending. The runtime closes admission during active lamp routines (including
+wind-down and sunrise), alerts and rest; it has no independent clock-based
+quiet-hours schedule.
+
+### Object-directed idle glances
+
+With `object_glances` enabled, vision may run one YOLO pass per minute while
+runtime is idle, awake and available, with no voice session. YuNet and YOLO run
+sequentially on the same worker; the camera publisher and watchdog continue.
+The capture-time camera transform is read before YOLO. People and objects
+whose boxes overlap a face in that frame are excluded. At most 32 class-labelled
+base-frame bearings remain in memory, expiring ten minutes after last sighting.
+No image or object map is persisted.
+
+`gaze surroundings` carries a bounded metadata snapshot to runtime. Runtime
+validates its clock and prepares an object-directed variant of `idle_micro_glance`
+through calibrated camera FK and the ordinary compiler at command time. It changes
+only the existing clip's yaw/neck direction within its authored envelope. An
+already-due idle may use that variant on every third eligible glance, provided
+the shared budget permits it. It never selects the preceding object again.
+Idle deadlines, clip selection, tempo, amplitude variation and final anchor
+remain unchanged; unsuitable or absent objects leave ordinary random idles.
+Directional pose profiles retain their existing yaw-safe clips.
+
+Camera off, Tracking Off, a setting change or stale metadata invalidates the
+prepared variant. An active object glance takes a continuous compiled return
+to its anchor. Foreground movement, wake, speech, Stop and rest retain their
+existing ownership and interruption paths. No autonomous code clears the Stop
+latch. This integration is lamp-unverified.
 
 ### Anchors
 

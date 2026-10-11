@@ -532,3 +532,15 @@ The JSON's `qwen_asr_slowdown` remains `null` until that separate comparison
 is recorded. Include capture rate, inference median/p95, ASR slowdown,
 temperature, cable continuity and orientation in the commissioning results.
 These hardware results are required before selecting detector frame rates.
+
+## Optional object map
+
+`object_glances` in `behaviours.json` beside the camera preference opts into a
+bounded in-memory object map. Background YOLO shares the face inference worker
+and is admitted no more than once per minute, only with camera and Faces on,
+no voice session, and an idle/awake runtime. An already-running native inference
+finishes before its result is discarded after an ownership change. Capture and
+the watchdog keep running independently. The map excludes people and face-box
+overlaps and expires entries after ten minutes. Privacy or tracking changes
+clear it. See [autonomous vision restraint](../docs/motion-architecture.md#autonomous-vision-restraint)
+and [behaviour settings](../docs/configuration.md#character-behaviours).

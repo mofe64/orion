@@ -457,3 +457,12 @@ export type ListChange = { type: "add"; text: string } | { type: "remove"; expec
 export function agentLists(connection: GatewayConnection, list: ListName, change?: ListChange): Promise<ListItem[]> {
   return request(connection, "/api/v2/voice/request", { method: "POST", body: JSON.stringify({ method: "lists", params: { list, change: change ?? null } }) });
 }
+
+export const behaviourKeys = ["object_glances", "mutual_gaze", "arrival_notice", "new_object_peek", "presence_defers_rest"] as const;
+export type BehaviourKey = typeof behaviourKeys[number];
+export type BehaviourSettings = Record<BehaviourKey, boolean>;
+export interface BehaviourResponse { behaviours: BehaviourSettings }
+export const getBehaviours = (connection: GatewayConnection, signal?: AbortSignal) =>
+  request<BehaviourResponse>(connection, "/api/v2/behaviours", { signal });
+export const setBehaviours = (connection: GatewayConnection, changes: Partial<BehaviourSettings>, signal?: AbortSignal) =>
+  request<BehaviourResponse>(connection, "/api/v2/behaviours", { method: "POST", body: JSON.stringify(changes), signal });

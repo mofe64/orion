@@ -1273,3 +1273,26 @@ runtime/target/release/orion-trajectory --hardware v2 \
 For an anchor-relative motion, add `--anchor-pose POSE_NAME`. The output holds
 positions, velocities, accelerations, markers, calibration ranges and
 hardware-profile metadata.
+
+### Object-directed idle variant
+
+`idle_micro_glance` can receive a capture-grounded object direction when its
+setting is enabled. It remains the same catalogue clip and is lamp-unverified.
+The ten authoring answers are:
+
+1. Idea and lead: a small glance toward an observed object, preserving the
+   existing coordinated yaw/neck drawing.
+2. Silhouette: a slight sideways head displacement, with the arm unchanged.
+3. Anticipation: no added prelude; retain the ordinary idle pause and clip.
+4. Followers: no added body movement or competing secondary action.
+5. Settle: the authored fixation and final zero-offset anchor keyframe.
+6. Arc: preserve the clip's coupled yaw/neck curve; only its direction changes.
+7. Weight: preserve its authored duration and the existing bounded tempo variation.
+8. Anchors: ordinary idle anchors that permit `idle_micro_glance`; directional
+   profiles keep their existing inward-safe clips.
+9. Interruption: privacy, setting and mode changes compile an owned anchor
+   return. Foreground, speech, Stop and rest retain priority. Failed execution
+   spends budget and reschedules the idle rather than retrying in a burst.
+10. Checks: V2 compiled-envelope, shared-budget, stale-context and privacy-return
+    tests. Visual MuJoCo and lamp checks with differently placed objects remain
+    owed. Verify that the ordinary idle cadence and subtle scale still read.

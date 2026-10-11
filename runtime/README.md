@@ -729,3 +729,13 @@ Alarms accept `sunrise_minutes` (5–60). The earliest eligible alarm fades from
 Before the first save that adds reminder/recurrence fields, Orion preserves the exact legacy file at `~/.config/orion/routines.json.pre-reminders`. The backup is created once and never replaced; if it cannot be secured, the alert-state save fails and the legacy file stays intact. A fresh installation, or a file already written in the extended format, has no legacy snapshot to preserve.
 
 Stop `oriond` before rollback. Keep a separate copy of the extended `routines.json`, restore `routines.json.pre-reminders` over `routines.json`, deploy the older runtime, and restart it. Alerts and changes made after the backup are absent from the restored snapshot. The sound companion file may remain; its ringing-window key prevents stale sound state from changing restored alerts. An older runtime rejects the extended file's unknown fields, so changing only the executable is insufficient.
+
+### Autonomous camera metadata
+
+The vision service sends `gaze surroundings JSON` with a fresh capture clock,
+privacy/tracking state, behaviour settings and at most 32 mapped objects.
+`gaze surroundings status` reports whether background inference may start;
+`gaze surroundings clear` invalidates autonomous context and returns an owned
+object glance to its anchor. These private commands never clear the Stop latch.
+The runtime owns priority, expiry and shared curiosity admission. See
+[object-directed idles](../docs/motion-architecture.md#object-directed-idle-glances).

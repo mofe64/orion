@@ -371,6 +371,13 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             speaking_light_intensity = 0.0;
         }
         let character_was_enabled = character.status().enabled;
+        character.set_curiosity_available(
+            rest.reactions_ready()
+                && !feedback.session_active()
+                && !speech.is_active()
+                && !scenes.is_active()
+                && !routines.curiosity_quiet(),
+        );
         character.tick(
             now_seconds,
             &mut core,

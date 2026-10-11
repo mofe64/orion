@@ -98,7 +98,7 @@ it("preserves saved raw IDs while displaying friendly model and effort names", (
 it("orders owner settings and keeps the sole Save action beside its restart consequence", () => {
   const html = markup(voice);
   const headings = [...html.matchAll(/<h2>(.*?)<\/h2>/g)].map(match => match[1]);
-  expect(headings).toEqual(["Orion", "Personality and memory", "Location", "Voice", "Studio", "Developer tools"]);
+  expect(headings).toEqual(["Orion", "Personality and memory", "Character behaviours", "Location", "Voice", "Studio", "Developer tools"]);
   expect(html.match(/>Save [^<]+<\/button>/g)).toEqual([">Save voice settings</button>"]);
   const save = html.slice(html.indexOf('class="settings-save"'),html.indexOf("<h2>Studio"));
   expect(save).toContain("restarts the voice coordinator");

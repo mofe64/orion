@@ -91,3 +91,12 @@ class GazeClient:
         voice = self.command("voice status")["voice"]
         return bool(voice.get("session") and voice.get("confirmed")
                     and voice.get("phase") not in ("unavailable", ""))
+
+    def background_ready(self):
+        return self.command('gaze surroundings status')['ready'] is True
+
+    def surroundings(self, value):
+        self.command('gaze surroundings ' + json.dumps(value))
+
+    def clear_surroundings(self):
+        self.command('gaze surroundings clear')

@@ -12,7 +12,10 @@ use crate::motion::pose::JointPositions;
 use crate::motion::style::MotionStyle;
 #[path = "aim_light.rs"]
 mod aim_light;
+#[path = "surroundings.rs"]
+mod surroundings;
 pub(crate) use aim_light::WorkRequest;
+pub(crate) use surroundings::Surroundings;
 
 /// Note:
 /// - A clip is a named motion definition, such as "idle_breathe". It describes a movement using joint targets, timing, and style
@@ -266,6 +269,7 @@ struct Attention {
 /// and it persists info into its fields between ticks so we can track the character's state over time.
 #[derive(Debug)]
 pub struct CharacterCoordinator {
+    surroundings: surroundings::SurroundingsState,
     gaze: super::gaze::GazeCoordinator,
     /// Character state we expose to other parts of the application.
     status: CharacterStatus,
@@ -391,6 +395,7 @@ impl CharacterCoordinator {
     pub fn new(seed: u64) -> Self {
         Self {
             gaze: super::gaze::GazeCoordinator::default(),
+            surroundings: surroundings::SurroundingsState::default(),
             status: CharacterStatus {
                 enabled: false,
                 state: CharacterState::Off,
@@ -456,6 +461,8 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.gaze.clear();
+        self.surroundings.clear();
+        self.settle_object_idle(now, core)?;
         if let Some(attention) = self.attention.as_mut().filter(|attention| attention.visual) {
             attention.speaker_track_id = None;
             attention.bearing = None;
@@ -1290,6 +1297,7 @@ impl CharacterCoordinator {
         if (scene_active || speech_active || !self.status.enabled) && self.work.is_some() {
             self.preempt_for_foreground(now, core)?;
         }
+        self.settle_object_idle(now, core)?;
         if self.tick_work(now, core)? {
             return Ok(());
         }
@@ -1685,10 +1693,13 @@ impl CharacterCoordinator {
                 Error::InvalidState("Character idle has no immutable anchor.".into())
             })?;
         // play the idle clip relative to our anchor
+        let object = self.object_idle(&clip, now, core);
+        let is_object = object.is_some();
         let definition = match self.vary_idle(
-            core.motions().motion(&clip)?.clone(),
+            object.unwrap_or(core.motions().motion(&clip)?.clone()),
             &anchor,
             &core.driver().joint_limits()?,
+            !is_object,
         ) {
             Ok(definition) => definition,
             Err(error) => {
@@ -1753,8 +1764,9 @@ impl CharacterCoordinator {
         mut motion: MotionDefinition,
         anchor: &JointPositions,
         limits: &[crate::devices::driver::JointLimit],
+        random_direction: bool,
     ) -> Result<MotionDefinition> {
-        let requested_mirror = self.rng.index(2) == 0;
+        let requested_mirror = self.rng.index(2) == 0 && random_direction;
         let amplitude = self.rng.range(0.85, 1.15);
         let tempo = self.rng.range(0.9, 1.1);
         let safe_side = |mirror: bool| {
@@ -1783,7 +1795,7 @@ impl CharacterCoordinator {
         };
         let mirror = if safe_side(requested_mirror) {
             requested_mirror
-        } else if safe_side(!requested_mirror) {
+        } else if random_direction && safe_side(!requested_mirror) {
             !requested_mirror
         } else {
             return Err(Error::Runtime(format!(
@@ -5927,8 +5939,12 @@ mod tests {
             let name = first.choose_idle(NextIdleCategory::Micro, &core);
             assert_eq!(name, second.choose_idle(NextIdleCategory::Micro, &core));
             let source = core.motions().motion(&name).unwrap();
-            let a = first.vary_idle(source.clone(), &anchor, &limits).unwrap();
-            let b = second.vary_idle(source.clone(), &anchor, &limits).unwrap();
+            let a = first
+                .vary_idle(source.clone(), &anchor, &limits, true)
+                .unwrap();
+            let b = second
+                .vary_idle(source.clone(), &anchor, &limits, true)
+                .unwrap();
             for ((original, a), b) in source.keyframes.iter().zip(&a.keyframes).zip(&b.keyframes) {
                 assert_eq!(a.target, b.target);
                 assert_eq!(a.duration_seconds, b.duration_seconds);
@@ -5994,6 +6010,7 @@ mod tests {
                             core.motions().motion(&name).unwrap().clone(),
                             anchor,
                             &limits,
+                            true,
                         )
                         .unwrap();
                     for keyframe in &motion.keyframes {
