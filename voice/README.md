@@ -69,8 +69,9 @@ baseline and opens the teal follow-up invitation.
 without HAT mixer commands; `--capture-channels 2|6` and `--processed-channel N`
 select the verified XVF3800 stream. The processed channel feeds the listener
 without averaging raw microphone channels. V2 attention asks the local vision
-service after confirmed wake and requires runtime `--gaze on` plus fitted camera
-intrinsics. Camera-off or unavailable vision suppresses attention. `--vision-socket`
+service after confirmed wake, using built-in wide-lens intrinsics. V2 runtime
+enables gaze by default; `--gaze off`, camera-off or unavailable vision suppresses
+attention. `--vision-socket`
 defaults to `/tmp/orion-vision.sock`. See
 [visual speaker selection](../docs/voice-architecture.md#direction-evidence) and
 [USB profile setup](../docs/hardware-versions.md#usb-capture-and-playback).
@@ -249,7 +250,7 @@ explains why the new command can wait for the old agent turn to finish.
 
 ## Calibrate V2 attention
 
-V2 wake attention uses [camera calibration](../vision/README.md#face-calibration-and-tracking).
+V2 wake attention uses [built-in wide-lens intrinsics and face tracking](../vision/README.md#face-tracking).
 The USB procedure below remains a diagnostic for the microphone beam; it does
 not enable speaker-facing movement.
 

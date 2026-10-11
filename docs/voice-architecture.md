@@ -394,7 +394,7 @@ The winning excess must reach 0.05, exceed the runner-up by 0.05 and be at least
 1.5 times its score. Ambiguous or insufficient motion selects the largest frontal face,
 then the largest face as a nearest-face proxy. YuNet mouth corners provide a
 heuristic, not a speech or lip-opening measurement. Speaker selection on the
-lamp remains unverified. See [vision setup and calibration](../vision/README.md#face-calibration-and-tracking).
+lamp remains unverified. See [vision setup and tracking](../vision/README.md#face-tracking).
 
 The listener sends `voice SESSION attend_bearing AZ EL AGE_MS`, with base
 azimuth/elevation in radians and age computed from the selected capture. Queue
@@ -415,7 +415,7 @@ Scenes, speech, Stop and unavailable character states retain priority.
 
 A working camera with no recent face sends `voice SESSION attend_scan AGE_MS`.
 Gaze compiles one small neck sweep and settles to the original anchor, then
-gives up for that conversation. Camera-off, missing intrinsics/model, unavailable
+gives up for that conversation. Camera-off, a missing detector model, unavailable
 vision and stale responses produce no attention command. V2 does not use
 acoustic direction as a fallback. `--vision-socket` defaults to
 `/tmp/orion-vision.sock`. No wake/verifier thresholds, XVF processing or existing
@@ -425,8 +425,8 @@ The age of the oldest supporting vote travels with the side after confirmation.
 Time spent waiting in the command queue and homing also counts. The runtime checks
 that the evidence remains younger than three seconds before starting attention.
 Stale evidence leaves Orion facing home and lets the voice turn continue. Physical
-calibration is required before enabling V1 direction estimates; V2 requires
-fitted camera intrinsics and lamp validation of speaker selection.
+calibration is required before enabling V1 direction estimates. V2 uses built-in
+wide-lens intrinsics and still needs lamp validation of speaker selection.
 
 ## Streaming replies and timing
 

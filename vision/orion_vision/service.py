@@ -313,11 +313,10 @@ def main():
     parser.add_argument("--preference-file", type=Path, default=Path.home() / ".config/orion/camera.json")
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--replay", type=Path, help="Directory of synthetic JPEG test inputs")
-    from .calibration import DEFAULT_PATH, Intrinsics
+    from .intrinsics import Intrinsics
     from .detect_faces import MODEL_PATH, YuNet
     from .gaze_client import GazeClient
     from .pipeline import FacePipeline
-    parser.add_argument("--intrinsics", type=Path, default=DEFAULT_PATH)
     parser.add_argument("--face-model", type=Path, default=MODEL_PATH)
     parser.add_argument("--runtime-socket", type=Path, default=Path("/tmp/oriond.sock"))
     args = parser.parse_args()
@@ -342,7 +341,7 @@ def main():
                 raise RuntimeError("Vision socket already has a running owner")
     pipeline, detection_error = None, None
     try:
-        pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.load(args.intrinsics),
+        pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.camera_module_3_wide(),
                                 GazeClient(args.runtime_socket))
         if isinstance(source, Picamera2Source):
             source.expected_geometry = pipeline.intrinsics.geometry

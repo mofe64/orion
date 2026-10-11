@@ -1,5 +1,4 @@
 import copy
-import json
 import math
 from pathlib import Path
 import tempfile
@@ -10,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from orion_vision.calibration import Intrinsics, lores_bgr
+from orion_vision.intrinsics import Intrinsics, lores_bgr
 from orion_vision.gaze_client import GazeClient
 from orion_vision.pipeline import FacePipeline
 from orion_vision.sources import Picamera2Source
@@ -19,25 +18,11 @@ from test_tracking import FakeRuntime, eventually, face, intrinsics
 
 
 GEOMETRY = {'scaler_crop': [0, 0, 4608, 2592],
-    'sensor_mode': {'output_size': [1536, 864], 'bit_depth': 10},
+    'sensor_mode': {'output_size': [2304, 1296], 'bit_depth': 10},
     'flips': {'hflip': False, 'vflip': False}, 'lores_stride': 384}
 
 
 class GeometryTests(unittest.TestCase):
-    def test_geometry_survives_save_and_legacy_calibration_is_refused(self):
-        calibration = intrinsics()
-        calibration.geometry = copy.deepcopy(GEOMETRY)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'camera-v2.json'
-            calibration.save(path)
-            self.assertEqual(json.loads(path.read_text())['geometry'], GEOMETRY)
-            self.assertEqual(Intrinsics.load(path).geometry, GEOMETRY)
-            value = json.loads(path.read_text())
-            del value['geometry']
-            path.write_text(json.dumps(value))
-            with self.assertRaisesRegex(ValueError, 'geometry'):
-                Intrinsics.load(path)
-
     def test_lores_rejects_wrong_resolution_dtype_and_short_stride_before_crop(self):
         for buffer in (np.zeros((720, 640), np.uint8), np.zeros((360, 318), np.uint8),
                        np.zeros((240, 321, 3), np.uint8), np.zeros((360, 384), np.float32)):
@@ -46,9 +31,9 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(lores_bgr(np.zeros((360, 384), np.uint8)).shape, (240, 320, 3))
 
     def test_pipeline_drops_changed_crop_sensor_flip_and_stride(self):
-        calibration = intrinsics()
-        calibration.geometry = copy.deepcopy(GEOMETRY)
-        pipeline = FacePipeline(MagicMock(), calibration, MagicMock())
+        model = Intrinsics.camera_module_3_wide()
+        model.geometry['lores_stride'] = 384
+        pipeline = FacePipeline(MagicMock(), model, MagicMock())
         pipeline.reset(True)
         buffer = np.zeros((360, 384), np.uint8)
         geometry = {key: value for key, value in GEOMETRY.items() if key != 'scaler_crop'}
@@ -56,13 +41,16 @@ class GeometryTests(unittest.TestCase):
         self.assertIsNotNone(pipeline.pending)
         pipeline.pending = None
         for key, value in [('scaler_crop', [1, 0, 4608, 2592]),
-                           ('sensor_mode', {'output_size': [2304, 1296], 'bit_depth': 10}),
+                           ('sensor_mode', {'output_size': [1536, 864], 'bit_depth': 10}),
                            ('flips', {'hflip': True, 'vflip': False}), ('lores_stride', 320)]:
             changed = copy.deepcopy(GEOMETRY)
             changed[key] = value
             pipeline.submit(200, buffer, {'ScalerCrop': changed.pop('scaler_crop')}, changed)
             self.assertIsNone(pipeline.pending, key)
-        self.assertEqual(pipeline.dropped, 4)
+        pipeline.submit(300, np.zeros((360, 320), np.uint8),
+            {'ScalerCrop': GEOMETRY['scaler_crop']}, geometry)
+        self.assertIsNone(pipeline.pending)  # Buffer stride must match metadata too.
+        self.assertEqual(pipeline.dropped, 5)
 
     def test_source_rejects_flips_and_negotiated_sensor_mismatch(self):
         for hflip, vflip in [(True, False), (False, True), (True, True)]:
@@ -73,7 +61,7 @@ class GeometryTests(unittest.TestCase):
         camera, module = MagicMock(), MagicMock()
         module.Picamera2.return_value = camera
         camera.camera_configuration.return_value = {
-            'sensor': {'output_size': (2304, 1296), 'bit_depth': 10},
+            'sensor': {'output_size': (1536, 864), 'bit_depth': 10},
             'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
         with patch.dict('sys.modules', picamera2=module, libcamera=MagicMock()):
             with self.assertRaisesRegex(ValueError, 'geometry'):

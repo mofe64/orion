@@ -16,7 +16,6 @@ dependencies = [
 
 [project.scripts]
 orion-vision = "orion_vision.service:main"
-orion-vision-calibrate = "orion_vision.calibration:main"
 
 [tool.setuptools.packages.find]
 include = ["orion_vision*"]

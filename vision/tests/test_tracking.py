@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import cv2
 import numpy as np
 
-from orion_vision.calibration import Intrinsics, checkerboard_points, fit, lores_bgr
+from orion_vision.intrinsics import Intrinsics, lores_bgr
 from orion_vision.detect_faces import Face, MODEL_SHA256, YuNet
 from orion_vision.gaze_client import GazeClient, boottime_ns
 from orion_vision.pipeline import FacePipeline
@@ -20,7 +20,7 @@ from orion_vision.tracker import Tracker, choose_track
 
 
 def intrinsics():
-    return Intrinsics([[125, 0, 160], [0, 125, 120], [0, 0, 1]], [-.05, .005, 0, 0], .1)
+    return Intrinsics([[125, 0, 160], [0, 125, 120], [0, 0, 1]], [-.05, .005, 0, 0])
 
 
 def face(centre=(160, 120), size=40, frontal=True):
@@ -38,44 +38,17 @@ def eventually(predicate, seconds=2):
     raise AssertionError("Condition did not occur")
 
 
-class CalibrationTests(unittest.TestCase):
+class IntrinsicsAndDetectorTests(unittest.TestCase):
     def test_fisheye_projection_round_trip_including_edges(self):
-        calibration = intrinsics()
+        model = Intrinsics.camera_module_3_wide()
         points = np.array([[math.tan(a), math.tan(e), 1]
             for a in np.linspace(-.95, .95, 17) for e in np.linspace(-.7, .7, 9)], dtype=float)
         pixels, _ = cv2.fisheye.projectPoints(points.reshape(-1, 1, 3), np.zeros(3), np.zeros(3),
-            calibration.matrix, calibration.distortion)
-        rays = calibration.rays(pixels)
+            model.matrix, model.distortion)
+        rays = model.rays(pixels)
         expected = points / np.linalg.norm(points, axis=1)[:, None]
         errors = np.arccos(np.clip(np.sum(rays * expected, axis=1), -1, 1))
         self.assertLess(float(max(errors)), math.radians(.2))
-
-    def test_fits_synthetic_distinct_checkerboards_and_saves_only_numbers(self):
-        calibration = intrinsics()
-        board = checkerboard_points(9, 6, .025)
-        corners = []
-        for i in range(18):
-            pixels, _ = cv2.fisheye.projectPoints(board, np.array([.1 * (i % 3), -.15 + .07*(i % 5), .03*i]),
-                np.array([-.15 + .03*(i % 6), -.1 + .02*(i % 4), .4 + .03*i]),
-                calibration.matrix, calibration.distortion)
-            corners.append(pixels)
-        fitted = fit(corners, 9, 6, .025)
-        fitted.geometry = {'scaler_crop': [0, 0, 4608, 2592],
-            'sensor_mode': {'output_size': [1536, 864], 'bit_depth': 10},
-            'flips': {'hflip': False, 'vflip': False}, 'lores_stride': 384}
-        self.assertLess(fitted.rms, .01)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "camera-v2.json"
-            fitted.save(path)
-            loaded = Intrinsics.load(path)
-            np.testing.assert_allclose(loaded.matrix, fitted.matrix)
-            self.assertEqual(list(Path(directory).iterdir()), [path])
-            with self.assertRaises(ValueError):
-                Intrinsics(fitted.matrix, fitted.distortion, .50001)
-            with patch('orion_vision.calibration.cv2.fisheye.calibrate', return_value=(.51, fitted.matrix, fitted.distortion, [], [])):
-                with self.assertRaises(ValueError):
-                    fit(corners, 9, 6, .025)
-            self.assertEqual(Intrinsics.load(path).rms, loaded.rms)
 
     def test_yuv_stride_crop_after_conversion_and_only_callback_copy(self):
         buffer = np.zeros((360, 384), dtype=np.uint8)
@@ -84,7 +57,7 @@ class CalibrationTests(unittest.TestCase):
         module = MagicMock()
         module.Picamera2.return_value = camera
         camera.camera_configuration.return_value = {
-            'sensor': {'output_size': (1536, 864), 'bit_depth': 10},
+            'sensor': {'output_size': (2304, 1296), 'bit_depth': 10},
             'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
         with patch.dict('sys.modules', picamera2=module, libcamera=MagicMock()):
             source = Picamera2Source()
@@ -92,7 +65,7 @@ class CalibrationTests(unittest.TestCase):
             publish = MagicMock()
             source.start(publish, lambda: False, lambda: True)
             self.assertEqual(camera.create_video_configuration.call_args.kwargs['lores'],
-                {'size': (320, 240), 'format': 'YUV420'})
+                {'size': (320, 240), 'format': 'YUV420', 'preserve_ar': False})
             request = MagicMock()
             request.make_array.return_value = buffer
             camera.post_callback(request)
@@ -194,7 +167,7 @@ class TrackerTests(unittest.TestCase):
             thread = Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
             thread.start()
             try:
-                client, tracker, calibration = GazeClient(server.server_address), Tracker(), intrinsics()
+                client, tracker, model = GazeClient(server.server_address), Tracker(), intrinsics()
                 ids = None
                 for index, yaw in enumerate(np.linspace(-.35, .35, 15)):
                     stamp = 1_000_000_000 + index * 100_000_000
@@ -203,9 +176,9 @@ class TrackerTests(unittest.TestCase):
                     if index % 2:
                         world.reverse()  # Detector ordering may change.
                     points = np.array([[math.tan(yaw - az), 0, 1] for az in world])
-                    pixels, _ = cv2.fisheye.projectPoints(points.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), calibration.matrix, calibration.distortion)
+                    pixels, _ = cv2.fisheye.projectPoints(points.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), model.matrix, model.distortion)
                     faces = [face(pixel) for pixel in pixels.reshape(-1, 2)]
-                    tracks = tracker.update(stamp, faces, client.bearings(stamp, calibration.rays([f.centre for f in faces])))
+                    tracks = tracker.update(stamp, faces, client.bearings(stamp, model.rays([f.centre for f in faces])))
                     by_bearing = [track.id for track in sorted(tracks, key=lambda t: t.state[0])]
                     ids = ids or by_bearing
                     self.assertEqual(by_bearing, ids)

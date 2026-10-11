@@ -166,6 +166,8 @@ class SocketTests(unittest.TestCase):
         self.assertEqual(response.status, 503)
         self.assertEqual(json.loads(response.read())['error']['code'], 'no_frame')
         client.close()
+        # The response reaches the peer before the server exits viewing().
+        eventually(lambda: self.vision.clients == 0)
         self.assertEqual(self.vision.clients, 0)
         self.assertFalse(self.vision.wants_rgb())
 
@@ -179,7 +181,7 @@ class SocketTests(unittest.TestCase):
         response2.close(); client2.close()
 
     def test_tracking_observations_and_privacy_use_the_same_source_lifecycle(self):
-        from orion_vision.calibration import Intrinsics
+        from orion_vision.intrinsics import Intrinsics
         from orion_vision.detect_faces import Face
         from orion_vision.pipeline import FacePipeline
         detector, client = MagicMock(), MagicMock()
@@ -187,7 +189,7 @@ class SocketTests(unittest.TestCase):
             [[110, 90], [130, 90], [120, 100], [113, 110], [127, 110]], .95)]
         client.voice_active.return_value = False
         client.bearings.return_value = [{"azimuth": .2, "elevation": .1}]
-        pipeline = FacePipeline(detector, Intrinsics([[125, 0, 160], [0, 125, 120], [0, 0, 1]], [0]*4, .1), client)
+        pipeline = FacePipeline(detector, Intrinsics.camera_module_3_wide(), client)
         self.vision.close()
         self.vision = Vision(self.source, self.preference, pipeline=pipeline)
         self.server.vision = self.vision
@@ -315,6 +317,67 @@ class MetadataTests(unittest.TestCase):
             self.assertIsNone(vision.latest)
             self.assertEqual(vision.status()[1]['capture_boottime_ns'], 6)
             self.assertEqual(vision.dropped, 0)
+
+
+class StartupTests(unittest.TestCase):
+    def test_service_tracks_without_a_camera_intrinsics_file(self):
+        from orion_vision.gaze_client import boottime_ns
+        from orion_vision.service import main
+        from test_tracking import face
+        camera, camera_module = MagicMock(), MagicMock()
+        camera_module.Picamera2.return_value = camera
+        camera.camera_configuration.return_value = {
+            'sensor': {'output_size': (2304, 1296), 'bit_depth': 10},
+            'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
+        detector, client = MagicMock(), MagicMock()
+        detector.detect.return_value = [face()]
+        client.voice_active.return_value = False
+        client.bearings.return_value = [{'azimuth': .2, 'elevation': 0}]
+        created = []
+
+        def server_factory(path, vision):
+            created.append(vision)
+            server = MagicMock()
+            def serve(**kwargs):
+                self.assertIsNotNone(vision.pipeline, vision.detection_error)
+                eventually(lambda: camera.start.called)
+                request = MagicMock()
+                request.get_metadata.return_value = {'SensorTimestamp': boottime_ns(),
+                    'ExposureTime': 0, 'ScalerCrop': (0, 0, 4608, 2592)}
+                request.make_array.return_value = np.zeros((360, 384), np.uint8)
+                camera.post_callback(request)
+                eventually(lambda: client.target.called)
+                self.assertEqual(len(vision.pipeline.observations()), 1)
+                self.assertIsNone(vision.pipeline.status()['error'])
+                request.make_array.assert_called_once_with('lores')
+            server.serve_forever.side_effect = serve
+            return server
+
+        read_text = Path.read_text
+        def without_intrinsics(path, *args, **kwargs):
+            if path.name == 'camera-v2.json':
+                raise FileNotFoundError(path)
+            return read_text(path, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            profile = home / 'profile.json'
+            profile.write_text(json.dumps({'camera': {'enabled': True, 'index': 0,
+                'hflip': False, 'vflip': False}}))
+            args = ['orion-vision', '--profile', str(profile), '--socket', str(home / 'vision.sock')]
+            with patch.object(Path, 'home', return_value=home), \
+                    patch.object(Path, 'read_text', autospec=True, side_effect=without_intrinsics) as reads, \
+                    patch.object(sys, 'argv', args), \
+                    patch.dict(sys.modules, picamera2=camera_module, libcamera=MagicMock()), \
+                    patch('orion_vision.detect_faces.YuNet', return_value=detector), \
+                    patch('orion_vision.gaze_client.GazeClient', return_value=client), \
+                    patch('orion_vision.service.VisionServer', side_effect=server_factory), \
+                    patch('orion_vision.service.signal.signal'):
+                main()
+            self.assertFalse((home / '.config/orion/camera-v2.json').exists())
+            self.assertFalse(any(call.args[0].name == 'camera-v2.json' for call in reads.call_args_list))
+            self.assertIsNone(created[0].source.camera)
+            camera.close.assert_called_once()
 
 
 if __name__ == "__main__":

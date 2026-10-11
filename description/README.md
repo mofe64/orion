@@ -65,9 +65,9 @@ At the repository's V2 `home`, the measured model has the upper arm leaning
 back about 46°, the forearm leaning forward about 25°, and the camera looking
 forward about 13° down. All-zero calibrated angles give a bent posture, not
 the upright CAD reference. Studio, MuJoCo and Rust FK use these same angles
-without a V2 offset conversion. These CAD mounts do not establish
-lens intrinsics or the fitted camera-to-head correction. Measure those before
-using real camera pixels to locate targets.
+without a V2 offset conversion. These CAD mounts do not establish physical
+camera-to-head alignment. Vision uses [built-in wide-lens intrinsics](../vision/README.md#face-tracking);
+validate the mount and capture-time alignment on the lamp.
 
 ### Reproduce the kinematics fixtures
 

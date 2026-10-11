@@ -8,6 +8,8 @@ import time
 import numpy as np
 import simplejpeg
 
+from .intrinsics import SIZE, camera_geometry, stream_geometry
+
 
 @dataclass(frozen=True)
 class Capture:
@@ -29,7 +31,7 @@ class Picamera2Source:
             raise ValueError("Camera flips are unsupported by fisheye rays; both must be false")
         self.index, self.hflip, self.vflip = index, hflip, vflip
         self.camera = None
-        self.expected_geometry = None
+        self.expected_geometry = camera_geometry()
 
     def start(self, publish, wants_rgb, wants_lores=None):
         from picamera2 import Picamera2
@@ -38,31 +40,30 @@ class Picamera2Source:
         self.camera = Picamera2(self.index)
         try:
             # libcamera BGR888 is [R,G,B] in a Python array, despite its name.
-            streams = {"lores": {"size": (320, 240), "format": "YUV420"}} if wants_lores else {}
-            sensor = {'sensor': self.expected_geometry['sensor_mode']} if self.expected_geometry else {}
-            controls = {"FrameRate": 30}
-            if self.expected_geometry:
-                controls['ScalerCrop'] = tuple(self.expected_geometry['scaler_crop'])
+            streams = {"lores": {"size": SIZE, "format": "YUV420", "preserve_ar": False}} if wants_lores else {}
+            controls = {"FrameRate": 30, "ScalerCrop": tuple(self.expected_geometry['scaler_crop'])}
             config = self.camera.create_video_configuration(
                 main={"size": (1280, 720), "format": "BGR888"},
-                **streams, **sensor,
+                **streams, sensor=self.expected_geometry['sensor_mode'],
                 transform=Transform(hflip=self.hflip, vflip=self.vflip),
                 controls=controls, buffer_count=4, queue=False)
             self.camera.configure(config)
             geometry = None
             if wants_lores:
-                from .calibration import SIZE, stream_geometry
                 actual = self.camera.camera_configuration()
                 lores = actual['lores']
-                if tuple(lores['size']) != SIZE or lores['format'] != 'YUV420':
+                if (tuple(lores['size']) != SIZE or lores['format'] != 'YUV420'
+                        or lores.get('preserve_ar', False)):
                     raise ValueError("Configured lores geometry differs from 320x240 YUV420")
-                geometry = stream_geometry({'ScalerCrop': [0, 0, 1, 1]}, {
+                geometry = stream_geometry({'ScalerCrop': self.expected_geometry['scaler_crop']}, {
                     'sensor_mode': actual['sensor'], 'lores_stride': lores['stride'],
                     'flips': {'hflip': self.hflip, 'vflip': self.vflip}})
+                if geometry['sensor_mode'] != self.expected_geometry['sensor_mode']:
+                    raise ValueError("Configured sensor geometry differs from the built-in camera configuration")
+                # Share the configured stride with the pipeline before any
+                # callbacks can submit frames. Padding changes storage, not rays.
+                self.expected_geometry['lores_stride'] = geometry['lores_stride']
                 del geometry['scaler_crop']
-                if self.expected_geometry and geometry != {key: value for key, value
-                        in self.expected_geometry.items() if key != 'scaler_crop'}:
-                    raise ValueError("Configured sensor geometry differs from calibration")
 
             def completed(request):
                 metadata = request.get_metadata()
@@ -100,6 +101,8 @@ class ReplaySource:
 
     def start(self, publish, wants_rgb, wants_lores=None):
         self.stop.clear()
+        geometry = camera_geometry()
+        crop = geometry.pop('scaler_crop')
 
         def replay():
             index = 0
@@ -114,7 +117,8 @@ class ReplaySource:
                 # On Linux this is the same clock as SensorTimestamp; Replay is
                 # test input on hosts without CLOCK_BOOTTIME as well.
                 from .gaze_client import boottime_ns
-                publish(Capture(rgb, {"SensorTimestamp": boottime_ns(), "ExposureTime": 0}, lores))
+                publish(Capture(rgb, {"SensorTimestamp": boottime_ns(), "ExposureTime": 0,
+                    "ScalerCrop": crop}, lores, geometry))
                 index += 1
                 self.stop.wait(self.period)
 

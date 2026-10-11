@@ -63,7 +63,7 @@ run outside `RuntimeCore::tick`; the query accepts at most 16 rays through
 the existing bounded socket command handling.
 
 Software tests validate interpolation and stationary-target stability during
-a yaw/swivel sweep. Physical timestamp-to-joint alignment and fitted camera
+a yaw/swivel sweep. Physical timestamp-to-joint alignment and camera
 mount accuracy remain unverified on the lamp.
 
 ## Bearing gaze (V2)
