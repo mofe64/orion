@@ -293,10 +293,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         if let Err(error) = routines.tick_audio(now_seconds, audio.as_mut()) {
             eprintln!("oriond: {error}");
         }
-        lighting.set_camera_viewer(camera_viewer.active(
-            now_seconds,
-            scenes.is_active() || speech.is_active() || routines.ringing(),
-        ));
+        lighting.set_camera_viewer(camera_viewer.active(now_seconds) && rest.reactions_ready());
         lighting.set_wake_pulse(if rest.dark() && rest.wake_acknowledgment_ready() {
             feedback.candidate_pulse(now_seconds)
         } else {
@@ -370,6 +367,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             &feedback,
             routines.ringing() || scenes.is_active() || speech.is_active(),
         );
+        // Rest can change on this tick. Sunrise may bypass darkness, but must
+        // never expose a stale viewer lease during rest or waking.
+        lighting.set_camera_viewer(camera_viewer.active(now_seconds) && rest.reactions_ready());
         lighting.set_wake_pulse(if rest.dark() && rest.wake_acknowledgment_ready() {
             feedback.candidate_pulse(now_seconds)
         } else {

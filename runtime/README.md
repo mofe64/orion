@@ -481,18 +481,22 @@ agent through `get_lighting`. Starting the character clears the manual program.
 
 ## Camera viewer indicator
 
-On V2, `camera-viewer 3` leases a faint cyan marker on the first ring pixel for
-three seconds; `camera-viewer 0` clears it. Other lease values and V1 requests
-are rejected. The authenticated gateway manages the leases for
+On V2, `camera-viewer 3` leases a bright cyan indicator across all 24 ring pixels
+for three seconds; `camera-viewer 0` clears it. The indicator pulses smoothly
+every two seconds, with green and blue channels ranging from 128 to 255 and
+red and white at zero. It stays illuminated while viewing is allowed.
+Other lease values and V1 requests are rejected. The authenticated gateway
+manages the leases for
 [streams and snapshots](../orion_studio/README.md#camera-feed). A lost gateway
 cannot leave a permanent marker.
 
-The marker does not change manual lamp preferences, routines, torque or motion.
-It is below scenes, speech and ringing alerts, and passes through the existing
-rest darkness mask. Those states suppress the marker; it reappears when they
-finish if the lease remains valid. The underlying RGBW frame is retained
-without the marker, so expiry restores prior lighting. Lease handling uses the
-existing queued command socket and bounded comparisons; no camera, file or
+The indicator overrides manual lighting, scenes, speech and ringing alerts
+while viewing. It does not change their preferences, timing, audio, torque or
+motion. Going to rest, resting, waking and faults suppress the indicator,
+including during sunrise; the existing rest darkness mask also applies. The
+underlying RGBW frame continues updating without the indicator, so clearing or
+expiry restores the latest lighting. Lease handling uses the existing queued
+command socket and bounded comparisons; no camera, file or
 model work enters the control tick.
 
 ## Mode and alert commands

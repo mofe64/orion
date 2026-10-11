@@ -360,8 +360,9 @@ impl RestLighting {
         self.wake_pulse = color;
     }
 
-    /// A faint cyan pixel on the V2 ring. Keep it out of the saved/base frame
-    /// and below the rest mask so expiry restores the exact previous lighting.
+    /// A bright cyan pulse across the V2 ring, above ordinary lighting writes.
+    /// Keep it out of the base frame and below rest darkness so expiry restores
+    /// the latest underlying lighting without changing its owner's preferences.
     pub fn set_camera_viewer(&mut self, active: bool) {
         self.camera_viewer = active;
     }
@@ -405,11 +406,11 @@ impl LightingDevice for RestLighting {
             self.device.render_uniform(color)?;
         } else {
             let mut output = frame.clone();
-            if self.viewer_rendered
-                && let Some(pixel) = output.first_mut()
-            {
-                pixel.green = pixel.green.max(8);
-                pixel.blue = pixel.blue.max(8);
+            if self.viewer_rendered {
+                // A smooth two-second pulse stays at least half bright. Replace
+                // all channels so a white or cyan scene cannot wash out the cue.
+                let level = (191.5 + 63.5 * (self.now * std::f64::consts::PI).cos()).round() as u8;
+                output.fill(Rgbw8::new(0, level, level, 0));
             }
             self.device.render(&output)?;
         }
@@ -430,30 +431,55 @@ mod tests {
     #[test]
     fn viewer_marker_preserves_base_frame_and_rest_mask() {
         let observed = Rc::new(RefCell::new(Vec::new()));
-        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone())));
+        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone(), 24)));
         let base = Rgbw8::new(2, 3, 4, 5);
-        light.render(&[base]).unwrap();
+        light.render_uniform(base).unwrap();
         light.set_camera_viewer(true);
         light.update(false, 1.0).unwrap();
-        assert_eq!(*observed.borrow(), [Rgbw8::new(2, 8, 8, 5)]);
-        assert_eq!(light.frame, [base]);
+        assert_eq!(*observed.borrow(), vec![Rgbw8::new(0, 128, 128, 0); 24]);
+        assert_eq!(light.frame, vec![base; 24]);
         light.set_camera_viewer(false);
         light.update(false, 2.0).unwrap();
-        assert_eq!(*observed.borrow(), [base]);
+        assert_eq!(*observed.borrow(), vec![base; 24]);
         light.set_camera_viewer(true);
         light.update(true, 3.0).unwrap();
+        assert_eq!(*observed.borrow(), vec![base; 24]);
         light.update(true, 3.0 + REST_FADE_SECONDS).unwrap();
-        assert_eq!(*observed.borrow(), [Rgbw8::OFF]);
+        assert_eq!(*observed.borrow(), vec![Rgbw8::OFF; 24]);
         assert!(!light.is_on());
         light.set_wake_pulse(Some(Rgbw8::new(10, 2, 1, 0)));
         light.update(true, 9.0).unwrap();
-        assert_eq!(*observed.borrow(), [Rgbw8::new(10, 2, 1, 0)]);
+        assert_eq!(*observed.borrow(), vec![Rgbw8::new(10, 2, 1, 0); 24]);
     }
 
-    struct ObservedLight(Rc<RefCell<Vec<Rgbw8>>>);
+    #[test]
+    fn viewer_indicator_pulses_over_every_lighting_write_and_restores_latest_frame() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone(), 24)));
+        light.set_camera_viewer(true);
+        for (time, level) in [(0.0, 255), (1.0, 128), (2.0, 255)] {
+            light.update(false, time).unwrap();
+            assert_eq!(*observed.borrow(), vec![Rgbw8::new(0, level, level, 0); 24]);
+            for base in [Rgbw8::new(255, 255, 255, 255), Rgbw8::OFF] {
+                light.render_uniform(base).unwrap();
+                assert_eq!(*observed.borrow(), vec![Rgbw8::new(0, level, level, 0); 24]);
+                assert_eq!(light.frame, vec![base; 24]);
+            }
+            assert!(light.is_on());
+        }
+        let latest = (0..24)
+            .map(|index| Rgbw8::new(index, 1, 2, 3))
+            .collect::<Vec<_>>();
+        light.render(&latest).unwrap();
+        light.set_camera_viewer(false);
+        light.update(false, 2.1).unwrap();
+        assert_eq!(*observed.borrow(), latest);
+    }
+
+    struct ObservedLight(Rc<RefCell<Vec<Rgbw8>>>, usize);
     impl LightingDevice for ObservedLight {
         fn pixel_count(&self) -> usize {
-            1
+            self.1
         }
         fn render(&mut self, pixels: &[Rgbw8]) -> Result<()> {
             *self.0.borrow_mut() = pixels.to_vec();
@@ -742,7 +768,7 @@ mod tests {
     #[test]
     fn candidate_pulse_is_only_visible_exception_to_rest_darkness() {
         let observed = Rc::new(RefCell::new(vec![Rgbw8::OFF]));
-        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone())));
+        let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone(), 1)));
         light.update(true, 1.0).unwrap();
         let pulse = Rgbw8::new(40, 20, 5, 4);
         light.set_wake_pulse(Some(pulse));

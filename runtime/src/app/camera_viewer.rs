@@ -26,8 +26,8 @@ impl CameraViewer {
         )
     }
 
-    pub(super) fn active(&self, now: f64, foreground: bool) -> bool {
-        !foreground && now < self.expires_at
+    pub(super) fn active(&self, now: f64) -> bool {
+        now < self.expires_at
     }
 }
 
@@ -36,17 +36,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lease_renews_expires_clears_and_yields_to_foreground() {
+    fn lease_renews_expires_and_clears() {
         let mut marker = CameraViewer::default();
-        assert!(!marker.active(0.0, false));
+        assert!(!marker.active(0.0));
         marker.command("camera-viewer 3", 10.0, true).unwrap();
-        assert!(marker.active(12.0, false));
-        assert!(!marker.active(12.0, true));
-        assert!(!marker.active(13.0, false));
+        assert!(marker.active(12.0));
+        assert!(!marker.active(13.0));
         marker.command("camera-viewer 3", 12.0, true).unwrap();
-        assert!(marker.active(14.0, false));
+        assert!(marker.active(14.0));
         marker.command("camera-viewer 0", 14.0, true).unwrap();
-        assert!(!marker.active(14.0, false));
+        assert!(!marker.active(14.0));
     }
 
     #[test]
@@ -61,7 +60,7 @@ mod tests {
             let response: serde_json::Value =
                 serde_json::from_str(&marker.command(command, 0.0, supported).unwrap()).unwrap();
             assert_eq!(response["ok"], false);
-            assert!(!marker.active(0.0, false));
+            assert!(!marker.active(0.0));
         }
     }
 }
