@@ -147,7 +147,8 @@ presence wakes the lamp or clears Stop. See [Hands ownership and thresholds](mot
 Off and Hands return `503 tracking_off` from `/speaker`; V2 confirmed wakes then
 produce no visual turn or scan, and conversation gestures use the held anchor.
 V1 retains its acoustic side turn. Tracking does not change lamp routine mode
-or the automatic-rest timeout. See [wake direction evidence](voice-architecture.md#direction-evidence)
+or the automatic-rest timeout. Opt-in [presence deferral](motion-architecture.md#presence-defers-automatic-rest)
+can inhibit automatic rest while fresh face or hand observations continue. See [wake direction evidence](voice-architecture.md#direction-evidence)
 and [preference defaults](configuration.md#camera-privacy-and-profile).
 
 The service's CPU quota applies to all its threads, including libcamera request
@@ -156,9 +157,10 @@ Nice gives voice work scheduling priority; quota throttling can suspend camera
 threads and stall capture silently. A watchdog reopens the source after a
 capture-publication gap, invalidating callbacks from the closed source. Health
 retains the restart count across camera toggles. See [vision operating limits](../vision/README.md#service-setup-and-development).
-The quota change, automatic recovery, tracking modes and two-person target
-stability are implemented and lamp-unverified; hardware checks are listed in
-the [vision acceptance procedure](../vision/README.md#face-tracking).
+The ten-minute camera soak, privacy toggle, Off/Faces modes, steady two-person
+gaze and matched ASR comparison passed the reported lamp checks. The soak did
+not require a watchdog restart. Recorded evidence and remaining optical and
+recovery checks are in the [vision acceptance procedure](../vision/README.md#face-tracking).
 
 ### Listener and voice service
 

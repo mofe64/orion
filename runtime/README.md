@@ -743,3 +743,8 @@ anchor without enabling torque or clearing Stop.
 object glance or reaction to its anchor. These private commands never clear the Stop latch.
 The runtime owns priority, expiry and shared curiosity admission. See
 [object-directed idles](../docs/motion-architecture.md#object-directed-idle-glances).
+
+`rest.presence_deferred` reports an expired automatic-rest deadline held by fresh,
+opt-in camera presence. The deadline is not renewed, so losing presence can allow
+rest immediately. Explicit rest and sleep-after-reply bypass this deferral;
+presence never creates a wake event. See [presence and rest](../docs/motion-architecture.md#presence-defers-automatic-rest).

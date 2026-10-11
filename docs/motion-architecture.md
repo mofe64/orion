@@ -147,9 +147,30 @@ after checking its candidate and motion; failed execution does not refund it.
 
 The policy has bounded in-memory state and no detector, motion or servo IO.
 Object idle glances, mutual gaze, arrival notice and object peeks use this policy.
-Hands mode also uses this policy; presence deferral is pending. The runtime closes admission during active lamp routines (including
+Hands mode also uses this policy. Presence deferral admits no gesture and does
+not spend motion budget. The runtime closes admission during active lamp routines (including
 wind-down and sunrise), alerts and rest; it has no independent clock-based
 quiet-hours schedule.
+
+### Presence defers automatic rest
+
+With `presence_defers_rest` enabled, fresh face observations in Faces mode or
+palm observations in Hands mode can keep an already powered, awake lamp from
+starting automatic rest. Evidence expires after two seconds; camera privacy,
+Tracking Off, an empty observation or disabling the preference removes it.
+Object detections and pets do not count. Only the active detector's presence
+field is considered, without identifying a person or storing an image.
+
+The original inactivity deadline is retained. While it is expired and fresh
+presence holds it, `rest.presence_deferred` is true and `remaining_seconds` is
+zero. Once presence ends or becomes stale, automatic rest can begin immediately
+if no foreground owner or conversation is still deferring it. Presence never
+refreshes voice confirmation, queues a wake, changes routine mode or enables
+torque. Explicit rest, sleep-after-reply and scheduled wind-down retain priority.
+An already descending or resting lamp ignores presence as a wake signal.
+This policy spends no curiosity budget because it initiates no movement; it
+only inhibits an automatic transition. Lamp checks remain owed for sustained
+work, departure, privacy, explicit rest and absence of surprise waking.
 
 ### Hands following
 
@@ -252,10 +273,10 @@ return to the unchanged character anchor. The shared budget and the same
 three-second intensity lift accompanies the existing warm background effect.
 There is no audio. Manual light, scenes, voice, Stop and rest retain priority.
 
-Arrival notice never enables torque or wakes a resting lamp. With the default
-ten-minute automatic-rest timeout, an empty room can already have led to rest;
-the welcome then remains suppressed. It can run while Orion is still awake,
-for example in Lamp mode or with a longer configured rest timeout. Privacy and
+Arrival notice never enables torque or wakes a resting lamp. An automatic-rest
+timeout of ten minutes or less can put the lamp to rest before an arrival becomes
+eligible, suppressing the welcome. The default timeout is thirty minutes; Lamp
+mode disables that timeout. Privacy and
 mode changes use the same owned return as mutual gaze. This behaviour is
 lamp-unverified.
 

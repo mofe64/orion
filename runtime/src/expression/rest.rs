@@ -33,6 +33,7 @@ pub struct RestStatus {
     pub timeout_seconds: f64,
     pub last_confirmed_at: Option<f64>,
     pub remaining_seconds: Option<f64>,
+    pub presence_deferred: bool,
     pub movement_run_id: Option<u64>,
     pub light_on: bool,
     pub error: Option<String>,
@@ -56,6 +57,7 @@ pub struct RestCoordinator {
     state: RestState,
     timeout: f64,
     deadline: Option<f64>,
+    presence_deferred: bool,
     last_confirmed_at: Option<f64>,
     rest_run: Option<u64>,
     wake_session: Option<String>,
@@ -72,6 +74,7 @@ impl RestCoordinator {
             state: RestState::Disabled,
             timeout,
             deadline: None,
+            presence_deferred: false,
             last_confirmed_at: None,
             rest_run: None,
             wake_session: None,
@@ -88,6 +91,7 @@ impl RestCoordinator {
             sleep_requested: self.sleep_session.is_some(),
             timeout_seconds: self.timeout,
             last_confirmed_at: self.last_confirmed_at,
+            presence_deferred: self.presence_deferred,
             remaining_seconds: if self.mode == super::routines::UserMode::Idle {
                 self.deadline.map(|at| (at - now).max(0.0))
             } else {
@@ -108,17 +112,20 @@ impl RestCoordinator {
 
     pub fn set_mode(&mut self, mode: super::routines::UserMode, now: f64) {
         self.mode = mode;
+        self.presence_deferred = false;
         self.sleep_session = None;
         self.deadline = (self.state == RestState::Awake).then_some(now + self.timeout);
     }
 
     pub fn request_sleep(&mut self, session: &str) {
         self.sleep_session = Some(session.into());
+        self.presence_deferred = false;
     }
 
     pub fn disable(&mut self) {
         self.sleep_session = None;
         self.state = RestState::Disabled;
+        self.presence_deferred = false;
         self.deadline = None;
         self.rest_run = None;
         self.wake_session = None;
@@ -139,6 +146,7 @@ impl RestCoordinator {
             self.sleep_session = None;
         }
         self.last_confirmed_at = Some(now);
+        self.presence_deferred = false;
         self.deadline = Some(now + self.timeout);
         if self.state != RestState::Awake {
             self.wake_session = Some(session.into());
@@ -179,6 +187,7 @@ impl RestCoordinator {
             .ok_or_else(|| Error::Runtime("Rest movement has no run ID.".into()))?;
         self.sleep_session = None;
         self.state = RestState::GoingToRest;
+        self.presence_deferred = false;
         self.rest_run = Some(run);
         self.wake_session = None;
         self.attention = None;
@@ -225,6 +234,11 @@ impl RestCoordinator {
         feedback: &VoiceFeedback,
         foreground_busy: bool,
     ) {
+        self.presence_deferred = self.state == RestState::Awake
+            && self.mode == super::routines::UserMode::Idle
+            && self.sleep_session.is_none()
+            && self.deadline.is_some_and(|deadline| now >= deadline)
+            && character.presence_defers_rest(now, core);
         if let Err(error) = self.advance(now, core, character, feedback, foreground_busy) {
             self.state = RestState::Fault;
             self.error = Some(error.to_string());
@@ -233,6 +247,7 @@ impl RestCoordinator {
             self.attention = None;
             eprintln!("oriond: rest lifecycle failed; awaiting explicit recovery: {error}");
         }
+        self.presence_deferred &= self.state == RestState::Awake;
     }
 
     fn advance<D: RuntimeDriver>(
@@ -310,7 +325,8 @@ impl RestCoordinator {
                     .as_ref()
                     .is_some_and(|id| !feedback.owns(id))
                     || (self.mode == super::routines::UserMode::Idle
-                        && self.deadline.is_some_and(|deadline| now >= deadline)))
+                        && self.deadline.is_some_and(|deadline| now >= deadline)
+                        && !character.presence_defers_rest(now, core)))
                     && !foreground_busy
                     && !feedback.confirmed_activity()
                     && character.can_auto_rest(core)

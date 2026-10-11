@@ -1,10 +1,35 @@
 import json
+import time
 
 from daemon_support import DaemonTestCase, daemon, request
 from test_gaze import boottime_ns
 
 
 class SurroundingsTests(DaemonTestCase):
+    def test_presence_holds_expired_rest_until_privacy_clear(self):
+        with daemon(hardware='v2', automatic_character=True, following=True,
+                    gaze=False, rest_after_seconds=1) as path:
+            self.wait_for_rest(path, 'awake')
+            # Presence can defer rest even when gaze movement is disabled.
+            deadline = time.monotonic() + 1.5
+            while time.monotonic() < deadline:
+                self.ok(path, 'gaze surroundings ' + json.dumps({
+                    'capture_boottime_ns': boottime_ns(), 'camera_on': True,
+                    'tracking_mode': 'faces', 'objects': [], 'looking_away': None,
+                    'settings': {'presence_defers_rest': True},
+                    'faces': [{'track_id': 1, 'azimuth': 0., 'elevation': 0., 'frontal': False}]}))
+                time.sleep(.2)
+            status = request(path, 'character status')['rest']
+            self.assertEqual(status['state'], 'awake')
+            self.assertEqual(status['remaining_seconds'], 0)
+            self.assertTrue(status['presence_deferred'])
+            self.assertIsNone(status['last_confirmed_at'])
+            self.ok(path, 'gaze surroundings clear')
+            status = self.wait_for_rest(path, 'going_to_rest')['rest']
+            self.assertFalse(status['presence_deferred'])
+            self.wait_for_rest(path, 'resting')
+            self.assertFalse(request(path, 'status')['torque_enabled'])
+
     def test_metadata_freshness_voice_gate_and_stop_latch(self):
         with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
             self.wait_for_rest(path, 'awake')
@@ -28,7 +53,6 @@ class SurroundingsTests(DaemonTestCase):
             self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
 
     def test_mutual_gaze_waits_for_dwell_and_yields_to_unconfirmed_wake(self):
-        import time
         with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
             self.wait_for_rest(path, 'awake')
             def observe():

@@ -44,9 +44,8 @@ returns the complete setting map; `POST` accepts a partial map of known boolean
 keys, serializes concurrent edits and atomically replaces the file with mode
 0600. A failed write preserves the previous preferences.
 
-Object glances, mutual gaze, arrival notice and object peeks are implemented and
-lamp-unverified. Presence deferral is pending. Studio
-exposes each control when its behaviour is implemented. Vision watches the file beside its camera preference;
+All five character behaviours are implemented and lamp-unverified. Studio
+exposes their switches under Character behaviours. Vision watches the file beside its camera preference;
 changing it invalidates pending autonomous observations without resetting the
 runtime's curiosity budget or leaving an active Hands mode. Settings survive deployment and rollback.
 
@@ -243,7 +242,7 @@ With `--hardware v2`, it defaults to `off` for maintenance. Select `on` explicit
 for normal character startup. See [hardware profiles and calibration](hardware-versions.md).
 Use `off` for maintenance startup with torque disabled. `--rest-after-seconds`
 defaults to `1800`, or 30 minutes. Accepted wake confirmations reset inactivity;
-active conversations and foreground work can defer rest. Lamp mode disables
+active conversations, foreground work and opt-in fresh camera presence can defer rest. Lamp mode disables
 automatic rest while preserving idle animations. See
 [automatic rest](system-architecture.md#automatic-rest-and-waking).
 

@@ -96,6 +96,7 @@ struct ObjectGlance {
 pub(super) struct SurroundingsState {
     pub(super) budget: CuriosityBudget,
     received: Option<f64>,
+    present: bool,
     stamp: u64,
     pub(super) settings: BehaviourSettings,
     glance: Option<ObjectGlance>,
@@ -111,6 +112,7 @@ pub(super) struct SurroundingsState {
 impl SurroundingsState {
     pub(super) fn clear(&mut self) {
         self.received = None;
+        self.present = false;
         self.glance = None;
         self.settings = BehaviourSettings::default();
         self.mutual.clear();
@@ -132,6 +134,19 @@ impl CharacterCoordinator {
         self.leave_hands(now, core)?;
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)
+    }
+    /// Deferral is read-only: it never grants motion, renews a voice deadline,
+    /// enables torque or manufactures a wake event.
+    pub(crate) fn presence_defers_rest<D: RuntimeDriver>(
+        &self,
+        now: f64,
+        core: &RuntimeCore<D>,
+    ) -> bool {
+        self.surroundings.settings.presence_defers_rest
+            && self.surroundings.fresh(now)
+            && self.surroundings.present
+            && self.status.enabled
+            && core.mode().torque_is_enabled()
     }
     pub(crate) fn set_curiosity_available(&mut self, allowed: bool) {
         self.surroundings.runtime_allowed = allowed;
@@ -203,6 +218,11 @@ impl CharacterCoordinator {
         }
         self.surroundings.received = Some(now);
         self.surroundings.settings = value.settings;
+        self.surroundings.present = match value.tracking_mode.as_str() {
+            "faces" => !value.faces.is_empty(),
+            "hands" => value.hand_count > 0,
+            _ => false,
+        };
         let _ = self
             .surroundings
             .budget
@@ -509,5 +529,124 @@ mod tests {
         character.forget_gaze_for_external_stop(crate::expression::gaze::GazeStopCommand::Stop);
         character.set_curiosity_available(true);
         assert!(!character.curiosity_ready(&core));
+    }
+    fn presence_fixture() -> (
+        RuntimeCore<crate::expression::gaze::tests::FollowingDriver>,
+        CharacterCoordinator,
+        std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) {
+        let (mut core, _, boot) = crate::expression::gaze::tests::following();
+        let mut character = CharacterCoordinator::new(1);
+        // Presence is a detector observation, independent of actuator permission.
+        character.start(0., &mut core).unwrap();
+        for step in 1..=250 {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        (core, character, boot)
+    }
+    fn presence_message(
+        stamp: u64,
+        mode: &str,
+        face: bool,
+        hands: u8,
+        enabled: bool,
+        camera: bool,
+    ) -> Surroundings {
+        serde_json::from_value(serde_json::json!({"capture_boottime_ns":stamp,
+            "camera_on":camera,"tracking_mode":mode,"settings":{"presence_defers_rest":enabled},
+            "objects":[],"looking_away":null,"hand_count":hands,"hand_point":null,
+            "faces":if face {serde_json::json!([{"track_id":1,"azimuth":0.,"elevation":0.,"frontal":false}])}else{serde_json::json!([])}
+        })).unwrap()
+    }
+    #[test]
+    fn presence_is_opt_in_fresh_and_specific_to_the_active_detector() {
+        let (mut core, mut character, boot) = presence_fixture();
+        for (index, (mode, face, hands, enabled, camera, expected)) in [
+            ("faces", true, 0, true, true, true),
+            ("hands", false, 1, true, true, true),
+            ("faces", false, 1, true, true, false),
+            ("hands", true, 0, true, true, false),
+            ("off", true, 1, true, true, false),
+            ("faces", true, 0, false, true, false),
+            ("faces", true, 0, true, false, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let now = 6. + index as f64;
+            let stamp = 1_000_000_000 + (now * 1e9) as u64;
+            boot.store(stamp, Ordering::Relaxed);
+            character
+                .observe_surroundings(
+                    presence_message(stamp, mode, face, hands, enabled, camera),
+                    now,
+                    &mut core,
+                )
+                .unwrap();
+            assert_eq!(character.presence_defers_rest(now, &core), expected);
+            assert!(!character.presence_defers_rest(now + 2.01, &core));
+        }
+    }
+    #[test]
+    fn presence_holds_expired_deadline_but_not_explicit_sleep_or_resting_torque() {
+        use crate::expression::{
+            rest::{RestCoordinator, RestState},
+            voice_feedback::VoiceFeedback,
+        };
+        for explicit in [false, true] {
+            let (mut core, mut character, boot) = presence_fixture();
+            let mut rest = RestCoordinator::new(1.);
+            let feedback = VoiceFeedback::default();
+            rest.started();
+            rest.tick(5., &mut core, &mut character, &feedback, false);
+            boot.store(7_000_000_000, Ordering::Relaxed);
+            character
+                .observe_surroundings(
+                    presence_message(7_000_000_000, "faces", true, 0, true, true),
+                    6.,
+                    &mut core,
+                )
+                .unwrap();
+            rest.tick(6., &mut core, &mut character, &feedback, false);
+            assert_eq!(rest.status(6.).state, RestState::Awake);
+            assert!(rest.status(6.).presence_deferred);
+            assert_eq!(rest.status(6.).remaining_seconds, Some(0.));
+            assert_eq!(rest.status(6.).last_confirmed_at, None);
+            if explicit {
+                rest.request_sleep("explicit-request");
+            }
+            // Explicit sleep bypasses fresh presence; otherwise expiry does it.
+            let at = if explicit { 6.1 } else { 8.01 };
+            rest.tick(at, &mut core, &mut character, &feedback, false);
+            assert_eq!(rest.status(at).state, RestState::GoingToRest);
+            assert!(!rest.status(at).presence_deferred);
+            for step in 1..=600 {
+                let now = at + step as f64 * 0.02;
+                let stamp = 1_000_000_000 + (now * 1e9) as u64;
+                boot.store(stamp, Ordering::Relaxed);
+                core.tick(now).unwrap();
+                if step % 25 == 0 {
+                    character
+                        .observe_surroundings(
+                            presence_message(stamp, "faces", true, 0, true, true),
+                            now,
+                            &mut core,
+                        )
+                        .unwrap();
+                }
+                character
+                    .tick(now, &mut core, false, None, false, None, None)
+                    .unwrap();
+                rest.tick(now, &mut core, &mut character, &feedback, false);
+            }
+            assert_eq!(rest.status(at + 12.).state, RestState::Resting);
+            assert!(!core.snapshot().torque_enabled);
+            assert!(!character.presence_defers_rest(at + 12., &core));
+        }
     }
 }

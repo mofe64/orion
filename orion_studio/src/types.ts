@@ -265,6 +265,7 @@ export interface GatewayStatus {
     timeout_seconds: number;
     last_confirmed_at: number | null;
     remaining_seconds: number | null;
+    presence_deferred?: boolean;
     movement_run_id: number | null;
     light_on: boolean;
     error: string | null;

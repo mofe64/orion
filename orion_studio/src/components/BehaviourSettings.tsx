@@ -9,6 +9,7 @@ const controls: Array<[BehaviourKey, string, string]> = [
   ["mutual_gaze", "Mutual gaze", "Acknowledge a sustained look with a small, silent response."],
   ["arrival_notice", "Arrival notice", "Give a silent welcome after the room has been empty for ten minutes."],
   ["new_object_peek", "Object peeks", "Take one curious look at a newly noticed object or pet."],
+  ["presence_defers_rest", "Stay awake with company", "Delay automatic rest while a face or hands remain in view."],
 ];
 const noSubscription = () => () => {};
 const emptySnapshot = () => emptyBehaviours;
