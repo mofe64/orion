@@ -21,7 +21,8 @@ export function drawCameraDetections(context: CanvasRenderingContext2D, detectio
     context.strokeStyle = detection.chosen_target ? "#ffe299" : "#78e6cf";
     context.fillStyle = context.strokeStyle; context.lineWidth = detection.chosen_target ? 3 : 2;
     context.strokeRect(x * width, y * height, w * width, h * height);
-    context.fillText(`Face ${detection.track_id}${detection.chosen_target ? " · target" : ""}`, x * width + 4, Math.max(16, y * height - 5));
+    const label = detection.class === "hand" ? "Hand" : "Face";
+    context.fillText(`${label} ${detection.track_id}${detection.chosen_target ? " · target" : ""}`, x * width + 4, Math.max(16, y * height - 5));
   }
 }
 

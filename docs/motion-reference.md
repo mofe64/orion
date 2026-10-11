@@ -411,7 +411,7 @@ tipping, cable clearance, readability and shoulder load are lamp-unverified.
 
 | Pose | Single idea and lead | Main silhouette | Secondary head and base |
 | --- | --- | --- | --- |
-| `lean_reach_low` | Shoulder and elbow reach decisively forward | Light about 22 cm forward and 24 cm high | Centred base and neck; wrist pitches the beam onto the desk |
+| `lean_reach_low` | Shoulder and elbow reach decisively forward | Light about 21 cm forward and 25 cm high | Centred base and neck; wrist pitches the beam onto the desk |
 | `lean_reach_left` | Shoulder and elbow extend toward the left work area | Open elbow, light about 19 cm radially forward and 29 cm high | Base faces 0.55 rad left; centred neck and downward wrist preserve the work point |
 | `lean_reach_right` | Shoulder and elbow extend toward the right work area | Mirror of the left reach, with the same arm height | Base faces 0.55 rad right; neck and wrist remain secondary |
 
@@ -475,7 +475,11 @@ tests verify execution, while load, contact, tipping and readable acting remain
 lamp-unverified. Explicit staging uses zero independent joint lag to preserve
 the coupled arm envelope.
 
-`motion::ik::solve_lean` returns `aimed`, `clamped`, or `unreachable`. It is a
+`motion::ik::solve_lean` returns `aimed`, `clamped`, or `unreachable`. The
+status describes the light: `aimed` means it lands within `AIM_TOLERANCE_RAD`
+(1°) of the target, and `clamped` means limits leave it further off. A
+separate `lean_limited` flag reports when the comfort envelope shortened the
+requested lean; at lean 0.8 that is common and does not affect `aimed`. It is a
 pose planner, not an execution interface. A caller must compile its result
 through `MotionSequence` with live calibration and call
 `ComfortBox::validate_measured_sequence` before installing the movement. Unreachable

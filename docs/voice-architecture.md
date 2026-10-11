@@ -468,7 +468,7 @@ model while Codex finishes. Phase-less messages wait for final completion. They 
 multiple-final or streamed-item checks. If the turn has no explicit final, the
 last phase-less message is the answer. Two distinct explicit final items retire
 the conversation. Model
-commentary and citation markers are removed from spoken output. The final text
+commentary, citation markers and web addresses are removed from spoken output. The final text
 must preserve any prefix
 already emitted; a mismatch cancels the turn and retires the agent conversation.
 The base prompt requests a short opening sentence and prose for listening, without

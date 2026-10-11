@@ -163,7 +163,7 @@ impl CharacterCoordinator {
                 work.run = Some(run);
                 work.aimed = solution.positions;
                 Ok(
-                    json!({"ok":true,"status":solution.status,"aim_error_rad":solution.aim_error_rad,"run_id":run}),
+                    json!({"ok":true,"status":solution.status,"aim_error_rad":solution.aim_error_rad,"lean_limited":solution.lean_limited,"run_id":run}),
                 )
             }
             WorkRequest::Scan { index, .. } => {

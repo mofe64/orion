@@ -10,6 +10,7 @@ from .find import FindError, FindJob, locate
 from .behaviours import KEYS, ObjectMap, overlaps
 from .novelty import NoveltyTrack
 from .hands import HandWindow
+from .intrinsics import SIZE
 
 IDLE_HZ, VOICE_HZ = 10, 3
 GAZE_RETRY_SECONDS = 3.
@@ -242,7 +243,9 @@ class FacePipeline:
                 "dropped_frames": self.dropped, "error": self.error,
                 "gaze_available": self.gaze_available, "gaze_error": self.gaze_error,
                 "object_lookup": self.find_job is not None, "objects_available": self.objects is not None and getattr(self.objects, "available", True) is not False,
-                "palms_available": self.palms is not None, "tracking_mode": self.mode}
+                "palms_available": self.palms is not None, "tracking_mode": self.mode,
+                "hand_count": self.hand_count if self.mode == "hands" else 0,
+                "hand_point": self.hand_point if self.mode == "hands" else None}
 
     def needs_frame(self):
         with self.changed:
@@ -387,7 +390,7 @@ class FacePipeline:
         except (OSError, ValueError, AttributeError):
             pass
 
-    def _hand_frame(self, stamp, buffer, generation):
+    def _hand_frame(self, stamp, buffer, generation, rgb=None, preview_generation=None):
         if self.palms is None:
             raise ValueError('Palm detector unavailable')
         camera = self.client.camera_pose(stamp)
@@ -403,6 +406,17 @@ class FacePipeline:
                     return
                 self.hand_count = len(palms)
                 self.hand_point = self.hand_window.observe(palms, stamp, self.intrinsics, camera)
+                if rgb is not None and preview_generation == self.preview_generation:
+                    # Boxes and pixels come from one capture, as for faces.
+                    width, height = SIZE
+                    detections = [{"class": "hand", "track_id": index + 1, "score": palm.confidence,
+                        "chosen_target": False, "capture_boottime_ns": str(stamp),
+                        "box": [min(max(palm.box[0] / width, 0.), 1.), min(max(palm.box[1] / height, 0.), 1.),
+                                min(max(palm.box[2] / width, 0.), 1.), min(max(palm.box[3] / height, 0.), 1.)]}
+                        for index, palm in enumerate(palms)]
+                    self.latest_preview = (stamp, rgb, detections)
+                else:
+                    self.latest_preview = None
             self._surroundings(stamp, [])
 
     def _run(self):
@@ -455,7 +469,7 @@ class FacePipeline:
             next_inference = last_inference + 1 / self.rate_hz
             try:
                 if self.mode == 'hands':
-                    self._hand_frame(stamp, buffer, generation)
+                    self._hand_frame(stamp, buffer, generation, rgb, preview_generation)
                     with self.changed:
                         self.error = None
                     continue

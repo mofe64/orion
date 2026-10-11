@@ -215,10 +215,10 @@ second. Gaps over two seconds reset this dwell. P8 IK with `lean=0.35` supplies 
 slow `hands_follow` destination; no raw joint stream reaches the controller.
 Only successful measured completion commits that work point and anchor.
 
-Entry and each follow move spend the shared budget, including its sixty-second
-spacing and three-per-ten-minute cap. Work-point keys use eight-centimetre cells
-for habituation. Hands therefore follows deliberate changes sparingly; it is
-not continuous hand chasing. Mode toggling cannot replenish the budget. Ten
+Hands is a mode the user selects, so entry and follow moves do not spend the
+shared curiosity budget. Their restraint is the eight-centimetre, one-second
+shift rule and one move at a time: Hands follows deliberate changes in the
+work point, not continuous hand chasing. Ten
 seconds without hands stops scheduling ordinary idles while holding the work
 anchor; an already running idle finishes its anchor return. Speech retains priority. Hands alone does not defer automatic rest.
 

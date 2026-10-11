@@ -67,7 +67,8 @@ for permission, image lifetime, transport and failure behaviour.
 such as notebook → book, mug → cup and plant → potted plant to the detector's
 COCO categories, then asks the coordinator to execute the operation. It must
 run before final speech. Results preserve `aimed`, `clamped`, `not_found` and
-`ambiguous`; a clamped result can carry `moved: false`, and ambiguous candidates
+`ambiguous`; `aimed` can carry `lean_limited: true` when Orion leaned less
+than requested but the light still landed; a clamped result can carry `moved: false`, and ambiguous candidates
 require clarification. The tool never sends a photo or accepts joint targets.
 Hardware recognition and beam alignment remain lamp-unverified. See the
 [camera execution boundary](../docs/system-architecture.md#camera-and-vision).
@@ -177,7 +178,9 @@ Studio Settings offers five traits and four conversational habits. Defaults are
 Warm, Calm, and Keep it brief. This habit is the only overall brevity control;
 deselecting it allows long answers. The base prompt asks for a short opening
 sentence and speech-friendly prose without markdown, bullet symbols, tables or
-headings. Speech normalization strips citations and whitespace without truncation;
+headings, in plain everyday words without technical terms, codes or web
+addresses. Speech normalization strips citations, web addresses (Markdown links
+keep their words) and whitespace without truncation;
 the streamed-answer runaway guard remains 64 KiB. Selecting none uses a neutral,
 clear tone.
 `SOUL.md` defaults to `$HOME/.local/share/orion/SOUL.md`; `ORION_SOUL_PATH`

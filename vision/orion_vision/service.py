@@ -262,7 +262,7 @@ class Vision:
                 stamp, rgb = self.latest
                 # Inference previews keep boxes and pixels from one capture. When
                 # detection is unavailable, the ordinary camera feed still works.
-                preview = self.pipeline.preview() if self.pipeline and self.tracking_mode == 'faces' else None
+                preview = self.pipeline.preview() if self.pipeline and self.tracking_mode in ('faces', 'hands') else None
                 if preview is not None:
                     stamp, rgb, _ = preview
                 if self.cached and (stamp == self.cached[0] or time.monotonic() - self.last_encode < 1 / 15):

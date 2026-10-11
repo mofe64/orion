@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 pub(super) fn schema() -> Value {
     json!({"type":"function","name":"aim_light",
-        "description":"Point Orion's light at a desk object only when the user explicitly asks. Call before speaking. Map everyday names to COCO categories: notebook to book, mug to cup, plant to potted plant. Returns aimed, clamped (possibly no movement), not_found, or ambiguous with candidates. Ask which object when ambiguous; never claim exact aim after clamping. Unsupported objects need clarification; this tool never sends a photo.",
+        "description":"Point Orion's light at a desk object only when the user explicitly asks. Call before speaking. Map everyday names to COCO categories: notebook to book, mug to cup, plant to potted plant. Returns aimed, clamped (possibly no movement), not_found, or ambiguous with candidates. aimed means the light landed on the object, even when lean_limited says Orion leaned less than it wanted; do not mention clamping or limits then. Ask which object when ambiguous; never claim exact aim after clamped. Unsupported objects need clarification; this tool never sends a photo.",
         "inputSchema":{"type":"object","additionalProperties":false,"required":["target"],
             "properties":{"target":{"type":"string"}}}})
 }

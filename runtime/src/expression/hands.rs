@@ -1,6 +1,5 @@
 //! Exclusive Hands-mode ownership. Observations plan; ticks only track ownership.
 use super::*;
-use crate::expression::curiosity::{CuriosityContext, CuriosityKind};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MoveKind {
@@ -98,7 +97,7 @@ impl CharacterCoordinator {
         if !self.hands_available(core) || self.hands.run.is_some() {
             return Ok(());
         }
-        let (name, target, destination, key, kind) = if !self.hands.entered {
+        let (name, target, destination, kind) = if !self.hands.entered {
             let target = core.poses().pose("desk_work")?.clone();
             let point = core
                 .camera_kinematics()
@@ -110,7 +109,6 @@ impl CharacterCoordinator {
                 "hands_entry",
                 target,
                 point,
-                "hands:entry".into(),
                 MoveKind::Enter,
             )
         } else {
@@ -146,27 +144,13 @@ impl CharacterCoordinator {
                 "hands_follow",
                 target,
                 Some(point),
-                format!("hands:{:0.0}:{:0.0}", point[0] / 0.08, point[1] / 0.08),
                 MoveKind::Follow,
             )
         };
+        // Hands is an explicit mode the user chose, not unprompted curiosity:
+        // its restraint is the 8 cm / 1 s work-shift rule above and one move
+        // at a time, not the shared gesture budget (3 per 10 minutes).
         let definition = core.prepare_hands_motion(name, &target, None)?;
-        let context = CuriosityContext {
-            enabled: true,
-            camera_on: true,
-            tracking_on: true,
-            powered_and_awake: true,
-            character_available: true,
-            ..Default::default()
-        };
-        if self
-            .surroundings
-            .budget
-            .try_spend(now, &key, CuriosityKind::Gesture, context)
-            .is_err()
-        {
-            return Ok(());
-        }
         self.preempt_idle_or_thinking(now, core)?;
         if self.hands.previous.is_none() {
             self.hands.previous = self.status.active_anchor.clone();
@@ -396,7 +380,7 @@ mod tests {
         assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
     }
     #[test]
-    fn hands_waits_for_shift_dwell_and_budget_then_holds_when_hands_disappear() {
+    fn hands_waits_for_shift_and_dwell_without_a_gesture_budget_then_holds() {
         let (mut core, mut character, boot) = fixture();
         character.observe_hands(1, None, 5., &mut core).unwrap();
         advance(&mut core, &mut character, &boot, 5., 12., true);
@@ -407,32 +391,29 @@ mod tests {
             .unwrap();
         assert!(character.hands.candidate.is_none());
         let shifted = [0.14, -0.32, 0.];
-        for at in [14., 14.5, 15.] {
-            character
-                .observe_hands(1, Some(shifted), at, &mut core)
-                .unwrap();
-        }
-        assert!(
-            character.hands.run.is_none(),
-            "mode entry already spent the shared budget"
-        );
         character
-            .observe_hands(1, Some(shifted), 65., &mut core)
+            .observe_hands(1, Some(shifted), 14., &mut core)
             .unwrap();
         character
-            .observe_hands(1, Some(shifted), 66., &mut core)
+            .observe_hands(1, Some(shifted), 14.5, &mut core)
+            .unwrap();
+        assert!(character.hands.run.is_none(), "a shift must hold for 1 s");
+        // The explicit mode follows once the dwell passes, even though entry
+        // moved the lamp moments ago; the curiosity budget does not apply.
+        character
+            .observe_hands(1, Some(shifted), 15., &mut core)
             .unwrap();
         assert_eq!(
             character.status.active_clip.as_deref(),
             Some("hands_follow")
         );
         assert_eq!(character.status.active_anchor.as_ref(), Some(&desk));
-        advance(&mut core, &mut character, &boot, 66., 74., true);
+        advance(&mut core, &mut character, &boot, 15., 23., true);
         assert_ne!(character.status.active_anchor.as_ref(), Some(&desk));
         let held = character.status.active_anchor.clone();
-        advance(&mut core, &mut character, &boot, 74., 90., false);
+        advance(&mut core, &mut character, &boot, 23., 39., false);
         assert_eq!(character.status.active_anchor, held);
-        assert!(character.hands.suppress_idle(90.));
+        assert!(character.hands.suppress_idle(39.));
         assert_eq!(core.mode(), RuntimeMode::Holding);
     }
     #[test]

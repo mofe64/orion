@@ -2,16 +2,16 @@ format_version: 2
 units: radians
 poses:
   lean_reach_low:
-    description: Arm-led reach toward a desk point 28 cm ahead; lamp contact, tipping and shoulder load unverified.
+    description: Arm-led reach toward a desk point 28 cm ahead. Shoulder 1.15 rad keeps elbow droop inside the completion tolerance at P = 48 (1.2 rad held 0.041–0.050 rad short, 2026-10-11).
     tags: [powered, idle_anchor, desk_reach]
     default_lighting: warm_idle_breathe
     idle_profile: directional
     positions:
       base_yaw_joint: 0.0
-      shoulder_pitch_joint: 1.2
+      shoulder_pitch_joint: 1.15
       elbow_pitch_joint: -0.4
       head_roll_joint: 0.0
-      head_pitch_joint: 0.221483
+      head_pitch_joint: 0.247512
   lean_reach_left:
     description: Arm-led open-elbow reach toward a desk point 28 cm away to the left; lamp contact, tipping and shoulder load unverified.
     tags: [powered, idle_anchor, desk_reach]

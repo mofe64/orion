@@ -78,6 +78,26 @@ class PalmTests(unittest.TestCase):
         self.assertIsNone(window.observe([Palm([300,30,30,30],.9)],5_000_000_001,lens,CAMERA))
         self.assertEqual(len(window.samples),1)
 
+    def test_hands_mode_publishes_paired_hand_boxes_and_counts_hands(self):
+        faces,palms,client=Mock(),Mock(),Mock()
+        palms.detect.return_value=[Palm([320,180,64,36],.9)]
+        client.camera_pose.return_value=CAMERA
+        client.voice_active.return_value=False
+        now=[10.]
+        pipeline=FacePipeline(faces,intrinsics(),client,clock=lambda:now[0],boot_clock=lambda:int(now[0]*1e9),palms=palms)
+        pipeline.start();self.addCleanup(pipeline.close)
+        pipeline.reset(True,mode='hands')
+        frame,rgb=np.zeros((360,640,3),np.uint8),np.zeros((360,640,3),np.uint8)
+        stamp=int(now[0]*1e9)
+        pipeline.submit(stamp,frame,rgb=rgb)
+        eventually(lambda:pipeline.preview() is not None)
+        captured,pixels,detections=pipeline.preview()
+        self.assertEqual(captured,stamp);self.assertIs(pixels,rgb)
+        self.assertEqual(detections,[{"class":"hand","track_id":1,"score":.9,"chosen_target":False,
+            "capture_boottime_ns":str(stamp),"box":[.5,.5,.1,.1]}])
+        self.assertEqual(pipeline.status()['hand_count'],1)
+        faces.detect.assert_not_called()
+
     def test_single_worker_switches_detectors_and_late_hand_work_cannot_survive_mode_change(self):
         faces,palms,objects,client=Mock(),Mock(),Mock(),Mock()
         faces.detect.return_value=[]

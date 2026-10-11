@@ -203,8 +203,11 @@ The same watcher polls the independent tracking preference. Off clears
 pending inference and tracks, discards in-flight results, and reports a zero
 detection rate. `/observations` and the viewed `/detections` batch are empty;
 `/speaker` returns `503 tracking_off`. Faces resumes with fresh track IDs.
-Hands also refuses `/speaker`, and selects the palm detector instead of YuNet;
-viewed JPEGs remain plain capture frames without face overlays.
+Hands also refuses `/speaker`, and selects the palm detector instead of YuNet
+at 5 Hz. The viewed stream pairs each JPEG with that frame's palm inference, so
+`/detections` carries `"class": "hand"` boxes from the same capture and the feed
+updates at the detection rate. `/health` reports `hand_count` and the smoothed
+`hand_point` (base-frame metres, or `null` until two seconds of hands).
 Override its path with `--tracking-preference-file`; keep gateway and Vision
 paths aligned. Defaults and failure behaviour are in
 [configuration](../docs/configuration.md#camera-privacy-and-profile).

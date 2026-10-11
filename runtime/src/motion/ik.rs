@@ -362,11 +362,19 @@ pub enum LeanStatus {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct LeanSolution {
+    /// Describes the light: `aimed` when it lands within `AIM_TOLERANCE_RAD`
+    /// of the target, `clamped` when limits leave it off target.
     pub status: LeanStatus,
     /// Unreachable has no pose, so callers cannot accidentally play a fallback.
     pub positions: Option<JointPositions>,
     pub aim_error_rad: Option<f64>,
+    /// The comfort envelope shortened the requested lean. The light can still
+    /// be aimed exactly from the shorter reach.
+    pub lean_limited: bool,
 }
+
+/// Light aim counts as exact within one degree, the planner's tested accuracy.
+pub const AIM_TOLERANCE_RAD: f64 = std::f64::consts::PI / 180.0;
 
 impl LeanSolution {
     fn unreachable() -> Self {
@@ -374,6 +382,7 @@ impl LeanSolution {
             status: LeanStatus::Unreachable,
             positions: None,
             aim_error_rad: None,
+            lean_limited: false,
         }
     }
 }
@@ -468,15 +477,15 @@ pub fn solve_lean(
         return Ok(LeanSolution::unreachable());
     }
     let aim_error_rad = (dot / norm(delta)).clamp(-1.0, 1.0).acos();
-    let clamped = arm_clamped || pitch_scale < 1.0 - EPS || aim_error_rad > 1e-5;
     Ok(LeanSolution {
-        status: if clamped {
+        status: if aim_error_rad > AIM_TOLERANCE_RAD {
             LeanStatus::Clamped
         } else {
             LeanStatus::Aimed
         },
         positions: Some(posed),
         aim_error_rad: Some(aim_error_rad),
+        lean_limited: arm_clamped || pitch_scale < 1.0 - EPS,
     })
 }
 
@@ -771,7 +780,9 @@ mod tests {
             original[1] - reached[1] > 0.12,
             "{original:?} to {reached:?}, {reach:?}"
         );
-        assert_eq!(reach.status, LeanStatus::Clamped);
+        // The envelope shortens the reach, but the light still lands.
+        assert!(reach.lean_limited);
+        assert_eq!(reach.status, LeanStatus::Aimed);
     }
 
     #[test]

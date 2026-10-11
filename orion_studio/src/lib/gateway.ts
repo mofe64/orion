@@ -90,6 +90,7 @@ export interface CameraObservation {
   box: [number, number, number, number]; // Normalised x, y, width, height.
 }
 export interface CameraDetection {
+  class?: "face" | "hand";
   box: [number, number, number, number];
   score: number;
   track_id: number;

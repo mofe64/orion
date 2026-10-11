@@ -24,6 +24,11 @@ describe("camera controls and overlay", () => {
     expect(context.strokeRect).toHaveBeenCalledWith(160, 180, 64, 72);
     expect(context.fillText).toHaveBeenCalledWith("Face 4 · target", 164, 175);
   });
+  it("labels hand boxes in Hands mode", () => {
+    const context = { clearRect: vi.fn(), fillText: vi.fn(), strokeRect: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCameraDetections(context, [{ class: "hand", track_id: 1, score: .9, chosen_target: false, capture_boottime_ns: "1", box: [.5, .5, .1, .1] }], 640, 360);
+    expect(context.fillText).toHaveBeenCalledWith("Hand 1", 324, 175);
+  });
   it("highlights only the chosen target and labels every track", () => {
     const strokes: [string | CanvasGradient | CanvasPattern, number][] = [];
     const context = { clearRect: vi.fn(), fillText: vi.fn(), strokeRect: () => strokes.push([context.strokeStyle, context.lineWidth]) } as unknown as CanvasRenderingContext2D;
