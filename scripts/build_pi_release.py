@@ -41,6 +41,9 @@ def snapshot_commit(source, revision, releases, hardware='v1'):
         (release / 'release.json').write_text(json.dumps({
             'revision': commit[:12], 'commit': commit, 'hardware': hardware, 'release_id': release_id,
         }, indent=2) + '\n')
+        if hardware == 'v2' and (release / 'vision/orion_vision/detect_objects.py').is_file():
+            from vision_assets import stage_yolo
+            stage_yolo(source, release)
     except BaseException:
         shutil.rmtree(release)
         raise

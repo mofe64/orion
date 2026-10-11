@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub(crate) struct Gateway {
+    pub voice_resources: Arc<Mutex<()>>,
     client: reqwest::Client,
     url: String,
     token: String,
@@ -12,6 +13,7 @@ pub(crate) type ActiveRun = Arc<Mutex<Option<u64>>>;
 impl Gateway {
     pub fn new(url: &str, token: &str) -> Result<Self, String> {
         Ok(Self {
+            voice_resources: Arc::new(Mutex::new(())),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -125,6 +127,38 @@ impl Gateway {
         }
         Ok(result["result"].clone())
     }
+    pub async fn aim_light(&self, mut parameters: Value, session: &str) -> Result<Value, String> {
+        let resources = self.voice_resources.clone().try_lock_owned().map_err(
+            |_| "Aiming must be requested before speech starts; please try after this reply",
+        )?;
+        parameters["session_id"] = session.into();
+        let gateway = self.clone();
+        // A cancelled voice task drops its JoinHandle, not the worker owning
+        // the CPU gate. A later ASR job waits for remote lookup/recovery to end.
+        tokio::spawn(async move {
+            let _resources = resources;
+            let response = gateway
+                .client
+                .post(format!("{}/api/v2/operations", gateway.url))
+                .timeout(Duration::from_secs(65))
+                .bearer_auth(&gateway.token)
+                .json(&parameters)
+                .send()
+                .await
+                .map_err(|e| e.without_url().to_string())?;
+            let value = gateway.decode(response).await?;
+            if value["accepted"] != true || value["result"]["ok"] != true {
+                return Err(gateway.model_error(
+                    value["result"]["error"]
+                        .as_str()
+                        .unwrap_or("Aiming was refused"),
+                ));
+            }
+            Ok(value["result"].clone())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
     pub async fn cancel(&self, active: &ActiveRun) {
         if let Some(run) = active.lock().await.take() {
             let _ = self
@@ -157,6 +191,79 @@ fn wav(pcm: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn exercise_aim_gate(cancel: bool) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = Gateway::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "secret",
+        )
+        .unwrap();
+        let held = gateway.voice_resources.lock().await;
+        assert!(
+            gateway
+                .aim_light(json!({"operation":"aim_light","category":"book"}), "a")
+                .await
+                .unwrap_err()
+                .contains("before speech")
+        );
+        drop(held);
+        let copy = gateway.clone();
+        let lookup = tokio::spawn(async move {
+            copy.aim_light(json!({"operation":"aim_light","category":"book"}), "a")
+                .await
+        });
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut header = Vec::new();
+        while !header.ends_with(b"\r\n\r\n") {
+            header.push(stream.read_u8().await.unwrap());
+        }
+        let header = String::from_utf8(header).unwrap();
+        let size: usize = header
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")
+                    .map(str::to_owned)
+            })
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut body = vec![0; size];
+        stream.read_exact(&mut body).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["session_id"],
+            "a"
+        );
+        assert!(gateway.voice_resources.try_lock().is_err());
+        if cancel {
+            lookup.abort();
+            tokio::task::yield_now().await;
+            assert!(gateway.voice_resources.try_lock().is_err());
+        }
+        let response = r#"{"accepted":true,"result":{"ok":true,"status":"not_found"}}"#;
+        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.unwrap();
+        if cancel {
+            assert!(lookup.await.unwrap_err().is_cancelled());
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while gateway.voice_resources.try_lock().is_err() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        } else {
+            assert_eq!(lookup.await.unwrap().unwrap()["status"], "not_found");
+        }
+        assert!(gateway.voice_resources.try_lock().is_ok());
+    }
+    #[tokio::test]
+    async fn aiming_excludes_asr_and_speech_until_the_server_finishes() {
+        exercise_aim_gate(false).await;
+    }
+    #[tokio::test]
+    async fn cancelled_caller_cannot_release_the_inflight_lookup_gate() {
+        exercise_aim_gate(true).await;
+    }
     async fn peer(status: &str, body: &str) -> (Gateway, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let gateway = Gateway::new(

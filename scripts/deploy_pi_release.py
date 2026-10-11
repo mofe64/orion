@@ -55,6 +55,12 @@ def validate_listener(release):
 def prepare_vision(release):
     # Release-local data follows activation/rollback without replacing native libraries.
     download(release, YUNET_URL, 'vision/models/face_detection_yunet_2023mar.onnx', YUNET_SHA256)
+    if (release / 'vision/orion_vision/detect_objects.py').is_file():
+        from vision_assets import verify_yolo
+        verify_yolo(release)
+        run(release / 'vision/.venv/bin/python', '-c',
+            'from orion_vision.detect_objects import YoloNCNN; import sys; YoloNCNN(sys.argv[1])',
+            release / 'vision/models/yolo11n_ncnn_model')
 
 
 def validate_voice(release, root):

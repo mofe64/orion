@@ -418,6 +418,39 @@ The ten authoring answers apply to each pose:
 
 #### Lean IK and table points
 
+`look_around` is an ordinary V2 catalogue motion. The aiming request executes
+its three marked stops separately so each detector pass sees a stationary
+camera, then returns or starts the aim. The ten authoring answers are:
+
+1. Search the desk; the neck leads and the base catches up.
+2. Readable left, centre and right stops keep the arm silhouette stable.
+3. A small opposing neck turn and upward pitch announce the first search.
+4. The base follows the neck; downward wrist pitch keeps the desk in view.
+5. Each search stop and final anchor return are real settles.
+6. Neck and base coordinate a shallow viewing arc; there is no arm oscillation.
+7. Slow 1.6 s base catches and a 2.8 s return express weight; the compiler can
+   lengthen them, and inference waits for measured settling.
+8. Home, speech and commissioned reach anchors must support it. Generated
+   search targets are shortened into the same comfort envelope.
+9. Stop, rest, speech and foreground work revoke search ownership. Failed or
+   cancelled stops do not replace the anchor. A normal no-match result compiles
+   a slow return to the saved anchor; a revoked owner cannot initiate recovery.
+10. Catalogue compilation and the following-driver integration check the
+    stops, recovery and ownership. Desk coverage, cable clearance and the
+    neck-first reading remain lamp-unverified.
+
+The generated `aim_light` approach uses the same ten decisions: its one idea is
+an arm-led reach toward the selected desk point; its silhouette is the open
+shoulder/elbow reach; an eight-percent opposing arm displacement supplies
+anticipation when the envelope permits it; head and base follow after 35% of
+the arm travel; only the target is a settle; coupled arm motion supplies the
+arc; 0.35/0.65/2.5 s authored stages and a 3.5 s recovery express weight; the
+saved powered anchor supplies the reference; failed or interrupted movement
+cannot commit its target; calibrated envelope sampling and measured-completion
+tests verify execution, while load, contact, tipping and readable acting remain
+lamp-unverified. Explicit staging uses zero independent joint lag to preserve
+the coupled arm envelope.
+
 `motion::ik::solve_lean` returns `aimed`, `clamped`, or `unreachable`. It is a
 pose planner, not an execution interface. A caller must compile its result
 through `MotionSequence` with live calibration and call

@@ -191,6 +191,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     backend: &str,
 ) -> crate::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
+    if let Some(config) = options.hardware.profile().comfort_box.clone() {
+        core.configure_comfort_box(config)?;
+    }
     let camera_error = if options.hardware == crate::HardwareVersion::V2 {
         // Deployed geometry belongs to the release, independently of the live
         // catalog working directory. Missing geometry never blocks startup.

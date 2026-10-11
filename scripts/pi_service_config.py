@@ -210,6 +210,9 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 release / 'hardware/profiles' / f'{hardware}.json'))
             change_effective_start(contents, lambda start: set_option(start, '--face-model',
                 release / 'vision/models/face_detection_yunet_2023mar.onnx'))
+            if (release / 'vision/orion_vision/detect_objects.py').is_file():
+                change_effective_start(contents, lambda start: set_option(start, '--object-model',
+                    release / 'vision/models/yolo11n_ncnn_model'))
 
         # A first onboard installation adds only missing defaults. Existing override values win.
         if name == 'orion-listener':

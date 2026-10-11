@@ -4,6 +4,7 @@ import time
 
 from .gaze_client import boottime_ns
 from .tracker import MAX_AGE_NS, Tracker, choose_track
+from .find import FindError, FindJob, locate
 
 IDLE_HZ, VOICE_HZ = 10, 3
 GAZE_RETRY_SECONDS = 3.
@@ -12,7 +13,8 @@ TARGET_HOLD_NS = 1_000_000_000
 
 
 class FacePipeline:
-    def __init__(self, detector, intrinsics, client, clock=time.monotonic, boot_clock=boottime_ns):
+    def __init__(self, detector, intrinsics, client, clock=time.monotonic, boot_clock=boottime_ns,
+                 objects=None):
         self.detector, self.intrinsics, self.client = detector, intrinsics, client
         self.clock, self.boot_clock = clock, boot_clock
         self.changed, self.stop = Condition(), Event()
@@ -36,15 +38,23 @@ class FacePipeline:
         self.target_track_id = None
         self.challenger_track_id = None
         self.challenger_since_ns = None
+        self.objects = objects
+        self.camera_enabled = False
+        self.find_job = None
 
     def start(self):
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
         self.thread.start()
 
-    def reset(self, enabled):
+    def reset(self, enabled, camera_enabled=None):
         with self.changed:
             self.enabled = enabled
+            self.camera_enabled = enabled if camera_enabled is None else camera_enabled
             self.generation += 1
+            if self.find_job is not None:
+                self.find_job.error = FindError('camera_changed', 'Capture or tracking changed during lookup')
+                if not self.find_job.running:
+                    self.find_job.done.set()
             self.pending = None
             self.latest_preview = None
             self.preview_generation += 1
@@ -65,7 +75,7 @@ class FacePipeline:
 
     def submit(self, stamp, buffer, metadata=None, geometry=None, rgb=None):
         with self.changed:
-            if self.enabled and buffer is not None:
+            if self.camera_enabled and (self.enabled or self.find_job is not None) and buffer is not None:
                 if self.intrinsics.geometry is not None:
                     try:
                         self.intrinsics.validate_capture(buffer, metadata, geometry)
@@ -99,7 +109,70 @@ class FacePipeline:
         with self.changed:
             return {"enabled": self.enabled, "rate_hz": self.rate_hz if self.enabled else 0, "inferences": self.inferences,
                 "dropped_frames": self.dropped, "error": self.error,
-                "gaze_available": self.gaze_available, "gaze_error": self.gaze_error}
+                "gaze_available": self.gaze_available, "gaze_error": self.gaze_error,
+                "object_lookup": self.find_job is not None, "objects_available": self.objects is not None}
+
+    def needs_frame(self):
+        with self.changed:
+            return self.camera_enabled and (self.enabled or self.find_job is not None)
+
+    def find(self, category, session=None, timeout=5.):
+        from .detect_objects import CATEGORIES
+        if category not in CATEGORIES:
+            raise FindError('unknown_category', 'Use one of the COCO object categories')
+        with self.changed:
+            if not self.camera_enabled:
+                raise FindError('camera_off', 'Camera is disabled')
+            if self.objects is None:
+                raise FindError('objects_unavailable', 'Object detector is unavailable')
+            if self.find_job is not None:
+                raise FindError('find_busy', 'An object lookup is already running')
+            job = FindJob(category, session, self.generation, self.clock() + timeout)
+            self.find_job = job
+            self.pending = self.latest_preview = None
+            self.changed.notify_all()
+        if not job.done.wait(timeout):
+            with self.changed:
+                job.error = job.error or FindError('find_timeout', 'Object lookup timed out')
+                if not job.running:
+                    job.done.set()
+                self.changed.notify_all()
+            # NCNN is a synchronous native call. A deadline invalidates its
+            # result, but must not advertise CPU availability before it returns.
+            job.done.wait()
+        if job.error:
+            raise job.error
+        return job.result
+
+    def _find(self, job, stamp, buffer):
+        try:
+            if job.done.is_set() or self.clock() >= job.deadline:
+                return
+            if not self.client.find_allowed(job.session):
+                raise FindError('voice_active', 'Object lookup is unavailable during voice activity')
+            # Read geometry before inference; the measured pose history is only 1 s.
+            camera = self.client.camera_pose(stamp)
+            objects = self.objects.detect(buffer)
+            candidates = locate([obj for obj in objects if obj.category == job.category],
+                                self.intrinsics, camera, stamp)
+            if not self.client.find_allowed(job.session):
+                raise FindError('voice_active', 'Voice ownership changed during lookup')
+            with self.changed:
+                if not self.camera_enabled or job.generation != self.generation:
+                    raise FindError('camera_changed', 'Capture or tracking changed during lookup')
+                if not job.done.is_set():
+                    job.result = {'status': 'not_found' if not candidates else
+                        'ambiguous' if len(candidates) > 1 else 'found', 'candidates': candidates}
+        except Exception as error:
+            if not job.done.is_set():
+                job.error = error
+        finally:
+            with self.changed:
+                if job.result is None and job.error is None:
+                    job.error = FindError('find_timeout', 'Object lookup timed out')
+                job.done.set()
+                if self.find_job is job:
+                    self.find_job = None
 
     def _clear_target(self):
         if self.target_selected:
@@ -168,11 +241,21 @@ class FacePipeline:
         last_inference = None
         while not self.stop.is_set():
             with self.changed:
+                if self.find_job and self.find_job.done.is_set():
+                    self.find_job = None
                 self.changed.wait_for(lambda: self.stop.is_set() or self.pending is not None, timeout=.1)
                 if self.stop.is_set():
                     return
                 if self.pending is None:
                     continue
+                job = self.find_job
+                if job is not None:
+                    job.running = True
+                    stamp, buffer, _, _, _ = self.pending
+                    self.pending = None
+            if job is not None:
+                self._find(job, stamp, buffer)
+                continue
             now = self.clock()
             if now >= self.next_voice_poll:
                 try:

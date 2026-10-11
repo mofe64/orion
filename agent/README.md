@@ -59,6 +59,15 @@ cargo test --manifest-path agent/Cargo.toml installed_runtime_handshake -- --ign
 
 ## Memory and tools
 
+`aim_light(target)` explicitly aims at a supported desk object. It maps names
+such as notebook → book, mug → cup and plant → potted plant to the detector's
+COCO categories, then asks the coordinator to execute the operation. It must
+run before final speech. Results preserve `aimed`, `clamped`, `not_found` and
+`ambiguous`; a clamped result can carry `moved: false`, and ambiguous candidates
+require clarification. The tool never sends a photo or accepts joint targets.
+Hardware recognition and beam alignment remain lamp-unverified. See the
+[camera execution boundary](../docs/system-architecture.md#camera-and-vision).
+
 Memory defaults to `$HOME/.local/share/orion/MEMORY.md`; `ORION_MEMORY_PATH`
 selects a different file. `AgentConfig.memory_path = None` disables storage.
 Entries have this format:

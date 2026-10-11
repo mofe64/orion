@@ -196,6 +196,47 @@ class BundleTests(unittest.TestCase):
 
 
 class VisionAssetTests(unittest.TestCase):
+    def test_yolo_export_is_verified_before_staging_and_missing_or_corrupt_fails(self):
+        from vision_assets import stage_yolo, verify_yolo
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release, source = root / 'release', root / 'source'
+            module = release / 'vision/orion_vision/detect_objects.py'
+            module.parent.mkdir(parents=True)
+            hashes = {name: hashlib.sha256(name.encode()).hexdigest() for name in ('model.ncnn.param', 'model.ncnn.bin')}
+            module.write_text('MODEL_HASHES = ' + repr(hashes))
+            model = source / 'vision/models/yolo11n_ncnn_model'
+            model.mkdir(parents=True)
+            with patch.dict('os.environ', {'ORION_YOLO_MODEL_DIR': str(model)}):
+                with self.assertRaisesRegex(RuntimeError, 'Missing pinned'):
+                    stage_yolo(source, release)
+                for name in hashes:
+                    (model / name).write_bytes(name.encode())
+                stage_yolo(source, release)
+                verify_yolo(release)
+                (model / 'model.ncnn.bin').write_bytes(b'corrupt')
+                with self.assertRaisesRegex(RuntimeError, 'SHA-256 mismatch'):
+                    stage_yolo(source, release)
+                verify_yolo(release)  # Previously verified release is unchanged.
+
+    def test_only_the_pinned_ncnn_headless_opencv_exception_is_accepted(self):
+        from pi_release_bundle import install_wheels
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            wheels = Path(directory)
+            for name in ('ncnn-1.0.20250503-a.whl', 'opencv_python_headless-4.11.0.86-a.whl'):
+                (wheels / name).touch()
+            expected = "Found 1 incompatibility\nThe package `ncnn` requires `opencv-python`, but it's not installed\n"
+            for diagnostic, accepted in [(expected, True), (expected.replace('opencv-python', 'numpy'), False),
+                (expected.replace('1 incompatibility', '2 incompatibilities'), False)]:
+                runner = Mock(side_effect=[None, subprocess.CalledProcessError(1, ['uv'], stderr=diagnostic), None])
+                if accepted:
+                    install_wheels(Path('/python'), wheels, runner)
+                    self.assertEqual(runner.call_args.args[1], '-c')
+                else:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        install_wheels(Path('/python'), wheels, runner)
+
     def test_deployment_uses_the_detectors_pinned_checksum(self):
         import ast
         source = ast.parse((SCRIPTS.parent / 'vision/orion_vision/detect_faces.py').read_text())

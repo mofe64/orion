@@ -10,6 +10,9 @@ use crate::motion::library::{
 };
 use crate::motion::pose::JointPositions;
 use crate::motion::style::MotionStyle;
+#[path = "aim_light.rs"]
+mod aim_light;
+pub(crate) use aim_light::WorkRequest;
 
 /// Note:
 /// - A clip is a named motion definition, such as "idle_breathe". It describes a movement using joint targets, timing, and style
@@ -294,6 +297,8 @@ pub struct CharacterCoordinator {
     /// A directly requested foreground action still needs its final posture captured.
     /// Once movement ends, that posture becomes the anchor for later character motion.
     foreground_pending: bool,
+    work: Option<aim_light::WorkState>,
+    work_anchor: bool,
 
     /// The foreground scene whose result Orion is waiting for.
     /// Only successful completion of this scene replaces the character's anchor.
@@ -398,6 +403,8 @@ impl CharacterCoordinator {
             active_idle_category: None,
             starting_run_id: None,
             foreground_pending: false,
+            work: None,
+            work_anchor: false,
             foreground_scene_run_id: None,
             thinking_run: None,
             speech_motion_run_id: None,
@@ -426,6 +433,7 @@ impl CharacterCoordinator {
 
     /// Resets the character's attention state, clearing any active attention movement.
     pub fn clear_attention(&mut self) {
+        self.work = None;
         self.attention = None;
         self.gaze.clear();
     }
@@ -446,7 +454,9 @@ impl CharacterCoordinator {
         self.gaze.suspend(command);
     }
     pub(crate) fn resume_gaze<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) -> Result<()> {
-        self.gaze.resume(core.mode().torque_is_enabled())
+        self.gaze.resume(core.mode().torque_is_enabled())?;
+        self.work_anchor = false;
+        Ok(())
     }
     /// Wake can clear Stop only for an already powered, enabled character.
     /// Read-only runtime access prevents voice recovery from enabling torque or
@@ -475,6 +485,8 @@ impl CharacterCoordinator {
             return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
         if !self.status.enabled
+            || self.work.is_some()
+            || self.work_anchor
             || self.starting_run_id.is_some()
             || self.foreground_pending
             || self.foreground_scene_run_id.is_some()
@@ -527,6 +539,11 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<CharacterStatus> {
+        if self.work.is_some() || self.work_anchor {
+            return Err(Error::InvalidState(
+                "The desk-light anchor owns attention".into(),
+            ));
+        }
         // Reject the request if the direction is unsupported, the confidence isn’t a finite number, or the confidence is outside the accepted range.
         if !matches!(side, "left" | "right")
             || !confidence.is_finite()
@@ -641,6 +658,11 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<CharacterStatus> {
+        if self.work.is_some() || self.work_anchor {
+            return Err(Error::InvalidState(
+                "The desk-light anchor owns attention".into(),
+            ));
+        }
         if !self.gaze.status().enabled {
             return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
@@ -804,6 +826,7 @@ impl CharacterCoordinator {
         // now tells the runtime when this movement began on its elapsed-time clock.
         // we use a goto command here with a provided duration, we aren't using the return_home motion (which is defined in our yaml)
         let response = checked(core.handle_command("goto home 1.600000", now))?;
+        self.work_anchor = false;
         // Do not clear Stop if startup was rejected by a foreground owner or
         // failed to restore torque/home. Explicit --gaze off stays off.
         if self.gaze.is_stopped() {
@@ -1009,6 +1032,20 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         if self
+            .work
+            .take()
+            .and_then(|work| work.run)
+            .is_some_and(|run| {
+                core.snapshot()
+                    .motion
+                    .as_ref()
+                    .is_some_and(|motion| motion.run_id == run)
+            })
+        {
+            checked(core.handle_command("stop", now))?;
+        }
+        self.work_anchor = false;
+        if self
             .attention
             .as_ref()
             .is_some_and(|attention| attention.visual)
@@ -1036,6 +1073,7 @@ impl CharacterCoordinator {
     /// Clears attention and tracking for a home movement, then gives the
     /// foreground action priority while character mode is enabled.
     pub fn note_foreground_started(&mut self, now: f64) {
+        self.work_anchor = false;
         // clear attention and tracking for a home movement
         self.clear_attention();
         self.starting_run_id = None;
@@ -1129,6 +1167,12 @@ impl CharacterCoordinator {
         speech_analysis: Option<&SpeechAnalysis>,
         speech_frame: Option<usize>,
     ) -> Result<()> {
+        if (scene_active || speech_active || !self.status.enabled) && self.work.is_some() {
+            self.preempt_for_foreground(now, core)?;
+        }
+        if self.tick_work(now, core)? {
+            return Ok(());
+        }
         // no character processing if character mode is not enabled
         if !self.status.enabled {
             self.gaze.yield_to_priority(now, core);
@@ -2880,6 +2924,7 @@ impl CharacterCoordinator {
     }
 
     fn finish_stop(&mut self) {
+        self.work_anchor = false;
         self.thinking_run = None;
         self.clear_attention();
         self.status = CharacterStatus {

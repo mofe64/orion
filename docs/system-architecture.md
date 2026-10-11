@@ -72,6 +72,36 @@ thread runs YuNet on the latest lores capture, computes camera rays, and asks
 through runtime `gaze`, preserving calibration, the compiler, motion priority
 and Stop latches.
 
+Explicit `aim_light` requests follow agent → coordinator → gateway → vision
+lookup → runtime planning. YOLO11n shares YuNet's single inference worker;
+capture and its stall watchdog continue independently. Before inference, vision
+reads the capture-time camera transform from `camera-rays`. This preserves
+the measured pose even when inference outlasts the one-second pose history.
+Detected centres become rays and intersect the base-frame desk plane at `z = 0`.
+A single camera cannot prove that an object is actually on that plane.
+
+The coordinator admits this explicit lookup only after ASR, before final speech.
+A shared resource lock excludes ASR, TTS and playback, including a subsequent
+turn while an interrupted response finishes its lookup. The runtime grants the
+confirmed thinking session a sixty-second `vision_begin` lease, revoked by
+phase changes, expiry or `vision_end`. Background object work never inherits
+this permission. A general `/find` request is refused while any voice owner exists.
+
+The runtime owns the search across three authored `look_around` stops. It saves
+the previous anchor, suppresses gaze and idle reactions, and compiles each
+movement against calibration and the coupled comfort envelope. The gateway
+checks camera privacy, tracking changes, voice ownership and measured movement
+completion between steps. Several matching objects return `ambiguous` for the
+agent to clarify. No match returns to the previous anchor. Invalid desk rays or
+unreachable points return `clamped` with no applied aim.
+
+Only a completed aim becomes the held lamp anchor; face gaze and visual speaker
+attention then leave that work spot alone. Speech and idle clips use the held
+anchor. Explicit movement, `gaze resume`, character restart or selecting Idle
+mode releases that attention hold. Stop, rest, speech and foreground controls
+revoke an in-progress search; its old owner cannot restart it. Search, aim,
+desk-plane accuracy and beam alignment remain lamp-unverified.
+
 Viewer previews pair completed detections with RGB from the same capture. The
 authenticated gateway proxies `/detections` only with a healthy viewer lease;
 polling cannot create one. Studio matches exact timestamp strings and removes

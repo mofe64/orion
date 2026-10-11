@@ -137,6 +137,25 @@ Native MuJoCo checks tracking and software ownership. These are
 `simulation_preview` performances: physical tracking, safe cable motion,
 speed/deadband tuning and camera alignment remain unverified on the lamp.
 
+## Desk-light aiming
+
+`aim-light` is a V2 JSON command for a bounded owned search. Start with
+`{"action":"begin","token":"<32 hex characters>"}`, then use the same token
+for `scan` (`index`: 0–2), `target` (`point`: base-frame metres, `lean`: 0–1),
+`status`, and `end`. `scan`, `target` and a restoring `end` return a movement
+`run_id`; wait for measured completion. `status.committed` confirms a successful
+aim. An expired or revoked token cannot restore or change the anchor. There
+is no raw-joint input. The [motion catalogue](../docs/motion-reference.md#lean-ik-and-table-points)
+describes the envelope and generated approach. The authenticated gateway owns
+normal calls; direct callers must also respect camera privacy and voice exclusion.
+
+`camera-rays` replies additionally include `camera.position` and the row-major
+`camera.rotation` from the same interpolated measured capture pose. This pure
+query lets a slow detector retain geometry before pose-history expiry.
+`voice SESSION vision_begin` and `vision_end` bound an explicit post-ASR lookup;
+`voice status` reports its live `vision_session`. They do not make background
+vision eligible during a conversation.
+
 ## Build and test
 
 Use a toolchain that supports the crate's Rust 2024 syntax. Run from the repository root:

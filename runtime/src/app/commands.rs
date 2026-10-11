@@ -154,6 +154,23 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
         })?;
         return Ok(serde_json::to_string(&core.camera_rays(request)?)?);
     }
+    if let Some(arguments) = command.strip_prefix("aim-light ") {
+        if scenes.is_active() || speech.is_active() {
+            return Err(crate::Error::InvalidState(
+                "Aiming cannot interrupt scene or speech".into(),
+            ));
+        }
+        let request = serde_json::from_str::<crate::expression::character::WorkRequest>(arguments)
+            .map_err(|error| {
+                crate::Error::InvalidArgument(format!("Invalid aim-light JSON: {error}"))
+            })?;
+        let coordinator = character
+            .as_deref_mut()
+            .ok_or_else(|| crate::Error::InvalidState("Character is unavailable".into()))?;
+        return Ok(coordinator
+            .work_request(request, now_seconds, core)?
+            .to_string());
+    }
     if matches!(command, "gaze status" | "gaze clear" | "gaze resume") {
         let coordinator = character
             .as_deref_mut()
@@ -585,6 +602,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             }
             let result = routines.request(request, wall, now_seconds, audio)?;
             if let Some(mode) = mode {
+                if mode == crate::expression::routines::UserMode::Idle {
+                    character.release_work_anchor();
+                }
                 rest.set_mode(mode, now_seconds);
             }
             Ok(result)
@@ -628,6 +648,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             || command.starts_with("character ") && command != "character status"
             || command.starts_with("goto ")
             || command.starts_with("play ")
+            || command.starts_with("aim-light ")
         {
             return serde_json::json!({"ok":false,"error":"Dismiss the alert first"}).to_string();
         }
@@ -637,12 +658,19 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
     }
     if let Some(fields) = command.strip_prefix("voice ") {
         if fields == "status" {
-            return serde_json::json!({"ok": true, "voice": feedback}).to_string();
+            return serde_json::json!({"ok": true, "voice": feedback,
+                "vision_session": feedback.vision_session(now_seconds)})
+            .to_string();
         }
         let parts: Vec<_> = fields.split_whitespace().collect();
         if parts.len() < 2 || parts.len() > 5 {
             return serde_json::json!({"ok": false, "error": "Expected voice SESSION EVENT"})
                 .to_string();
+        }
+        if parts[1] == "vision_begin"
+            && (speech.is_active() || scenes.is_active() || !feedback.owns(parts[0]))
+        {
+            return serde_json::json!({"ok":false,"error":"Vision interval requires the current owner without scene or speech"}).to_string();
         }
         if matches!(parts[1], "attend_bearing" | "attend_scan") {
             if !character.gaze_status().enabled {

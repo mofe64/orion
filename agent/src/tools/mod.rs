@@ -1,3 +1,4 @@
+mod aim_light;
 mod lighting;
 mod lists;
 mod routines;
@@ -38,6 +39,7 @@ pub(crate) fn schemas() -> Value {
     ]);
     schemas.as_array_mut().unwrap().extend(routines::schemas());
     schemas.as_array_mut().unwrap().extend(lists::schemas());
+    schemas.as_array_mut().unwrap().push(aim_light::schema());
     schemas
 }
 #[derive(Deserialize)]
@@ -62,6 +64,19 @@ pub(crate) async fn execute(
     events: Option<&mpsc::Sender<AgentEvent>>,
 ) -> Result<Value, String> {
     match name {
+        "aim_light" => {
+            let parameters = aim_light::resolve(arguments)?;
+            let events = events.ok_or("No robot coordinator is attached")?;
+            let (reply, result) = oneshot::channel();
+            events
+                .send(AgentEvent::RobotOperation { parameters, reply })
+                .await
+                .map_err(|_| "Coordinator stopped")?;
+            tokio::time::timeout(std::time::Duration::from_secs(75), result)
+                .await
+                .map_err(|_| "Aiming request timed out")?
+                .map_err(|_| "Aiming request cancelled")?
+        }
         "get_weather" => {
             let args: crate::weather::Args =
                 serde_json::from_value(arguments).map_err(|e| e.to_string())?;
@@ -215,6 +230,48 @@ fn timezone_label(zone: Option<&str>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn aim_light_preserves_every_result_state_without_optimistic_success() {
+        for value in [
+            json!({"status":"aimed","moved":true}),
+            json!({"status":"clamped","moved":false,"reason":"unreachable"}),
+            json!({"status":"not_found","candidates":[]}),
+            json!({"status":"ambiguous","candidates":[{"category":"book"},{"category":"book"}]}),
+        ] {
+            let (send, mut receive) = mpsc::channel(1);
+            let config = AgentConfig::default();
+            let call = execute(
+                &config,
+                "aim_light",
+                json!({"target":"notebook"}),
+                Some(&send),
+            );
+            let response = async {
+                let AgentEvent::RobotOperation { parameters, reply } =
+                    receive.recv().await.unwrap()
+                else {
+                    panic!("Expected coordinator operation")
+                };
+                assert_eq!(
+                    parameters,
+                    json!({"operation":"aim_light","category":"book"})
+                );
+                reply.send(Ok(value.clone())).unwrap();
+            };
+            let (result, ()) = tokio::join!(call, response);
+            assert_eq!(result.unwrap(), value);
+        }
+        assert!(
+            execute(
+                &AgentConfig::default(),
+                "aim_light",
+                json!({"target":"book"}),
+                None
+            )
+            .await
+            .is_err()
+        );
+    }
     #[tokio::test]
     async fn forget_requires_an_existing_id_and_rejects_extra_fields() {
         let dir = tempfile::tempdir().unwrap();

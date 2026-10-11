@@ -12,6 +12,7 @@ dependencies = [
   "simplejpeg==1.9.0",
   "picamera2==0.3.25; sys_platform == 'linux' and platform_machine == 'aarch64'",
   "opencv-python-headless==4.11.0.86",
+  "ncnn==1.0.20250503",
 ]
 
 [project.scripts]
@@ -19,6 +20,16 @@ orion-vision = "orion_vision.service:main"
 
 [tool.setuptools.packages.find]
 include = ["orion_vision*"]
+
+[tool.setuptools.package-data]
+orion_vision = ["coco.json"]
+
+# Replace NCNN's desktop OpenCV dependency with the same headless cv2 API,
+# as in P0, and retain the wheel's other declared dependencies.
+[[tool.uv.dependency-metadata]]
+name = "ncnn"
+version = "1.0.20250503"
+requires-dist = ["numpy", "tqdm", "requests", "portalocker", "opencv-python-headless==4.11.0.86"]
 
 # The 1.8.1 sdist's setup.py declares no runtime dependencies, but aborts on
 # non-Linux hosts before producing metadata. Supply that exact metadata so

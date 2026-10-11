@@ -28,7 +28,7 @@ for line in sys.stdin:
         assert params['sandbox'] == 'read-only'
         assert params['ephemeral'] is True
         assert 'set_lighting' in params['baseInstructions']
-        assert {tool['name'] for tool in params['dynamicTools']} == {'start_light_routine', 'stop_light_routine', 'get_weather', 'append_memory', 'search_memories', 'forget_memory', 'set_alert_sound', 'set_reminder', 'snooze_alert', 'add_list_item', 'list_items', 'remove_list_item', 'clear_list', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
+        assert {tool['name'] for tool in params['dynamicTools']} == {'aim_light', 'start_light_routine', 'stop_light_routine', 'get_weather', 'append_memory', 'search_memories', 'forget_memory', 'set_alert_sound', 'set_reminder', 'snooze_alert', 'add_list_item', 'list_items', 'remove_list_item', 'clear_list', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
         assert params['config']['web_search'] == 'live'
         result = {'thread': {'id': thread_id}}
     elif method == 'turn/start':

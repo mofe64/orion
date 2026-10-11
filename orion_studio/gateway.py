@@ -398,6 +398,124 @@ class OrionGateway:
             connection.close()
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "Orion's camera service is unavailable.") from error
 
+    def find_object(self, category, session=None):
+        if self.hardware != 'v2' or not self.camera_is_enabled():
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_off', 'Camera is unavailable or disabled.')
+        connection = http.client.HTTPConnection('localhost', timeout=60)
+        connection.sock = socket.socket(socket.AF_UNIX)
+        connection.sock.settimeout(60)
+        try:
+            connection.sock.connect(self.vision_socket)
+            payload = {'category': category}
+            if session is not None:
+                payload['session'] = session
+            connection.request('POST', '/find', json.dumps(payload), {'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            encoded = response.read(32769)
+            if len(encoded) > 32768:
+                raise ValueError('Oversized object response')
+            value = json.loads(encoded)
+            if response.status != 200:
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'find_unavailable',
+                    value.get('error', {}).get('message', 'Object lookup was refused.'))
+            if (not isinstance(value, dict) or value.get('status') not in ('found', 'ambiguous', 'not_found')
+                    or not isinstance(value.get('candidates'), list) or len(value['candidates']) > 16):
+                raise ValueError('Invalid object response')
+            return value
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'find_unavailable', 'Object lookup failed.') from error
+        finally:
+            connection.close()
+
+    def aim_light(self, payload):
+        if (set(payload) - {'operation', 'category', 'session_id'}
+                or not isinstance(payload.get('category'), str) or not 1 <= len(payload['category']) <= 32):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_target', 'Expected one COCO category.')
+        session = payload.get('session_id')
+        if session is not None and (not isinstance(session, str) or re.fullmatch('[0-9a-f]{32}', session) is None):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_session', 'Invalid voice session.')
+        if self.hardware != 'v2' or not self.camera_is_enabled():
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_off', 'Camera is unavailable or disabled.')
+        token = secrets.token_hex(16)
+        mode = self.get_tracking_mode()['tracking_mode']
+        deadline = time.monotonic() + 52
+        begun = False
+        interval = False
+        def work(action, **fields):
+            return self._checked('aim-light ' + json.dumps({'action': action, 'token': token, **fields}))
+        def guard():
+            if not self.camera_is_enabled() or self.get_tracking_mode()['tracking_mode'] != mode:
+                raise GatewayError(HTTPStatus.CONFLICT, 'camera_changed', 'Camera or tracking changed during aiming.')
+            voice = self._checked('voice status')
+            if ((session is not None and voice.get('vision_session') != session)
+                    or (session is None and voice['voice'].get('session'))):
+                raise GatewayError(HTTPStatus.CONFLICT, 'voice_active', 'The voice-safe aiming interval ended.')
+            if time.monotonic() >= deadline:
+                raise GatewayError(HTTPStatus.GATEWAY_TIMEOUT, 'aim_timeout', 'Aiming timed out.')
+        def wait_movement(result, check=True):
+            if result.get('run_id') is None:
+                return
+            until = time.monotonic() + 10
+            while time.monotonic() < until:
+                if check:
+                    guard()
+                status = self._checked('status')
+                motion = next((item for item in (status.get('motion'), status.get('last_motion'))
+                               if item and item.get('run_id') == result['run_id']), None)
+                if not motion:
+                    raise GatewayError(HTTPStatus.CONFLICT, 'aim_interrupted', 'Aiming lost movement ownership.')
+                if motion['state'] == 'completed':
+                    return
+                if motion['state'] not in ('executing', 'settling'):
+                    raise GatewayError(HTTPStatus.CONFLICT, 'aim_interrupted', 'Aiming did not complete.')
+                time.sleep(.05)
+            raise GatewayError(HTTPStatus.GATEWAY_TIMEOUT, 'aim_timeout', 'Aiming did not settle.')
+        try:
+            if session is not None:
+                self._checked(f'voice {session} vision_begin')
+                interval = True
+            guard()
+            work('begin')
+            begun = True
+            found = self.find_object(payload['category'], session)
+            for index in range(3):
+                if found['status'] != 'not_found':
+                    break
+                guard()
+                wait_movement(work('scan', index=index))
+                found = self.find_object(payload['category'], session)
+            guard()
+            if found['status'] != 'found':
+                return {'ok': True, **found, 'moved': False}
+            if len(found['candidates']) != 1:
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'invalid_find', 'Expected one object candidate.')
+            point = found['candidates'][0].get('point')
+            if point is None:
+                return {'ok': True, 'status': 'clamped', 'moved': False,
+                        'reason': 'The object ray does not meet the desk in front of the camera.'}
+            if (not isinstance(point, list) or len(point) != 3
+                    or any(type(v) not in (int, float) or not math.isfinite(v) for v in point)):
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'invalid_find', 'Invalid desk point.')
+            result = work('target', point=point, lean=.8)
+            if result['status'] == 'unreachable':
+                return {'ok': True, 'status': 'clamped', 'moved': False, 'reason': 'The desk point is unreachable.'}
+            wait_movement(result)
+            if work('status').get('committed') is not True:
+                raise GatewayError(HTTPStatus.CONFLICT, 'aim_interrupted', 'The aimed pose was not accepted.')
+            work('end')
+            begun = False
+            self._checked('routines ' + json.dumps({'action': 'set_mode', 'mode': 'lamp'}))
+            return {**result, 'moved': True, 'category': payload['category']}
+        finally:
+            try:
+                if begun:
+                    # The owner token makes recovery inert after Stop, rest,
+                    # speech, or another foreground action revokes this request.
+                    wait_movement(work('end'), check=False)
+            finally:
+                if interval:
+                    self._checked(f'voice {session} vision_end')
+
     def status(self) -> dict[str, Any]:
         runtime = self.client.request("status")
         scenes = self._checked("scene status")
@@ -524,7 +642,9 @@ class OrionGateway:
         if not isinstance(payload, dict):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
         operation = payload.get("operation")
-        if operation == "goto":
+        if operation == 'aim_light':
+            response = self.aim_light(payload)
+        elif operation == "goto":
             name = self._name(payload.get("name"), "pose")
             duration = payload.get("duration_seconds", 3.0)
             if isinstance(duration, bool) or not isinstance(duration, (int, float)):

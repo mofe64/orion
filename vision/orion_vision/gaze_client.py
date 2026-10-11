@@ -53,6 +53,19 @@ class GazeClient:
             raise ValueError("Runtime bearing count mismatch")
         return value["bearings"]
 
+    def camera_pose(self, stamp):
+        return self.command('camera-rays ' + json.dumps({
+            'capture_boottime_ns': stamp, 'rays': [[0, 0, 1]]}))['camera']
+
+    def find_allowed(self, session=None):
+        value = self.command('voice status')
+        voice = value['voice']
+        if session is not None:
+            return value.get('vision_session') == session
+        # Explicit non-voice callers and future background work fail closed
+        # for every live phase, including wake verification and announcements.
+        return not voice.get('session')
+
     def target(self, track):
         from .tracker import angle_delta
         try:

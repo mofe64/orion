@@ -8,6 +8,7 @@ runtime/target/
 agent/target/
 coordinator/target/
 voice/models/*
+vision/models/
 !voice/models/wake/
 voice/models/wake/*
 !voice/models/wake/hey_orion_reference.rpw

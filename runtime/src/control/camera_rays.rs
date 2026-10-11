@@ -236,6 +236,7 @@ pub struct CameraRaysResponse {
     pub ok: bool,
     pub bearings: Vec<Bearing>,
     pub pose_age_ms: f64,
+    pub camera: crate::motion::kinematics::FramePose,
 }
 
 pub struct CameraGeometry {
@@ -286,6 +287,7 @@ impl CameraGeometry {
         let camera = self.kinematics.fk(&positions)?.camera;
         Ok(CameraRaysResponse {
             ok: true,
+            camera: camera.clone(),
             bearings: request
                 .rays
                 .into_iter()

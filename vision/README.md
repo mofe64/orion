@@ -72,7 +72,8 @@ an environment that sees Ubuntu's source-built `libcamera` and `pykms`:
 ```bash
 uv venv --python /usr/bin/python3 --system-site-packages vision/.venv
 uv sync --project vision --locked --python /usr/bin/python3
-uv run --project vision orion-vision --profile hardware/profiles/v2.json
+uv run --project vision orion-vision --profile hardware/profiles/v2.json \
+  --object-model vision/models/yolo11n_ncnn_model
 ```
 
 The Pi release builder performs the environment steps and installs the unit
@@ -95,6 +96,55 @@ contention. The Unix socket is user-only
 | `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
 | `/detections` | Latest preview detection batch; 503 `camera_not_viewed` without a stream or snapshot lease |
 | `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window; 503 `tracking_off` in Off mode |
+
+`POST /find` accepts `{"category":"book"}` and returns `found`, `not_found`
+or `ambiguous`, with at most sixteen candidates. Each candidate contains a
+lores pixel box, confidence, capture timestamp, base bearing and desk `point`
+(null when the ray misses the desk). An optional `session` is accepted only
+inside the runtime's coordinator-owned voice interval. Unknown categories,
+overlapping requests, camera changes and expired requests are rejected.
+The HTTP body is limited to 1 KiB. No snapshot is created or transmitted.
+Explicit lookup also works with Tracking Off; it does not enable face tracking.
+
+### Pinned object model
+
+YOLO11n runs through `ncnn==1.0.20250503`, with one CPU thread and Vulkan off.
+The full 640×360 lores image is scaled to 320×180, then padded by seventy rows
+above and below. Postprocessing removes that padding before fisheye projection;
+it applies a 0.4 score threshold, class-specific 0.45 IoU suppression, and a
+sixteen-object result limit. Face inference pauses for this pass and resumes
+afterward. Object inference runs only on explicit requests.
+
+The [Ultralytics export](https://github.com/ultralytics/ultralytics/tree/v8.3.107)
+and YOLO11n weights are AGPL-3.0 and stay in Orion's open GPL-3.0 component.
+The commissioned export uses Ultralytics 8.3.107, Torch 2.6.0, Torchvision 0.21.0,
+NumPy 2.1.1 and PNNX release 20250430, with `imgsz=320`, `device=cpu` and
+`half=False`. Its source is the
+[official YOLO11n checkpoint](https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt),
+SHA-256 `0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1`.
+Export on a development machine with those versions:
+
+```python
+from ultralytics import YOLO
+YOLO("yolo11n.pt").export(format="ncnn", imgsz=320, device="cpu", half=False)
+```
+
+Stage the verified `model.ncnn.param` and `model.ncnn.bin` in the ignored
+`vision/models/yolo11n_ncnn_model/`, or set `ORION_YOLO_MODEL_DIR` to their
+directory when running the release builder. The maintained hashes are
+[`MODEL_HASHES`](orion_vision/detect_objects.py); rebuilding with another
+exporter is not permission to change those hashes. The builder copies only
+the matching files into its release, and the Pi checks them and loads NCNN
+before activation. A missing or mismatched export fails preparation. The Pi
+never installs Torch or performs conversion. `--object-model` selects the
+release-local directory; service startup also verifies both hashes.
+
+The lockfile replaces NCNN's desktop `opencv-python` dependency with pinned
+`opencv-python-headless==4.11.0.86` and retains its other dependencies. A bare
+`uv pip check` reports the absent desktop distribution. Release validation
+accepts exactly that one known mismatch and imports both NCNN and cv2; every
+other dependency error still fails. Object recognition, nominal lens/table
+accuracy, and camera operation during a spoken lookup remain lamp-unverified.
 
 JPEGs are encoded on demand and cached across viewers at at most 15 fps.
 With detection available, preview JPEGs use completed inference captures: up to

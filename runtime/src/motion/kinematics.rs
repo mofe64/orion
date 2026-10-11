@@ -71,9 +71,9 @@ impl FramePose {
         if distance <= 0.0 || !distance.is_finite() {
             return Ok(None);
         }
-        Ok(Some(std::array::from_fn(|i| {
-            self.position[i] + distance * direction[i]
-        })))
+        let mut point = std::array::from_fn(|i| self.position[i] + distance * direction[i]);
+        point[2] = table_z;
+        Ok(Some(point))
     }
 
     fn compose(self, local: Self) -> Self {

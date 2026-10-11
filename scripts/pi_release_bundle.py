@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import subprocess
 import tarfile
 import zipfile
 
@@ -90,4 +91,18 @@ def install_wheels(python, wheels, run):
         raise RuntimeError(f'No prepared wheels in {wheels}')
     run('uv', 'pip', 'install', '--python', python, '--no-config', '--offline', '--no-index',
         '--no-build', '--no-deps', '--no-cache', '--link-mode', 'copy', *packages)
-    run('uv', 'pip', 'check', '--python', python, '--no-config', '--offline', '--no-cache')
+    try:
+        run('uv', 'pip', 'check', '--python', python, '--no-config', '--offline', '--no-cache',
+            capture_output=True, text=True)
+    except subprocess.CalledProcessError as error:
+        diagnostics = (error.stdout or '') + (error.stderr or '')
+        # The pinned NCNN wheel declares desktop OpenCV. The vision lock
+        # deliberately supplies the ABI-compatible headless cv2 distribution.
+        # Accept exactly this single missing distribution, never other failures.
+        expected = "The package `ncnn` requires `opencv-python`, but it's not installed"
+        if (not any(p.name.startswith('ncnn-1.0.20250503-') for p in packages)
+                or not any(p.name.startswith('opencv_python_headless-4.11.0.86-') for p in packages)
+                or 'Found 1 incompatibility\n' not in diagnostics
+                or diagnostics.strip().splitlines()[-1] != expected):
+            raise
+        run(python, '-c', 'import cv2, ncnn; assert cv2.__version__ == "4.11.0"')

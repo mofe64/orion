@@ -308,14 +308,14 @@ async fn connected(
                         let mut delivered_reply = None;
                         if briefing {
                             if !text.ends_with(": ") {
-                                speak(&speech,&gateway,&pi,&hub,&sid,request,text,active.clone(),true).await?;
+                                speak(&speech,&gateway,&pi,&hub,&sid,request,text,active.clone(),true,true).await?;
                                 pi.send(json!({"type":"session.processing","sessionId":sid})).await?;
                             }
                             let (_keep, interrupted) = watch::channel(false);
                             let (_, reply) = response(&agent,&speech,&gateway,&pi,&hub,&sid,request,MORNING_BRIEFING,active,tool_feedback,interrupted).await?;
                             delivered_reply = Some(reply);
                         } else {
-                            speak(&speech,&gateway,&pi,&hub,&sid,request,text,active,false).await?;
+                            speak(&speech,&gateway,&pi,&hub,&sid,request,text,active,false,true).await?;
                         }
                         Ok(Completed::AnnouncementPlayed { id, attempt, reply: delivered_reply })
                     });
@@ -513,7 +513,9 @@ async fn connected(
                             *next_request += 1;
                             event(hub, sid, json!({"type":"transcription.started", "purpose":purpose, "captureMs":message["captureMs"]}));
                             let speech = speech.clone(); let sid = sid.to_owned();
+                            let resources = gateway.voice_resources.clone();
                             jobs.spawn(async move {
+                                let _resources = resources.lock().await;
                                 let started = Instant::now();
                                 let transcript = speech.transcribe(pcm.to_vec()).await?;
                                 Ok(Completed::Transcript { sid, purpose, transcript, elapsed:started.elapsed().as_secs_f64()*1000. })
@@ -662,7 +664,11 @@ async fn response(
     let (send, mut receive) = mpsc::channel(8);
     // Text is bounded by the agent's streamed-answer/event guards. Queue it
     // independently so slow inference cannot consume the agent turn deadline.
-    let (text_send, text_receive) = mpsc::unbounded_channel();
+    let (text_send, mut text_receive) = mpsc::unbounded_channel();
+    // response() starts after ASR has completed. An explicit lookup owns this
+    // gate until the gateway has completed movement and closed its voice lease.
+    // Speech holds it from first synthesis through measured playback completion.
+    let vision_gate = &gateway.voice_resources;
     let streamed_text = text_send.clone();
     let activity = async {
         let text_send = streamed_text;
@@ -700,7 +706,10 @@ async fn response(
                         sid,
                         json!({"type":"agent.progress","requestId":request,"message":"Searching the web"}),
                     );
-                    if tool_feedback && !*interrupted.borrow() {
+                    if tool_feedback
+                        && !*interrupted.borrow()
+                        && let Ok(_voice_interval) = vision_gate.try_lock()
+                    {
                         let mut stopped = interrupted.clone();
                         tokio::select! {
                             biased;
@@ -715,6 +724,7 @@ async fn response(
                                 "I’ll search for that now.".into(),
                                 active.clone(),
                                 true,
+                                false,
                             ) => result?,
                         }
                         if !*interrupted.borrow() {
@@ -733,7 +743,11 @@ async fn response(
                     }
                     let sleep = parameters["operation"] == "sleep";
                     let mode = parameters["request"]["action"] == "set_mode";
-                    let result = gateway.robot_operation(parameters, sid).await;
+                    let result = if parameters["operation"] == "aim_light" {
+                        gateway.aim_light(parameters, sid).await
+                    } else {
+                        gateway.robot_operation(parameters, sid).await
+                    };
                     if sleep && result.is_ok() {
                         sleep_requested.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -785,17 +799,23 @@ async fn response(
         tokio::select! {
             biased;
             _ = stopped.wait_for(|stopped| *stopped) => Ok(()),
-            result = speak_sequence(
-                speech,
-                gateway,
-                pi,
-                hub,
-                sid,
-                request,
-                text_receive,
-                active.clone(),
-                false,
-            ) => result,
+            result = async {
+                // Do not lock while waiting for the agent's first final text:
+                // that agent may be waiting for an aim_light tool result.
+                let first = text_receive.recv().await.ok_or("No final speech was produced")?;
+                let _voice_interval = vision_gate.lock().await;
+                let (send, receive) = mpsc::unbounded_channel();
+                send.send(first).map_err(|_| "Speech renderer stopped")?;
+                let forward = async {
+                    while let Some(text) = text_receive.recv().await {
+                        send.send(text).map_err(|_| "Speech renderer stopped")?;
+                    }
+                    drop(send);
+                    Ok::<(), String>(())
+                };
+                tokio::try_join!(forward, speak_sequence(speech, gateway, pi, hub, sid, request,
+                    receive, active.clone(), false)).map(|_| ())
+            } => result,
         }
     };
     let result = tokio::try_join!(agent_turn, spoken);
@@ -822,7 +842,13 @@ async fn speak(
     text: String,
     active: ActiveRun,
     intermediate: bool,
+    acquire_resources: bool,
 ) -> Result<(), String> {
+    let _resources = if acquire_resources {
+        Some(gateway.voice_resources.lock().await)
+    } else {
+        None
+    };
     let (send, receive) = mpsc::unbounded_channel();
     send.send(text).map_err(|_| "Speech renderer stopped")?;
     drop(send);

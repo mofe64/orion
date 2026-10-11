@@ -122,7 +122,8 @@ class Vision:
                         and now - (self.last_published_at if self.last_published_at is not None
                             else self.camera_started_at) >= 2)
                 if self.pipeline and tracking_changed:
-                    self.pipeline.reset(self.enabled and wanted and mode == 'faces')
+                    self.pipeline.reset(self.enabled and wanted and mode == 'faces',
+                                        camera_enabled=self.enabled and wanted)
                 if not wanted and self.enabled:
                     self._disable()
                 elif wanted and stalled:
@@ -139,7 +140,7 @@ class Vision:
                         self.last_published_at = None
                     try:
                         if self.pipeline:
-                            self.pipeline.reset(mode == 'faces')
+                            self.pipeline.reset(mode == 'faces', camera_enabled=True)
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb,
                                               self.wants_lores)
                         else:
@@ -184,7 +185,7 @@ class Vision:
 
     def wants_lores(self):
         with self.changed:
-            return self.enabled and self.tracking_mode == 'faces'
+            return self.enabled and self.pipeline is not None and self.pipeline.needs_frame()
 
     @contextmanager
     def viewing(self, snapshot=False):
@@ -312,6 +313,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        from .find import FindError
+        vision = self.server.vision
+        try:
+            if self.path != '/find':
+                return self.respond(404, {'error': {'code': 'not_found'}})
+            status, body = vision.status()
+            if status != 200:
+                return self.respond(status, body)
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 < length <= 1024 or self.headers.get('Transfer-Encoding'):
+                raise ValueError('Expected a bounded JSON body')
+            body = json.loads(self.rfile.read(length))
+            if (not isinstance(body, dict) or not set(body) <= {'category', 'session'}
+                    or not isinstance(body.get('category'), str)
+                    or ('session' in body and (not isinstance(body['session'], str)
+                        or len(body['session']) != 32
+                        or any(c not in '0123456789abcdef' for c in body['session'])))):
+                raise ValueError('Expected category and optional voice session')
+            if not vision.pipeline:
+                raise FindError('objects_unavailable', 'Object detector is unavailable')
+            result = vision.pipeline.find(body['category'], body.get('session'))
+            # Camera privacy may change after inference, before the HTTP reply.
+            status, state = vision.status()
+            self.respond(200, result) if status == 200 else self.respond(status, state)
+        except FindError as error:
+            self.respond(400 if error.code == 'unknown_category' else 503,
+                         {'error': {'code': error.code, 'message': str(error)}})
+        except (ValueError, KeyError) as error:
+            self.respond(400, {'error': {'code': 'invalid_find', 'message': str(error)}})
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            pass
+
     def do_GET(self):
         vision = self.server.vision
         try:
@@ -391,7 +425,9 @@ def main():
     from .detect_faces import MODEL_PATH, YuNet
     from .gaze_client import GazeClient
     from .pipeline import FacePipeline
+    from .detect_objects import YoloNCNN, MODEL_PATH as OBJECT_MODEL_PATH
     parser.add_argument("--face-model", type=Path, default=MODEL_PATH)
+    parser.add_argument('--object-model', type=Path, default=OBJECT_MODEL_PATH)
     parser.add_argument("--runtime-socket", type=Path, default=Path("/tmp/oriond.sock"))
     args = parser.parse_args()
     camera = json.loads(args.profile.read_text()).get("camera", {})
@@ -414,9 +450,10 @@ def main():
             else:
                 raise RuntimeError("Vision socket already has a running owner")
     pipeline, detection_error = None, None
+    objects = YoloNCNN(args.object_model)
     try:
         pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.camera_module_3_wide(),
-                                GazeClient(args.runtime_socket))
+                                GazeClient(args.runtime_socket), objects=objects)
         if isinstance(source, Picamera2Source):
             source.expected_geometry = pipeline.intrinsics.geometry
     except (OSError, ValueError, KeyError) as error:

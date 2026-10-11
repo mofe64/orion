@@ -22,8 +22,19 @@ pub struct VoiceFeedback {
     deadline: f64,
     retired: VecDeque<String>,
     history: VecDeque<(String, String, f64)>,
+    #[serde(skip)]
+    vision_until: Option<f64>,
 }
 impl VoiceFeedback {
+    pub fn vision_session(&self, now: f64) -> Option<&str> {
+        (self.confirmed_activity()
+            && self.phase == "thinking"
+            && self
+                .vision_until
+                .is_some_and(|until| now < until && now < self.deadline))
+        .then_some(self.session.as_deref())
+        .flatten()
+    }
     /// Confirmation requires an explicit prefix verification or an endpointed
     /// wake. The candidate cue never extends the inactivity deadline.
     pub fn confirm(&mut self, id: &str, now: f64) -> bool {
@@ -84,6 +95,7 @@ impl VoiceFeedback {
         );
     }
     pub fn clear(&mut self) {
+        self.vision_until = None;
         self.confirmed = false;
         self.announcement = false;
         self.verifying_wake = false;
@@ -155,6 +167,20 @@ impl VoiceFeedback {
             return Ok(None);
         }
         if self.session.as_deref() != Some(id) {
+            return Ok(None);
+        }
+        if event == "vision_begin" {
+            if !self.confirmed_activity() || self.phase != "thinking" || now >= self.deadline {
+                return Err("Vision interval requires the current confirmed thinking session");
+            }
+            self.vision_until = Some(now + 60.0);
+            self.record(event, now);
+            return Ok(None);
+        }
+        // Every phase transition revokes the interval. Keepalive above may
+        // extend the voice owner, but never extends this sixty-second lease.
+        self.vision_until = None;
+        if event == "vision_end" {
             return Ok(None);
         }
         match event {
@@ -320,6 +346,23 @@ impl VoiceFeedback {
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn vision_interval_is_owned_bounded_and_never_renewed_by_voice_keepalive() {
+        let mut feedback = VoiceFeedback::default();
+        feedback.event(ID, "wake", 0.).unwrap();
+        assert!(feedback.event(ID, "vision_begin", 1.).is_err());
+        feedback.event(ID, "endpoint", 2.).unwrap();
+        feedback.confirm(ID, 3.);
+        feedback.event(ID, "vision_begin", 4.).unwrap();
+        assert_eq!(feedback.vision_session(5.), Some(ID));
+        feedback.event(ID, "keepalive", 63.).unwrap();
+        assert_eq!(feedback.vision_session(64.), None);
+        feedback.event(ID, "vision_begin", 65.).unwrap();
+        feedback.playback_started(66.);
+        assert_eq!(feedback.vision_session(66.), None);
+        feedback.clear();
+        assert_eq!(feedback.vision_session(67.), None);
+    }
     #[test]
     fn announcement_authorizes_playback_without_confirmed_user_activity() {
         let mut feedback = VoiceFeedback::default();

@@ -10,6 +10,8 @@ use crate::motion::pose::{JointPositions, PoseLibrary};
 use crate::motion::trajectory::JointTrajectory;
 use serde_json::json;
 use std::time::Instant;
+#[path = "aim_light.rs"]
+mod aim_light;
 
 struct TrackingMovement {
     started_at: f64,
@@ -61,6 +63,10 @@ struct ActiveMovement {
 }
 
 pub struct RuntimeCore<D: RuntimeDriver> {
+    comfort: Option<(
+        crate::motion::ik::ComfortBoxConfig,
+        crate::motion::ik::ComfortBox,
+    )>,
     driver: D,
     camera_geometry: Option<super::camera_rays::CameraGeometry>,
     camera_geometry_error: String,
@@ -103,6 +109,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         )?;
         Ok(Self {
             driver,
+            comfort: None,
             camera_geometry: None,
             camera_geometry_error: "camera-rays requires the V2 model loaded at startup".into(),
             tracking: None,
@@ -938,6 +945,19 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             ));
         }
         validate_motion_assets(&self.driver, &poses, &motions)?;
+        let comfort = self
+            .comfort
+            .as_ref()
+            .map(|(config, _)| {
+                crate::motion::ik::ComfortBox::from_config(
+                    config,
+                    &poses,
+                    &self.driver.joint_limits()?,
+                )
+                .map(|envelope| (config.clone(), envelope))
+            })
+            .transpose()?;
+        self.comfort = comfort;
         self.poses = poses;
         self.motions = motions;
         Ok(())
