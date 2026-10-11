@@ -34,6 +34,16 @@ def camera_enabled(path):
         return False
 
 
+def tracking_mode(path):
+    try:
+        value = json.loads(Path(path).read_text())['tracking_mode']
+        return value if value in ('off', 'faces') else 'off'
+    except FileNotFoundError:
+        return 'faces'
+    except (OSError, ValueError, KeyError, TypeError):
+        return 'off'
+
+
 def exposure_midpoint(metadata):
     timestamp, exposure = metadata.get("SensorTimestamp"), metadata.get("ExposureTime")
     if type(timestamp) is not int or timestamp <= 0 or type(exposure) is not int or exposure < 0:
@@ -43,10 +53,12 @@ def exposure_midpoint(metadata):
 
 class Vision:
     def __init__(self, source, preference_file, encoder=simplejpeg.encode_jpeg, clock=time.monotonic,
-                 pipeline=None, detection_error=None):
+                 pipeline=None, detection_error=None, tracking_file=None):
         self.source, self.preference_file, self.encoder = source, Path(preference_file), encoder
         self.clock = clock
         self.pipeline, self.detection_error = pipeline, detection_error
+        self.tracking_file = Path(tracking_file) if tracking_file is not None else self.preference_file.with_name('tracking.json')
+        self.tracking_mode = tracking_mode(self.tracking_file)
         self.changed = Condition()
         self.encode_lock = Lock()
         self.stop = Event()
@@ -100,12 +112,17 @@ class Vision:
         try:
             while not self.stop.is_set():
                 wanted = camera_enabled(self.preference_file)
+                mode = tracking_mode(self.tracking_file)
                 now = self.clock()
                 with self.changed:
+                    tracking_changed = mode != self.tracking_mode
+                    self.tracking_mode = mode
                     stalled = (self.enabled and self.camera_started_at is not None
                         and now - self.camera_started_at > 3
                         and now - (self.last_published_at if self.last_published_at is not None
                             else self.camera_started_at) >= 2)
+                if self.pipeline and tracking_changed:
+                    self.pipeline.reset(self.enabled and wanted and mode == 'faces')
                 if not wanted and self.enabled:
                     self._disable()
                 elif wanted and stalled:
@@ -122,9 +139,9 @@ class Vision:
                         self.last_published_at = None
                     try:
                         if self.pipeline:
-                            self.pipeline.reset(True)
+                            self.pipeline.reset(mode == 'faces')
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb,
-                                              lambda: self.enabled)
+                                              self.wants_lores)
                         else:
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb)
                     except Exception as error:
@@ -165,6 +182,10 @@ class Vision:
         with self.changed:
             return self.enabled and (self.clients > 0 or self.clock() < self.snapshot_until)
 
+    def wants_lores(self):
+        with self.changed:
+            return self.enabled and self.tracking_mode == 'faces'
+
     @contextmanager
     def viewing(self, snapshot=False):
         with self.changed:
@@ -187,6 +208,8 @@ class Vision:
         with self.changed:
             if not self.wants_rgb():
                 return 503, {"error": {"code": "camera_not_viewed", "message": "A camera viewer is required"}}
+            if self.tracking_mode == 'off':
+                return 200, {"capture_boottime_ns": None, "age_ms": None, "detections": []}
             if not self.pipeline:
                 return 503, {"error": {"code": "detection_unavailable", "message": "Face detection is unavailable"}}
             preview = self.pipeline.preview()
@@ -204,7 +227,7 @@ class Vision:
     def status(self):
         with self.changed:
             settings = {"camera_enabled": camera_enabled(self.preference_file),
-                        "camera_restarts": self.camera_restarts}
+                        "tracking_mode": self.tracking_mode, "camera_restarts": self.camera_restarts}
             if not settings['camera_enabled']:
                 return 503, {**settings, "error": {"code": "camera_off", "message": "Camera is disabled"}}
             if not self.enabled or self.error:
@@ -222,7 +245,7 @@ class Vision:
                 stamp, rgb = self.latest
                 # Inference previews keep boxes and pixels from one capture. When
                 # detection is unavailable, the ordinary camera feed still works.
-                preview = self.pipeline.preview() if self.pipeline else None
+                preview = self.pipeline.preview() if self.pipeline and self.tracking_mode == 'faces' else None
                 if preview is not None:
                     stamp, rgb, _ = preview
                 if self.cached and (stamp == self.cached[0] or time.monotonic() - self.last_encode < 1 / 15):
@@ -298,11 +321,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/health":
                 return self.respond(200, body)
             if self.path == "/observations":
-                return self.respond(200, vision.pipeline.observations() if vision.pipeline else [])
+                return self.respond(200, vision.pipeline.observations() if vision.pipeline and vision.tracking_mode == 'faces' else [])
             if self.path == "/detections":
                 status, body = vision.detections()
                 return self.respond(status, body)
             if urlsplit(self.path).path == "/speaker":
+                if vision.tracking_mode == 'off':
+                    return self.respond(503, {"error": {"code": "tracking_off"}})
                 if not vision.pipeline:
                     return self.respond(503, {"error": {"code": "detection_unavailable"}})
                 try:
@@ -358,6 +383,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", type=Path, default=Path("/tmp/orion-vision.sock"))
     parser.add_argument("--preference-file", type=Path, default=Path.home() / ".config/orion/camera.json")
+    parser.add_argument("--tracking-preference-file", type=Path,
+        help="Tracking preference (default: tracking.json beside camera preference)")
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--replay", type=Path, help="Directory of synthetic JPEG test inputs")
     from .intrinsics import Intrinsics
@@ -395,7 +422,8 @@ def main():
     except (OSError, ValueError, KeyError) as error:
         detection_error = str(error)
         LOG.warning("Face tracking unavailable: %s", error)
-    vision = Vision(source, args.preference_file, pipeline=pipeline, detection_error=detection_error)
+    vision = Vision(source, args.preference_file, pipeline=pipeline, detection_error=detection_error,
+                    tracking_file=args.tracking_preference_file)
     server = VisionServer(args.socket, vision)
     def stop(signum, frame):
         vision.stop.set()

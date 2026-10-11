@@ -8,6 +8,8 @@ import "./Home.css";
 import { failure, forOwner, OwnerRequestError, type Failure } from "../lib/feedback";
 import { FailureNotice } from "./FailureNotice";
 import { useScopedFeedback } from "../hooks/useScopedNotice";
+import { useTrackingMode } from "../hooks/useTrackingMode";
+import { TrackingControl } from "./TrackingControl";
 
 import { assetDisplayName } from "../lib/displayName";
 import { orionStateLabel } from "../lib/orionMode";
@@ -48,6 +50,10 @@ export function homeFeedbackArea(label: string): FeedbackArea {
   return "expression";
 }
 export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvailable = false, connection, status, onConnect, onVoice, onCreate, onDiagnostics, onRefresh, voiceNotice, voiceError, onRun }: Props) {
+  const trackingSupported = status?.runtime.hardware !== "v1";
+  const tracking = useTrackingMode(connection, trackingSupported);
+  const trackingControl = <TrackingControl {...tracking} connected={!!connection} supported={trackingSupported}
+    onChange={mode => void tracking.choose?.(mode)} />;
   const [pending, setPending] = useState<string | null>(null);
   const [mood, setMood] = useState<LampMood>("Warm white");
   const [hue, setHue] = useState(210);
@@ -124,6 +130,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   if (!connection) return <section className="home-dashboard" id="workspace" aria-label="Orion home">
     <header className="oh-heading"><div><h1>Your Orion awaits.</h1><p>Connect Orion to talk, choose scenes, and control its light.</p></div></header>
     <div className="oh-disconnected"><p>Your scenes and previews are available in Animation.</p><button className="oh-connect" onClick={onConnect}>Connect Orion <ArrowUpRight size={16} /></button></div>
+    {trackingControl}
   </section>;
 
   return <section className="home-dashboard" id="workspace" aria-label="Orion home">
@@ -146,8 +153,10 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
           </div></div>
           {feedback("mode")}
         </section>
-        <div className="oh-talk"><span className="oh-mic"><Mic size={19} /></span><span><strong>Listening</strong><small>{voiceLabel}</small></span><button className="studio-switch" role="switch" aria-label="Orion listening" aria-checked={listening} disabled={!voiceAvailable} onClick={onVoice}><span /></button></div>
-        {voiceNotice && <p role="status" className="oh-feedback">{voiceNotice}</p>}<FailureNotice value={voiceError ?? null} />
+        <div className="oh-inputs"><div className="oh-input-control">
+          <div className="oh-talk"><span className="oh-mic"><Mic size={19} /></span><span><strong>Listening</strong><small>{voiceLabel}</small></span><button className="studio-switch" role="switch" aria-label="Orion listening" aria-checked={listening} disabled={!voiceAvailable} onClick={onVoice}><span /></button></div>
+          {voiceNotice && <p role="status" className="oh-feedback">{voiceNotice}</p>}<FailureNotice value={voiceError ?? null} />
+        </div>{trackingControl}</div>
       </div>
       <section className="oh-lamp" aria-label="Lamp controls" aria-busy={pending !== null}>
         <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={lightOn} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled || resting} onClick={() => { commitLamp.cancel(); lampDirty.current = false; applyLight({ enabled: !lightOn, mood, brightness, hue }); }}><span /></button></header>
@@ -181,7 +190,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         </section>}
         <ListsCard connection={connection} />
       </div>
-      {status?.runtime.hardware !== "v1" && <CameraCard connection={connection} />}
+      {trackingSupported && <CameraCard connection={connection} overlay={tracking.mode === "faces"} onEnabledChange={tracking.cameraChanged} />}
     </div>
     {onDiagnostics && <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>}
     {status?.rest?.error && <p className="oh-feedback" role="alert">{status.rest.error}</p>}

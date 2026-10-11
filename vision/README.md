@@ -89,23 +89,24 @@ contention. The Unix socket is user-only
 
 | GET endpoint | Response |
 | --- | --- |
-| `/health` | Camera state, `camera_restarts`, latest `capture_boottime_ns`, drops and connected streams |
+| `/health` | Camera state, `tracking_mode`, `camera_restarts`, latest `capture_boottime_ns`, drops and connected streams |
 | `/frame.jpg` | Latest main frame resized to 640×360; timestamp in `X-Capture-Boottime-Ns` |
 | `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
 | `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
 | `/detections` | Latest preview detection batch; 503 `camera_not_viewed` without a stream or snapshot lease |
-| `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window |
+| `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window; 503 `tracking_off` in Off mode |
 
 JPEGs are encoded on demand and cached across viewers at at most 15 fps.
 With detection available, preview JPEGs use completed inference captures: up to
-10 fps idle and 3 fps during voice activity. If detection fails, JPEGs use the
+10 fps idle and 3 fps during voice activity. With tracking off or detection
+unavailable, JPEGs use the
 ordinary latest capture. A completed preview pairs its RGB buffer with fresh
 detections from that exact capture, so retained gaze tracks never create boxes
 on another frame.
 Disconnected viewers cause encoding to stop. Capture converts RGB only while
 a stream client is connected or a snapshot was requested in the last two
 seconds. Callbacks without viewing demand omit the main RGB copy. Tracking
-copies the 640×360 lores YUV buffer independently, so detection continues
+in Faces mode copies the 640×360 lores YUV buffer independently, so detection continues
 without full-frame RGB copies. The first viewing request waits up to one second
 for an RGB frame. Capture retains one latest RGB buffer; inference retains at
 most one pending, one in-flight and one completed preview. They remain in memory
@@ -135,6 +136,14 @@ defaults to enabled; malformed or unreadable settings fail closed. Setting
 and makes every GET endpoint return HTTP 503 with `error.code: camera_off`.
 Changing it to true reopens capture. No frames are saved. The setting is not
 replaced by deployment or rollback. See [configuration](../docs/configuration.md).
+
+The same watcher polls the independent tracking preference. Off clears
+pending inference and tracks, discards in-flight results, and reports a zero
+detection rate. `/observations` and the viewed `/detections` batch are empty;
+`/speaker` returns `503 tracking_off`. Faces resumes with fresh track IDs.
+Override its path with `--tracking-preference-file`; keep gateway and Vision
+paths aligned. Defaults and failure behaviour are in
+[configuration](../docs/configuration.md#camera-privacy-and-profile).
 
 The capture watchdog waits until startup is more than three seconds old, then
 reopens the source if no capture has been published for two seconds. It logs
@@ -220,7 +229,7 @@ the worker polls gaze availability every three seconds before sending targets
 again. Only detector or camera-ray failures invalidate tracking. A missed
 detection retains the chosen live track until its one-second expiry without
 replaying its capture timestamp. Clear is sent once when the target disappears,
-or on privacy off. Health reports gaze availability separately from detection
+or on privacy or tracking off. Health reports gaze availability separately from detection
 errors. Calibration and motion limits stay owned by the runtime.
 
 `/observations` includes `id`, `class`, `track_id`, base `azimuth`/`elevation`
@@ -247,10 +256,10 @@ validation; mouth-corner jitter and head turns can confuse the heuristic.
 
 After deployment, check the negotiated lores stride and YuNet's per-frame
 median/p95 time. On the lamp, compare reply latency on comparable spoken
-utterances with tracking running (10 Hz idle, 3 Hz during voice activity) and
-with `sudo systemctl stop orion-vision`. Restart it afterwards with
-`sudo systemctl restart orion-vision`. Use the installed quota and Nice settings above and
-target at most 10% slowdown; record ASR latency separately when available.
+utterances with Tracking Faces (10 Hz idle, 3 Hz during voice activity) and
+Tracking Off, keeping capture and viewing conditions matched. Use the installed
+quota and Nice settings above and target at most 10% slowdown; record ASR
+latency separately when available.
 The P0 comparison is manual; no fixed audio fixture or trial script exists.
 If that comparison fails, reduce `SIZE` to `(480, 270)` and repeat the checks.
 At 1, 2 and 3 m, confirm non-empty `/observations` and a stable track ID while
@@ -259,6 +268,13 @@ walk, then point the camera at the TV and posters for one minute and confirm
 there are no false faces. These checks need physical lamp validation. Also
 check longer thermal load, the fitted lens/mount, capture-time alignment and
 camera-off closure/gaze cancellation.
+
+Verify Off removes boxes and following and drops detector CPU, then Faces
+resumes detection. Keep the Studio camera open for ten minutes, toggling camera capture
+off and on once. Check advancing `capture_boottime_ns`, `camera_restarts: 0`,
+and the service cgroup's `cpu.stat` `nr_throttled`; record temperature after
+ten minutes idle with the camera on. These checks and the matched ASR trial
+are lamp-unverified.
 
 An in-memory Pi probe on 2026-10-11 negotiated a 640-byte lores stride and a
 540×640 packed YUV buffer for `SIZE = (640, 360)`, with `preserve_ar: False`.
@@ -277,11 +293,6 @@ CPU cap. Each phase reused its initial latest frame once; other inferences
 sampled fresh captures. The 10 Hz phase exceeds the 100 ms frame budget.
 This probe establishes geometry and bounded-workload timing; ASR slowdown,
 distance tracking and false-face acceptance still need the manual lamp checks.
-
-Keep the Studio camera open for ten minutes, toggling camera capture off and
-on once. Check advancing `capture_boottime_ns`, `camera_restarts: 0`, and the
-service cgroup's `cpu.stat` `nr_throttled`; record temperature after ten minutes
-idle with the camera on. Quota and watchdog acceptance remain lamp-unverified.
 
 ### Measurement environment
 

@@ -415,7 +415,9 @@ Scenes, speech, Stop and unavailable character states retain priority.
 
 A working camera with no recent face sends `voice SESSION attend_scan AGE_MS`.
 Gaze compiles one small neck sweep and settles to the original anchor, then
-gives up for that conversation. Camera-off, a missing detector model, unavailable
+gives up for that conversation. Tracking Off returns `503 tracking_off` and
+produces no turn or scan; conversation and speech gestures use the existing
+anchor. Camera-off, a missing detector model, unavailable
 vision and stale responses produce no attention command. V2 does not use
 acoustic direction as a fallback. `--vision-socket` defaults to
 `/tmp/orion-vision.sock`. No wake/verifier thresholds, XVF processing or existing

@@ -338,6 +338,13 @@ class HttpAuthenticationTests(unittest.TestCase):
                 self.assertEqual(result.exception.code, HTTPStatus.UNAUTHORIZED)
                 result.exception.close()
 
+    def test_tracking_read_and_write_require_authentication(self):
+        for document in (None, {'tracking_mode': 'off'}):
+            with self.assertRaises(urllib.error.HTTPError) as result:
+                urllib.request.urlopen(self.request('/api/v2/tracking/mode', document=document, authorized=False))
+            self.assertEqual(result.exception.code, HTTPStatus.UNAUTHORIZED)
+            result.exception.close()
+
     def test_debug_logs_require_authentication(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:
             urllib.request.urlopen(self.request("/api/v2/debug/logs", authorized=False))
@@ -560,6 +567,74 @@ class CameraProxyTests(unittest.TestCase):
         with urllib.request.urlopen(self.request('enabled', {'camera_enabled': True})) as response:
             self.assertTrue(json.load(response)['camera_enabled'])
         self.assertTrue(self.gateway.camera_is_enabled())
+
+    def test_tracking_routes_save_and_read_mode_without_a_viewer_or_runtime_command(self):
+        url = f'http://127.0.0.1:{self.server.server_port}/api/v2/tracking/mode'
+        headers = {'Authorization': 'Bearer ' + 'a' * 32, 'Content-Type': 'application/json'}
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
+            self.assertEqual(json.load(response)['tracking_mode'], 'faces')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers,
+                data=b'{"tracking_mode":"off"}')) as response:
+            self.assertEqual(json.load(response)['tracking_mode'], 'off')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
+            self.assertEqual(json.load(response)['tracking_mode'], 'off')
+        self.assertEqual(self.vision_requests, [])
+        self.client.request.assert_not_called()
+
+
+class TrackingPreferenceTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.gateway = OrionGateway(Mock(), hardware='v2', camera_preference_file=self.root / 'camera.json')
+
+    def test_missing_defaults_faces_and_invalid_or_unreadable_files_fail_closed(self):
+        path = self.gateway.tracking_preference_file
+        self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'faces')
+        for value in ('bad json', '[]', 'null', '{}', '{"tracking_mode":true}',
+                      '{"tracking_mode":"hands"}', '{"tracking_mode":["faces"]}'):
+            path.write_text(value)
+            self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'off', value)
+        path.unlink(); path.mkdir()
+        self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'off')
+
+    def test_setter_rejects_unknown_modes_and_non_objects_without_writing(self):
+        for payload in (None, [], False, {}, {'tracking_mode': 'hands'}, {'tracking_mode': True},
+                        {'tracking_mode': 1}, {'tracking_mode': ['faces']}):
+            with self.subTest(payload=payload), self.assertRaises(GatewayError) as error:
+                self.gateway.set_tracking_mode(payload)
+            self.assertEqual(error.exception.status, HTTPStatus.BAD_REQUEST)
+            self.assertEqual(error.exception.code, 'invalid_tracking_mode')
+        self.assertFalse(self.gateway.tracking_preference_file.exists())
+
+    def test_mode_survives_a_gateway_restart_and_camera_setters_remain_independent(self):
+        self.gateway.set_camera_enabled({'camera_enabled': False})
+        result = self.gateway.set_tracking_mode({'tracking_mode': 'off'})
+        self.assertFalse(result['camera_enabled'])
+        self.assertEqual(result['tracking_mode'], 'off')
+        self.assertEqual(self.gateway.tracking_preference_file.stat().st_mode & 0o777, 0o600)
+        self.gateway.set_camera_enabled({'camera_enabled': True})
+        replacement = OrionGateway(Mock(), hardware='v2', camera_preference_file=self.root / 'camera.json')
+        self.assertEqual(replacement.get_tracking_mode()['tracking_mode'], 'off')
+        replacement.set_tracking_mode({'tracking_mode': 'faces'})
+        self.assertTrue(self.gateway.camera_is_enabled())
+        self.assertEqual(json.loads(self.gateway.tracking_preference_file.read_text()), {'tracking_mode': 'faces'})
+
+    def test_failed_atomic_write_keeps_previous_preference_and_removes_temporary_file(self):
+        self.gateway.set_tracking_mode({'tracking_mode': 'off'})
+        with patch('gateway.os.fsync', side_effect=OSError('disk unavailable')):
+            with self.assertRaises(GatewayError) as error:
+                self.gateway.set_tracking_mode({'tracking_mode': 'faces'})
+        self.assertEqual(error.exception.code, 'tracking_setting_unavailable')
+        self.assertEqual(self.gateway.tracking_mode(), 'off')
+        self.assertEqual(list(self.root.glob('.tracking-*')), [])
+
+    def test_v1_has_no_tracking_control(self):
+        gateway = OrionGateway(Mock(), hardware='v1')
+        for call in (gateway.get_tracking_mode, lambda: gateway.set_tracking_mode({'tracking_mode': 'off'})):
+            with self.assertRaises(GatewayError) as error:
+                call()
+            self.assertEqual(error.exception.code, 'camera_unavailable')
 
 
 class CameraViewerLeaseTests(unittest.TestCase):

@@ -100,6 +100,30 @@ class VisualAttentionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(result)
         self.assertIsNone(await visual_attention('/nonexistent-vision.sock', 0))
 
+    async def test_tracking_off_returns_no_visual_attention_and_v2_wake_never_turns_or_scans(self):
+        attention, requests = await self.query({'error': {'code': 'tracking_off'}}, status=503)
+        self.assertIsNone(attention)
+        self.assertIn('GET /speaker?', requests[0])
+        import test_satellite_transport as transport
+        direction = Mock()
+        direction.observation.side_effect = lambda: {'side': 'left', 'confidence': 1., 'observed_at': time.monotonic()}
+        with patch('orion_voice.satellite.visual_attention', AsyncMock(return_value=attention)) as query, \
+             patch('orion_voice.satellite.DirectionEstimator', return_value=direction):
+            client, identity, expressions = await transport.ListenerTransportTests.acoustic_session(self, {1: .9}, 'v2')
+            self.assertTrue(json.loads(await client.recv())['accepted'])
+            full = json.loads(await client.recv()); await client.recv()
+            self.assertEqual(full['purpose'], 'wake_and_command')
+            for _ in range(200):
+                if f'voice {identity} endpoint' in expressions:
+                    break
+                await asyncio.sleep(.01)
+            else:
+                self.fail(f'Missing endpoint: {expressions}')
+            self.assertIn(f'voice {identity} confirmed', expressions)
+            query.assert_awaited_once()
+            self.assertFalse(any(' attend_' in command for command in expressions), expressions)
+            await client.close()
+
     def test_v1_queue_age_contract_is_unchanged(self):
         self.assertEqual(age_attention_command('voice owner attend_left 500', .25), 'voice owner attend_left 750.0')
         self.assertEqual(age_attention_command('voice owner attend_right 0', .1), 'voice owner attend_right 100.0')

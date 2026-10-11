@@ -121,6 +121,13 @@ Home shows Orion’s mode, listening, Expressions and lamp controls after connec
 When disconnected, it shows one **Connect Orion** action and a compact placeholder;
 Animation remains available for scenes and previews.
 
+On V2, **Tracking: Off / Faces** sits beside Listening. It loads the saved Pi
+mode and allows one selection at a time. Saving shows a notice; a failed save
+restores the previous choice and displays an error. Camera-off and disconnected
+states disable it with an explanation. Off hides boxes while the plain feed
+continues. See [camera and tracking behaviour](../docs/system-architecture.md#camera-and-vision)
+for detector, gaze and wake-turn effects.
+
 Choose **Idle mode** for autonomous movement with timed rest, or **Lamp mode** to
 stay on with animations. **Pause mode** and **Resume mode** control automatic
 movement without changing the chosen mode. Settings shows the same mode label and
@@ -189,6 +196,8 @@ The gateway protects all camera routes with the existing bearer token:
 | `GET /api/v2/camera/observations` | Proxy observation JSON |
 | `GET /api/v2/camera/detections` | Proxy fresh preview boxes while an existing healthy viewer holds the lease |
 | `POST /api/v2/camera/enabled` | Save `{"camera_enabled": true}` or `false` |
+| `GET /api/v2/tracking/mode` | Read saved `tracking_mode` and camera privacy state |
+| `POST /api/v2/tracking/mode` | Atomically save `{"tracking_mode": "off"}` or `"faces"`; reject unknown modes |
 
 Streams and snapshots return HTTP 503 with `error.code: camera_resting` while
 rest is `going_to_rest`, `resting`, `waking` or `fault`. Open streams end when
@@ -217,6 +226,8 @@ the runtime lease expires naturally. See the [runtime marker contract](../runtim
 and [vision setup](../vision/README.md#service-setup-and-development).
 Detection requests use the existing viewer lease and check it before and after
 the vision response. Polling boxes cannot start viewing or extend the indication.
+`--tracking-preference-file` overrides the independent tracking preference;
+gateway and Vision must use the same path. See [saved settings](../docs/configuration.md#camera-privacy-and-profile).
 
 ## Animation library and scene editor
 

@@ -91,7 +91,7 @@ class FacePipeline:
 
     def status(self):
         with self.changed:
-            return {"rate_hz": self.rate_hz, "inferences": self.inferences,
+            return {"enabled": self.enabled, "rate_hz": self.rate_hz if self.enabled else 0, "inferences": self.inferences,
                 "dropped_frames": self.dropped, "error": self.error,
                 "gaze_available": self.gaze_available, "gaze_error": self.gaze_error}
 

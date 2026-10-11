@@ -25,7 +25,9 @@ export function drawCameraDetections(context: CanvasRenderingContext2D, detectio
   }
 }
 
-export function CameraCard({ connection, overlay = true }: { connection: GatewayConnection | null; overlay?: boolean }) {
+export function CameraCard({ connection, overlay = true, onEnabledChange }: {
+  connection: GatewayConnection | null; overlay?: boolean; onEnabledChange?: (enabled: boolean) => void;
+}) {
   const image = useRef<HTMLCanvasElement>(null);
   const boxes = useRef<HTMLCanvasElement>(null);
   const epoch = useRef(0);
@@ -67,11 +69,11 @@ export function CameraCard({ connection, overlay = true }: { connection: Gateway
       live.current = value === "live";
       if (!live.current) overlayData.current.clear();
       paintOverlay();
-      if (value === "live") setEnabled(true);
-      if (value === "off") { setEnabled(false); image.current?.getContext("2d")?.clearRect(0, 0, 640, 360); }
+      if (value === "live") { setEnabled(true); onEnabledChange?.(true); }
+      if (value === "off") { setEnabled(false); onEnabledChange?.(false); image.current?.getContext("2d")?.clearRect(0, 0, 640, 360); }
     }, controller.signal);
     return () => { epoch.current++; controller.abort(); live.current = false; overlayData.current.clear(); paintOverlay(); };
-  }, [connection, revision, paintOverlay]);
+  }, [connection, revision, paintOverlay, onEnabledChange]);
 
   useEffect(() => {
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>; let inFlight = false;
@@ -98,7 +100,7 @@ export function CameraCard({ connection, overlay = true }: { connection: Gateway
     try {
       const saved = await setCameraEnabled(connection, desired ?? !enabled);
       if (generation !== epoch.current) return;
-      setEnabled(saved.camera_enabled); setRevision(value => value + 1);
+      setEnabled(saved.camera_enabled); onEnabledChange?.(saved.camera_enabled); setRevision(value => value + 1);
     } catch (value) { if (generation === epoch.current) setError(value instanceof Error ? value.message : "Couldn’t change camera privacy."); }
     finally { if (generation === epoch.current) setPending(false); }
   };

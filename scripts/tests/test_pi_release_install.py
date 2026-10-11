@@ -61,6 +61,8 @@ class ConfigurationTests(Fixture):
     def test_camera_unit_is_profile_gated_and_does_not_change_privacy_preference(self):
         privacy = self.env.parent / 'camera.json'
         privacy.write_text('{"camera_enabled":false}')
+        tracking = self.env.parent / 'tracking.json'
+        tracking.write_text('{"tracking_mode":"off"}')
         self.assertNotIn(self.units / 'orion-vision.service', self.plan())
         (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
         plan = self.plan()
@@ -72,6 +74,8 @@ class ConfigurationTests(Fixture):
             self.assertIn(setting, unit)
         self.assertNotIn(privacy, plan)
         self.assertEqual(privacy.read_text(), '{"camera_enabled":false}')
+        self.assertNotIn(tracking, plan)
+        self.assertEqual(tracking.read_text(), '{"tracking_mode":"off"}')
         profile_path = self.release / 'hardware/profiles/v2.json'
         selected = json.loads(profile_path.read_text())
         selected['camera']['enabled'] = False
@@ -83,6 +87,9 @@ class ConfigurationTests(Fixture):
         for status, body, accepted in ((503, {"error": {"code": "camera_off"}}, True),
                                       (200, {"capture_boottime_ns": 123, "detection": {"error": None, "inferences": 1}}, True),
                                       (200, {"capture_boottime_ns": 123, "detection": {"error": None, "inferences": 0}}, False),
+                                      (200, {"capture_boottime_ns": 123, "tracking_mode": "off",
+                                             "detection": {"error": None, "inferences": 0}}, True),
+                                      (200, {"capture_boottime_ns": None, "tracking_mode": "off"}, False),
                                       (200, {"capture_boottime_ns": 123}, False),
                                       (200, {"capture_boottime_ns": None}, False),
                                       (200, {"capture_boottime_ns": 123, "detection": {"error": "Model missing"}}, False),

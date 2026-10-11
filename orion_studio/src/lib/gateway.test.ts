@@ -1,10 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { compileMotionPreview, uploadSpeech, setAlertSound, requestPairingCode, exchangePairingCode, GatewayError } from "./gateway";
+import { compileMotionPreview, uploadSpeech, setAlertSound, requestPairingCode, exchangePairingCode, GatewayError, getTrackingMode, setTrackingMode } from "./gateway";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("gateway v2 client", () => {
+  it("reads and saves only tracking mode using authenticated routes", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ tracking_mode: "off", camera_enabled: true }) });
+    vi.stubGlobal("fetch", fetch);
+    const connection = { url: "http://orion/", token: "secret" };
+    await getTrackingMode(connection); await setTrackingMode(connection, "off");
+    expect(fetch.mock.calls[0][0]).toBe("http://orion/api/v2/tracking/mode");
+    expect(fetch.mock.calls[0][1]).toMatchObject({ cache: "no-store", headers: { Authorization: "Bearer secret" } });
+    expect(fetch.mock.calls[1][1]).toMatchObject({ method: "POST", headers: { Authorization: "Bearer secret" } });
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ tracking_mode: "off" });
+  });
   it("requests and exchanges pairing codes without authorization using their own timeouts", async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 2 }) });
     vi.stubGlobal("fetch", fetch);

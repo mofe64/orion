@@ -361,14 +361,15 @@ def check_vision_health(socket_path='/tmp/orion-vision.sock'):
         response = connection.getresponse()
         body = json.loads(response.read(65536))
         detection = body.get('detection') or {}
-        if detection.get('error'):
+        tracking = body.get('tracking_mode', 'faces') != 'off'
+        if tracking and detection.get('error'):
             raise RuntimeError(f'Vision detection error: {detection["error"]}')
         # Privacy-off is a healthy process, not a failed deployment.
         if response.status != 200 and not (response.status == 503 and body.get('error', {}).get('code') == 'camera_off'):
             raise RuntimeError(f'Vision is not ready: {body}')
         if response.status == 200 and not body.get('capture_boottime_ns'):
             raise RuntimeError('Vision has not captured a frame yet')
-        if response.status == 200 and not detection.get('inferences'):
+        if response.status == 200 and tracking and not detection.get('inferences'):
             raise RuntimeError('Vision has not completed a successful inference yet')
     finally:
         connection.close()

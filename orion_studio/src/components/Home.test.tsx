@@ -43,6 +43,9 @@ describe("Home control availability", () => {
     expect(html.match(/class="oh-connect"/g)).toHaveLength(1);
     expect(html).toContain("Your scenes and previews are available in Animation.");
     expect(html).not.toContain('role="switch"');
+    expect(html).toContain(">Tracking</strong>");
+    expect(html).toContain("Connect Orion to change tracking");
+    expect(html).toMatch(/fieldset[^>]*disabled=""/);
     expect(html).not.toContain('aria-label="Lamp controls"');
     expect(html).not.toContain('aria-label="Orion mode"');
     expect(html).not.toContain("Hello, Orion.");

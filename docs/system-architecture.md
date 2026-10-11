@@ -76,7 +76,8 @@ Viewer previews pair completed detections with RGB from the same capture. The
 authenticated gateway proxies `/detections` only with a healthy viewer lease;
 polling cannot create one. Studio matches exact timestamp strings and removes
 boxes at 300 ms, including request delay in their age. This metadata remains in
-memory and never enters stored snapshots or logs.
+memory and never enters stored snapshots or logs. In Tracking Off mode, preview
+JPEGs use the latest plain capture instead of waiting for inference.
 
 Vision observes the saved camera privacy setting outside camera callbacks.
 Disabling it purges frame/JPEG buffers and closes capture within one second;
@@ -84,14 +85,30 @@ existing streams end and every endpoint returns `503 camera_off`. Capture
 stamps use the exposure midpoint in `CLOCK_BOOTTIME`, not host delivery time
 or `CLOCK_MONOTONIC`. See [vision setup and interfaces](../vision/README.md).
 
+Studio's Home has an exclusive Tracking Off / Faces control beside Listening.
+The gateway saves it on the Pi; Vision observes it outside camera callbacks.
+Every mode change invalidates pending and in-flight results and clears tracks.
+Off stops detector work and lores copies, clears the gaze target once, removes
+boxes and observations, and returns `503 tracking_off` from `/speaker`.
+Camera viewing retains its privacy and viewer-indicator requirements. Faces
+resumes with fresh tracks. Camera privacy off closes capture in either mode;
+the saved mode remains unchanged. See [preference defaults and paths](configuration.md#camera-privacy-and-profile).
+
+Tracking mode does not change character behaviour, speech animations, rest,
+lamp routines or Stop. Idle micro-glances continue without a visual target.
+V2 confirmed wakes use visual attention only: Off produces no turn or scan,
+and conversation gestures use the existing anchor. V1 retains its acoustic
+side turn. See [wake direction evidence](voice-architecture.md#direction-evidence).
+
 The service's CPU quota applies to all its threads, including libcamera request
 completion and camera callbacks. Its ceiling allows capture to proceed while
 Nice gives voice work scheduling priority; quota throttling can suspend camera
 threads and stall capture silently. A watchdog reopens the source after a
 capture-publication gap, invalidating callbacks from the closed source. Health
 retains the restart count across camera toggles. See [vision operating limits](../vision/README.md#service-setup-and-development).
-The quota change and automatic recovery are implemented and lamp-unverified.
-See the [vision acceptance procedure](../vision/README.md#face-tracking).
+The quota change, automatic recovery and tracking modes are implemented and
+lamp-unverified; hardware checks are listed in
+the [vision acceptance procedure](../vision/README.md#face-tracking).
 
 ### Listener and voice service
 

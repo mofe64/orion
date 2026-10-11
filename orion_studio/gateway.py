@@ -279,6 +279,7 @@ class OrionGateway:
         hardware: str = "v1",
         vision_socket: str = "/tmp/orion-vision.sock",
         camera_preference_file: Path | None = None,
+        tracking_preference_file: Path | None = None,
     ):
         if hardware not in ("v1", "v2"):
             raise ValueError("Hardware must be v1 or v2")
@@ -291,6 +292,7 @@ class OrionGateway:
         self.scene_write_lock = threading.Lock()
         self.vision_socket = vision_socket
         self.camera_preference_file = camera_preference_file or Path.home() / ".config/orion/camera.json"
+        self.tracking_preference_file = tracking_preference_file or self.camera_preference_file.with_name('tracking.json')
         self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
 
     def require_camera_awake(self):
@@ -335,6 +337,45 @@ class OrionGateway:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
+
+    def tracking_mode(self):
+        try:
+            value = json.loads(self.tracking_preference_file.read_text()).get('tracking_mode')
+            return value if value in ('off', 'faces') else 'off'
+        except FileNotFoundError:
+            return 'faces'
+        except (OSError, ValueError, AttributeError):
+            return 'off'
+
+    def get_tracking_mode(self):
+        if self.hardware != 'v2':
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
+        return {'api_version': API_VERSION, 'tracking_mode': self.tracking_mode(),
+                'camera_enabled': self.camera_is_enabled()}
+
+    def set_tracking_mode(self, payload):
+        if self.hardware != 'v2':
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
+        if not isinstance(payload, dict) or payload.get('tracking_mode') not in ('off', 'faces'):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_tracking_mode',
+                'tracking_mode must be off or faces.')
+        path = self.tracking_preference_file
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.tracking-', delete=False) as output:
+                temporary = Path(output.name)
+                json.dump({'tracking_mode': payload['tracking_mode']}, output)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(path)
+        except OSError as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'tracking_setting_unavailable',
+                'Could not save tracking mode.') from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return self.get_tracking_mode()
 
     def open_camera(self, path):
         if self.hardware != "v2":
@@ -1717,6 +1758,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
+            if path == '/api/v2/tracking/mode':
+                return HTTPStatus.OK, gateway.get_tracking_mode()
             camera_paths = {"/api/v2/camera/stream": "/stream", "/api/v2/camera/snapshot": "/frame.jpg",
                             "/api/v2/camera/observations": "/observations",
                             "/api/v2/camera/detections": "/detections"}
@@ -1754,6 +1797,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path == '/api/v2/tracking/mode':
+                return HTTPStatus.OK, gateway.set_tracking_mode(self._read_json())
             if path == "/api/v2/camera/enabled":
                 return HTTPStatus.OK, gateway.set_camera_enabled(self._read_json())
             if path == "/api/v2/pair/code":
@@ -1967,6 +2012,8 @@ def parse_args() -> argparse.Namespace:
     serve.add_argument("--socket", default=DEFAULT_SOCKET)
     serve.add_argument("--vision-socket", default="/tmp/orion-vision.sock")
     serve.add_argument("--camera-preference-file", type=Path, default=Path.home() / ".config/orion/camera.json")
+    serve.add_argument('--tracking-preference-file', type=Path,
+        help='Tracking preference (default: tracking.json beside camera preference)')
     serve.add_argument("--bind", default="127.0.0.1", help="Listen address; :: accepts IPv4 and IPv6 (default: IPv4 loopback).")
     serve.add_argument("--port", type=int, default=7447)
     serve.add_argument("--token-file", type=Path, required=True)
@@ -2005,6 +2052,7 @@ def main() -> None:
         hardware=args.hardware,
         vision_socket=args.vision_socket,
         camera_preference_file=args.camera_preference_file,
+        tracking_preference_file=args.tracking_preference_file,
     )
     server = GatewayHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)

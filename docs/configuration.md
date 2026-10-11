@@ -22,6 +22,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/routines.sounds.json` | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window |
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/camera.json` | `{"camera_enabled": true}` or `false`; vision watches this privacy preference |
+| `.config/orion/tracking.json` | `{"tracking_mode": "off"}` or `"faces"`; saved independently of camera privacy |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
 | `.local/share/orion/SOUL.md` | Saved personality choices and generated instructions |
@@ -39,6 +40,13 @@ of microphone mute. A missing file defaults to enabled; malformed or unreadable
 settings disable capture. Vision watches this file every 100 ms and closes the
 camera within one second of disabling it. Deployment and rollback leave the
 preference untouched.
+
+`tracking_mode` in `~/.config/orion/tracking.json` selects one detector mode:
+`off` or `faces`. A missing file defaults to `faces`; unreadable, corrupt or
+unknown settings select `off`. Vision polls it at the same interval as camera
+privacy. The gateway atomically writes this separate file before acknowledging
+a change, and deployment and rollback preserve it. Camera privacy wins over
+the selected mode. See [camera and tracking behaviour](system-architecture.md#camera-and-vision).
 
 `hardware/profiles/v2.json` enables the service and selects camera index 0,
 CAM/DISP1, `hflip: false`, `vflip: false` and the retained
