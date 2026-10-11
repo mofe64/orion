@@ -244,6 +244,29 @@ class VisionAssetTests(unittest.TestCase):
                         and any(isinstance(target, ast.Name) and target.id == 'MODEL_SHA256' for target in node.targets))
         self.assertEqual(receiver.YUNET_SHA256, checksum)
 
+    def test_palm_asset_uses_runtime_pin_and_follows_release_activation(self):
+        import ast
+        import prepare_pi_voice_stack as assets
+        source = ast.parse((SCRIPTS.parent / 'vision/orion_vision/detect_hands.py').read_text())
+        checksum = next(ast.literal_eval(node.value) for node in source.body if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == 'MODEL_SHA256' for target in node.targets))
+        self.assertEqual(receiver.PALM_SHA256, checksum)
+        self.assertIn('47534e27c9851bb1128ccc0102f1145e27f23f98', receiver.PALM_URL)
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory)
+            (release / 'vision/orion_vision').mkdir(parents=True)
+            (release / 'vision/orion_vision/detect_hands.py').touch()
+            payload = b'synthetic palm fixture'
+            checksum = hashlib.sha256(payload).hexdigest()
+            with patch.object(receiver, 'YUNET_SHA256', checksum), patch.object(receiver, 'PALM_SHA256', checksum), \
+                 patch.object(assets.urllib.request, 'urlopen', return_value=io.BytesIO(payload)) as fetch, \
+                 patch.object(receiver, 'run') as run:
+                # Each HTTP response needs its own stream.
+                fetch.side_effect = lambda *args, **kwargs: io.BytesIO(payload)
+                receiver.prepare_vision(release)
+            self.assertEqual((release / 'vision/models/palm_detection_mediapipe_2023feb.onnx').read_bytes(), payload)
+            self.assertIn('PalmDetector', run.call_args.args[2])
+
     def test_model_download_is_pinned_verified_and_reused(self):
         import prepare_pi_voice_stack as assets
         with tempfile.TemporaryDirectory() as directory:

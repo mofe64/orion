@@ -1,0 +1,19 @@
+format_version: 2
+motion:
+  name: hands_entry
+  description: Anticipate with the arm, lower the camera toward the desk, and hold.
+  space: absolute
+  style: speaking_calm
+  keyframes:
+    - pose: desk_anticipation
+      duration: 0.45
+      arrival: settle
+      marker: anticipation
+    - pose: desk_arm_lead
+      duration: 0.8
+      arrival: settle
+      marker: arm_lead
+    - pose: desk_work
+      duration: 2.5
+      arrival: settle
+      hold: 0.2

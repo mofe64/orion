@@ -191,6 +191,8 @@ The same watcher polls the independent tracking preference. Off clears
 pending inference and tracks, discards in-flight results, and reports a zero
 detection rate. `/observations` and the viewed `/detections` batch are empty;
 `/speaker` returns `503 tracking_off`. Faces resumes with fresh track IDs.
+Hands also refuses `/speaker`, and selects the palm detector instead of YuNet;
+viewed JPEGs remain plain capture frames without face overlays.
 Override its path with `--tracking-preference-file`; keep gateway and Vision
 paths aligned. Defaults and failure behaviour are in
 [configuration](../docs/configuration.md#camera-privacy-and-profile).
@@ -556,3 +558,31 @@ The worker sends only the object ID, approximate interest key, class, timestamps
 bearing and optional table point in `novelty`; feature images never leave the
 worker. See [object peeks](../docs/motion-architecture.md#object-peeks-and-pet-notice)
 for admission, expiry and motion ownership.
+
+## Palm detector and Hands mode
+
+The [MediaPipe palm detector from OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/47534e27c9851bb1128ccc0102f1145e27f23f98/models/palm_detection_mediapipe)
+is Apache-2.0. `detect_hands.py` pins its SHA-256 and decodes its 192×192 NHWC
+RGB input and 2016 SSD anchors. Lores is letterboxed; the decoder restores
+640×360 coordinates, bounds candidates before NMS, and keeps at most eight palms.
+The bundled `PALM-LICENSE` covers the adapted decoder. No extra Python inference
+package or worker thread is added.
+
+`--palm-model` defaults to
+`/usr/local/share/orion/vision/palm_detection_mediapipe_2023feb.onnx`.
+The camera-stack installer and release deployment download the pinned asset,
+verify it before replacement and fail on missing/corrupt model data. Release
+units point at their own model, preserving activation/rollback consistency.
+The service fails startup if that required asset cannot be loaded.
+
+Hands reports only `hand_count` and the optional averaged base-frame
+`hand_point` through `gaze surroundings`. A one-second capture gap or missing
+hands clears the two-second point window. Camera/mode changes invalidate its
+in-flight results. The watcher sends an off-mode recovery heartbeat while
+camera capture is disabled or another mode is selected. See [Hands movement
+and interruption rules](../docs/motion-architecture.md#hands-following).
+
+Before commissioning Hands, check that auto-exposure maintains usable palms
+under Orion's own light, that a stationary work area remains steady during head
+movement, and that CPU/ASR timing stays acceptable at five palm inferences per
+second. These physical checks remain unverified.

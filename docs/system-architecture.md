@@ -129,20 +129,26 @@ existing streams end and every endpoint returns `503 camera_off`. Capture
 stamps use the exposure midpoint in `CLOCK_BOOTTIME`, not host delivery time
 or `CLOCK_MONOTONIC`. See [vision setup and interfaces](../vision/README.md).
 
-Studio's Home has an exclusive Tracking Off / Faces control beside Listening.
-The gateway saves it on the Pi; Vision observes it outside camera callbacks.
-Every mode change invalidates pending and in-flight results and clears tracks.
-Off stops detector work and lores copies, clears the gaze target once, removes
-boxes and observations, and returns `503 tracking_off` from `/speaker`.
-Camera viewing retains its privacy and viewer-indicator requirements. Faces
-resumes with fresh tracks. Camera privacy off closes capture in either mode;
-the saved mode remains unchanged. See [preference defaults and paths](configuration.md#camera-privacy-and-profile).
+Studio's Home has an exclusive Tracking Off / Faces / Hands control beside
+Listening. The gateway saves it on the Pi; Vision observes it outside camera
+callbacks. Every mode change invalidates pending and in-flight detector results.
+Off stops background inference and lores copies; an explicit object lookup can
+still request a frame. Faces uses YuNet. Hands selects the pinned MediaPipe palm
+model at five frames per second on that same worker, with no face detector or
+background YOLO. Camera privacy closes capture in every mode; the saved choice
+survives. Camera viewing keeps the same privacy and indicator requirements.
 
-Tracking mode does not change character behaviour, speech animations, rest,
-lamp routines or Stop. Idle micro-glances continue without a visual target.
-V2 confirmed wakes use visual attention only: Off produces no turn or scan,
-and conversation gestures use the existing anchor. V1 retains its acoustic
-side turn. See [wake direction evidence](voice-architecture.md#direction-evidence).
+Hands enters an authored desk pose, follows a stable change in the work centroid
+and restores the previous character anchor when it leaves. Runtime owns these
+compiled movements and their shared curiosity budget. Idles and speech use the
+work anchor with coupled comfort protection. Neither selecting Hands nor hand
+presence wakes the lamp or clears Stop. See [Hands ownership and thresholds](motion-architecture.md#hands-following).
+
+Off and Hands return `503 tracking_off` from `/speaker`; V2 confirmed wakes then
+produce no visual turn or scan, and conversation gestures use the held anchor.
+V1 retains its acoustic side turn. Tracking does not change lamp routine mode
+or the automatic-rest timeout. See [wake direction evidence](voice-architecture.md#direction-evidence)
+and [preference defaults](configuration.md#camera-privacy-and-profile).
 
 The service's CPU quota applies to all its threads, including libcamera request
 completion and camera callbacks. Its ceiling allows capture to proceed while

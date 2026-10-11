@@ -28,7 +28,7 @@ export class TrackingPreference {
     this.listeners.forEach(listener => listener());
   }
   private validate(value: TrackingSetting) {
-    if (!["off", "faces"].includes(value.tracking_mode) || typeof value.camera_enabled !== "boolean")
+    if (!["off", "faces", "hands"].includes(value.tracking_mode) || typeof value.camera_enabled !== "boolean")
       throw new Error("The gateway returned an invalid tracking setting.");
     return value;
   }
@@ -77,7 +77,7 @@ export class TrackingPreference {
       if (!controller.signal.aborted)
         this.update({ mode: saved.tracking_mode,
           ...(cameraRevision === this.cameraRevision ? { cameraEnabled: saved.camera_enabled } : {}),
-          notice: saved.tracking_mode === "off" ? "Tracking is off." : "Face tracking is on." });
+          notice: saved.tracking_mode === "off" ? "Tracking is off." : saved.tracking_mode === "hands" ? "Following your work." : "Face tracking is on." });
     } catch (error) {
       if (!controller.signal.aborted) {
         this.saveFailure = failure("Studio couldn't save Orion's tracking mode. Please try again.", error);

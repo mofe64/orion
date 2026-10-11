@@ -525,7 +525,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
-    if command.starts_with("gaze surroundings ") {
+    if command.starts_with("gaze surroundings ") || command == "gaze hands off" {
         character.set_curiosity_available(
             rest.reactions_ready()
                 && !feedback.session_active()
@@ -533,6 +533,12 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 && !scenes.is_active()
                 && !routines.curiosity_quiet(),
         );
+        if command == "gaze hands off" {
+            return match character.leave_hands(now_seconds, core) {
+                Ok(()) => serde_json::json!({"ok":true}).to_string(),
+                Err(error) => serde_json::json!({"ok":false,"error":error.to_string()}).to_string(),
+            };
+        }
         if command == "gaze surroundings status" {
             return serde_json::json!({"ok":true,"ready":character.curiosity_ready(core)})
                 .to_string();

@@ -147,9 +147,57 @@ after checking its candidate and motion; failed execution does not refund it.
 
 The policy has bounded in-memory state and no detector, motion or servo IO.
 Object idle glances, mutual gaze, arrival notice and object peeks use this policy.
-Hands mode and presence deferral are pending. The runtime closes admission during active lamp routines (including
+Hands mode also uses this policy; presence deferral is pending. The runtime closes admission during active lamp routines (including
 wind-down and sunrise), alerts and rest; it has no independent clock-based
 quiet-hours schedule.
+
+### Hands following
+
+Hands is an explicit tracking mode, separate from behaviour switches and the
+Idle/Lamp routine mode. One inference worker runs the palm detector at five
+frames per second; YuNet and background YOLO are excluded. Explicit `/find`
+retains its voice-safe ownership interval and pauses whichever detector was
+selected. `/speaker` returns `503 tracking_off`, so V2 conversation stays at
+the work anchor instead of turning or scanning for a face.
+
+The first fresh Hands observation can enter `desk_work` through `hands_entry`.
+The authored anticipation and arm lead are adapted to the measured start;
+shoulder and elbow lead before the camera pitches down. Completion establishes
+the desk pose as the character anchor. The `directional` idle profile avoids
+outward yaw clips near range limits. Subsequent generated idle/speech drawings
+are projected into the coupled comfort box, use synchronous settle curves and
+are checked over their complete trajectory. This protection is scoped to a
+Hands-derived anchor; it does not change ordinary home animation.
+
+Vision averages each frame's palm centres, projects that centroid using the
+capture-time camera transform onto the desk plane, then averages these base-frame
+points over two seconds. Transforming before averaging prevents lamp movement
+from masquerading as work movement. Runtime requires an eight-centimetre shift
+from the committed work point, stable within four centimetres for at least one
+second. Gaps over two seconds reset this dwell. P8 IK with `lean=0.35` supplies a
+slow `hands_follow` destination; no raw joint stream reaches the controller.
+Only successful measured completion commits that work point and anchor.
+
+Entry and each follow move spend the shared budget, including its sixty-second
+spacing and three-per-ten-minute cap. Work-point keys use eight-centimetre cells
+for habituation. Hands therefore follows deliberate changes sparingly; it is
+not continuous hand chasing. Mode toggling cannot replenish the budget. Ten
+seconds without hands stops scheduling ordinary idles while holding the work
+anchor; an already running idle finishes its anchor return. Speech retains priority. Hands alone does not defer automatic rest.
+
+Leaving Hands or disabling capture requests `hands_return` to the prior anchor.
+The private `gaze hands off` heartbeat retries a deferred return after voice or
+another temporary owner releases priority, even with no camera frames. Stale
+inference also requests a bounded return. The runtime tick only checks lifecycle
+and may compile a recovery; detector work, centroid projection and lean IK stay
+outside it. A replacement preserves commanded position, velocity and acceleration;
+failed preflight leaves the installed trajectory intact for a later retry.
+Stop blocks following and recovery until an authorized resume. Explicit scenes,
+pose commands and object aiming replace Hands ownership and require leaving and
+reselecting Hands to resume following; old observations cannot undo those controls.
+Rest clears ownership and never wakes from presence. All Hands behavior is
+lamp-unverified, including own-light exposure, apparent work stability,
+interruption, contact, shoulder load and CPU/ASR impact.
 
 ### Object peeks and pet notice
 

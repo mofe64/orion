@@ -46,6 +46,7 @@ class Fixture(unittest.TestCase):
 class ConfigurationTests(Fixture):
     def test_v2_camera_geometry_and_detector_are_loaded_from_release_including_overrides(self):
         (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        self.write(self.release / 'vision/orion_vision/detect_hands.py', '# module present')
         self.installed_units()
         override = self.units / 'oriond.service.d/99-local.conf'
         self.write(override, '[Service]\nExecStart=\nExecStart=/old/release/runtime/target/release/oriond '
@@ -54,6 +55,8 @@ class ConfigurationTests(Fixture):
         start = effective_start([(override, plan[override])])
         self.assertIn('--camera-urdf ' + str(self.release / 'description/urdf/orion-v2.urdf'), start)
         self.assertEqual(start.count('--camera-urdf'), 1)
+        self.assertIn('--palm-model ' + str(self.release / 'vision/models/palm_detection_mediapipe_2023feb.onnx'),
+                      plan[self.units / 'orion-vision.service'])
         self.assertIn('--socket /tmp/custom.sock', start)
         self.assertIn('--face-model ' + str(self.release / 'vision/models/face_detection_yunet_2023mar.onnx'),
                       plan[self.units / 'orion-vision.service'])

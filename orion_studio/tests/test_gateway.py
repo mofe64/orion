@@ -607,14 +607,20 @@ class TrackingPreferenceTests(unittest.TestCase):
         path = self.gateway.tracking_preference_file
         self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'faces')
         for value in ('bad json', '[]', 'null', '{}', '{"tracking_mode":true}',
-                      '{"tracking_mode":"hands"}', '{"tracking_mode":["faces"]}'):
+                      '{"tracking_mode":"bodies"}', '{"tracking_mode":["faces"]}'):
             path.write_text(value)
             self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'off', value)
         path.unlink(); path.mkdir()
         self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'off')
 
+    def test_hands_mode_is_persisted_and_read_back(self):
+        saved = self.gateway.set_tracking_mode({'tracking_mode': 'hands'})
+        self.assertEqual(saved['tracking_mode'], 'hands')
+        self.assertEqual(json.loads(self.gateway.tracking_preference_file.read_text()), {'tracking_mode': 'hands'})
+        self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'hands')
+
     def test_setter_rejects_unknown_modes_and_non_objects_without_writing(self):
-        for payload in (None, [], False, {}, {'tracking_mode': 'hands'}, {'tracking_mode': True},
+        for payload in (None, [], False, {}, {'tracking_mode': 'bodies'}, {'tracking_mode': True},
                         {'tracking_mode': 1}, {'tracking_mode': ['faces']}):
             with self.subTest(payload=payload), self.assertRaises(GatewayError) as error:
                 self.gateway.set_tracking_mode(payload)

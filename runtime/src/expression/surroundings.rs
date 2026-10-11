@@ -79,6 +79,10 @@ pub(crate) struct Surroundings {
     pub faces: Vec<SeenFace>,
     #[serde(default)]
     pub novelty: Option<NovelObject>,
+    #[serde(default)]
+    pub hand_count: u8,
+    #[serde(default)]
+    pub hand_point: Option<[f64; 3]>,
 }
 #[derive(Debug)]
 struct ObjectGlance {
@@ -125,6 +129,7 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.surroundings.clear();
+        self.leave_hands(now, core)?;
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)
     }
@@ -141,6 +146,7 @@ impl CharacterCoordinator {
             && self.status.enabled
             && self.gaze.status().enabled
             && !self.gaze.is_stopped()
+            && !self.hands.blocks_gaze()
             && self.work.is_none()
             && !self.work_anchor
             && self.attention.is_none()
@@ -161,10 +167,17 @@ impl CharacterCoordinator {
         let boot = core
             .camera_boottime_ns()
             .ok_or_else(|| Error::InvalidState("V2 camera clock unavailable".into()))?;
-        if value
-            .novelty
-            .as_ref()
-            .is_some_and(|object| !object.valid(value.capture_boottime_ns))
+        if value.hand_count > 8
+            || value.hand_point.is_some_and(|p| {
+                !p.into_iter().all(f64::is_finite)
+                    || p[2].abs() > 1e-6
+                    || p[1] >= 0.0
+                    || p[0].hypot(p[1]) > 1.0
+            })
+            || value
+                .novelty
+                .as_ref()
+                .is_some_and(|object| !object.valid(value.capture_boottime_ns))
             || value.objects.len() > 32
             || value.faces.len() > 16
             || value.faces.iter().any(|face| {
@@ -177,7 +190,7 @@ impl CharacterCoordinator {
             || value.capture_boottime_ns <= self.surroundings.stamp
             || value.capture_boottime_ns > boot.saturating_add(50_000_000)
             || boot.saturating_sub(value.capture_boottime_ns) > 1_000_000_000
-            || !matches!(value.tracking_mode.as_str(), "faces" | "off")
+            || !matches!(value.tracking_mode.as_str(), "faces" | "off" | "hands")
         {
             return Err(Error::InvalidArgument(
                 "Invalid or stale surroundings".into(),
@@ -185,7 +198,7 @@ impl CharacterCoordinator {
         }
         self.surroundings.stamp = value.capture_boottime_ns;
         if !value.camera_on || value.tracking_mode == "off" {
-            self.surroundings.clear();
+            self.clear_surroundings(now, core)?;
             return Ok(());
         }
         self.surroundings.received = Some(now);
@@ -194,6 +207,14 @@ impl CharacterCoordinator {
             .surroundings
             .budget
             .observe_focus(now, value.looking_away);
+        if value.tracking_mode == "hands" {
+            self.surroundings.mutual.clear();
+            self.surroundings.arrival.clear();
+            self.surroundings.glance = None;
+            self.settle_reaction(now, core)?;
+            return self.observe_hands(value.hand_count, value.hand_point, now, core);
+        }
+        self.leave_hands(now, core)?;
         if let Err(error) = self.observe_arrival(&value.faces, now, core) {
             eprintln!("oriond: arrival notice declined: {error}");
         }

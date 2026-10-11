@@ -322,6 +322,8 @@ test "${actual%% *}" = "$expected"
         self.assertIn('8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4', source)
         source = source.replace('8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4',
                                 hashlib.sha256(b'synthetic-yunet').hexdigest())
+        source = source.replace('78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c',
+                                hashlib.sha256(b'synthetic-yunet').hexdigest())
         source = source.replace("if (( EUID != 0 )); then", "if false; then")
         source = source.replace("/etc/os-release", str(release)).replace("/proc/device-tree/model", str(model))
         source = source.replace("export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/sbin",

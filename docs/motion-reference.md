@@ -1400,3 +1400,43 @@ lag, so the stated staging and IK reach survive exactly.
     persistence, unreachable targets and anchor-return tests. Visual MuJoCo
     and lamp checks remain owed for silhouette, own-light exposure, contact,
     shoulder load, interruptions and CPU/ASR impact.
+
+### Hands desk entry and following
+
+`desk_work` is a normal V2 powered idle anchor with the `directional` profile.
+Its camera centre ray intersects the table about 34 cm forward under the CAD
+mount geometry. `desk_anticipation` and `desk_arm_lead` are normal powered
+transition drawings. `hands_entry` plays those drawings into `desk_work` and
+holds. `hands_follow` and `hands_return` are anchor-relative catalogue templates;
+runtime supplies the observed work destination or saved prior anchor and adapts
+their anticipation and arm lead. All six assets are lamp-unverified.
+
+1. Idea and lead: a useful steady desk light. Shoulder and elbow announce the
+   desk entry/follow/return; the head follows. `desk_anticipation` and
+   `desk_arm_lead` isolate those first two drawings.
+2. Silhouette: `desk_work` places the wrist over the desk with a clear bent arm
+   and downward camera. The transition drawings retain home's head direction
+   until the arm has established the approach.
+3. Anticipation: a four-percent arm pullback over 0.45 authored seconds, projected
+   at comfort boundaries. The nominal drawing starts from home; live variants
+   use the measured pose, including when returning from another work point.
+4. Followers: a quarter of arm travel over 0.8 authored seconds, then the head
+   and base join the remaining 2.5-second approach. Light remains the existing
+   background effect; no sound competes with the work.
+5. Settle: every drawing settles; a 0.2-second final hold establishes the
+   destination. `desk_work` is the lasting anchor; anticipation/lead never are.
+6. Arc: one calibrated spline carries all joints. Runtime removes independent
+   joint lag and samples the full curve against the shoulder–elbow hull.
+7. Weight: `speaking_calm` tempo slows all three motions, with no overshoot.
+   Compiler timing can lengthen travel further to respect joint speed limits.
+8. Anchors: entry ends at desk_work, following at the successful IK destination,
+   return at the saved prior character anchor. All must satisfy comfort preflight;
+   following never adopts an unfinished or cancelled trajectory's target.
+9. Interruption: higher-priority work preempts only an owned run. Privacy/mode
+   exit returns continuously when allowed; Stop remains latched. Stale data
+   resets dwell, and explicit pose/scene changes retire the previous Hands session.
+10. Checks: catalogue calibration, camera-ray desk intersection, detector
+    exclusion, moving-camera centroid stability, shift/dwell/budget gates,
+    completed-anchor commitment, stale entry recovery, priority/Stop and
+    expression containment. Visual MuJoCo and lamp checks remain owed for
+    silhouettes, own-light exposure, contact, shoulder load and mode exit.

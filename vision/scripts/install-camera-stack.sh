@@ -134,6 +134,14 @@ printf '%s  %s\n' "${yunet_sha}" "${build_root}/${yunet_file}" | sha256sum --che
 install -d /usr/local/share/orion/vision
 install -m 0644 "${build_root}/${yunet_file}" "/usr/local/share/orion/vision/${yunet_file}"
 
+# Same pinned OpenCV Zoo revision and verify-before-replace policy for Hands.
+palm_file=palm_detection_mediapipe_2023feb.onnx
+palm_sha=78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c
+palm_url=https://media.githubusercontent.com/media/opencv/opencv_zoo/47534e27c9851bb1128ccc0102f1145e27f23f98/models/palm_detection_mediapipe/${palm_file}
+curl --fail --location --retry 3 "${palm_url}" --output "${build_root}/${palm_file}"
+printf '%s  %s\n' "${palm_sha}" "${build_root}/${palm_file}" | sha256sum --check --status
+install -m 0644 "${build_root}/${palm_file}" "/usr/local/share/orion/vision/${palm_file}"
+
 echo "Installed libpisp ${libpisp_tag}, libcamera ${libcamera_tag}, rpicam-apps ${rpicam_tag}."
 echo "Run vision/scripts/verify-camera-stack.sh. If the sensor is missing, configure its IMX708 overlay for the fitted CSI port and reboot."
 echo "Use a fresh login after changing video-group membership."

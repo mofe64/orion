@@ -23,7 +23,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/camera.json` | `{"camera_enabled": true}` or `false`; vision watches this privacy preference |
 | `.config/orion/behaviours.json` | Opt-in camera behaviours; missing or corrupt settings disable them |
-| `.config/orion/tracking.json` | `{"tracking_mode": "off"}` or `"faces"`; saved independently of camera privacy |
+| `.config/orion/tracking.json` | `{"tracking_mode": "off"}`, `"faces"` or `"hands"`; saved independently of camera privacy |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
 | `.local/share/orion/SOUL.md` | Saved personality choices and generated instructions |
@@ -48,7 +48,7 @@ Object glances, mutual gaze, arrival notice and object peeks are implemented and
 lamp-unverified. Presence deferral is pending. Studio
 exposes each control when its behaviour is implemented. Vision watches the file beside its camera preference;
 changing it invalidates pending autonomous observations without resetting the
-runtime's curiosity budget. Settings survive deployment and rollback.
+runtime's curiosity budget or leaving an active Hands mode. Settings survive deployment and rollback.
 
 ## Camera privacy and profile
 
@@ -59,7 +59,7 @@ camera within one second of disabling it. Deployment and rollback leave the
 preference untouched.
 
 `tracking_mode` in `~/.config/orion/tracking.json` selects one detector mode:
-`off` or `faces`. A missing file defaults to `faces`; unreadable, corrupt or
+`off`, `faces` or `hands`. A missing file defaults to `faces`; unreadable, corrupt or
 unknown settings select `off`. Vision polls it at the same interval as camera
 privacy. The gateway atomically writes this separate file before acknowledging
 a change, and deployment and rollback preserve it. Camera privacy wins over

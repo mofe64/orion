@@ -68,6 +68,7 @@ pub struct RuntimeCore<D: RuntimeDriver> {
         crate::motion::ik::ComfortBox,
     )>,
     driver: D,
+    character_comfort: bool,
     camera_geometry: Option<super::camera_rays::CameraGeometry>,
     camera_geometry_error: String,
     tracking: Option<TrackingTelemetry>,
@@ -110,6 +111,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         Ok(Self {
             driver,
             comfort: None,
+            character_comfort: false,
             camera_geometry: None,
             camera_geometry_error: "camera-rays requires the V2 model loaded at startup".into(),
             tracking: None,
@@ -804,7 +806,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
 
     fn install_character_performance(
         &mut self,
-        definition: MotionDefinition,
+        mut definition: MotionDefinition,
         anchor: JointPositions,
         now_seconds: f64,
         replacing: Option<u64>,
@@ -869,6 +871,9 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             Some(state) => state.velocities,
             None => self.measured_velocities(),
         };
+        if self.character_comfort {
+            self.fit_character_comfort(&mut definition, &anchor)?;
+        }
         let limits = self.driver.joint_limits()?;
         let amplitude_scale = definition.uniform_amplitude_scale(&anchor, &limits)?;
         let targets = definition.resolved_targets_with_scale(&anchor, amplitude_scale)?;
@@ -884,6 +889,13 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             amplitude_scale,
             &limits,
         )?;
+        if self.character_comfort {
+            self.comfort
+                .as_ref()
+                .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+                .1
+                .validate_sequence(&sequence)?;
+        }
         let target = targets
             .last()
             .cloned()

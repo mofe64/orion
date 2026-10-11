@@ -243,6 +243,111 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         Ok((definition, lift))
     }
 
+    pub(crate) fn set_character_comfort(&mut self, enabled: bool) {
+        self.character_comfort = enabled;
+    }
+    pub(super) fn fit_character_comfort(
+        &self,
+        definition: &mut MotionDefinition,
+        anchor: &JointPositions,
+    ) -> Result<()> {
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let targets = definition.resolved_targets(anchor)?;
+        let amplitude = definition.style.amplitude;
+        for (frame, target) in definition.keyframes.iter_mut().zip(targets) {
+            let target = comfort.project(anchor, &target)?.0;
+            frame.target = target
+                .into_iter()
+                .map(|(joint, value)| {
+                    let offset = if amplitude > 1e-12 {
+                        (value - anchor[&joint]) / amplitude
+                    } else {
+                        0.0
+                    };
+                    (joint, offset)
+                })
+                .collect();
+            frame.arrival = KeyframeArrival::Settle;
+        }
+        definition.style.joint_lag = 0.0;
+        definition.style.overshoot_scale = 0.0;
+        Ok(())
+    }
+    pub(crate) fn hands_light_target(
+        &self,
+        anchor: &JointPositions,
+        point: [f64; 3],
+    ) -> Result<JointPositions> {
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let model = self
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("Hands needs V2 geometry".into()))?;
+        let solution = solve_lean(
+            model,
+            comfort,
+            self.poses.pose("home")?,
+            anchor,
+            point,
+            0.35,
+        )?;
+        solution
+            .positions
+            .ok_or_else(|| Error::InvalidState("Work point outside desk reach".into()))
+    }
+    pub(crate) fn prepare_hands_motion(
+        &self,
+        name: &str,
+        target: &JointPositions,
+        replacing: Option<(u64, f64)>,
+    ) -> Result<MotionDefinition> {
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let start = self.measured_positions();
+        let mut pullback = start.clone();
+        let mut lead = start.clone();
+        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+            pullback.insert(
+                joint.into(),
+                start[joint] - 0.04 * (target[joint] - start[joint]),
+            );
+            lead.insert(
+                joint.into(),
+                start[joint] + 0.25 * (target[joint] - start[joint]),
+            );
+        }
+        let pullback = comfort.project(&start, &pullback)?.0;
+        let mut definition = self.motions.motion(name)?.clone();
+        definition.space = MotionSpace::AnchorRelative;
+        definition.return_to_anchor = true;
+        for frame in &mut definition.keyframes {
+            frame.pose_name = None;
+            let pose = match frame.marker.as_deref() {
+                Some("anticipation") => &pullback,
+                Some("arm_lead") => &lead,
+                _ => target,
+            };
+            frame.target = pose
+                .iter()
+                .map(|(joint, value)| (joint.clone(), value - target[joint]))
+                .collect();
+        }
+        definition.style.joint_lag = 0.0;
+        definition.style.amplitude = 1.0;
+        self.validate_curiosity_motion(&definition, target, replacing)?;
+        Ok(definition)
+    }
+
     pub fn configure_comfort_box(&mut self, config: ComfortBoxConfig) -> Result<()> {
         let comfort = ComfortBox::from_config(&config, &self.poses, &self.driver.joint_limits()?)?;
         self.comfort = Some((config, comfort));

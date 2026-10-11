@@ -12,6 +12,8 @@ use crate::motion::pose::JointPositions;
 use crate::motion::style::MotionStyle;
 #[path = "aim_light.rs"]
 mod aim_light;
+#[path = "hands.rs"]
+mod hands;
 #[path = "reactions.rs"]
 mod reactions;
 #[path = "surroundings.rs"]
@@ -272,6 +274,7 @@ struct Attention {
 #[derive(Debug)]
 pub struct CharacterCoordinator {
     surroundings: surroundings::SurroundingsState,
+    hands: hands::HandsState,
     gaze: super::gaze::GazeCoordinator,
     /// Character state we expose to other parts of the application.
     status: CharacterStatus,
@@ -398,6 +401,7 @@ impl CharacterCoordinator {
         Self {
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
+            hands: hands::HandsState::default(),
             status: CharacterStatus {
                 enabled: false,
                 state: CharacterState::Off,
@@ -557,7 +561,7 @@ impl CharacterCoordinator {
         {
             return Ok(false);
         }
-        if self.surroundings.reaction.is_some() {
+        if self.surroundings.reaction.is_some() || self.hands.blocks_gaze() {
             // Face observations continue; this one bounded response owns motion.
             return Ok(true);
         }
@@ -1135,6 +1139,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
+        self.preempt_hands(now, core)?;
         self.preempt_reaction(now, core)?;
         self.gaze.yield_to_priority(now, core);
         // if we have an active idle or thinking run, and the runtime is still moving,
@@ -1163,6 +1168,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
+        self.hands_foreground_override(core);
         if self
             .work
             .take()
@@ -1302,6 +1308,8 @@ impl CharacterCoordinator {
         if (scene_active || speech_active || !self.status.enabled) && self.work.is_some() {
             self.preempt_for_foreground(now, core)?;
         }
+        self.finish_hands(now, core);
+        self.expire_hands(now, core)?;
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)?;
         if self.tick_work(now, core)? {
@@ -1586,10 +1594,11 @@ impl CharacterCoordinator {
             self.reset_timers(now);
         }
 
-        if self.surroundings.reaction.is_some() {
+        if self.surroundings.reaction.is_some() || self.hands_run_active() {
             return Ok(());
         }
-        if !self.foreground_pending
+        if !self.hands.blocks_gaze()
+            && !self.foreground_pending
             && self.attention.is_none()
             && let Some(anchor) = self.status.active_anchor.clone()
             && self.gaze.tick(now, &anchor, core)
@@ -1674,6 +1683,9 @@ impl CharacterCoordinator {
         if self.attention.is_some() {
             return Ok(());
         }
+        if self.hands.suppress_idle(now) {
+            return Ok(());
+        }
         // if we get here, that means we are allowed to idle
         // chose the idle category based on which deadline is closer
         let category = if self.next_micro_at <= self.next_large_at {
@@ -1736,11 +1748,14 @@ impl CharacterCoordinator {
         core: &RuntimeCore<D>,
     ) -> String {
         // get the closest pose profile based on the character's anchor
-        let profile = self
-            .status
-            .active_anchor
-            .as_ref()
-            .and_then(|anchor| closest_pose_profile(core, anchor));
+        let profile = if self.hands.owns_anchor() {
+            Some("directional".into())
+        } else {
+            self.status
+                .active_anchor
+                .as_ref()
+                .and_then(|anchor| closest_pose_profile(core, anchor))
+        };
 
         // get the list of candidates based on the profile and category
         let mut candidates: Vec<&str> = match (profile.as_deref(), category) {

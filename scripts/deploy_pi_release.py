@@ -21,6 +21,11 @@ YUNET_URL = ('https://media.githubusercontent.com/media/opencv/opencv_zoo/'
              '47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_detection_yunet/'
              'face_detection_yunet_2023mar.onnx')
 
+PALM_SHA256 = '78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c'
+PALM_URL = ('https://media.githubusercontent.com/media/opencv/opencv_zoo/'
+            '47534e27c9851bb1128ccc0102f1145e27f23f98/models/palm_detection_mediapipe/'
+            'palm_detection_mediapipe_2023feb.onnx')
+
 
 def run(*args, **kwargs):
     return subprocess.run([str(arg) for arg in args], check=True, **kwargs)
@@ -55,6 +60,11 @@ def validate_listener(release):
 def prepare_vision(release):
     # Release-local data follows activation/rollback without replacing native libraries.
     download(release, YUNET_URL, 'vision/models/face_detection_yunet_2023mar.onnx', YUNET_SHA256)
+    if (release / 'vision/orion_vision/detect_hands.py').is_file():
+        download(release, PALM_URL, 'vision/models/palm_detection_mediapipe_2023feb.onnx', PALM_SHA256)
+        run(release / 'vision/.venv/bin/python', '-c',
+            'from orion_vision.detect_hands import PalmDetector; import sys; PalmDetector(sys.argv[1])',
+            release / 'vision/models/palm_detection_mediapipe_2023feb.onnx')
     if (release / 'vision/orion_vision/detect_objects.py').is_file():
         from vision_assets import verify_yolo
         verify_yolo(release)

@@ -24,7 +24,7 @@ class TrackingPreferenceTests(unittest.TestCase):
             path = Path(directory) / 'tracking.json'
             self.assertEqual(tracking_mode(path), 'faces')
             for value in ('bad json', '[]', '{}', 'null', '{"tracking_mode":1}',
-                          '{"tracking_mode":"hands"}', '{"tracking_mode":"off"}'):
+                          '{"tracking_mode":"bodies"}', '{"tracking_mode":"off"}'):
                 path.write_text(value)
                 self.assertEqual(tracking_mode(path), 'off', value)
             path.unlink(); path.mkdir()
@@ -102,8 +102,11 @@ class TrackingPreferenceTests(unittest.TestCase):
                 self.assertFalse(source.wants_lores())
                 self.assertEqual(source.starts, 1)
                 self.assertEqual(request('/health')['tracking_mode'], 'off')
+                vision.tracking_file.write_text('{"tracking_mode":"hands"}')
+                eventually(lambda: vision.tracking_mode == 'hands')
+                self.assertEqual(request('/speaker?since_ns=0', 503)['error']['code'], 'tracking_off')
                 vision.tracking_file.write_text('{"tracking_mode":"faces"}')
-                eventually(lambda: pipeline.enabled)
+                eventually(lambda: pipeline.enabled and pipeline.mode == "faces")
                 now[0] += 100_000_000
                 source.emit(now[0])
                 eventually(lambda: len(pipeline.observations()) == 1)

@@ -735,6 +735,9 @@ Stop `oriond` before rollback. Keep a separate copy of the extended `routines.js
 The vision service sends `gaze surroundings JSON` with a fresh capture clock,
 privacy/tracking state, behaviour settings, at most 32 mapped objects and one
 optional `novelty` candidate with fresh capture and persistence timestamps.
+Hands mode instead includes `hand_count` (0–8) and an optional finite table-plane
+`hand_point`. `gaze hands off` requests/retries restoration of the pre-Hands
+anchor without enabling torque or clearing Stop.
 `gaze surroundings status` reports whether background inference may start;
 `gaze surroundings clear` invalidates autonomous context and returns an owned
 object glance or reaction to its anchor. These private commands never clear the Stop latch.

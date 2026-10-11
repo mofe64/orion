@@ -373,6 +373,7 @@ class StartupTests(unittest.TestCase):
                     patch.dict(sys.modules, picamera2=camera_module, libcamera=MagicMock()), \
                     patch('orion_vision.detect_faces.YuNet', return_value=detector), \
                     patch('orion_vision.detect_objects.YoloNCNN'), \
+                    patch('orion_vision.detect_hands.PalmDetector'), \
                     patch('orion_vision.gaze_client.GazeClient', return_value=client), \
                     patch('orion_vision.service.VisionServer', side_effect=server_factory), \
                     patch('orion_vision.service.signal.signal'):

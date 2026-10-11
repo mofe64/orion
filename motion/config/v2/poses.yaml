@@ -99,6 +99,35 @@ poses:
       elbow_pitch_joint: -0.391
       head_roll_joint: -0.021
       head_pitch_joint: 0.120001
+  desk_anticipation:
+    description: Small arm pullback before the desk entry; lamp unverified.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: 0.06
+      shoulder_pitch_joint: 0.29832
+      elbow_pitch_joint: -0.25264
+      head_roll_joint: -0.021
+      head_pitch_joint: -0.14
+  desk_arm_lead:
+    description: Shoulder and elbow begin the desk entry while the head holds; lamp unverified.
+    tags: [powered, transition]
+    positions:
+      base_yaw_joint: 0.06
+      shoulder_pitch_joint: 0.3685
+      elbow_pitch_joint: -0.277
+      head_roll_joint: -0.021
+      head_pitch_joint: -0.14
+  desk_work:
+    description: Desk-facing Hands anchor with a broad arm silhouette; lamp unverified.
+    tags: [powered, idle_anchor]
+    default_lighting: warm_idle_breathe
+    idle_profile: directional
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.55
+      elbow_pitch_joint: -0.34
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.4
   rest:
     description: Captured torque-free mechanical rest on 2026-10-07.
     tags:

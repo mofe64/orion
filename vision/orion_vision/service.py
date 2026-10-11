@@ -38,7 +38,7 @@ def camera_enabled(path):
 def tracking_mode(path):
     try:
         value = json.loads(Path(path).read_text())['tracking_mode']
-        return value if value in ('off', 'faces') else 'off'
+        return value if value in ('off', 'faces', 'hands') else 'off'
     except FileNotFoundError:
         return 'faces'
     except (OSError, ValueError, KeyError, TypeError):
@@ -110,6 +110,7 @@ class Vision:
 
     def _watch(self):
         retry_at = 0.
+        hands_release_at = 0.
         try:
             while not self.stop.is_set():
                 wanted = camera_enabled(self.preference_file)
@@ -125,8 +126,8 @@ class Vision:
                         and now - (self.last_published_at if self.last_published_at is not None
                             else self.camera_started_at) >= 2)
                 if self.pipeline and tracking_changed:
-                    self.pipeline.reset(self.enabled and wanted and mode == 'faces',
-                                        camera_enabled=self.enabled and wanted)
+                    self.pipeline.reset(self.enabled and wanted and mode != 'off',
+                                        camera_enabled=self.enabled and wanted, mode=mode)
                 if not wanted and self.enabled:
                     self._disable()
                 elif wanted and stalled:
@@ -143,7 +144,7 @@ class Vision:
                         self.last_published_at = None
                     try:
                         if self.pipeline:
-                            self.pipeline.reset(mode == 'faces', camera_enabled=True)
+                            self.pipeline.reset(mode != 'off', camera_enabled=True, mode=mode)
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb,
                                               self.wants_lores)
                         else:
@@ -153,6 +154,10 @@ class Vision:
                         self._disable()
                         self.error = str(error)
                         retry_at = self.clock() + 1
+                if (self.pipeline and hasattr(self.pipeline, 'release_hands') and now >= hands_release_at
+                        and (not self.enabled or mode != 'hands')):
+                    self.pipeline.release_hands()
+                    hands_release_at = now + .5
                 self.stop.wait(.1)
         finally:
             self._disable()
@@ -363,7 +368,7 @@ class Handler(BaseHTTPRequestHandler):
                 status, body = vision.detections()
                 return self.respond(status, body)
             if urlsplit(self.path).path == "/speaker":
-                if vision.tracking_mode == 'off':
+                if vision.tracking_mode != 'faces':
                     return self.respond(503, {"error": {"code": "tracking_off"}})
                 if not vision.pipeline:
                     return self.respond(503, {"error": {"code": "detection_unavailable"}})
@@ -426,10 +431,12 @@ def main():
     parser.add_argument("--replay", type=Path, help="Directory of synthetic JPEG test inputs")
     from .intrinsics import Intrinsics
     from .detect_faces import MODEL_PATH, YuNet
+    from .detect_hands import MODEL_PATH as PALM_MODEL_PATH, PalmDetector
     from .gaze_client import GazeClient
     from .pipeline import FacePipeline
     from .detect_objects import YoloNCNN, MODEL_PATH as OBJECT_MODEL_PATH
     parser.add_argument("--face-model", type=Path, default=MODEL_PATH)
+    parser.add_argument("--palm-model", type=Path, default=PALM_MODEL_PATH)
     parser.add_argument('--object-model', type=Path, default=OBJECT_MODEL_PATH)
     parser.add_argument("--runtime-socket", type=Path, default=Path("/tmp/oriond.sock"))
     args = parser.parse_args()
@@ -454,9 +461,10 @@ def main():
                 raise RuntimeError("Vision socket already has a running owner")
     pipeline, detection_error = None, None
     objects = YoloNCNN(args.object_model)
+    palms = PalmDetector(args.palm_model)
     try:
         pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.camera_module_3_wide(),
-                                GazeClient(args.runtime_socket), objects=objects)
+                                GazeClient(args.runtime_socket), objects=objects, palms=palms)
         if isinstance(source, Picamera2Source):
             source.expected_geometry = pipeline.intrinsics.geometry
     except (OSError, ValueError, KeyError) as error:
