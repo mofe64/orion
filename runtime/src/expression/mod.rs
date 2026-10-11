@@ -1,5 +1,6 @@
 pub mod alert_sound;
 pub mod character;
+pub mod curiosity;
 pub mod gaze;
 pub mod lamp;
 pub mod rest;

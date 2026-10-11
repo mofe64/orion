@@ -127,6 +127,27 @@ playback, and the character coordinator owns the anchor, idle schedule and
 generated speech motion. `RuntimeCore` is the only thing that executes
 movement for all three.
 
+### Autonomous vision restraint
+
+`CuriosityBudget` supplies a shared admission policy for autonomous vision
+gestures. It permits at most three in a rolling ten-minute window, separated
+by at least sixty seconds. Repeating a target extends its cooldown from two
+minutes to four, eight, sixteen and then thirty-two minutes. An hour without
+a reaction forgets that target's history. Target keys describe local tracks
+and objects; they are not biometric identities. Camera or tracking changes
+must not reset the budget.
+
+Two minutes of continuous, fresh observations of a person looking away
+suppress gestures except glances. A gap over two seconds, a frontal face or
+an unknown observation breaks that focus inference. It is a coarse restraint
+signal, not proof of where someone is looking. Glances still spend the shared
+budget. Camera privacy, Tracking Off, Stop, rest, voice, foreground work,
+disabled settings and quiet hours close admission. A caller reserves budget
+after checking its candidate and motion; failed execution does not refund it.
+
+The policy has bounded in-memory state and no detector, motion or servo IO.
+Behaviour integration is pending; adding the policy alone enables no movement.
+
 ### Anchors
 
 The anchor is captured when Orion enters an idle context. Every idle and speech
