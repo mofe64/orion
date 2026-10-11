@@ -276,7 +276,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
     const robot = robotRef.current;
     if (!robot) return;
     for (const [name, value] of Object.entries(joints)) {
-      robot.joints[name]?.setJointValue(value + catalog.urdfJointOffsets[name as keyof JointPositions]);
+      robot.joints[name]?.setJointValue(value + (catalog.urdfJointOffsets?.[name as keyof JointPositions] ?? 0));
     }
     invalidateRef.current();
   }, [catalog, joints, mode]);

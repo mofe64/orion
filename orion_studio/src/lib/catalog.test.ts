@@ -4,6 +4,16 @@ import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
 import { catalogs, isOwnerPose, ownerAssetDescription, projectCatalog } from "./catalog";
 
 describe("v2 project catalog", () => {
+  it("feeds calibrated V2 angles straight to the URDF and keeps every pose in its limits", () => {
+    expect(catalogs.v2.urdfJointOffsets).toBeUndefined();
+    expect(catalogs.v1.urdfJointOffsets?.shoulder_pitch_joint).not.toBe(0);
+    for (const pose of Object.values(catalogs.v2.poses)) {
+      for (const limit of catalogs.v2.jointLimits) {
+        expect(pose.positions[limit.name]).toBeGreaterThanOrEqual(limit.lower_rad);
+        expect(pose.positions[limit.name]).toBeLessThanOrEqual(limit.upper_rad);
+      }
+    }
+  });
   it("keeps acknowledgement scenes and motion timing identical apart from direction", () => {
     const mirror = (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll("left", "right"));
     expect(mirror(projectCatalog.scenes.acknowledge_left)).toEqual(projectCatalog.scenes.acknowledge_right);

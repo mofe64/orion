@@ -399,33 +399,113 @@ mod tests {
     }
 
     #[test]
-    fn home_camera_has_the_expected_position_and_upward_view() {
+    fn home_matches_the_measured_bent_arm_and_downward_view() {
         let home = fixture()
             .cases
             .into_iter()
             .find(|case| case.name == "home")
             .unwrap();
-        let camera = model().fk(&home.positions).unwrap().camera;
-        for (actual, expected) in camera.position.into_iter().zip([-0.007, -0.146, 0.460]) {
-            assert!((actual - expected).abs() < 0.001);
+        let model = model();
+        let camera = model.fk(&home.positions).unwrap().camera;
+        let mut centres = Vec::new();
+        for name in [
+            "shoulder_pitch_joint",
+            "elbow_pitch_joint",
+            "head_pitch_joint",
+        ] {
+            let index = model
+                .camera
+                .iter()
+                .position(|joint| joint.name == name)
+                .unwrap();
+            centres.push(evaluate(&model.camera[..=index], &home.positions).position);
+        }
+        for (pair, expected) in centres.windows(2).zip([-46.0, 25.0]) {
+            let y = pair[1][1] - pair[0][1];
+            let z = pair[1][2] - pair[0][2];
+            let lean = (-y).atan2(z).to_degrees();
+            assert!((lean - expected).abs() < 1.0, "home link lean {lean}");
         }
         let forward = camera.rotate_vector([0.0, 0.0, 1.0]);
         let elevation = forward[2].atan2(forward[0].hypot(forward[1])).to_degrees();
-        assert!((elevation - 5.0).abs() < 0.5, "home elevation {elevation}");
+        assert!((elevation + 13.0).abs() < 1.0, "home elevation {elevation}");
+        assert!(forward[1] < -0.9, "home camera must look ahead");
+    }
+
+    #[test]
+    fn baked_reference_matches_old_fk_of_q_minus_reference_to_one_picometre() {
+        let model = model();
+        // Before P4 every movable origin had identity rotation. Retain the
+        // original translations, axes, meshes and optical mounts; restore only
+        // those three origin rotations to reconstruct that CAD model.
+        let reference = [
+            ("shoulder_pitch_joint", 1.118),
+            ("elbow_pitch_joint", -1.500),
+            ("head_pitch_joint", 0.070),
+        ];
+        let mut old = model.clone();
+        for chain in [&mut old.camera, &mut old.light] {
+            for joint in chain {
+                if reference.iter().any(|(name, _)| *name == joint.name) {
+                    joint.origin.rotation = FramePose::IDENTITY.rotation;
+                }
+            }
+        }
+        let mut cases = fixture().cases;
+        let poses: serde_yaml::Value =
+            serde_yaml::from_str(include_str!("../../../motion/config/v2/poses.yaml")).unwrap();
+        cases.push(Case {
+            name: "rest".into(),
+            positions: serde_yaml::from_value(poses["poses"]["rest"]["positions"].clone()).unwrap(),
+            camera: FramePose::IDENTITY,
+            light: FramePose::IDENTITY,
+        });
+        for case in cases {
+            let mut shifted = case.positions.clone();
+            for (name, offset) in reference {
+                *shifted.get_mut(name).unwrap() -= offset;
+            }
+            let actual = model.fk(&case.positions).unwrap();
+            let expected = old.fk(&shifted).unwrap();
+            for (actual, expected) in [
+                (actual.camera, expected.camera),
+                (actual.light, expected.light),
+            ] {
+                for (a, e) in actual
+                    .position
+                    .into_iter()
+                    .chain(actual.rotation.into_iter().flatten())
+                    .zip(
+                        expected
+                            .position
+                            .into_iter()
+                            .chain(expected.rotation.into_iter().flatten()),
+                    )
+                {
+                    assert!((a - e).abs() <= 1e-12, "{}: {a} != {e}", case.name);
+                }
+            }
+        }
     }
 
     #[test]
     fn positive_yaw_moves_right_and_positive_pitch_tilts_down() {
         let model = model();
         let mut positions = zero();
+        // Preserve the original CAD-reference displacement assertions. The
+        // calibrated zero is bent and places the camera behind the yaw axis.
+        positions.insert("shoulder_pitch_joint".into(), 1.118);
+        positions.insert("elbow_pitch_joint".into(), -1.500);
+        positions.insert("head_pitch_joint".into(), 0.070);
+        let upright = positions.clone();
         let reference = model.fk(&positions).unwrap().camera;
         positions.insert("base_yaw_joint".into(), 0.2);
         let right = model.fk(&positions).unwrap().camera;
         // Facing -Y, the lamp's own right is base -X.
         assert!(right.position[0] < reference.position[0] - 0.01);
         assert!(right.rotate_vector([0.0, 0.0, 1.0])[0] < -0.1);
-        positions = zero();
-        positions.insert("head_pitch_joint".into(), 0.2);
+        positions = upright;
+        positions.insert("head_pitch_joint".into(), 0.070 + 0.2);
         assert!(
             model
                 .fk(&positions)
@@ -437,8 +517,12 @@ mod tests {
     }
 
     #[test]
-    fn zero_optical_axes_are_right_down_and_forward() {
-        let frames = model().fk(&zero()).unwrap();
+    fn upright_cad_reference_optical_axes_are_right_down_and_forward() {
+        let mut upright = zero();
+        upright.insert("shoulder_pitch_joint".into(), 1.118);
+        upright.insert("elbow_pitch_joint".into(), -1.500);
+        upright.insert("head_pitch_joint".into(), 0.070);
+        let frames = model().fk(&upright).unwrap();
         for frame in [frames.camera, frames.light] {
             for (local, expected) in [
                 ([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]),

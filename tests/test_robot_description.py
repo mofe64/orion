@@ -115,6 +115,33 @@ def test_mujoco_zero_and_ranges_match_the_accepted_physical_calibration():
 class CameraFrameDescriptionTests(unittest.TestCase):
     """Frame conventions and fixture provenance need only the Python stdlib."""
 
+    def test_v2_models_use_calibrated_zero_and_exact_physical_limits(self):
+        calibration_bytes = (MUJOCO_CONFIG / "servo_calibration-v2.json").read_bytes()
+        calibration = json.loads(calibration_bytes)
+        reference = json.loads((MUJOCO_CONFIG / "model_reference-v2.json").read_text())
+        self.assertEqual(hashlib.sha256(calibration_bytes).hexdigest(), reference["source_calibration_sha256"])
+        self.assertEqual(reference["applied_to"], [
+            "description/urdf/orion-v2.urdf", "simulation/mujoco/v2/robot.xml",
+        ])
+        urdf = ET.parse(PROJECT_ROOT / reference["applied_to"][0]).getroot()
+        mjcf = ET.parse(PROJECT_ROOT / reference["applied_to"][1]).getroot()
+        for name in CANONICAL_JOINTS:
+            with self.subTest(joint=name):
+                physical = calibration["joints"][name]
+                radians_per_count = 2 * math.pi / calibration["encoder_resolution"]
+                limits = sorted(physical[key] * radians_per_count / physical["encoder_direction"]
+                                for key in ("safe_min_delta_raw", "safe_max_delta_raw"))
+                joint = urdf.find(f"joint[@name='{name}']")
+                self.assertEqual([float(joint.find("limit").get(key)) for key in ("lower", "upper")], limits)
+                mj_joint = mjcf.find(f".//joint[@name='{name}']")
+                self.assertEqual([float(value) for value in mj_joint.get("range").split()], limits)
+                self.assertEqual(float(mj_joint.get("ref")), reference["joint_reference_radians"][name])
+                expected_roll = -reference["joint_reference_radians"][name] if name in (
+                    "shoulder_pitch_joint", "elbow_pitch_joint", "head_pitch_joint",
+                ) else 0.0
+                self.assertEqual([float(value) for value in joint.find("origin").get("rpy").split()],
+                                 [expected_roll, 0.0, 0.0])
+
     def test_v2_camera_and_light_are_fixed_nominal_neck_mounts(self):
         root = ET.parse(PROJECT_ROOT / "description/urdf/orion-v2.urdf").getroot()
         for joint_name, frame, position in (

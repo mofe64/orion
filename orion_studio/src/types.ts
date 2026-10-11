@@ -212,7 +212,7 @@ export interface ProjectCatalog {
   cueUrls: Record<string, string>;
   urdf: string;
   meshUrls: Record<string, string>;
-  urdfJointOffsets: JointPositions;
+  urdfJointOffsets?: JointPositions;
   jointLimits: JointLimit[];
 }
 

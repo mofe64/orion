@@ -42,11 +42,17 @@ class V2ModelTests(unittest.TestCase):
                 parent, child = joint.find('parent').get('link'), joint.find('child').get('link')
                 origin = np.fromstring(joint.find('origin').get('xyz'), sep=' ')
                 relative = np.eye(4); relative[:3, 3] = origin
+                roll, pitch, yaw = np.fromstring(joint.find('origin').get('rpy'), sep=' ')
+                def axis_rotation(axis, angle):
+                    x, y, z = axis
+                    cross = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
+                    return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * cross @ cross
+                relative[:3, :3] = (axis_rotation([0, 0, 1], yaw)
+                                   @ axis_rotation([0, 1, 0], pitch)
+                                   @ axis_rotation([1, 0, 0], roll))
                 if joint.get('type') == 'revolute':
                     axis = np.fromstring(joint.find('axis').get('xyz'), sep=' ')
-                    a = angles[joint.get('name')]; x, y, z = axis
-                    cross = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
-                    relative[:3, :3] = np.eye(3) + np.sin(a) * cross + (1 - np.cos(a)) * cross @ cross
+                    relative[:3, :3] = relative[:3, :3] @ axis_rotation(axis, angles[joint.get('name')])
                 transforms[child] = transforms[parent] @ relative
             expected_face = transforms['v21_neck_swivel_link'] @ np.array([0, -.085, .020, 1])
             site = mujoco.mj_name2id(bridge.model, mujoco.mjtObj.mjOBJ_SITE, 'v21_face')
@@ -58,14 +64,20 @@ class V2ModelTests(unittest.TestCase):
         poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']
         model = mujoco.MjModel.from_xml_path(str(PROJECT / 'simulation/mujoco/v2/scene.xml'))
         data = mujoco.MjData(model)
-        def face_x(pose):
+        def face_and_forward_x(pose):
             data.qpos[:] = 0
             for joint, value in poses[pose]['positions'].items():
                 data.qpos[model.joint(joint).qposadr[0]] = value
             mujoco.mj_forward(model, data)
-            return data.site('v21_face').xpos[0]
-        self.assertGreater(face_x('look_left'), 0.05)
-        self.assertLess(face_x('look_right'), -0.05)
+            return data.site('v21_face').xpos[0], data.site('light_frame').xmat.reshape(3, 3)[0, 2]
+        # The bent model changes face displacement, so assert its measured-
+        # reference geometry precisely and retain a strong direction check.
+        left_position, left_direction = face_and_forward_x('look_left')
+        right_position, right_direction = face_and_forward_x('look_right')
+        self.assertAlmostEqual(left_position, 0.044558144080031094, places=12)
+        self.assertAlmostEqual(right_position, -0.027197103020340445, places=12)
+        self.assertGreater(left_direction, 0.9)
+        self.assertLess(right_direction, -0.7)
 
     def test_bridge_rejects_wrong_hardware_and_never_claims_dynamic_safety(self):
         poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']['home']['positions']

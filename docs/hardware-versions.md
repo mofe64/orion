@@ -33,11 +33,13 @@ V2 calibration writes `~/.config/orion/servo_calibration-v2.json`. V2 rest captu
 writes `rest` directly into the repository's `motion/config/v2/poses.yaml`, matching
 V1's repository pose workflow. Home and rest in that file use the V2 lamp's
 captured physical calibration zero. Other poses and motions remain preview
-candidates until checked on the assembled lamp. The V2 URDF's all-zero pose is an
-upright arm, not that calibration zero; Studio's 3D preview converts calibrated
-angles to model angles with
-[`model_reference-v2.json`](../simulation/mujoco/config/model_reference-v2.json),
-aligned visually against a photo of the lamp at home. The captured calibration supplies
+candidates until checked on the assembled lamp. The V2 URDF and MuJoCo model
+accept calibrated angles directly: the bent zero posture is baked into their
+joint origins and references. Studio and Rust FK apply no additional V2
+offsets. The measured alignment, date and calibration hash are recorded in
+[`model_reference-v2.json`](../simulation/mujoco/config/model_reference-v2.json).
+At `home`, the upper arm leans back about 46°, the forearm leans forward about
+25°, and the camera looks forward about 13° down. The captured calibration supplies
 servo IDs, encoder zeros, directions and numerical limits to the V2 runtime.
 
 V2 hardware, simulation, Studio preview and release validation read the same

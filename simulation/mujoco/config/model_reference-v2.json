@@ -9,5 +9,10 @@
     "head_roll_joint": 0.0,
     "head_pitch_joint": 0.07
   },
-  "reference_formula": "model_angle = calibrated_angle - joint_reference; Studio applies this offset only to the 3D preview."
+  "reference_formula": "The measured joint_reference rotations are baked into URDF origins (-reference) and MJCF joint ref values. Calibrated angles enter both models directly; nothing applies these offsets at runtime.",
+  "source_calibration_sha256": "df1fc254f2e3d0b58cc556a8158ba234c86663a4e9007abdd038ce23392771d4",
+  "applied_to": [
+    "description/urdf/orion-v2.urdf",
+    "simulation/mujoco/v2/robot.xml"
+  ]
 }

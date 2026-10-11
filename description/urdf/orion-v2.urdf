@@ -85,7 +85,7 @@
     <child link="v21_base_yaw_link" />
     <origin xyz="0.0 0.0 0.060000000000000005" rpy="0 0 0" />
     <axis xyz="0 0 -1" />
-    <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
+    <limit lower="-1.4388739790367313" upper="1.5401167110371838" effort="0" velocity="0" />
   </joint>
   <link name="v21_shoulder_pitch_link">
     <visual name="v21_1">
@@ -121,9 +121,10 @@
   <joint name="shoulder_pitch_joint" type="revolute">
     <parent link="v21_base_yaw_link" />
     <child link="v21_shoulder_pitch_link" />
-    <origin xyz="0.0 0.0 0.05299999999999999" rpy="0 0 0" />
+    <!-- Calibrated reference: simulation/mujoco/config/model_reference-v2.json, 2026-10-11. -->
+    <origin xyz="0.0 0.0 0.05299999999999999" rpy="-1.118 0 0" />
     <axis xyz="1 0 0" />
-    <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
+    <limit lower="-0.5553010452146021" upper="1.2547962844904545" effort="0" velocity="0" />
   </joint>
   <link name="v21_elbow_pitch_link">
     <visual name="v21_10">
@@ -159,9 +160,10 @@
   <joint name="elbow_pitch_joint" type="revolute">
     <parent link="v21_shoulder_pitch_link" />
     <child link="v21_elbow_pitch_link" />
-    <origin xyz="0.0 0.0 0.15000000000000002" rpy="0 0 0" />
+    <!-- Calibrated reference: simulation/mujoco/config/model_reference-v2.json, 2026-10-11. -->
+    <origin xyz="0.0 0.0 0.15000000000000002" rpy="1.5 0 0" />
     <axis xyz="1 0 0" />
-    <limit lower="-2.705260340591211" upper="2.705260340591211" effort="0" velocity="0" />
+    <limit lower="-1.5707963267948966" upper="1.069184609156292" effort="0" velocity="0" />
   </joint>
   <link name="v21_wrist_pitch_link">
     <visual name="v21_13">
@@ -197,9 +199,10 @@
   <joint name="head_pitch_joint" type="revolute">
     <parent link="v21_elbow_pitch_link" />
     <child link="v21_wrist_pitch_link" />
-    <origin xyz="0.0 0.0 0.131" rpy="0 0 0" />
+    <!-- Calibrated reference: simulation/mujoco/config/model_reference-v2.json, 2026-10-11. -->
+    <origin xyz="0.0 0.0 0.131" rpy="-0.07 0 0" />
     <axis xyz="1 0 0" />
-    <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
+    <limit lower="-0.6718835850939109" upper="1.3453011509757073" effort="0" velocity="0" />
   </joint>
   <link name="v21_neck_swivel_link">
     <visual name="v21_8">
@@ -273,7 +276,7 @@
     <child link="v21_neck_swivel_link" />
     <origin xyz="0.0 -0.0175 0.04899999999999999" rpy="0 0 0" />
     <axis xyz="0 0 -1" />
-    <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="0" velocity="0" />
+    <limit lower="-1.7778837331594581" upper="1.6122138080678088" effort="0" velocity="0" />
   </joint>
   <!-- Nominal CAD mounts. Optical axes: +X right, +Y down, +Z forward. -->
   <link name="camera_optical_frame" />

@@ -4,7 +4,6 @@ import posesYaml from "../../../motion/config/v1/poses.yaml?raw";
 import posesYamlV2 from "../../../motion/config/v2/poses.yaml?raw";
 import calibration from "../../../simulation/mujoco/config/servo_calibration.json";
 import modelReference from "../../../simulation/mujoco/config/model_reference.json";
-import modelReferenceV2 from "../../../simulation/mujoco/config/model_reference-v2.json";
 import orionUrdf from "../../../description/urdf/orion.urdf?raw";
 import orionUrdfV2 from "../../../description/urdf/orion-v2.urdf?raw";
 import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
@@ -147,7 +146,7 @@ function loadJointLimits(): JointLimit[] {
 }
 
 const cueUrls = Object.fromEntries(Object.entries(cueFiles).map(([path, url]) => [semanticFileName(path), url]));
-const urdfJointOffsets = Object.fromEntries(
+const v1UrdfJointOffsets = Object.fromEntries(
   JOINT_NAMES.map((name) => [name, -Number(modelReference.joint_reference_radians[name])]),
 ) as JointPositions;
 
@@ -156,15 +155,13 @@ function meshUrls(files: Files): Record<string, string> {
 }
 
 /**
- * V2 has no tracked calibration; use the model's limits until a lamp reports its own.
- * URDF limits are model angles, so shift them into calibrated joint space.
+ * V2 URDF limits are already calibrated angles from the tracked lamp calibration.
  */
-function urdfJointLimits(urdf: string, reference: Record<string, number>): JointLimit[] {
+function urdfJointLimits(urdf: string): JointLimit[] {
   return JOINT_NAMES.map((name) => {
     const joint = urdf.match(new RegExp(`<joint name="${name}"[\\s\\S]*?<limit lower="([^"]+)" upper="([^"]+)"`));
     if (!joint) throw new Error(`The V2 robot description is missing ${name}.`);
-    const offset = Number(reference[name]);
-    return { name, lower_rad: Number(joint[1]) + offset, upper_rad: Number(joint[2]) + offset };
+    return { name, lower_rad: Number(joint[1]), upper_rad: Number(joint[2]) };
   });
 }
 
@@ -179,7 +176,7 @@ export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
     cueUrls,
     urdf: orionUrdf,
     meshUrls: meshUrls(FILES.v1.meshes),
-    urdfJointOffsets,
+    urdfJointOffsets: v1UrdfJointOffsets,
     jointLimits: loadJointLimits(),
   },
   v2: {
@@ -190,11 +187,7 @@ export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
     cueUrls,
     urdf: orionUrdfV2,
     meshUrls: meshUrls(FILES.v2.meshes),
-    // The V2 calibration zero is not the URDF's upright all-zero pose; see the reference file.
-    urdfJointOffsets: Object.fromEntries(
-      JOINT_NAMES.map((name) => [name, -Number(modelReferenceV2.joint_reference_radians[name])]),
-    ) as JointPositions,
-    jointLimits: urdfJointLimits(orionUrdfV2, modelReferenceV2.joint_reference_radians),
+    jointLimits: urdfJointLimits(orionUrdfV2),
   },
 };
 

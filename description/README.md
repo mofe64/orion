@@ -27,8 +27,8 @@ CAD origins are in metres, relative to that link:
 | `camera_optical_frame` | `(0, -0.082, 0.0157)` | Local +Z |
 | `light_frame` | `(0, -0.077, 0.020)` | Local +Z, along the light beam |
 
-Both use ROS optical axes: **+X right, +Y down, +Z forward**. At zero joint
-angles these point along base −X, −Z and −Y respectively. The base frame is
+Both use ROS optical axes: **+X right, +Y down, +Z forward**. In the upright
+CAD reference these point along base −X, −Z and −Y respectively. The base frame is
 the URDF root link, `v21_base`: +Z is up, −Y is ahead, and −X is the lamp's
 own right. Positive base yaw turns right; positive head pitch tilts down.
 The fixed joints use roll/pitch/yaw `(-π/2, 0, π)`.
@@ -36,8 +36,13 @@ The fixed joints use roll/pitch/yaw `(-π/2, 0, π)`.
 MuJoCo's `camera_optical_frame` camera has the same origin and view direction,
 but its native axes are +X right, +Y up and −Z forward. Convert its rotation to
 ROS optical axes by negating its Y and Z columns. The `light_frame` site
-already uses the URDF optical axes. Existing bodies and servo joints retain
-their origins, axes and ranges.
+already uses the URDF optical axes. Both models accept calibrated angles
+directly. The three pitch-origin rotations in the URDF and the MJCF joint
+`ref` values bake in the measured 2026-10-11 alignment recorded in
+[`model_reference-v2.json`](../simulation/mujoco/config/model_reference-v2.json).
+Their joint limits match the tracked V2 servo calibration exactly; motion
+still uses the Pi calibration and runtime checks. Mesh and child translations
+remain in their original local frames.
 
 ### Rust forward kinematics
 
@@ -52,12 +57,15 @@ translation.
 The loader requires a connected tree of fixed and revolute joints, and fixed
 camera and light mounts. FK requires exactly the model's movable joint names
 with finite angles in radians. It performs no I/O, allocates nothing on valid
-input and moves nothing. It does not apply the URDF's CAD ranges as servo
+input and moves nothing. It does not apply the URDF's ranges as servo
 calibration; motion still requires the runtime's trajectory and calibration
 checks.
 
-The nominal model puts the camera near `(-0.007, -0.146, 0.460)` m at the
-repository's V2 `home`, looking about 5° up. These CAD mounts do not establish
+At the repository's V2 `home`, the measured model has the upper arm leaning
+back about 46°, the forearm leaning forward about 25°, and the camera looking
+forward about 13° down. All-zero calibrated angles give a bent posture, not
+the upright CAD reference. Studio, MuJoCo and Rust FK use these same angles
+without a V2 offset conversion. These CAD mounts do not establish
 lens intrinsics or the fitted camera-to-head correction. Measure those before
 using real camera pixels to locate targets.
 
