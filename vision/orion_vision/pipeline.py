@@ -194,6 +194,8 @@ class FacePipeline:
         self.stop.set()
         with self.changed:
             self.changed.notify_all()
+        if self.objects is not None and hasattr(self.objects, 'close'):
+            self.objects.close()
         if self.thread:
             self.thread.join(timeout=2)
 
@@ -234,7 +236,7 @@ class FacePipeline:
             return {"enabled": self.enabled, "rate_hz": self.rate_hz if self.enabled else 0, "inferences": self.inferences,
                 "dropped_frames": self.dropped, "error": self.error,
                 "gaze_available": self.gaze_available, "gaze_error": self.gaze_error,
-                "object_lookup": self.find_job is not None, "objects_available": self.objects is not None,
+                "object_lookup": self.find_job is not None, "objects_available": self.objects is not None and getattr(self.objects, "available", True) is not False,
                 "palms_available": self.palms is not None, "tracking_mode": self.mode}
 
     def needs_frame(self):
@@ -262,8 +264,8 @@ class FacePipeline:
                 if not job.running:
                     job.done.set()
                 self.changed.notify_all()
-            # NCNN is a synchronous native call. A deadline invalidates its
-            # result, but must not advertise CPU availability before it returns.
+            # The worker retains CPU ownership until the child returns or is
+            # killed and joined, even if the HTTP lookup deadline has expired.
             job.done.wait()
         if job.error:
             raise job.error

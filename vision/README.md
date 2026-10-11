@@ -108,12 +108,21 @@ Explicit lookup also works with Tracking Off; it does not enable face tracking.
 
 ### Pinned object model
 
-YOLO11n runs through `ncnn==1.0.20250503`, with one CPU thread and Vulkan off.
+YOLO11n runs through `ncnn==1.0.20250503`, with one CPU thread and Vulkan off,
+in a spawned child process. The pipeline's sole inference worker sends one
+in-memory frame and waits for its result, so YuNet and palm inference remain
+paused. NCNN's extraction can hold the Python GIL; process isolation keeps
+capture publication, HTTP and the watchdog responsive. No frame queue or disk
+spool is used. A fifteen-second inference deadline kills and joins a stalled
+child before another detector can run; the object detector then reports
+unavailable until service restart. Shutdown closes the child too. Logs report
+`YOLO inference outcome=… duration_ms=…` for successful and failed passes;
+record these durations alongside capture timestamps in the lamp check.
 The full 640×360 lores image is scaled to 320×180, then padded by seventy rows
 above and below. Postprocessing removes that padding before fisheye projection;
 it applies a 0.4 score threshold, class-specific 0.45 IoU suppression, and a
-sixteen-object result limit. Face inference pauses for this pass and resumes
-afterward. Object inference runs only on explicit requests.
+sixteen-object result limit. Object inference serves explicit requests and
+the bounded, opt-in background object map.
 
 The [Ultralytics export](https://github.com/ultralytics/ultralytics/tree/v8.3.107)
 and YOLO11n weights are AGPL-3.0 and stay in Orion's open GPL-3.0 component.

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from orion_vision.detect_objects import CATEGORIES, Object, YoloNCNN, decode
+from orion_vision.detect_objects import CATEGORIES, Object, _NativeYoloNCNN, decode
 from orion_vision.find import FindError, locate
 from orion_vision.gaze_client import GazeClient
 from orion_vision.intrinsics import SIZE, Intrinsics
@@ -24,7 +24,37 @@ def intrinsics():
     return Intrinsics([[300, 0, 320], [0, 300, 180], [0, 0, 1]], [0, 0, 0, 0])
 
 
+class GILHoldingDetector:
+    def __init__(self, entered):
+        self.entered = entered
+
+    def detect(self, pixels):
+        import sys
+        sys.setswitchinterval(30.)
+        self.entered.set()
+        until = time.monotonic() + 2.5
+        while time.monotonic() < until:
+            pass
+        return []
+
+
 class ObjectTests(unittest.TestCase):
+    def test_child_timeout_releases_cpu_before_return_and_reports_duration(self):
+        import multiprocessing
+        from orion_vision.inference_process import InferenceProcess
+        entered = multiprocessing.get_context('spawn').Event()
+        detector = InferenceProcess(GILHoldingDetector, entered, timeout=.1)
+        self.addCleanup(detector.close)
+        with self.assertLogs('orion_vision.inference_process', level='INFO') as logged:
+            with self.assertRaises(TimeoutError):
+                detector.detect(np.zeros((SIZE[1], SIZE[0], 3), np.uint8))
+        self.assertTrue(entered.is_set())
+        self.assertFalse(detector.process.is_alive())
+        self.assertFalse(detector.available)
+        self.assertIn('duration_ms=', logged.output[0])
+        with self.assertRaisesRegex(RuntimeError, 'unavailable'):
+            detector.detect(None)
+
     def test_letterbox_decoding_classwise_nms_and_bounded_results(self):
         rows = np.zeros((84, 2100), dtype=np.float32)
         book, cup = CATEGORIES.index('book'), CATEGORIES.index('cup')
@@ -41,7 +71,7 @@ class ObjectTests(unittest.TestCase):
             decode(rows.T)
 
     def test_replay_image_preserves_aspect_and_rgb_order(self):
-        detector = YoloNCNN.__new__(YoloNCNN)
+        detector = _NativeYoloNCNN.__new__(_NativeYoloNCNN)
         detector.ncnn, detector.net = MagicMock(), MagicMock()
         detector.net.create_extractor.return_value.__enter__.return_value.input.return_value = 0
         detector.net.create_extractor.return_value.__enter__.return_value.extract.return_value = (
@@ -173,14 +203,14 @@ class ObjectTests(unittest.TestCase):
         self.assertEqual(result[0].code, 'find_timeout')
 
     def test_capture_watchdog_is_independent_of_blocked_object_inference(self):
-        entered, release = Event(), Event()
-        def detect(buffer):
-            entered.set(); release.wait(4)
-            return []
-        pipeline, _, _ = self.pipeline(detect)
+        import multiprocessing
+        from orion_vision.inference_process import InferenceProcess
+        entered = multiprocessing.get_context('spawn').Event()
+        detector = InferenceProcess(GILHoldingDetector, entered)
+        self.addCleanup(detector.close)
+        pipeline, _, _ = self.pipeline(detector.detect)
         # Vision starts its own worker; reuse this one through the privacy loop.
         pipeline.start = lambda: None
-        self.addCleanup(release.set)
         with tempfile.TemporaryDirectory() as directory:
             clock = [0.]
             source = QuietSource()
@@ -197,7 +227,8 @@ class ObjectTests(unittest.TestCase):
                     time.sleep(.015)
                 self.assertEqual(vision.camera_restarts, 0)
                 self.assertEqual(source.starts, 1)
-                release.set(); thread.join(1)
+                self.assertTrue(thread.is_alive(), 'Capture advanced during actual GIL-holding inference')
+                thread.join(4)
                 self.assertEqual(result[0]['status'], 'not_found')
             finally:
-                release.set(); vision.close()
+                vision.close()

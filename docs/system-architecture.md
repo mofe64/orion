@@ -73,8 +73,9 @@ through runtime `gaze`, preserving calibration, the compiler, motion priority
 and Stop latches.
 
 Explicit `aim_light` requests follow agent → coordinator → gateway → vision
-lookup → runtime planning. YOLO11n shares YuNet's single inference worker;
-capture and its stall watchdog continue independently. Before inference, vision
+lookup → runtime planning. The single inference worker schedules YuNet, palms and YOLO11n exclusively;
+YOLO runs in a child process so NCNN cannot hold capture's Python GIL.
+Capture and its stall watchdog continue independently. Before inference, vision
 reads the capture-time camera transform from `camera-rays`. This preserves
 the measured pose even when inference outlasts the one-second pose history.
 Detected centres become rays and intersect the base-frame desk plane at `z = 0`.

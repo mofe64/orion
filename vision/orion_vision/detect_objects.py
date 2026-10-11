@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from .intrinsics import SIZE, lores_bgr
+from .inference_process import InferenceProcess
 
 MODEL_PATH = Path('/usr/local/share/orion/vision/yolo11n_ncnn_model')
 MODEL_HASHES = {
@@ -71,7 +72,7 @@ def decode(rows):
     return [Object(CATEGORIES[selected_classes[i]], boxes[i], selected_scores[i]) for i in kept[:16]]
 
 
-class YoloNCNN:
+class _NativeYoloNCNN:
     def __init__(self, path=MODEL_PATH):
         import ncnn
         for name, expected in MODEL_HASHES.items():
@@ -103,3 +104,9 @@ class YoloNCNN:
             if status != 0:
                 raise ValueError('NCNN rejected YOLO output')
             return decode(np.asarray(output))
+
+
+class YoloNCNN(InferenceProcess):
+    """Isolate NCNN's GIL-holding extraction from capture and the watchdog."""
+    def __init__(self, path=MODEL_PATH):
+        super().__init__(_NativeYoloNCNN, path)
