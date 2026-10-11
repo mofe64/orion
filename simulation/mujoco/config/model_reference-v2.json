@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "hardware": "v2",
-  "alignment_method": "Studio's V2 model was visually aligned with a photo of the assembled lamp holding its powered home pose (2026-10-11). The V2 URDF's all-zero pose is an upright arm, which is not the captured calibration zero.",
+  "alignment_method": "Measured 2026-10-11 from two side-on photos of the lamp holding its powered home pose (motion/config/v2/poses.yaml home: shoulder 0.308, elbow -0.256, head_pitch -0.14). Image vertical checked against the monitor edge (<0.2 deg). Link directions taken through the shoulder, elbow and head-pitch axis centres; head direction from the diffuser rim. Model angles at home: shoulder -0.810, elbow +1.244, head_pitch -0.210 rad; reference = home - model. Uncertainty about +/-1.5 deg per joint. Base yaw and head roll are not observable from a side view and stay 0. The V2 URDF's all-zero pose is an upright arm with the head facing forward.",
   "joint_reference_radians": {
     "base_yaw_joint": 0.0,
-    "shoulder_pitch_joint": 0.908,
-    "elbow_pitch_joint": -1.086,
+    "shoulder_pitch_joint": 1.118,
+    "elbow_pitch_joint": -1.5,
     "head_roll_joint": 0.0,
-    "head_pitch_joint": -0.06
+    "head_pitch_joint": 0.07
   },
   "reference_formula": "model_angle = calibrated_angle - joint_reference; Studio applies this offset only to the 3D preview."
 }

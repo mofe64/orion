@@ -155,12 +155,16 @@ function meshUrls(files: Files): Record<string, string> {
   return Object.fromEntries(Object.entries(files).map(([path, url]) => [path.split("/").at(-1) ?? path, url]));
 }
 
-/** V2 has no tracked calibration; use the model's limits until a lamp reports its own. */
-function urdfJointLimits(urdf: string): JointLimit[] {
+/**
+ * V2 has no tracked calibration; use the model's limits until a lamp reports its own.
+ * URDF limits are model angles, so shift them into calibrated joint space.
+ */
+function urdfJointLimits(urdf: string, reference: Record<string, number>): JointLimit[] {
   return JOINT_NAMES.map((name) => {
     const joint = urdf.match(new RegExp(`<joint name="${name}"[\\s\\S]*?<limit lower="([^"]+)" upper="([^"]+)"`));
     if (!joint) throw new Error(`The V2 robot description is missing ${name}.`);
-    return { name, lower_rad: Number(joint[1]), upper_rad: Number(joint[2]) };
+    const offset = Number(reference[name]);
+    return { name, lower_rad: Number(joint[1]) + offset, upper_rad: Number(joint[2]) + offset };
   });
 }
 
@@ -190,7 +194,7 @@ export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
     urdfJointOffsets: Object.fromEntries(
       JOINT_NAMES.map((name) => [name, -Number(modelReferenceV2.joint_reference_radians[name])]),
     ) as JointPositions,
-    jointLimits: urdfJointLimits(orionUrdfV2),
+    jointLimits: urdfJointLimits(orionUrdfV2, modelReferenceV2.joint_reference_radians),
   },
 };
 
