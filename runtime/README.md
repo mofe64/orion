@@ -481,23 +481,23 @@ agent through `get_lighting`. Starting the character clears the manual program.
 
 ## Camera viewer indicator
 
-On V2, `camera-viewer 3` leases a bright cyan indicator across all 24 ring pixels
-for three seconds; `camera-viewer 0` clears it. The indicator pulses smoothly
-every two seconds, with green and blue channels ranging from 128 to 255 and
-red and white at zero. It stays illuminated while viewing is allowed.
+On V2, `camera-viewer 3` leases a steady cyan band on three adjacent ring pixels
+for three seconds; `camera-viewer 0` clears it. The band sits at the top centre
+when viewed from the front, on indices 15–17. Its green and blue channels stay
+at 255, with red and white at zero; it never pulses or dims. The other 21 pixels
+show the underlying lighting unchanged.
 Other lease values and V1 requests are rejected. The authenticated gateway
-manages the leases for
-[streams and snapshots](../orion_studio/README.md#camera-feed). A lost gateway
-cannot leave a permanent marker.
+manages the leases for [streams and snapshots](../orion_studio/README.md#camera-feed).
+A lost gateway cannot leave a permanent marker.
 
-The indicator overrides manual lighting, scenes, speech and ringing alerts
-while viewing. It does not change their preferences, timing, audio, torque or
-motion. Going to rest, resting, waking and faults suppress the indicator,
-including during sunrise; the existing rest darkness mask also applies. The
-underlying RGBW frame continues updating without the indicator, so clearing or
-expiry restores the latest lighting. Lease handling uses the existing queued
-command socket and bounded comparisons; no camera, file or
-model work enters the control tick.
+The band overrides manual lighting, scenes, speech and ringing alerts only on
+its three pixels while viewing. It does not change their preferences, timing,
+audio, torque or motion. Going to rest, resting, waking and faults suppress the
+indicator, including during sunrise; the existing rest darkness mask also
+applies. The underlying RGBW frame continues updating without the indicator,
+so clearing or expiry restores the latest lighting. Lease handling uses the existing queued
+command socket and bounded comparisons; no camera, file or model work enters
+the control tick.
 
 ## Mode and alert commands
 

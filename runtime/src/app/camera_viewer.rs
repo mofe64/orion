@@ -34,6 +34,19 @@ impl CameraViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{LightingDevice, Result, Rgbw8, expression::rest::RestLighting};
+    use std::{cell::RefCell, rc::Rc};
+
+    struct ObservedRing(Rc<RefCell<Vec<Rgbw8>>>);
+    impl LightingDevice for ObservedRing {
+        fn pixel_count(&self) -> usize {
+            24
+        }
+        fn render(&mut self, pixels: &[Rgbw8]) -> Result<()> {
+            *self.0.borrow_mut() = pixels.to_vec();
+            Ok(())
+        }
+    }
 
     #[test]
     fn lease_renews_expires_and_clears() {
@@ -62,5 +75,24 @@ mod tests {
             assert_eq!(response["ok"], false);
             assert!(!marker.active(0.0));
         }
+    }
+
+    #[test]
+    fn expired_lease_restores_the_latest_underlying_frame() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let mut light = RestLighting::new(Box::new(ObservedRing(observed.clone())));
+        let mut viewer = CameraViewer::default();
+        viewer.command("camera-viewer 3", 10.0, true).unwrap();
+        light.set_camera_viewer(viewer.active(10.0));
+        light.update(false, 10.0).unwrap();
+        light.render_uniform(Rgbw8::OFF).unwrap();
+        let latest = (0..24)
+            .map(|index| Rgbw8::new(index, 2, 3, 4))
+            .collect::<Vec<_>>();
+        light.render(&latest).unwrap();
+        assert_ne!(*observed.borrow(), latest);
+        light.set_camera_viewer(viewer.active(13.0));
+        light.update(false, 13.0).unwrap();
+        assert_eq!(*observed.borrow(), latest);
     }
 }

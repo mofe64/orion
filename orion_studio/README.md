@@ -156,6 +156,12 @@ for every viewer and clears the image. If the feed cannot connect, **Turn
 camera off** remains available. **Save snapshot** downloads one JPEG to the
 Studio device only when clicked; live frames are not saved automatically.
 
+A steady, full-brightness cyan band at the top centre of the V2 ring indicates
+viewing. It occupies three adjacent LEDs; the other 21 retain lamp, scene,
+speech and alarm lighting. The band remains steady while streaming and for
+at least three seconds after a snapshot. Rest states suppress it along with
+viewing. See the [runtime indicator contract](../runtime/README.md#camera-viewer-indicator).
+
 Debug's **Show camera observations** toggle draws boxes on a separate canvas.
 The observations endpoint returns an empty list until detection is implemented.
 Leaving Home or Debug cancels the stream and releases its viewer indication.
