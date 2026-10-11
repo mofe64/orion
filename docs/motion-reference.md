@@ -56,7 +56,9 @@ drivers, state snapshots, Studio, and MuJoCo.
 
 ## Bearing gaze tuning
 
-V2 gaze defaults off. `runtime/src/expression/gaze.rs` defines these tuning
+V2 gaze defaults on when serving; `--gaze off` disables it. V1 and non-serve
+operations leave gaze off. The [runtime contract](../runtime/README.md#bearing-gaze-v2)
+defines availability, Stop and recovery. `runtime/src/expression/gaze.rs` defines these tuning
 values; they change gaze character, never calibration or the motor ceiling:
 
 | Value | Setting |

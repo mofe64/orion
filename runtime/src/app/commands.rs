@@ -646,7 +646,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
         if matches!(parts[1], "attend_bearing" | "attend_scan") {
             if !character.gaze_status().enabled {
-                return serde_json::json!({"ok":false,"error":"Visual attention requires --gaze on"}).to_string();
+                return serde_json::json!({"ok":false,"error":"Gaze is unavailable"}).to_string();
             }
             let parsed = (|| -> Result<(Option<(f64, f64)>, f64), &'static str> {
                 let (bearing, age) = match parts[1] {
@@ -710,6 +710,13 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
         let action = if parts[1] == "confirmed" {
             if feedback.confirm(parts[0], now_seconds) {
+                // Ownership/confirmation must be accepted before clearing Stop.
+                // Rearm attention before the listener's ordered bearing request.
+                match character.resume_gaze_for_confirmed_wake(now_seconds, core) {
+                    Ok(true) => rest.started(),
+                    Ok(false) => {}
+                    Err(error) => eprintln!("oriond: stopped gaze recovery failed: {error}"),
+                }
                 rest.confirmed(parts[0], now_seconds);
                 Ok(Some((feedback.reaction(), None)))
             } else if !feedback.owns(parts[0]) || !feedback.confirmed_activity() {

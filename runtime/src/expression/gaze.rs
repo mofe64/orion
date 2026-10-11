@@ -48,12 +48,21 @@ pub struct GazeStatus {
 #[derive(Debug)]
 pub struct GazeCoordinator {
     status: GazeStatus,
-    configured: bool,
+    availability: GazeAvailability,
     target: Option<GazeTarget>,
     last_capture: Option<u64>,
     started_at: f64,
     last_update: f64,
     explicit_clear: bool,
+}
+
+// Target loss and motion handover never change this startup policy/Stop latch.
+#[derive(Debug, PartialEq, Eq)]
+enum GazeAvailability {
+    Off,
+    Ready,
+    Stopped,
+    Unavailable,
 }
 
 impl Default for GazeCoordinator {
@@ -71,7 +80,7 @@ impl Default for GazeCoordinator {
                 extensions: 0,
                 error: None,
             },
-            configured: false,
+            availability: GazeAvailability::Off,
             target: None,
             last_capture: None,
             started_at: 0.0,
@@ -83,21 +92,41 @@ impl Default for GazeCoordinator {
 
 impl GazeCoordinator {
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.configured = enabled;
+        self.availability = if enabled {
+            GazeAvailability::Ready
+        } else {
+            GazeAvailability::Off
+        };
         self.status.enabled = enabled;
         self.status.state = if enabled { "idle" } else { "off" };
         if !enabled {
             self.forget();
         }
     }
+    pub(crate) fn set_unavailable(&mut self, error: String) {
+        self.availability = GazeAvailability::Unavailable;
+        self.status.enabled = false;
+        self.status.error = Some(error);
+        self.forget();
+    }
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.availability == GazeAvailability::Stopped
+    }
     pub(crate) fn suspend(&mut self) {
+        if self.availability == GazeAvailability::Ready {
+            self.availability = GazeAvailability::Stopped;
+        }
         self.status.enabled = false;
         self.forget();
     }
     pub(crate) fn resume(&mut self) -> Result<()> {
-        if !self.configured {
-            return Err(Error::InvalidState("Gaze resume requires --gaze on".into()));
+        if matches!(
+            self.availability,
+            GazeAvailability::Off | GazeAvailability::Unavailable
+        ) {
+            return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
+        self.availability = GazeAvailability::Ready;
         self.status.enabled = true;
         self.forget();
         Ok(())
@@ -115,7 +144,7 @@ impl GazeCoordinator {
         core: &RuntimeCore<D>,
     ) -> Result<()> {
         if !self.status.enabled {
-            return Err(Error::InvalidState("Gaze requires --gaze on".into()));
+            return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
         let boot = core
             .camera_boottime_ns()
@@ -176,9 +205,7 @@ impl GazeCoordinator {
         core: &RuntimeCore<D>,
     ) -> Result<(MotionDefinition, JointPositions)> {
         if !self.status.enabled {
-            return Err(Error::InvalidState(
-                "Visual attention requires --gaze on".into(),
-            ));
+            return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
         let limits = core.driver().joint_limits()?;
         let start = core.driver().clamp_positions_to_safe_range(
@@ -306,7 +333,12 @@ impl GazeCoordinator {
         self.target = None;
         self.status.track_id = None;
         self.status.run_id = None;
-        self.status.state = if self.status.enabled { "idle" } else { "off" };
+        self.status.state = match self.availability {
+            GazeAvailability::Off => "off",
+            GazeAvailability::Ready => "idle",
+            GazeAvailability::Stopped => "stopped",
+            GazeAvailability::Unavailable => "unavailable",
+        };
         self.explicit_clear = false;
     }
 
@@ -794,6 +826,44 @@ mod tests {
     }
 
     #[test]
+    fn disabled_visual_attention_reports_unavailable() {
+        let (mut core, _, _) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        let error = character
+            .attend_bearing(Some((0.4, 0.)), 0., &mut core)
+            .unwrap_err();
+        assert!(error.to_string().contains("Gaze is unavailable"));
+    }
+
+    #[test]
+    fn stopped_state_survives_clear_priority_yield_and_long_idle_until_resume() {
+        let (mut core, anchor, boot) = following();
+        let mut gaze = GazeCoordinator::default();
+        gaze.set_enabled(true);
+        gaze.suspend();
+        gaze.clear();
+        gaze.yield_to_priority(0., &mut core);
+        for seconds in 1..=120 {
+            let now = seconds as f64;
+            boot.store(seconds * 1_000_000_000, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            assert!(
+                gaze.queue(target(boot.load(Ordering::Relaxed), 0.4), now, &core)
+                    .is_err()
+            );
+            assert!(!gaze.tick(now, &anchor, &mut core));
+            assert!(core.snapshot().motion.is_none());
+        }
+        assert_eq!(gaze.status().state, "stopped");
+        gaze.resume().unwrap();
+        assert_eq!(gaze.status().state, "idle");
+        gaze.queue(target(boot.load(Ordering::Relaxed), 0.4), 120., &core)
+            .unwrap();
+        assert!(gaze.tick(120., &anchor, &mut core));
+        assert!(core.snapshot().motion.is_some());
+    }
+
+    #[test]
     fn visual_speakers_at_sixty_and_one_hundred_degrees_use_bounded_base_and_neck() {
         for degrees in [60.0_f64, 100.0, -60.0, -100.0] {
             let (mut core, anchor, _) = following();
@@ -1177,7 +1247,7 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_bearings_choose_a_nearer_limit_and_inputs_require_opt_in_and_freshness() {
+    fn unreachable_bearings_choose_a_nearer_limit_and_inputs_require_enabled_gaze_and_freshness() {
         let (core, anchor, boot) = following();
         let mut gaze = GazeCoordinator::default();
         assert!(

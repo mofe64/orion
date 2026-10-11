@@ -166,7 +166,7 @@ pub(super) fn usage() -> &'static str {
   --check             Print one direct hardware state snapshot and exit.\n\
   --serve             Sample the selected backend at 50 Hz and serve status JSON.\n\
   --hardware v1|v2    Select hardware profile (default: v1).\n\
-  --gaze off|on       Enable V2 bearing gaze (default: off).\n\
+  --gaze off|on       Bearing gaze (default: on for V2 serve, off otherwise).\n\
   --backend NAME      Use hardware (default) or the native MuJoCo bridge.\n\
   --status            Request the latest JSON snapshot from the daemon.\n\
   --configure         Apply and verify Orion's servo profile, torque off.\n\
@@ -382,6 +382,10 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
         }
     }
     let profile = options.hardware.profile();
+    if !supplied.contains("--gaze") {
+        options.gaze_on =
+            options.hardware == crate::HardwareVersion::V2 && options.operation == Operation::Serve;
+    }
     if options.gaze_on
         && (options.hardware != crate::HardwareVersion::V2 || options.operation != Operation::Serve)
     {
@@ -518,6 +522,93 @@ mod hardware_tests {
     use super::*;
     fn parse(args: &[&str]) -> crate::Result<Options> {
         parse_options(args.iter().map(|s| s.to_string()))
+    }
+    #[test]
+    fn gaze_default_is_scoped_to_v2_serving_and_explicit_flags_keep_their_contract() {
+        for hardware in ["v1", "v2"] {
+            for operation in [
+                &[][..],
+                &["--check"],
+                &["--configure"],
+                &["--status"],
+                &["--enable"],
+                &["--disable"],
+                &["--goto", "home"],
+                &["--play", "return_home"],
+                &["--stop"],
+                &["--play-cue", "voice_wake"],
+                &["--light", "0", "0", "0", "0"],
+                &["--light-pixel", "0", "0", "0", "0", "0"],
+                &["--lights-off"],
+                &["--run-scene", "return_home"],
+                &["--scene-status"],
+                &["--stop-scene"],
+                &["--speech-status"],
+                &["--stop-speech"],
+            ] {
+                let mut args = vec!["--hardware", hardware];
+                args.extend(operation);
+                assert!(!parse(&args).unwrap().gaze_on, "{args:?}");
+                args.extend(["--gaze", "on"]);
+                assert!(parse(&args).is_err(), "{args:?}");
+            }
+        }
+        for backend in ["hardware", "mujoco"] {
+            assert!(
+                !parse(&["--serve", "--hardware", "v1", "--backend", backend])
+                    .unwrap()
+                    .gaze_on
+            );
+            assert!(
+                parse(&[
+                    "--serve",
+                    "--hardware",
+                    "v1",
+                    "--gaze",
+                    "on",
+                    "--backend",
+                    backend
+                ])
+                .is_err()
+            );
+            assert!(
+                !parse(&[
+                    "--serve",
+                    "--hardware",
+                    "v2",
+                    "--gaze",
+                    "off",
+                    "--backend",
+                    backend
+                ])
+                .unwrap()
+                .gaze_on
+            );
+            assert!(
+                parse(&[
+                    "--serve",
+                    "--hardware",
+                    "v2",
+                    "--gaze",
+                    "on",
+                    "--backend",
+                    backend
+                ])
+                .unwrap()
+                .gaze_on
+            );
+        }
+        for backend in ["hardware", "mujoco"] {
+            assert!(
+                parse(&["--serve", "--hardware", "v2", "--backend", backend])
+                    .unwrap()
+                    .gaze_on
+            );
+        }
+    }
+    #[test]
+    fn gaze_help_describes_the_hardware_and_operation_defaults() {
+        assert!(usage().contains("default: on for V2 serve, off otherwise"));
     }
     #[test]
     fn v2_selects_isolated_assets_usb_audio_and_maintenance_startup() {

@@ -66,14 +66,16 @@ Software tests validate interpolation and stationary-target stability during
 a yaw/swivel sweep. Physical timestamp-to-joint alignment and fitted camera
 mount accuracy remain unverified on the lamp.
 
-## Bearing gaze (V2, opt-in)
+## Bearing gaze (V2)
 
-`--gaze off|on` defaults to **off** and `on` requires a V2 server. Enable
-character mode explicitly for a preview:
+V2 servers enable gaze by default on hardware and MuJoCo. V1 and non-serve
+operations leave it off; explicit `--gaze on` requires a V2 server.
+Use `--gaze off` to disable it. V2 still defaults to character mode off for
+maintenance; enable character mode explicitly for a powered preview:
 
 ```bash
 runtime/target/debug/oriond --serve --backend mujoco --hardware v2 \
-  --start-pose home --character-on-start on --gaze on
+  --start-pose home --character-on-start on
 ```
 
 The socket accepts these commands; `capture_boottime_ns` uses the same clock
@@ -87,8 +89,8 @@ gaze resume
 ```
 
 Targets contain bearings, never joints. Optional `range` is positive metres;
-orientation gaze does not use it to move the arm. `gaze status` reports opt-in,
-track and run IDs, tracking/settling state, clamping, extension count, error, and the compiled peak
+orientation gaze does not use it to move the arm. `gaze status` reports enabled
+state, track and run IDs, tracking/settling state, clamping, extension count, error, and the compiled peak
 and base/neck planning-step speeds. Clamping compares the bounded aim pose
 with the requested bearing, including steps that have yet to reach the target.
 It also reports a base yaw restricted by calibration, even when the neck
@@ -111,8 +113,19 @@ discarding measured velocity. Targets older than one second stop extensions;
 the last plan holds for up to another 1.1 seconds and settles. `gaze clear` shortens that hold.
 Scenes, direct foreground movement, speech, rest and Stop preempt gaze.
 Stop and disable latch gaze off: subsequent targets cannot restart it.
-`gaze resume` explicitly clears that latch and requires startup `--gaze on`;
-it does not enable torque or start the character.
+Status shows `state:"stopped"` until a successful `character start`, an accepted
+confirmation of the current wake session, or `gaze resume` clears the latch.
+Wake recovery after disable restores torque and completes home before attention;
+it leaves powered scene or speech work in control. `gaze resume` only clears the
+latch: scripts must restore torque and character mode separately if needed.
+Targets, `gaze clear`, idle time, returning vision and stale wake sessions cannot
+clear Stop. None of these recovery requests override `--gaze off`.
+
+If camera geometry or its boot clock fails to load, the daemon keeps serving.
+Gaze reports `enabled:false, state:"unavailable"` with the startup error, and
+`camera-rays` is disabled. Restore the URDF and its frame references, then restart
+the daemon; resume requests cannot repair missing geometry. Explicitly disabled
+gaze reports `state:"off"`.
 
 Native MuJoCo checks tracking and software ownership. These are
 `simulation_preview` performances: physical tracking, safe cable motion,
@@ -534,11 +547,12 @@ onboard coordinator for Qwen confirmation and transcription. See [Pi voice setup
 
 ## Character startup and voice attention
 
-Serving starts character mode by default: configure servos, enable holding torque,
-move home, then enter idle after measured completion. Use
-`--serve --character-on-start off` for an observation-only maintenance startup.
-Studio Stop lasts until an explicit character start or the next daemon startup
-with character mode enabled. A timed-out or cancelled home
+V1 serving starts character mode by default: configure servos, enable holding
+torque, move home, then enter idle after measured completion. V2 defaults to
+maintenance startup with character mode off. Use `--character-on-start on|off`
+to choose explicitly. On V2 with gaze available, Stop's gaze latch can also be
+cleared by a confirmed wake; see [bearing gaze](#bearing-gaze-v2).
+A timed-out or cancelled home
 movement leaves character off; the terminal movement remains visible in status.
 
 The Pi listener sends `voice SESSION verify` before the short wake prefix ASR
@@ -550,7 +564,7 @@ The rest coordinator waits for home and checks that the observation is still
 younger than three seconds before requesting attention.
 
 On V2 the listener asks local vision for a speaker, then sends
-`voice SESSION attend_bearing AZ EL AGE_MS`. This requires `--gaze on`, finite
+`voice SESSION attend_bearing AZ EL AGE_MS`. This requires enabled gaze, finite
 base-frame radians, and the current confirmed session. The same three-second
 age rule includes command-queue and homing delay. Gaze compiles a neck-first
 turn, and successful measured completion captures the temporary facing anchor.
@@ -558,7 +572,8 @@ Visual attention bounds base travel to 0.65 radians from measured start and
 solves the remaining bearing with the neck. It rejects a final pose outside
 calibrated reach. Owned background motion is stopped and feedback refreshed
 before compiling the attention trajectory and checking its speed. Scene,
-speech and Stop retain priority; Stop's gaze latch also blocks visual attention.
+speech and Stop retain priority; an accepted current-session wake confirmation
+clears Stop's gaze latch before visual attention is queued.
 `voice SESSION attend_scan AGE_MS` makes one short calibrated neck sweep when
 the camera reports no face. Camera-off or unavailable vision sends no attention.
 See [speaker selection and freshness](../docs/voice-architecture.md#direction-evidence).

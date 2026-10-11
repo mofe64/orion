@@ -129,7 +129,7 @@ class FakeRuntime(socketserver.UnixStreamServer):
                         'elevation': math.atan2(-ray[1], math.hypot(ray[0], ray[2]))} for ray in value['rays']]
                     result = {'ok': True, 'bearings': bearings, 'pose_age_ms': 0}
                 elif command.startswith('gaze target'):
-                    result = {'ok': not self.reject_gaze, 'error': 'Gaze requires --gaze on'}
+                    result = {'ok': not self.reject_gaze, 'error': 'Gaze is unavailable'}
                 elif command == 'gaze status':
                     result = {'ok': True, 'gaze': {'enabled': not self.reject_gaze}}
                 elif command == 'voice status':
@@ -141,6 +141,19 @@ class FakeRuntime(socketserver.UnixStreamServer):
 
 
 class TrackerTests(unittest.TestCase):
+    def test_disabled_runtime_reports_unavailable_without_opt_in_advice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            server = FakeRuntime(Path(directory) / 'runtime.sock', reject_gaze=True)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                client = GazeClient(server.server_address)
+                self.assertFalse(client.gaze_available())
+                with self.assertRaisesRegex(ValueError, '^Gaze is unavailable$'):
+                    client.command('gaze target {}')
+            finally:
+                server.shutdown(); server.server_close(); thread.join(1)
+
     def test_speaker_uses_relative_mouth_motion_then_frontality_then_nearest(self):
         tracker = Tracker()
         bearings = [{'azimuth': -.2, 'elevation': 0}, {'azimuth': .2, 'elevation': 0}]

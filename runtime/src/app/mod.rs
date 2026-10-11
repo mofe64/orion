@@ -194,8 +194,8 @@ mod tests {
     }
 
     #[test]
-    fn gaze_is_default_off_and_opt_in_requires_a_v2_server() {
-        assert!(!parse(&["--serve", "--hardware", "v2"]).unwrap().gaze_on);
+    fn gaze_defaults_on_for_v2_and_explicit_on_requires_a_v2_server() {
+        assert!(parse(&["--serve", "--hardware", "v2"]).unwrap().gaze_on);
         assert!(
             parse(&["--serve", "--hardware", "v2", "--gaze", "on"])
                 .unwrap()

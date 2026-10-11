@@ -1,9 +1,11 @@
 import ctypes
 import json
+from pathlib import Path
 import sys
+import tempfile
 import time
 
-from daemon_support import DaemonTestCase, daemon, request
+from daemon_support import ROOT, DaemonTestCase, daemon, request
 
 
 def boottime_ns():
@@ -36,6 +38,7 @@ class GazeDaemonTests(DaemonTestCase):
                 self.assertTrue(request(path, gaze_target())['accepted'])
                 self.wait_for(path, 'gaze status', lambda s: s['gaze']['state'] == 'tracking')
                 self.ok(path, command)
+                self.assertEqual(request(path, 'gaze status')['gaze']['state'], 'stopped')
                 for _ in range(7):
                     response = request(path, gaze_target())
                     self.assertFalse(response.get('accepted', False), response)
@@ -57,13 +60,115 @@ class GazeDaemonTests(DaemonTestCase):
             self.assertEqual(status['base_step_speed_rad_s'], .6)
             self.assertEqual(status['neck_step_speed_rad_s'], 2.5)
 
-    def test_default_off_rejects_targets_and_status_and_clear_remain_available(self):
-        with daemon(hardware='v2', following=True) as path:
+    def test_defaults_enable_v2_serving_and_leave_v1_off(self):
+        for hardware, following, enabled in (('v1', True, False), ('v2', True, True), ('v2', False, True)):
+            with self.subTest(hardware=hardware, following=following), daemon(hardware=hardware, following=following) as path:
+                self.assertEqual(request(path, 'gaze status')['gaze']['enabled'], enabled)
+                self.assertEqual(request(path, 'status')['mode'], 'observe')
+
+    def test_explicit_off_rejects_targets_attention_and_all_resume_requests(self):
+        with daemon(hardware='v2', following=True, gaze=False) as path:
             self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
             self.assertFalse(request(path, gaze_target())['ok'])
             self.assertFalse(request(path, 'gaze resume')['ok'])
             self.ok(path, 'gaze clear')
             self.assertFalse(request(path, 'gaze target {"joints":{}}')['ok'])
+            self.ok(path, 'character start')
+            self.wait_for_rest(path, 'awake')
+            self.voice(path, 'a'*32, 'wake', 'endpoint', 'confirmed')
+            for command in (gaze_target(), f'voice {"a"*32} attend_bearing .4 0 0',
+                            f'voice {"a"*32} attend_scan 0', 'gaze resume'):
+                response = request(path, command)
+                self.assertFalse(response['ok'], response)
+                self.assertIn('Gaze is unavailable', response['error'])
+            self.assertEqual(request(path, 'gaze status')['gaze']['state'], 'off')
+
+    def test_missing_geometry_reports_unavailable_without_blocking_the_daemon(self):
+        for broken_reference in (False, True):
+            with self.subTest(broken_reference=broken_reference), tempfile.TemporaryDirectory() as temporary:
+                catalog = Path(temporary)
+                for name in ('motion', 'scenes', 'audio'):
+                    (catalog / name).symlink_to(ROOT / name, target_is_directory=True)
+                if broken_reference:
+                    urdf = catalog / 'description/urdf/orion-v2.urdf'
+                    urdf.parent.mkdir(parents=True)
+                    source = (ROOT / 'description/urdf/orion-v2.urdf').read_text()
+                    urdf.write_text(source.replace('<child link="camera_optical_frame"',
+                                                   '<child link="missing_camera_reference"'))
+                    self.assertNotEqual(urdf.read_text(), source)
+                with daemon(hardware='v2', following=True, gaze=True, catalog_root=catalog) as path:
+                    status = request(path, 'gaze status')['gaze']
+                    self.assertEqual(status['state'], 'unavailable')
+                    self.assertFalse(status['enabled'])
+                    self.assertTrue(status['error'])
+                    self.ok(path, 'character start')
+                    self.wait_for_rest(path, 'awake')
+                    self.voice(path, 'a'*32, 'wake', 'endpoint', 'confirmed')
+                    self.ok(path, 'gaze clear')
+                    for command in ('gaze resume', gaze_target(), f'voice {"a"*32} attend_bearing .4 0 0',
+                                    'camera-rays ' + json.dumps(dict(capture_boottime_ns=boottime_ns(), rays=[[0, 0, 1]]))):
+                        self.assertFalse(request(path, command)['ok'], command)
+                    self.assertEqual(request(path, 'gaze status')['gaze']['state'], 'unavailable')
+
+    def test_character_start_and_confirmed_wake_resume_after_stop_and_disable(self):
+        for stop in ('stop', 'disable'):
+            for resume in ('character start', 'confirmed wake'):
+                with self.subTest(stop=stop, resume=resume), daemon(hardware='v2', following=True,
+                        automatic_character=True, gaze=True) as path:
+                    self.wait_for_rest(path, 'awake')
+                    self.assertTrue(request(path, gaze_target())['accepted'])
+                    old_run = self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)['gaze']['run_id']
+                    self.ok(path, stop)
+                    if resume == 'character start':
+                        self.ok(path, resume)
+                    else:
+                        self.voice(path, 'a'*32, 'wake', 'endpoint')
+                        self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
+                        self.voice(path, 'a'*32, 'confirmed')
+                    self.assertTrue(request(path, 'gaze status')['gaze']['enabled'])
+                    self.wait_for_rest(path, 'awake')
+                    self.assertTrue(request(path, gaze_target(-.4))['accepted'])
+                    new_run = self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)['gaze']['run_id']
+                    self.assertGreater(new_run, old_run)
+
+    def test_clear_idle_reconnecting_targets_and_stale_wakes_cannot_clear_stop(self):
+        with daemon(hardware='v2', following=True, automatic_character=True, gaze=True) as path:
+            self.wait_for_rest(path, 'awake')
+            stale = 'a'*32
+            self.voice(path, stale, 'wake', 'endpoint', 'confirmed')
+            self.assertTrue(request(path, gaze_target())['accepted'])
+            self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)
+            self.ok(path, 'stop')
+            self.ok(path, 'gaze clear')
+            self.voice(path, stale, 'wake', 'endpoint')
+            self.assertFalse(request(path, f'voice {stale} confirmed')['ok'])
+            for _ in range(12):
+                # Each request reconnects, as a returning vision worker does.
+                self.assertFalse(request(path, gaze_target())['ok'])
+                self.assertIsNone(request(path, 'status')['motion'])
+                time.sleep(.1)
+            self.assertEqual(request(path, 'gaze status')['gaze']['state'], 'stopped')
+            self.voice(path, 'b'*32, 'wake', 'verify')
+            self.assertEqual(request(path, 'gaze status')['gaze']['state'], 'stopped')
+
+    def test_confirmed_wake_resumes_without_preempting_a_scene(self):
+        with daemon(hardware='v2', following=True, automatic_character=True, gaze=True) as path:
+            self.wait_for_rest(path, 'awake')
+            self.assertTrue(request(path, gaze_target())['accepted'])
+            self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)
+            self.ok(path, 'stop')
+            scene = self.ok(path, 'scene start return_home')['run_id']
+            run = request(path, 'status')['motion']['run_id']
+            self.assertFalse(request(path, 'character start')['ok'])
+            self.voice(path, 'a'*32, 'wake', 'endpoint', 'confirmed')
+            self.assertEqual(request(path, 'scene status')['scene']['run_id'], scene)
+            self.assertEqual(request(path, 'status')['motion']['run_id'], run)
+            self.assertTrue(request(path, 'gaze status')['gaze']['enabled'])
+            self.assertFalse(request(path, gaze_target())['accepted'])
+            self.wait_for(path, 'scene status', lambda s: s.get('scene') is None)
+            self.wait_for_rest(path, 'awake')
+            self.assertTrue(request(path, gaze_target(-.4))['accepted'])
+            self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)
 
     def test_scene_and_stop_win_without_gaze_error_or_automatic_restart(self):
         with daemon(hardware='v2', following=True, automatic_character=True, gaze=True) as path:

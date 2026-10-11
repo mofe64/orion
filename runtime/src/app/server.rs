@@ -191,20 +191,21 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     backend: &str,
 ) -> crate::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
-    if options.hardware == crate::HardwareVersion::V2 {
+    let camera_error = if options.hardware == crate::HardwareVersion::V2 {
         // The daemon working directory is the catalog root, including in a
         // deployed release. Missing geometry must never block daemon startup.
-        match crate::control::camera_rays::SystemBoottimeClock::new() {
-            Ok(clock) => {
-                if let Err(error) = core
-                    .configure_camera_geometry("description/urdf/orion-v2.urdf", Box::new(clock))
-                {
-                    eprintln!("oriond: camera-rays disabled: {error}");
-                }
-            }
-            Err(error) => eprintln!("oriond: camera-rays disabled: {error}"),
-        }
-    }
+        crate::control::camera_rays::SystemBoottimeClock::new()
+            .and_then(|clock| {
+                core.configure_camera_geometry("description/urdf/orion-v2.urdf", Box::new(clock))
+            })
+            .err()
+            .map(|error| {
+                eprintln!("oriond: camera-rays disabled: {error}");
+                error.to_string()
+            })
+    } else {
+        None
+    };
     if let Some(path) = &options.tracking_log {
         core.enable_tracking(crate::control::tracking::TrackingTelemetry::create(
             path, backend,
@@ -233,6 +234,11 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
     character.set_gaze_enabled(options.gaze_on);
+    if options.gaze_on
+        && let Some(error) = camera_error
+    {
+        character.set_gaze_unavailable(error);
+    }
     let mut feedback = crate::voice_feedback::VoiceFeedback::default();
     let mut playing_run = None;
     let mut voice_speech_run: Option<(u64, String)> = None;

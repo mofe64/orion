@@ -39,7 +39,7 @@ def request(path, command):
 
 
 @contextlib.contextmanager
-def daemon(automatic_character=False, rest_after_seconds=600, following=False, hardware='v1', gaze=False):
+def daemon(automatic_character=False, rest_after_seconds=600, following=False, hardware='v1', gaze=None, catalog_root=None):
     with tempfile.TemporaryDirectory(prefix='orion-daemon-test-', dir='/tmp') as temporary:
         path = Path(temporary) / 'daemon.sock'
         arguments = [str(BINARY), '--serve', '--backend', 'mujoco', '--socket', str(path),
@@ -50,14 +50,14 @@ def daemon(automatic_character=False, rest_after_seconds=600, following=False, h
             arguments += ['--character-on-start', 'off']
         elif hardware == 'v2':
             arguments += ['--character-on-start', 'on']
-        if gaze:
-            arguments += ['--gaze', 'on']
+        if gaze is False:
+            arguments += ['--gaze', 'off']
         environment = os.environ.copy()
         if following:
             environment['ORION_TEST_DRIVER_CONTROL'] = str(Path(temporary) / 'driver-control.json')
             environment['ORION_TEST_DRIVER_EVENTS'] = str(Path(temporary) / 'driver-events.jsonl')
         with tempfile.TemporaryFile(mode='w+') as output:
-            process = subprocess.Popen(arguments, cwd=ROOT, stdout=output, stderr=output, env=environment)
+            process = subprocess.Popen(arguments, cwd=catalog_root or ROOT, stdout=output, stderr=output, env=environment)
             try:
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:

@@ -142,7 +142,11 @@ A confirmation received during descent lets that movement finish before home
 begins. Capture continues throughout. After home completes, the runtime applies
 the latest listening or thinking state and checks any direction evidence before
 an attention turn. Explicit Character Stop and maintenance mode require an
-explicit character start to rearm automatic waking.
+explicit character start to rearm automatic waking. On V2 with gaze available,
+an accepted wake confirmation also clears the runtime `stop`/`disable` gaze
+latch and rearms attention. After disable, normal home startup restores torque;
+a powered scene or speech run retains ownership. Candidate, stale and duplicate
+wake events cannot perform this recovery. See [gaze recovery](../runtime/README.md#bearing-gaze-v2).
 
 A reply uploaded for a voice session remains queued until the runtime recognizes
 an active confirmed conversation and finishes home and any accepted attention
@@ -390,7 +394,9 @@ lamp remains unverified. See [vision setup and calibration](../vision/README.md#
 
 The listener sends `voice SESSION attend_bearing AZ EL AGE_MS`, with base
 azimuth/elevation in radians and age computed from the selected capture. Queue
-delay is added before delivery. `--gaze on` is required; the runtime ignores
+delay is added before delivery. V2 gaze is enabled by default; `--gaze off` or
+unavailable camera geometry rejects visual attention. An accepted current wake
+confirmation clears Stop's gaze latch before this request. The runtime ignores
 unconfirmed, retired or non-owning sessions. The rest coordinator checks the
 same three-second expiry again after measured home completion. The gaze FK
 solver creates a neck-first calibrated trajectory and a zero-offset settle at

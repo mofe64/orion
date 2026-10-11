@@ -175,7 +175,10 @@ values are in the [speech performance policy](motion-reference.md#speech-perform
 
 ### Voice attention
 
-V2 bearing gaze is opt-in with `--gaze on`. The vision service sends a latest
+V2 servers enable bearing gaze by default; `--gaze off` disables it. V1 and
+non-serve operations leave gaze off. Camera geometry loads once at startup;
+a load failure leaves the daemon serving with gaze unavailable and its error
+visible in status. The vision service sends a latest
 base-frame target, calculated with the measured pose at exposure time.
 `GazeCoordinator` solves neck swivel and wrist pitch through URDF FK, then
 generates anchor-relative keyframes. The neck leads; the base follows after
@@ -188,10 +191,16 @@ after one second; the last plan holds briefly and returns. Calibration and
 settle checks remain in the trajectory compiler and runtime.
 
 Foreground work, speech, rest and Stop preempt gaze. Stop and disable latch
-gaze off until an explicit `gaze resume`; streamed vision targets cannot undo it. Gaze can replace lower
+gaze off with `state:"stopped"`. A successful `character start`, an accepted
+current-session wake confirmation, or `gaze resume` clears the latch. These
+events cannot override configured-off or unavailable gaze. Targets, clears,
+idle time, returning vision and stale wake sessions cannot undo Stop.
+Confirmed-wake recovery rearms attention before bearing delivery; torque-off
+recovery follows the measured home lifecycle, while powered foreground work
+retains ownership. Gaze can replace lower
 priority idle or thinking motion and suppresses idle while its run settles.
-It never wakes a resting lamp, enables torque or moves the anchor. The
-[runtime command contract](../runtime/README.md#bearing-gaze-v2-opt-in) and
+Streamed gaze never wakes a resting lamp, enables torque or moves the anchor. The
+[runtime command contract](../runtime/README.md#bearing-gaze-v2) and
 [tuning values](motion-reference.md#bearing-gaze-tuning) define the interface.
 Physical gaze behaviour remains unverified; native MuJoCo validates software
 tracking and calibrated samples.

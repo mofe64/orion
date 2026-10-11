@@ -181,8 +181,12 @@ with a constant-velocity Kalman filter and a 20° nearest-neighbour gate. Tracks
 expire after one second. IDs increase for the service lifetime, including after
 privacy off/on. `looking_at_orion` is a landmark symmetry heuristic for a
 frontal face. Selection uses the largest frontal face, otherwise the largest.
-Targets and clears go only through runtime `gaze`; enable runtime `--gaze on`
-to allow movement. Rejected gaze commands preserve tracks and observations;
+Targets and clears go only through runtime `gaze`. V2 servers enable gaze by
+default; `--gaze off` disables it, and movement still requires powered character
+mode. Stop reports `state:"stopped"`; only character start, a confirmed wake or
+scripted `gaze resume` clears that latch. Returning vision cannot clear it.
+Missing runtime camera geometry reports gaze unavailable without stopping the
+daemon. Rejected gaze commands preserve tracks and observations;
 the worker polls gaze availability every three seconds before sending targets
 again. Only detector or camera-ray failures invalidate tracking. A missed
 detection retains the chosen live track until its one-second expiry without

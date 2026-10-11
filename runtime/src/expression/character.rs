@@ -433,6 +433,9 @@ impl CharacterCoordinator {
     pub fn set_gaze_enabled(&mut self, enabled: bool) {
         self.gaze.set_enabled(enabled);
     }
+    pub(crate) fn set_gaze_unavailable(&mut self, error: String) {
+        self.gaze.set_unavailable(error);
+    }
     pub fn gaze_status(&self) -> super::gaze::GazeStatus {
         self.gaze.status()
     }
@@ -445,6 +448,27 @@ impl CharacterCoordinator {
     pub(crate) fn resume_gaze(&mut self) -> Result<()> {
         self.gaze.resume()
     }
+    /// An accepted wake can recover Stop, but cannot opt into disabled gaze or
+    /// interrupt an already powered foreground owner. Torque-off recovery uses
+    /// normal measured home startup before the rest coordinator admits attention.
+    pub(crate) fn resume_gaze_for_confirmed_wake<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<bool> {
+        if !self.gaze.is_stopped() {
+            return Ok(false);
+        }
+        if !self.status.enabled
+            || self.starting_run_id.is_some()
+            || matches!(core.mode(), RuntimeMode::Observe | RuntimeMode::Configured)
+        {
+            self.start(now, core)?;
+        } else {
+            self.gaze.resume()?;
+        }
+        Ok(true)
+    }
     pub fn queue_gaze_target<D: RuntimeDriver>(
         &mut self,
         target: super::gaze::GazeTarget,
@@ -452,7 +476,7 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<bool> {
         if !self.gaze.status().enabled {
-            return Err(Error::InvalidState("Gaze requires --gaze on".into()));
+            return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
         if !self.status.enabled
             || self.starting_run_id.is_some()
@@ -622,9 +646,7 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<CharacterStatus> {
         if !self.gaze.status().enabled {
-            return Err(Error::InvalidState(
-                "Visual attention requires --gaze on".into(),
-            ));
+            return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
         let owns_gaze = self.gaze.status().run_id.is_some_and(|id| {
             core.snapshot()
@@ -744,7 +766,8 @@ impl CharacterCoordinator {
     }
 
     /// Starts the character mode, enabling it and configuring the runtime if necessary.
-    /// Returns an error if the character mode is already enabled or if the runtime is in an invalid mode.
+    /// Returns an error if character mode is already enabled without a Stop latch,
+    /// or if the runtime is in an invalid mode.
     /// It also rejects another start() while the first startup is still in progress,
     /// because the method sets enabled to true as soon as startup is successfully initiated.
     pub fn start<D: RuntimeDriver>(
@@ -752,7 +775,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<CharacterStatus> {
-        if self.status.enabled {
+        if self.status.enabled && !self.gaze.is_stopped() {
             // Character mode is already enabled, return an error.
             return Err(Error::InvalidState(
                 "Character mode is already enabled.".into(),
@@ -785,6 +808,11 @@ impl CharacterCoordinator {
         // now tells the runtime when this movement began on its elapsed-time clock.
         // we use a goto command here with a provided duration, we aren't using the return_home motion (which is defined in our yaml)
         let response = checked(core.handle_command("goto home 1.600000", now))?;
+        // Do not clear Stop if startup was rejected by a foreground owner or
+        // failed to restore torque/home. Explicit --gaze off stays off.
+        if self.gaze.is_stopped() {
+            self.gaze.resume()?;
+        }
         // record the movemnet so that our character state can track it on tick
         self.starting_run_id = response.get("run_id").and_then(serde_json::Value::as_u64);
         self.status.enabled = true;

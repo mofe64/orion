@@ -4,8 +4,8 @@ from daemon_support import DaemonTestCase, daemon, request
 
 
 class VisualAttentionTests(DaemonTestCase):
-    def test_opt_in_and_owned_confirmed_fresh_session_are_required(self):
-        with daemon(hardware='v2', following=True) as path:
+    def test_enabled_gaze_and_owned_confirmed_fresh_session_are_required(self):
+        with daemon(hardware='v2', following=True, gaze=False) as path:
             for verb in ('attend_bearing .4 .1 0', 'attend_scan 0'):
                 self.assertFalse(request(path, f'voice {"a"*32} {verb}')['ok'])
         with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
@@ -27,6 +27,20 @@ class VisualAttentionTests(DaemonTestCase):
             self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
                 and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
             self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .35)
+
+    def test_confirmed_wake_clears_stop_before_applying_visual_attention(self):
+        from test_gaze import gaze_target
+        for stop in ('stop', 'disable'):
+            with self.subTest(stop=stop), daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
+                self.wait_for_rest(path, 'awake')
+                self.assertTrue(request(path, gaze_target())['accepted'])
+                self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)
+                self.ok(path, stop)
+                session = 'a'*32
+                self.voice(path, session, 'wake', 'endpoint', 'confirmed', 'attend_bearing .4 .1 0')
+                self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
+                    and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
+                self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .35)
 
     def test_visual_freshness_and_retired_ownership_are_rechecked_after_home(self):
         for age, retire in ((0, False), (2999, False), (0, True)):
