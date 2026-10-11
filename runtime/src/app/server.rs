@@ -191,6 +191,20 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     backend: &str,
 ) -> crate::Result<i32> {
     let mut core = RuntimeCore::new(driver, poses, motions)?;
+    if options.hardware == crate::HardwareVersion::V2 {
+        // The daemon working directory is the catalog root, including in a
+        // deployed release. Missing geometry must never block daemon startup.
+        match crate::control::camera_rays::SystemBoottimeClock::new() {
+            Ok(clock) => {
+                if let Err(error) = core
+                    .configure_camera_geometry("description/urdf/orion-v2.urdf", Box::new(clock))
+                {
+                    eprintln!("oriond: camera-rays disabled: {error}");
+                }
+            }
+            Err(error) => eprintln!("oriond: camera-rays disabled: {error}"),
+        }
+    }
     if let Some(path) = &options.tracking_log {
         core.enable_tracking(crate::control::tracking::TrackingTelemetry::create(
             path, backend,

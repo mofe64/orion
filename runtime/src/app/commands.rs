@@ -148,6 +148,12 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
 ) -> crate::Result<String> {
     let (command, cue_value) = speech_cue_argument(command);
     let cues = parse_speech_cues(cue_value)?;
+    if let Some(arguments) = command.strip_prefix("camera-rays ") {
+        let request = serde_json::from_str(arguments).map_err(|error| {
+            crate::Error::InvalidArgument(format!("Invalid camera-rays JSON: {error}"))
+        })?;
+        return Ok(serde_json::to_string(&core.camera_rays(request)?)?);
+    }
     if command == "character status" {
         let status = character.as_deref().map(CharacterCoordinator::status);
         return Ok(serde_json::json!({"ok": true, "character": status}).to_string());

@@ -905,6 +905,50 @@ mod tests {
         assets: AssetReloadContext,
         _spool: tempfile::TempDir,
     }
+
+    #[test]
+    fn camera_ray_query_is_pure_and_geometry_failure_keeps_other_commands_available() {
+        struct FixedClock;
+        impl crate::control::camera_rays::BoottimeClock for FixedClock {
+            fn now_ns(&self) -> Option<u64> {
+                Some(1_000_000_000)
+            }
+        }
+        let mut h = DispatchFixture::new(600.0);
+        let query = r#"camera-rays {"capture_boottime_ns":1000000000,"rays":[[0,0,1]]}"#;
+        assert_eq!(h.command(query)["ok"], false);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../description/urdf/orion-v2.urdf");
+        h.core
+            .configure_camera_geometry(path, Box::new(FixedClock))
+            .unwrap();
+        h.core.tick(0.0).unwrap();
+        let before = h.command("status");
+        let result = h.command(query);
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["bearings"].as_array().unwrap().len(), 1);
+        assert_eq!(result["pose_age_ms"], 0.0);
+        assert_eq!(h.command("status"), before);
+        assert_eq!(h.command("camera-rays {}")["ok"], false);
+        let directory = tempfile::tempdir().unwrap();
+        let broken = directory.path().join("broken.urdf");
+        std::fs::write(&broken, "<robot/>").unwrap();
+        for path in [broken, directory.path().join("missing.urdf")] {
+            assert!(
+                h.core
+                    .configure_camera_geometry(path, Box::new(FixedClock))
+                    .is_err()
+            );
+            assert!(
+                h.command(query)["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("camera-rays disabled")
+            );
+            assert_eq!(h.command("status"), before);
+            assert_eq!(h.command("pose list")["ok"], true);
+        }
+    }
     impl DispatchFixture {
         fn new(timeout: f64) -> Self {
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

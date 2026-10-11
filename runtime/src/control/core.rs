@@ -62,6 +62,8 @@ struct ActiveMovement {
 
 pub struct RuntimeCore<D: RuntimeDriver> {
     driver: D,
+    camera_geometry: Option<super::camera_rays::CameraGeometry>,
+    camera_geometry_error: String,
     tracking: Option<TrackingTelemetry>,
     poses: PoseLibrary,
     motions: MotionLibrary,
@@ -101,6 +103,8 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         )?;
         Ok(Self {
             driver,
+            camera_geometry: None,
+            camera_geometry_error: "camera-rays requires the V2 model loaded at startup".into(),
             tracking: None,
             poses,
             motions,
@@ -118,6 +122,36 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             bus_error_count: 0,
             bus_fault: None,
         })
+    }
+
+    /// Load camera geometry once before serving; a failure disables only this
+    /// query and records the cause so the daemon remains available.
+    pub fn configure_camera_geometry(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        clock: Box<dyn super::camera_rays::BoottimeClock>,
+    ) -> Result<()> {
+        match super::camera_rays::CameraGeometry::load(path, clock) {
+            Ok(camera) => {
+                self.camera_geometry = Some(camera);
+                Ok(())
+            }
+            Err(error) => {
+                self.camera_geometry = None;
+                self.camera_geometry_error = format!("camera-rays disabled: {error}");
+                Err(error)
+            }
+        }
+    }
+
+    pub fn camera_rays(
+        &self,
+        request: super::camera_rays::CameraRaysRequest,
+    ) -> Result<super::camera_rays::CameraRaysResponse> {
+        self.camera_geometry
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState(self.camera_geometry_error.clone()))?
+            .query(request)
     }
 
     /// Attach capture before starting any movement. Off by default for every core.
@@ -144,6 +178,9 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             Ok(states) => states,
             Err(error) => return self.record_bus_failure("read", error),
         };
+        if let Some(camera) = &mut self.camera_geometry {
+            camera.record_measured(&states);
+        }
         let feedback_read_seconds = tracking_tick
             .map(|at| at.elapsed().as_secs_f64())
             .unwrap_or(0.0);

@@ -24,6 +24,46 @@ own raw register map and conversions for firmware bytes at addresses 0/1, a
 one-byte maximum-acceleration register at address 85, and project-specific
 encoder/velocity conversions.
 
+## Capture-time camera rays (V2)
+
+`camera-rays` is a pure Unix-socket query; it never enables torque or moves
+Orion. Start the daemon from the catalog root (the systemd working directory).
+For `--hardware v2`, including the V2 MuJoCo backend, startup loads
+`description/urdf/orion-v2.urdf` once. A missing or invalid model disables this
+query with its cause in the error response and startup log; other commands
+remain available. V1 does not load camera geometry.
+
+```text
+camera-rays {"capture_boottime_ns":123456789000,"rays":[[0,0,1]]}
+{"ok":true,"bearings":[{"azimuth":0.1,"elevation":-0.2}],"pose_age_ms":40.0}
+```
+
+Rays use the camera's ROS optical axes (+X right, +Y down, +Z forward), must be
+finite unit vectors, and number 1–16. Bearings are radians in the base frame:
+azimuth zero is ahead (−Y), positive is the lamp's right (−X), and positive
+elevation is up. Measured calibrated angles enter FK directly.
+
+After each successful feedback read, the 50 Hz tick reads
+`clock_gettime(CLOCK_BOOTTIME)` and copies five measured angles into a
+64-slot array retaining at most one second. This write allocates nothing.
+Queries linearly interpolate neighbouring samples; they reject captures older
+than the retained buffer or more than 50 ms ahead of the boot clock. A capture
+slightly ahead of the last measured sample uses that sample, which must be
+no more than 50 ms old at query time.
+`pose_age_ms` is the age of the pose used (the interpolated capture time, or
+the last measured time for tolerated future captures). Missing or stale
+feedback produces an error rather than an invented pose.
+
+Linux camera and joint timestamps include suspend; `Instant` is unsuitable
+for this alignment. macOS simulation uses the equivalent continuous boot
+clock, with its timebase cached at startup. Model loading and query parsing
+run outside `RuntimeCore::tick`; the query accepts at most 16 rays through
+the existing bounded socket command handling.
+
+Software tests validate interpolation and stationary-target stability during
+a yaw/swivel sweep. Physical timestamp-to-joint alignment and fitted camera
+mount accuracy remain unverified on the lamp.
+
 ## Build and test
 
 Use a toolchain that supports the crate's Rust 2024 syntax. Run from the repository root:
