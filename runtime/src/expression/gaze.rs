@@ -762,7 +762,7 @@ pub(crate) mod tests {
             .collect()
     }
     pub(crate) struct FollowingDriver {
-        positions: JointPositions,
+        pub(crate) positions: JointPositions,
         writes: Vec<JointPositions>,
         next_velocity: Arc<AtomicU64>,
     }

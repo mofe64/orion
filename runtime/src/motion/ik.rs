@@ -154,6 +154,90 @@ impl ComfortBox {
         ))
     }
 
+    /// Nearest point in the joint box and arm polygon. Only completion-sized
+    /// measurement error may be recovered; this never widens target limits.
+    pub fn tracking_start(
+        &self,
+        measured: &JointPositions,
+        tolerance: f64,
+    ) -> Result<JointPositions> {
+        if !tolerance.is_finite()
+            || tolerance < 0.0
+            || measured.len() != self.joint_ranges.len()
+            || self
+                .joint_ranges
+                .keys()
+                .any(|n| !measured.get(n).is_some_and(|v| v.is_finite()))
+        {
+            return Err(invalid("Invalid comfort recovery start"));
+        }
+        let mut pose: JointPositions = self
+            .joint_ranges
+            .iter()
+            .map(|(n, [lo, hi])| (n.clone(), measured[n].clamp(*lo, *hi)))
+            .collect();
+        if !self.contains(&pose) {
+            let point = [pose[SHOULDER], pose[ELBOW]];
+            let nearest = self
+                .arm_hull
+                .iter()
+                .zip(self.arm_hull.iter().cycle().skip(1))
+                .map(|(a, b)| {
+                    let edge = [b[0] - a[0], b[1] - a[1]];
+                    let t = (((point[0] - a[0]) * edge[0] + (point[1] - a[1]) * edge[1])
+                        / (edge[0] * edge[0] + edge[1] * edge[1]))
+                        .clamp(0., 1.);
+                    [a[0] + t * edge[0], a[1] + t * edge[1]]
+                })
+                .min_by(|a, b| {
+                    ((a[0] - point[0]).hypot(a[1] - point[1]))
+                        .total_cmp(&((b[0] - point[0]).hypot(b[1] - point[1])))
+                })
+                .unwrap();
+            pose.insert(SHOULDER.into(), nearest[0]);
+            pose.insert(ELBOW.into(), nearest[1]);
+        }
+        if measured
+            .iter()
+            .any(|(n, v)| (v - pose[n]).abs() > tolerance + EPS)
+        {
+            return Err(invalid("Measured pose exceeds comfort recovery tolerance"));
+        }
+        Ok(pose)
+    }
+
+    /// Keep the true measured start (and therefore continuity). Remove only its
+    /// bounded initial position error while checking the first quintic segment;
+    /// that allowance decays to zero at the first keyframe, never at later poses.
+    pub fn validate_measured_sequence(
+        &self,
+        sequence: &MotionSequence,
+        tolerance: f64,
+    ) -> Result<()> {
+        let start = sequence.sample(0.)?;
+        let projected = self.tracking_start(&start, tolerance)?;
+        let arrival = sequence
+            .keyframe_arrival_time(0)
+            .ok_or_else(|| invalid("No comfort recovery keyframe"))?;
+        for sample in 0..=(sequence.duration_seconds() / 0.02).ceil() as usize {
+            let t = (sample as f64 * 0.02).min(sequence.duration_seconds());
+            let u = if arrival > 0. {
+                (t / arrival).clamp(0., 1.)
+            } else {
+                1.
+            };
+            let remaining = 1. - u * u * u * (10. + u * (-15. + 6. * u));
+            let mut pose = sequence.sample(t)?;
+            for (n, value) in &mut pose {
+                *value -= (start[n] - projected[n]) * remaining;
+            }
+            if !self.contains(&pose) {
+                return Err(invalid("Compiled motion leaves the comfort box"));
+            }
+        }
+        Ok(())
+    }
+
     /// Per-joint compiler limits alone cannot prove coupled containment.
     /// Call this before installation of any generated lean trajectory.
     pub fn validate_sequence(&self, sequence: &MotionSequence) -> Result<()> {
@@ -660,6 +744,26 @@ mod tests {
                 .unwrap();
             }
         }
+    }
+
+    #[test]
+    fn recovery_allowance_expires_at_first_keyframe_and_rejects_large_error() {
+        let (_, poses, limits, comfort) = setup();
+        let anchor = poses.pose("lean_reach_low").unwrap();
+        let mut measured = anchor.clone();
+        *measured.get_mut(SHOULDER).unwrap() += 0.02;
+        let recovery = compiled(&measured, anchor, &limits);
+        assert!(comfort.validate_sequence(&recovery).is_err());
+        comfort.validate_measured_sequence(&recovery, 0.05).unwrap();
+        // A small excursion at a later target is not tracking error.
+        let excursion = compiled(anchor, &measured, &limits);
+        assert!(
+            comfort
+                .validate_measured_sequence(&excursion, 0.05)
+                .is_err()
+        );
+        *measured.get_mut(SHOULDER).unwrap() += 0.1;
+        assert!(comfort.tracking_start(&measured, 0.05).is_err());
     }
 
     #[test]

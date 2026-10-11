@@ -894,7 +894,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 .as_ref()
                 .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
                 .1
-                .validate_sequence(&sequence)?;
+                .validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)?;
         }
         let target = targets
             .last()

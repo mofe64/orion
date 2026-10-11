@@ -190,6 +190,15 @@ are projected into the coupled comfort box, use synchronous settle curves and
 are checked over their complete trajectory. This protection is scoped to a
 Hands-derived anchor; it does not change ordinary home animation.
 
+Measured starts may differ from the comfort hull by the runtime's 0.05-radian
+completion tolerance. Planning projects that reference into the hull while
+compiled output retains the actual measured start. Validation allows only that
+initial error, decaying along the first quintic segment to zero at its first
+settled keyframe. Later targets and curves must remain inside the original
+hull; larger errors are refused. A generated clip rejected by validation is
+logged and skipped, with `character.last_rejection` available in status, rather
+than ending the daemon. Driver IO faults retain their existing handling.
+
 Vision averages each frame's palm centres, projects that centroid using the
 capture-time camera transform onto the desk plane, then averages these base-frame
 points over two seconds. Transforming before averaging prevents lamp movement

@@ -48,7 +48,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .as_ref()
             .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
             .1;
-        comfort.validate_sequence(&sequence)
+        comfort.validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)
     }
     pub(crate) fn prepare_arrival_motion(
         &self,
@@ -65,7 +65,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
             .1;
         let limits = self.driver.joint_limits()?;
-        let centre = self.measured_positions();
+        let centre = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
         let mut target = self.poses.pose("attentive")?.clone();
         let delta = azimuth - centre["base_yaw_joint"];
         target.insert(
@@ -118,7 +121,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let target = solution
             .positions
             .ok_or_else(|| Error::InvalidState("Object outside desk reach".into()))?;
-        let start = self.measured_positions();
+        let start = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
         let mut pullback = start.clone();
         let mut lead = start.clone();
         for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
@@ -175,7 +181,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let model = self
             .camera_kinematics()
             .ok_or_else(|| Error::InvalidState("V2 geometry unavailable".into()))?;
-        let start = self.measured_positions();
+        let start = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
         let lift = match centre {
             Some(centre) => centre.clone(),
             None => {
@@ -313,7 +322,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .as_ref()
             .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
             .1;
-        let start = self.measured_positions();
+        let start = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
         let mut pullback = start.clone();
         let mut lead = start.clone();
         for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
@@ -379,7 +391,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let Some(target) = solution.positions.as_ref() else {
             return Ok((solution, None));
         };
-        let start = self.measured_positions();
+        let start = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
         // Arm leads the approach. The head joins only after the reach starts.
         // The bounded anticipation is projected toward the existing anchor.
         let mut pullback = start.clone();
@@ -473,7 +488,6 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .ok_or_else(|| Error::InvalidArgument("No work target".into()))?
             .0
             .clone();
-        let last = targets.len() - 1;
         let mut style = MotionStyle::named("speaking_calm")?;
         // Explicit staging carries the idea. Independent joint lag could bow
         // the shoulder/elbow spline outside the coupled comfort polygon.
@@ -487,16 +501,11 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             return_to_anchor: false,
             keyframes: targets
                 .into_iter()
-                .enumerate()
-                .map(|(i, (target, duration_seconds))| MotionKeyframe {
+                .map(|(target, duration_seconds)| MotionKeyframe {
                     pose_name: None,
                     target,
                     duration_seconds,
-                    arrival: if i == last {
-                        KeyframeArrival::Settle
-                    } else {
-                        KeyframeArrival::Through
-                    },
+                    arrival: KeyframeArrival::Settle,
                     hold_seconds: 0.,
                     marker: None,
                 })
@@ -511,7 +520,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             1.,
             &self.driver.joint_limits()?,
         )?;
-        comfort.validate_sequence(&sequence)?;
+        comfort.validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)?;
         Ok(PreparedAim {
             sequence,
             target,
@@ -530,5 +539,144 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         self.movement_started_at = now;
         self.mode = RuntimeMode::Moving;
         self.begin_movement(&prepared.name, prepared.target)
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::expression::{
+        character::CharacterCoordinator,
+        gaze::tests::{FollowingDriver, following},
+    };
+
+    fn fixture() -> (RuntimeCore<FollowingDriver>, JointPositions, JointPositions) {
+        let (mut core, _, _) = following();
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
+        let desk = core.poses.pose("desk_work").unwrap().clone();
+        let anchor = core.hands_light_target(&desk, [0.14, -0.32, 0.]).unwrap();
+        let mut measured = anchor.clone();
+        *measured.get_mut("shoulder_pitch_joint").unwrap() += 0.02;
+        assert!(!core.comfort.as_ref().unwrap().1.contains(&measured));
+        core.driver.positions = measured.clone();
+        core.tick(0.1).unwrap();
+        (core, anchor, measured)
+    }
+
+    #[test]
+    fn settled_tracking_error_allows_idle_follow_return_aim_peek_and_pet() {
+        for action in ["idle", "follow", "return", "aim", "peek", "pet"] {
+            let (mut core, anchor, measured) = fixture();
+            core.set_character_comfort(true);
+            match action {
+                "idle" => {
+                    let definition = core.motions.motion("idle_breathe").unwrap().clone();
+                    core.play_generated_anchored_relative(definition, anchor, 0.1)
+                        .unwrap();
+                }
+                "follow" | "return" => {
+                    let target = if action == "follow" {
+                        core.hands_light_target(&anchor, [-0.12, -0.35, 0.])
+                            .unwrap()
+                    } else {
+                        core.poses.pose("home").unwrap().clone()
+                    };
+                    let definition = core
+                        .prepare_hands_motion("hands_follow", &target, None)
+                        .unwrap();
+                    core.play_generated_anchored_relative(definition, target, 0.1)
+                        .unwrap();
+                }
+                "aim" => {
+                    let (_, prepared) = core
+                        .prepare_light_target(&anchor, [0., -0.28, 0.], 0.8)
+                        .unwrap();
+                    core.install_work_motion(prepared.unwrap(), 0.1).unwrap();
+                }
+                "peek" => {
+                    let definition = core.prepare_peek_motion(&anchor, [0., -0.28, 0.]).unwrap();
+                    core.play_generated_anchored_relative(definition, anchor, 0.1)
+                        .unwrap();
+                }
+                "pet" => {
+                    let (definition, _) = core
+                        .prepare_pet_motion(&anchor, None, 0., -0.5, None, 3.)
+                        .unwrap();
+                    core.play_generated_anchored_relative(definition, anchor, 0.1)
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let sequence = core.motion_sequence.as_ref().unwrap();
+            for (n, q) in sequence.sample(0.).unwrap() {
+                assert!(
+                    (q - measured[&n]).abs() < 1e-9,
+                    "{action}: discontinuous start"
+                );
+            }
+            let comfort = &core.comfort.as_ref().unwrap().1;
+            let first = sequence.keyframe_arrival_time(0).unwrap();
+            for i in 0..=100 {
+                let time = first + (sequence.duration_seconds() - first) * i as f64 / 100.;
+                assert!(
+                    comfort.contains(&sequence.sample(time).unwrap()),
+                    "{action} at {time}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_generated_idle_does_not_escape_character_tick() {
+        let (mut core, _, _) = following();
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
+        let mut character = CharacterCoordinator::new(1);
+        character.start(0., &mut core).unwrap();
+        for i in 1..=250 {
+            let t = i as f64 * 0.02;
+            core.tick(t).unwrap();
+            character
+                .tick(t, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        core.set_character_comfort(true);
+        core.driver
+            .positions
+            .insert("elbow_pitch_joint".into(), -0.75);
+        core.tick(100.).unwrap();
+        character
+            .tick(100., &mut core, false, None, false, None, None)
+            .unwrap();
+        assert!(
+            character
+                .status()
+                .last_rejection
+                .as_ref()
+                .unwrap()
+                .contains("comfort recovery tolerance")
+        );
+        assert!(core.snapshot().motion.is_none());
+        for i in 1..=100 {
+            let t = 100. + i as f64 * 0.02;
+            core.tick(t).unwrap();
+            character
+                .tick(t, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        assert!(core.snapshot().torque_enabled);
     }
 }

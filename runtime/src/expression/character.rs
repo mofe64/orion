@@ -234,6 +234,8 @@ pub enum NextIdleCategory {
 /// CharacterStatus is the compact view of the coordinator that other parts of the application can read
 #[derive(Clone, Debug, Serialize)]
 pub struct CharacterStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_rejection: Option<String>,
     /// Whether character mode is enabled.
     pub enabled: bool,
     /// The current character activity.
@@ -403,6 +405,7 @@ impl CharacterCoordinator {
             surroundings: surroundings::SurroundingsState::default(),
             hands: hands::HandsState::default(),
             status: CharacterStatus {
+                last_rejection: None,
                 enabled: false,
                 state: CharacterState::Off,
                 active_anchor: None,
@@ -1296,6 +1299,40 @@ impl CharacterCoordinator {
     /// speech_analysis - Optional information about the audio's energy, peaks, pauses, and duration.
     /// speech_frame - The current position in the audio analysis, counted in 20 ms frames.
     pub fn tick<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        scene_active: bool,
+        last_scene_result: Option<(u64, bool)>,
+        speech_active: bool,
+        speech_analysis: Option<&SpeechAnalysis>,
+        speech_frame: Option<usize>,
+    ) -> Result<()> {
+        match self.tick_inner(
+            now,
+            core,
+            scene_active,
+            last_scene_result,
+            speech_active,
+            speech_analysis,
+            speech_frame,
+        ) {
+            Err(
+                error @ (Error::InvalidArgument(_) | Error::InvalidState(_) | Error::OutOfRange(_)),
+            ) => {
+                let message = error.to_string();
+                if self.status.last_rejection.as_ref() != Some(&message) {
+                    eprintln!("oriond: character clip rejected: {message}");
+                }
+                self.status.last_rejection = Some(message);
+                self.reset_timers(now);
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
+    fn tick_inner<D: RuntimeDriver>(
         &mut self,
         now: f64,
         core: &mut RuntimeCore<D>,
@@ -3084,6 +3121,7 @@ impl CharacterCoordinator {
         self.thinking_run = None;
         self.clear_attention();
         self.status = CharacterStatus {
+            last_rejection: None,
             enabled: false,
             state: CharacterState::Off,
             active_anchor: None,
