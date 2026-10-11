@@ -82,6 +82,8 @@ pub struct RuntimeCore<D: RuntimeDriver> {
     next_run_id: u64,
     active_movement: Option<ActiveMovement>,
     last_movement: Option<MotionState>,
+    /// Final command retained only after successful measured completion.
+    last_completed_target: Option<JointPositions>,
     sequence: u64,
     snapshot: StateSnapshot,
     bus_failures: u32,
@@ -125,6 +127,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             next_run_id: 1,
             active_movement: None,
             last_movement: None,
+            last_completed_target: None,
             sequence: 1,
             snapshot,
             bus_failures: 0,
@@ -432,6 +435,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 return Ok(command_error("enable", "configure before enabling torque"));
             }
             let states = self.driver.activate()?;
+            self.last_completed_target = None;
             self.mode = RuntimeMode::Holding;
             self.sequence += 1;
             self.publish_snapshot(states)?;
@@ -447,6 +451,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             self.trajectory = None;
             self.motion_sequence = None;
             self.driver.deactivate()?;
+            self.last_completed_target = None;
             self.mode = RuntimeMode::Configured;
             self.refresh_snapshot()?;
             return Ok(json!({"ok": true, "command": "disable", "mode": "configured"}).to_string());
@@ -576,6 +581,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     }
 
     fn begin_movement(&mut self, name: &str, target: JointPositions) -> Result<u64> {
+        self.last_completed_target = None;
         let run_id = self.next_run_id;
         self.next_run_id = self
             .next_run_id
@@ -614,6 +620,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 progress: 0.0,
                 max_position_error_rad: None,
                 max_velocity_rad_s: None,
+                completion_diagnostic: None,
                 error: None,
             },
             target,
@@ -661,6 +668,44 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             if settled {
                 Some(MovementPhase::Completed)
             } else if now_seconds - settling_started_at >= self.completion.settle_timeout_seconds {
+                let joints = movement
+                    .target
+                    .iter()
+                    .map(|(name, target)| {
+                        // final_measurements above has verified complete feedback.
+                        let measured = states.iter().find(|state| state.name == *name).unwrap();
+                        super::state::CompletionJoint {
+                            name: name.clone(),
+                            commanded_position_rad: *target,
+                            measured_position_rad: measured.position,
+                            position_error_rad: target - measured.position,
+                            measured_velocity_rad_s: measured.velocity,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let worst = joints
+                    .iter()
+                    .max_by(|a, b| {
+                        a.position_error_rad
+                            .abs()
+                            .total_cmp(&b.position_error_rad.abs())
+                    })
+                    .unwrap();
+                movement.status.error = Some(format!(
+                    "Measured settling timed out after {:.2} s: {} position error {:.4} rad (limit {:.4}), maximum velocity {:.4} rad/s (limit {:.4})",
+                    now_seconds - settling_started_at,
+                    worst.name,
+                    worst.position_error_rad.abs(),
+                    self.completion.position_tolerance_rad,
+                    max_velocity,
+                    self.completion.velocity_tolerance_rad_s,
+                ));
+                movement.status.completion_diagnostic = Some(super::state::CompletionDiagnostic {
+                    position_tolerance_rad: self.completion.position_tolerance_rad,
+                    velocity_tolerance_rad_s: self.completion.velocity_tolerance_rad_s,
+                    settling_seconds: now_seconds - settling_started_at,
+                    joints,
+                });
                 Some(MovementPhase::TimedOut)
             } else {
                 None
@@ -690,6 +735,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 state: phase,
             });
         }
+        self.last_completed_target = (phase == MovementPhase::Completed).then_some(movement.target);
         self.last_movement = Some(movement.status);
         self.mode = RuntimeMode::Holding;
         self.sync_lifecycle_to_snapshot();
@@ -857,6 +903,8 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     .ok_or_else(|| Error::InvalidState("No character spline to extend.".into()))?
                     .sample_state((now_seconds - self.movement_started_at).max(0.0))?,
             )
+        } else if definition.name == "hands_track" {
+            self.completed_hands_command()?
         } else {
             None
         };
@@ -1622,6 +1670,33 @@ mod tests {
                 .max_position_error_rad
                 .unwrap()
                 > COMPLETION_POSITION_TOLERANCE_RAD
+        );
+        let failed = core.snapshot().last_motion.as_ref().unwrap();
+        assert!(
+            failed
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Measured settling timed out")
+        );
+        let diagnostic = failed.completion_diagnostic.as_ref().unwrap();
+        assert_eq!(
+            diagnostic.position_tolerance_rad,
+            COMPLETION_POSITION_TOLERANCE_RAD
+        );
+        assert_eq!(diagnostic.settling_seconds, 2.);
+        assert_eq!(diagnostic.joints.len(), ORION_JOINT_NAMES.len());
+        for joint in &diagnostic.joints {
+            assert_eq!(
+                joint.position_error_rad,
+                joint.commanded_position_rad - joint.measured_position_rad
+            );
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&core.snapshot().to_json().unwrap()).unwrap();
+        assert_eq!(
+            value["last_motion"]["completion_diagnostic"]["settling_seconds"],
+            2.
         );
     }
 

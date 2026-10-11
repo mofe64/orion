@@ -53,6 +53,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   const trackingSupported = status?.runtime.hardware !== "v1";
   const tracking = useTrackingMode(connection, trackingSupported);
   const trackingControl = <TrackingControl {...tracking} connected={!!connection} supported={trackingSupported}
+    runtimeFailure={status?.character.hands_failure?.message}
     onChange={mode => void tracking.choose?.(mode)} />;
   const [pending, setPending] = useState<string | null>(null);
   const [mood, setMood] = useState<LampMood>("Warm white");

@@ -15,6 +15,50 @@ pub(crate) struct PreparedAim {
 }
 
 impl<D: RuntimeDriver> RuntimeCore<D> {
+    /// A completed Hands spline ends with a stationary command that the driver
+    /// keeps holding. Continue from that command, rather than commanding the
+    /// measured load error as a new starting goal. Other owners and failed
+    /// runs still use their existing measured-start behavior.
+    pub(super) fn completed_hands_command(&self) -> Result<Option<crate::TrajectorySample>> {
+        if self.mode != RuntimeMode::Holding
+            || self.active_movement.is_some()
+            || !self.last_movement.as_ref().is_some_and(|motion| {
+                motion.state == MovementPhase::Completed
+                    && matches!(motion.name.as_str(), "hands_entry" | "hands_track")
+            })
+        {
+            return Ok(None);
+        }
+        let target = self
+            .last_completed_target
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Completed Hands command is unavailable".into()))?;
+        let (error, velocity) = final_measurements(&self.snapshot.joints, target)?;
+        if error > self.completion.position_tolerance_rad
+            || velocity > self.completion.velocity_tolerance_rad_s
+        {
+            return Err(Error::InvalidState(
+                "Measured Hands pose drifted beyond completion limits; go to rest, then resume Orion"
+                    .into(),
+            ));
+        }
+        self.comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1
+            .tracking_start(
+                &self.measured_positions(),
+                COMPLETION_POSITION_TOLERANCE_RAD,
+            )?;
+        self.driver.validate_positions(target)?;
+        let zeros = target.keys().map(|name| (name.clone(), 0.0)).collect();
+        Ok(Some(crate::TrajectorySample {
+            positions: target.clone(),
+            velocities: zeros,
+            accelerations: target.keys().map(|name| (name.clone(), 0.0)).collect(),
+        }))
+    }
+
     pub(crate) fn validate_curiosity_motion(
         &self,
         definition: &MotionDefinition,
@@ -23,7 +67,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     ) -> Result<()> {
         let limits = self.driver.joint_limits()?;
         let scale = definition.uniform_amplitude_scale(anchor, &limits)?;
-        let state = replacing
+        let mut state = replacing
             .filter(|(id, _)| {
                 self.active_movement
                     .as_ref()
@@ -35,6 +79,9 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 })
             })
             .transpose()?;
+        if replacing.is_none() && definition.name == "hands_track" {
+            state = self.completed_hands_command()?;
+        }
         let (positions, velocities, accelerations) = state.map_or_else(
             || (self.measured_positions(), self.measured_velocities(), None),
             |state| (state.positions, state.velocities, Some(state.accelerations)),
@@ -333,11 +380,21 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let model = self
             .camera_kinematics()
             .ok_or_else(|| Error::InvalidState("Hands needs V2 geometry".into()))?;
+        model.fk(anchor)?;
+        if !comfort.contains(anchor) {
+            return Err(Error::InvalidState(
+                "Hands anchor is outside the comfort box".into(),
+            ));
+        }
+        // Lean is a fraction of the desk pose's reach, not of the previous
+        // completed target. Reusing each target here compounds arm extension
+        // every time the hand changes direction. The compiler separately
+        // preserves continuity from the current commanded/measured state.
         let solution = solve_lean(
             model,
             comfort,
             self.poses.pose("home")?,
-            anchor,
+            self.poses.pose("desk_work")?,
             point,
             0.35,
         )?;
@@ -366,6 +423,11 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     .map(|sequence| sequence.sample((now - self.movement_started_at).max(0.0)))
             })
             .transpose()?
+            .or(if replacing.is_none() {
+                self.completed_hands_command()?.map(|state| state.positions)
+            } else {
+                None
+            })
             .unwrap_or_else(|| self.measured_positions());
         let seconds = target
             .iter()

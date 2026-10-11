@@ -118,10 +118,10 @@ def analyze(path, min_excursion=2 * math.tau / 4096, trial_run_ids=None):
             final_group = samples[-1] is rows[-1]
             terminal = ends.get(run_id, {}).get('state', 'incomplete') if final_group else 'replaced'
             settling = [r for r in samples if r['phase'] == 'settling']
-            complete = terminal == 'completed' and bool(settling)
             end_time = samples[-1]['runtime_time_seconds']
             # This is the terminal settling window, not a post-completion hold.
-            tail = [r for r in settling if r['runtime_time_seconds'] >= end_time - 0.25] if complete else []
+            tail = [r for r in settling if r['runtime_time_seconds'] >= end_time - 0.25] \
+                if terminal in {'completed', 'timed_out'} else []
             full_start = samples[0] is rows[0]
             output = {
                 'run_id': run_id, 'run_name': samples[0]['run_name'], 'motion_name': label,
@@ -159,7 +159,8 @@ def analyze(path, min_excursion=2 * math.tau / 4096, trial_run_ids=None):
                     'rms_error_rad': math.sqrt(area / duration), 'max_error_rad': max(map(abs, error)),
                     'lag_ms': lag, 'lag_correlation': correlation,
                     'lag_at_search_limit': lag is not None and abs(lag) >= 500,
-                    'steady_state_error_rad': statistics.fmean(steady) if steady else None,
+                    'steady_state_error_rad': statistics.fmean(steady) if steady and terminal == 'completed' else None,
+                    'terminal_settling_error_rad': statistics.fmean(steady) if steady else None,
                     'settle_position_std_rad': statistics.pstdev(settled_positions) if settled_positions else None,
                     'outside_command_envelope_rad': max(0, max(m) - max(c), min(c) - min(m)),
                     'max_measured_velocity_rad_s': max(abs(r['joints'][joint]['measured_velocity_rad_s']) for r in samples),
@@ -228,11 +229,11 @@ def markdown(report):
             lines.append(f'| {joint} | {v["moving_runs"]} | {number(v["commanded_peak_rad"])} | {number(v["measured_peak_rad"])} | {number(v["amplitude_ratio"],3)} | {number(v["rms_error_rad"])} | {number(v["lag_ms"],0)} |')
         lines.append('')
     lines += ['### Per-run measurements', '',
-              '| Run | Motion | Joint | Command peak | Measured peak | Ratio | RMS | Max error | Lag ms | Final error | End |',
+              '| Run | Motion | Joint | Command peak | Measured peak | Ratio | RMS | Max error | Lag ms | Settling error | End |',
               '| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
     for r in report['runs']:
         for joint, v in r['joints'].items():
-            lines.append(f'| {r["run_id"]} | {r["motion_name"]} | {joint} | {number(v["commanded_peak_rad"])} | {number(v["measured_peak_rad"])} | {number(v["amplitude_ratio"],3)} | {number(v["rms_error_rad"])} | {number(v["max_error_rad"])} | {number(v["lag_ms"],0)} | {number(v["steady_state_error_rad"])} | {r["terminal_state"]} |')
+            lines.append(f'| {r["run_id"]} | {r["motion_name"]} | {joint} | {number(v["commanded_peak_rad"])} | {number(v["measured_peak_rad"])} | {number(v["amplitude_ratio"],3)} | {number(v["rms_error_rad"])} | {number(v["max_error_rad"])} | {number(v["lag_ms"],0)} | {number(v["terminal_settling_error_rad"])} | {r["terminal_state"]} |')
     lines += ['', '### Amplitude losses greater than one third', '']
     losses = [(r, j, v) for r in report['runs'] for j, v in r['joints'].items() if v['loses_over_one_third']]
     lines += [f'- Run {r["run_id"]}, {r["motion_name"]}, {j}: ratio {v["amplitude_ratio"]:.3f}.' for r,j,v in losses] or ['None at the minimum excursion threshold.']

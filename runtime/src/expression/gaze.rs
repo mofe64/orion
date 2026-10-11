@@ -765,6 +765,13 @@ pub(crate) mod tests {
         pub(crate) positions: JointPositions,
         writes: Vec<JointPositions>,
         next_velocity: Arc<AtomicU64>,
+        feedback_offsets: [AtomicU64; 2],
+    }
+    impl FollowingDriver {
+        pub(crate) fn offset_feedback(&self, shoulder: f64, elbow: f64) {
+            self.feedback_offsets[0].store(shoulder.to_bits(), Ordering::Relaxed);
+            self.feedback_offsets[1].store(elbow.to_bits(), Ordering::Relaxed);
+        }
     }
     impl RuntimeDriver for FollowingDriver {
         fn apply_servo_profile(&mut self) -> Result<()> {
@@ -783,7 +790,16 @@ pub(crate) mod tests {
                 .iter()
                 .map(|(name, q)| JointState {
                     name: name.clone(),
-                    position: *q,
+                    position: *q
+                        + match name.as_str() {
+                            "shoulder_pitch_joint" => {
+                                f64::from_bits(self.feedback_offsets[0].load(Ordering::Relaxed))
+                            }
+                            "elbow_pitch_joint" => {
+                                f64::from_bits(self.feedback_offsets[1].load(Ordering::Relaxed))
+                            }
+                            _ => 0.,
+                        },
                     velocity,
                     current_ma: 0.0,
                     voltage_v: 12.0,
@@ -846,6 +862,7 @@ pub(crate) mod tests {
             positions: anchor.clone(),
             writes: Vec::new(),
             next_velocity: Arc::new(AtomicU64::new(0)),
+            feedback_offsets: std::array::from_fn(|_| AtomicU64::new(0)),
         };
         let (core, boot) = prepare(driver, poses, motions);
         (core, anchor, boot)
@@ -870,6 +887,7 @@ pub(crate) mod tests {
                 positions: poses.pose("home").unwrap().clone(),
                 writes: Vec::new(),
                 next_velocity: Arc::new(AtomicU64::new(0)),
+                feedback_offsets: std::array::from_fn(|_| AtomicU64::new(0)),
             };
             let mut core = RuntimeCore::new(driver, poses, motions).unwrap();
             for command in commands {

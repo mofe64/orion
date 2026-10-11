@@ -136,9 +136,13 @@ This opt-in profile also records speech-clock/status observations in
   the goal. Correlation removes offset and gain, but lag is approximate for
   nonlinear, quantized or nearly stationary responses. Check correlation and
   search-limit flags in JSON; an unavailable lag is `null`.
-- Final error: signed commanded-minus-measured error averaged over the last
-  250 ms of terminal settling, only for a completed run. This is a short final
-  settling estimate, not a long post-completion equilibrium measurement.
+- Terminal settling error: signed commanded-minus-measured error averaged over
+  the last 250 ms of settling for completed and timed-out runs, reported as
+  `terminal_settling_error_rad`. Position standard deviation uses the same
+  window. `steady_state_error_rad` retains its completed-run-only contract.
+  A stable error at timeout suggests an offset or load problem; a changing
+  error suggests unresolved settling. This short window cannot establish a
+  long-term equilibrium or independently identify the physical cause.
 - Command-envelope excess and terminal position standard deviation help
   distinguish bias, overshoot and settling jitter. Peak ratios above one alone
   do not prove overshoot: changing gravity bias can increase measured excursion.

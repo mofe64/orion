@@ -14,6 +14,7 @@ use crate::motion::style::MotionStyle;
 mod aim_light;
 #[path = "hands.rs"]
 mod hands;
+pub use hands::HandsFailure;
 #[path = "reactions.rs"]
 mod reactions;
 #[path = "surroundings.rs"]
@@ -235,6 +236,8 @@ pub enum NextIdleCategory {
 #[derive(Clone, Debug, Serialize)]
 pub struct CharacterStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub hands_failure: Option<HandsFailure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_rejection: Option<String>,
     /// Whether character mode is enabled.
     pub enabled: bool,
@@ -405,6 +408,7 @@ impl CharacterCoordinator {
             surroundings: surroundings::SurroundingsState::default(),
             hands: hands::HandsState::default(),
             status: CharacterStatus {
+                hands_failure: None,
                 last_rejection: None,
                 enabled: false,
                 state: CharacterState::Off,
@@ -563,9 +567,17 @@ impl CharacterCoordinator {
         {
             return Ok(false);
         }
-        if self.surroundings.reaction.is_some() || self.hands.blocks_gaze() {
+        if self.hands.blocks_gaze()
+            && let Some(failure) = &self.status.hands_failure
+        {
+            return Err(Error::InvalidState(failure.message.clone()));
+        }
+        if self.surroundings.reaction.is_some() {
             // Face observations continue; this one bounded response owns motion.
             return Ok(true);
+        }
+        if self.hands.blocks_gaze() {
+            return Ok(false);
         }
         if self.attention.is_some() {
             return self.update_speaker_bearing(target, now, core);
@@ -1631,6 +1643,12 @@ impl CharacterCoordinator {
         }
 
         if self.surroundings.reaction.is_some() || self.hands_run_active() {
+            return Ok(());
+        }
+        if self.status.hands_failure.is_some() {
+            // A failed work-light move must not trigger more arm movement or
+            // ordinary idles. Explicit recovery, foreground work and rest keep
+            // their existing priority paths above this point.
             return Ok(());
         }
         if !self.hands.blocks_gaze()
@@ -3120,6 +3138,7 @@ impl CharacterCoordinator {
         self.thinking_run = None;
         self.clear_attention();
         self.status = CharacterStatus {
+            hands_failure: None,
             last_rejection: None,
             enabled: false,
             state: CharacterState::Off,

@@ -13,7 +13,7 @@ import numpy as np
 
 from orion_vision.intrinsics import SIZE, Intrinsics, lores_bgr
 from orion_vision.detect_faces import FACE_SCORE_THRESHOLD, Face, MODEL_SHA256, YuNet
-from orion_vision.gaze_client import GazeClient, boottime_ns
+from orion_vision.gaze_client import GazeClient, RuntimeRejected, boottime_ns
 from orion_vision.pipeline import FacePipeline
 from orion_vision.sources import Picamera2Source
 from orion_vision.tracker import Tracker, choose_track
@@ -148,6 +148,18 @@ class FakeRuntime(socketserver.UnixStreamServer):
 
 
 class TrackerTests(unittest.TestCase):
+    def test_gaze_acknowledgement_preserves_acceptance_and_recovery_reasons(self):
+        tracker = Tracker()
+        track = tracker.update(1_000_000_000, [face()], [{'azimuth': .1, 'elevation': 0}])[0]
+        client = GazeClient('/unused-runtime.sock')
+        with patch.object(client, 'command', return_value={'ok': True, 'accepted': False}):
+            self.assertFalse(client.target(track))
+        with patch.object(client, 'command', return_value={'ok': True, 'accepted': True}):
+            self.assertTrue(client.target(track))
+        with patch.object(client, 'command', side_effect=RuntimeRejected('Hands return needs rest')):
+            with self.assertRaisesRegex(RuntimeRejected, 'Hands return needs rest'):
+                client.target(track)
+
     def test_disabled_runtime_reports_unavailable_without_opt_in_advice(self):
         with tempfile.TemporaryDirectory() as directory:
             server = FakeRuntime(Path(directory) / 'runtime.sock', reject_gaze=True)
