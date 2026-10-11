@@ -1418,12 +1418,14 @@ lag, so the stated staging and IK reach survive exactly.
 Its camera centre ray intersects the table about 34 cm forward under the CAD
 mount geometry. `desk_anticipation` and `desk_arm_lead` are normal powered
 transition drawings. `hands_entry` plays those drawings into `desk_work` and
-holds. `hands_follow` and `hands_return` are anchor-relative catalogue templates;
-runtime supplies the observed work destination or saved prior anchor and adapts
-their anticipation and arm lead. All six assets are lamp-unverified.
+holds. `hands_return` is an anchor-relative catalogue template; runtime supplies
+the saved prior anchor and adapts its anticipation and arm lead. Following uses
+the generated `hands_track` step described in
+[motion architecture](motion-architecture.md), not a catalogue asset. All five
+assets and the generated step are lamp-unverified.
 
 1. Idea and lead: a useful steady desk light. Shoulder and elbow announce the
-   desk entry/follow/return; the head follows. `desk_anticipation` and
+   desk entry and return; the head follows. Following has no authored drawing. `desk_anticipation` and
    `desk_arm_lead` isolate those first two drawings.
 2. Silhouette: `desk_work` places the wrist over the desk with a clear bent arm
    and downward camera. The transition drawings retain home's head direction

@@ -183,7 +183,9 @@ class FacePipeline:
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
             return
-        self.next_surroundings = self.clock() + .5
+        # Hands streams every 5 Hz inference so the runtime can follow
+        # continuously; other modes need only a slower heartbeat.
+        self.next_surroundings = self.clock() + (.15 if self.mode == 'hands' else .5)
         self.client.surroundings({'capture_boottime_ns': stamp,
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': self.mode if self.enabled else 'off',

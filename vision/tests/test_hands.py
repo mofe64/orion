@@ -70,7 +70,7 @@ class PalmTests(unittest.TestCase):
             pixel=cv2.fisheye.projectPoints(local.reshape(1,1,3),np.zeros(3),np.zeros(3),lens.matrix,lens.distortion)[0].reshape(2)
             point=window.observe([Palm([pixel[0]-10,pixel[1]-10,20,20],.9)],1+i*200_000_000,lens,
                                  dict(position=origin.tolist(),rotation=rotation.tolist()))
-            if i<10:self.assertIsNone(point)
+            if i<2:self.assertIsNone(point)
         np.testing.assert_allclose(point,target,atol=1e-8)
         self.assertIsNone(window.observe([],2_200_000_001,lens,CAMERA))
         self.assertEqual(len(window.samples),0)

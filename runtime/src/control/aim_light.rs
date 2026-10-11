@@ -3,6 +3,11 @@ use super::*;
 use crate::motion::ik::{ComfortBox, ComfortBoxConfig, LeanSolution, solve_lean};
 use crate::{MotionKeyframe, MotionStyle};
 
+/// Peak joint speed for continuous Hands steps; gaze uses 1.5 rad/s.
+pub(crate) const HANDS_TRACK_PEAK_RAD_S: f64 = 0.8;
+/// Shortest Hands step, so 5 Hz redirections blend instead of snapping.
+pub(crate) const HANDS_TRACK_MIN_SECONDS: f64 = 0.45;
+
 pub(crate) struct PreparedAim {
     sequence: MotionSequence,
     target: JointPositions,
@@ -340,6 +345,54 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .positions
             .ok_or_else(|| Error::InvalidState("Work point outside desk reach".into()))
     }
+    /// One continuous Hands step, like a gaze extension: a single settle at
+    /// the new work pose, compiled from the commanded state when it replaces a
+    /// running step so redirections never stop or jump. The arm moves at a
+    /// gentler peak speed than gaze to keep the light pool calm.
+    pub(crate) fn prepare_hands_track(
+        &self,
+        target: &JointPositions,
+        replacing: Option<(u64, f64)>,
+    ) -> Result<MotionDefinition> {
+        let from = replacing
+            .filter(|(id, _)| {
+                self.active_movement
+                    .as_ref()
+                    .is_some_and(|motion| motion.status.run_id == *id)
+            })
+            .and_then(|(_, now)| {
+                self.motion_sequence
+                    .as_ref()
+                    .map(|sequence| sequence.sample((now - self.movement_started_at).max(0.0)))
+            })
+            .transpose()?
+            .unwrap_or_else(|| self.measured_positions());
+        let seconds = target
+            .iter()
+            .map(|(joint, q)| 1.875 * (q - from[joint]).abs() / HANDS_TRACK_PEAK_RAD_S)
+            .fold(HANDS_TRACK_MIN_SECONDS, f64::max);
+        let mut style = MotionStyle::named("speaking_calm")?;
+        style.joint_lag = 0.0;
+        style.overshoot_scale = 0.0;
+        style.amplitude = 1.0;
+        let definition = MotionDefinition {
+            name: "hands_track".into(),
+            description: "Continuous work-light follow toward the latest hand point".into(),
+            space: MotionSpace::AnchorRelative,
+            style,
+            return_to_anchor: true,
+            keyframes: vec![MotionKeyframe {
+                pose_name: None,
+                target: target.keys().map(|joint| (joint.clone(), 0.0)).collect(),
+                duration_seconds: seconds,
+                arrival: KeyframeArrival::Settle,
+                hold_seconds: 0.,
+                marker: None,
+            }],
+        };
+        self.validate_curiosity_motion(&definition, target, replacing)?;
+        Ok(definition)
+    }
     pub(crate) fn prepare_hands_motion(
         &self,
         name: &str,
@@ -648,9 +701,12 @@ mod recovery_tests {
                     } else {
                         core.poses.pose("home").unwrap().clone()
                     };
-                    let definition = core
-                        .prepare_hands_motion("hands_follow", &target, None)
-                        .unwrap();
+                    let definition = if action == "follow" {
+                        core.prepare_hands_track(&target, None).unwrap()
+                    } else {
+                        core.prepare_hands_motion("hands_return", &target, None)
+                            .unwrap()
+                    };
                     core.play_generated_anchored_relative(definition, target, 0.1)
                         .unwrap();
                 }

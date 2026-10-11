@@ -23,7 +23,6 @@ pub(super) struct HandsState {
     received: Option<f64>,
     last_seen: Option<f64>,
     point: Option<[f64; 3]>,
-    candidate: Option<([f64; 3], f64)>,
     return_attempt_at: Option<f64>,
     run: Option<HandsRun>,
 }
@@ -42,6 +41,8 @@ impl HandsState {
         self.blocks_gaze() && (!self.fresh(now) || self.last_seen.is_none_or(|at| now - at >= 10.0))
     }
 }
+/// Hand-point changes smaller than this are palm jitter, not a work shift.
+const HANDS_DEADBAND_M: f64 = 0.03;
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
@@ -85,19 +86,21 @@ impl CharacterCoordinator {
         if !self.hands.wanted {
             self.hands.blocked = false;
         }
-        if !self.hands.fresh(now) {
-            self.hands.candidate = None;
-        }
         self.hands.wanted = true;
         self.hands.received = Some(now);
         if count > 0 {
             self.hands.last_seen = Some(now);
         }
         self.finish_hands(now, core);
-        if !self.hands_available(core) || self.hands.run.is_some() {
+        if !self.hands_available(core) {
             return Ok(());
         }
-        let (name, target, destination, kind) = if !self.hands.entered {
+        if !self.hands.entered {
+            if self.hands.run.is_some() {
+                return Ok(());
+            }
+            // Entering is the one authored gesture: anticipation, arm lead and
+            // a settle at the desk-facing pose.
             let target = core.poses().pose("desk_work")?.clone();
             let point = core
                 .camera_kinematics()
@@ -105,64 +108,64 @@ impl CharacterCoordinator {
                 .fk(&target)?
                 .light
                 .table_point([0., 0., 1.], 0.)?;
-            (
-                "hands_entry",
+            let definition = core.prepare_hands_motion("hands_entry", &target, None)?;
+            self.preempt_idle_or_thinking(now, core)?;
+            if self.hands.previous.is_none() {
+                self.hands.previous = self.status.active_anchor.clone();
+            }
+            let id = core.play_generated_anchored_relative(definition, target.clone(), now)?;
+            self.hands.run = Some(HandsRun {
+                id,
                 target,
                 point,
-                MoveKind::Enter,
-            )
-        } else {
-            let Some(point) = point.filter(|_| count > 0) else {
-                self.hands.candidate = None;
-                return Ok(());
-            };
-            if self
-                .hands
-                .point
-                .is_some_and(|last| distance(last, point) <= 0.08)
-            {
-                self.hands.candidate = None;
-                return Ok(());
-            }
-            let since = match self.hands.candidate {
-                Some((candidate, since)) if distance(candidate, point) <= 0.04 => since,
-                _ => {
-                    self.hands.candidate = Some((point, now));
-                    return Ok(());
-                }
-            };
-            if now - since < 1.0 {
-                return Ok(());
-            }
-            let anchor = self
-                .status
-                .active_anchor
-                .as_ref()
-                .ok_or_else(|| Error::InvalidState("Hands has no anchor".into()))?;
-            let target = core.hands_light_target(anchor, point)?;
-            (
-                "hands_follow",
-                target,
-                Some(point),
-                MoveKind::Follow,
-            )
-        };
-        // Hands is an explicit mode the user chose, not unprompted curiosity:
-        // its restraint is the 8 cm / 1 s work-shift rule above and one move
-        // at a time, not the shared gesture budget (3 per 10 minutes).
-        let definition = core.prepare_hands_motion(name, &target, None)?;
-        self.preempt_idle_or_thinking(now, core)?;
-        if self.hands.previous.is_none() {
-            self.hands.previous = self.status.active_anchor.clone();
+                kind: MoveKind::Enter,
+            });
+            self.status.active_clip = Some("hands_entry".into());
+            self.reset_timers(now);
+            return Ok(());
         }
-        let id = core.play_generated_anchored_relative(definition, target.clone(), now)?;
+        // After entry the light follows continuously, like face gaze: each
+        // fresh hand point redirects the running step from its commanded state.
+        let Some(point) = point.filter(|_| count > 0) else {
+            return Ok(());
+        };
+        let pursued = self.hands.run.as_ref().map_or(self.hands.point, |run| run.point);
+        if pursued.is_some_and(|last| distance(last, point) <= HANDS_DEADBAND_M) {
+            return Ok(());
+        }
+        let replacing = match &self.hands.run {
+            None => None,
+            Some(run)
+                if run.kind == MoveKind::Follow
+                    && core.snapshot().motion.as_ref().is_some_and(|motion| {
+                        motion.run_id == run.id && motion.state == MovementPhase::Executing
+                    }) =>
+            {
+                Some(run.id)
+            }
+            // Entry, return and measured settling finish before following.
+            Some(_) => return Ok(()),
+        };
+        let anchor = self
+            .status
+            .active_anchor
+            .clone()
+            .ok_or_else(|| Error::InvalidState("Hands has no anchor".into()))?;
+        let target = core.hands_light_target(&anchor, point)?;
+        let definition = core.prepare_hands_track(&target, replacing.map(|id| (id, now)))?;
+        let id = if let Some(id) = replacing {
+            core.extend_character_performance(id, definition, target.clone(), now)?
+        } else {
+            self.preempt_idle_or_thinking(now, core)?;
+            core.play_generated_anchored_relative(definition, target.clone(), now)?
+        };
         self.hands.run = Some(HandsRun {
             id,
             target,
-            point: destination,
-            kind,
+            point: Some(point),
+            kind: MoveKind::Follow,
         });
-        self.status.active_clip = Some(name.into());
+        self.status.active_clip = Some("hands_track".into());
         self.reset_timers(now);
         Ok(())
     }
@@ -172,7 +175,6 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.hands.wanted = false;
-        self.hands.candidate = None;
         self.finish_hands(now, core);
         let Some(previous) = self.hands.previous.clone() else {
             return Ok(());
@@ -253,7 +255,6 @@ impl CharacterCoordinator {
                 self.status.state = self.idle_state();
                 self.hands.entered = run.kind != MoveKind::Return;
                 self.hands.point = run.point;
-                self.hands.candidate = None;
                 if run.kind == MoveKind::Return {
                     self.hands.previous = None;
                 }
@@ -380,40 +381,42 @@ mod tests {
         assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
     }
     #[test]
-    fn hands_waits_for_shift_and_dwell_without_a_gesture_budget_then_holds() {
+    fn hands_follows_continuously_and_redirects_the_running_step() {
         let (mut core, mut character, boot) = fixture();
         character.observe_hands(1, None, 5., &mut core).unwrap();
         advance(&mut core, &mut character, &boot, 5., 12., true);
         let desk = character.status.active_anchor.clone().unwrap();
         let near = character.hands.point.unwrap();
+        // Palm jitter inside the deadband does not move the light.
         character
-            .observe_hands(1, Some([near[0] + 0.04, near[1], 0.]), 13., &mut core)
+            .observe_hands(1, Some([near[0] + 0.02, near[1], 0.]), 13., &mut core)
             .unwrap();
-        assert!(character.hands.candidate.is_none());
+        assert!(character.hands.run.is_none());
+        // A real shift starts following at once; no dwell or budget.
+        character
+            .observe_hands(1, Some([0.08, -0.32, 0.]), 13.2, &mut core)
+            .unwrap();
+        let first = character.hands.run.as_ref().unwrap();
+        let (id, first_target) = (first.id, first.target.clone());
+        assert_eq!(character.status.active_clip.as_deref(), Some("hands_track"));
+        // The next point redirects the same run from its commanded state.
+        advance(&mut core, &mut character, &boot, 13.2, 13.4, true);
         let shifted = [0.14, -0.32, 0.];
         character
-            .observe_hands(1, Some(shifted), 14., &mut core)
+            .observe_hands(1, Some(shifted), 13.4, &mut core)
             .unwrap();
-        character
-            .observe_hands(1, Some(shifted), 14.5, &mut core)
-            .unwrap();
-        assert!(character.hands.run.is_none(), "a shift must hold for 1 s");
-        // The explicit mode follows once the dwell passes, even though entry
-        // moved the lamp moments ago; the curiosity budget does not apply.
-        character
-            .observe_hands(1, Some(shifted), 15., &mut core)
-            .unwrap();
-        assert_eq!(
-            character.status.active_clip.as_deref(),
-            Some("hands_follow")
-        );
+        let run = character.hands.run.as_ref().unwrap();
+        assert_eq!(run.id, id);
+        assert_ne!(run.target, first_target);
+        assert_eq!(run.point, Some(shifted));
         assert_eq!(character.status.active_anchor.as_ref(), Some(&desk));
-        advance(&mut core, &mut character, &boot, 15., 23., true);
+        advance(&mut core, &mut character, &boot, 13.4, 20., true);
         assert_ne!(character.status.active_anchor.as_ref(), Some(&desk));
+        assert_eq!(character.hands.point, Some(shifted));
         let held = character.status.active_anchor.clone();
-        advance(&mut core, &mut character, &boot, 23., 39., false);
+        advance(&mut core, &mut character, &boot, 20., 36., false);
         assert_eq!(character.status.active_anchor, held);
-        assert!(character.hands.suppress_idle(39.));
+        assert!(character.hands.suppress_idle(36.));
         assert_eq!(core.mode(), RuntimeMode::Holding);
     }
     #[test]

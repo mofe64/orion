@@ -208,17 +208,20 @@ than ending the daemon. Driver IO faults retain their existing handling.
 
 Vision averages each frame's palm centres, projects that centroid using the
 capture-time camera transform onto the desk plane, then averages these base-frame
-points over two seconds. Transforming before averaging prevents lamp movement
-from masquerading as work movement. Runtime requires an eight-centimetre shift
-from the committed work point, stable within four centimetres for at least one
-second. Gaps over two seconds reset this dwell. P8 IK with `lean=0.35` supplies a
-slow `hands_follow` destination; no raw joint stream reaches the controller.
-Only successful measured completion commits that work point and anchor.
+points over 0.6 seconds, publishing once 0.4 seconds of continuous hands exist.
+Transforming before averaging prevents lamp movement from masquerading as work
+movement. Vision sends each 5 Hz point to the runtime. After entry, Hands
+follows continuously, like face gaze: a point more than 3 cm from the one being
+pursued plans a P8 IK destination (`lean=0.35`) and a generated `hands_track`
+step, one settle at that pose at a 0.8 rad/s compiled peak (0.45 s minimum).
+A later point redirects the running step from its commanded position,
+velocity and acceleration, so the light glides without stops or jumps; no raw
+joint stream reaches the controller. Entry and return keep their authored
+anticipation and arm lead. Only successful measured completion commits the
+work point and anchor.
 
-Hands is a mode the user selects, so entry and follow moves do not spend the
-shared curiosity budget. Their restraint is the eight-centimetre, one-second
-shift rule and one move at a time: Hands follows deliberate changes in the
-work point, not continuous hand chasing. Ten
+Hands is a mode the user selects, so its moves do not spend the shared
+curiosity budget. The 3 cm deadband ignores palm jitter. Ten
 seconds without hands stops scheduling ordinary idles while holding the work
 anchor; an already running idle finishes its anchor return. Speech retains priority. Hands alone does not defer automatic rest.
 
