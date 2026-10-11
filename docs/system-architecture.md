@@ -85,7 +85,14 @@ The coordinator admits this explicit lookup only after ASR, before final speech.
 A shared resource lock excludes ASR, TTS and playback, including a subsequent
 turn while an interrupted response finishes its lookup. The runtime grants the
 confirmed thinking session a sixty-second `vision_begin` lease, revoked by
-phase changes, expiry or `vision_end`. Background object work never inherits
+phase changes, expiry or `vision_end`. The gateway has one 58-second budget,
+including 14 seconds reserved for recovery and closing the voice interval;
+the coordinator retains the resource lock for up to 65 seconds. A new lookup
+is admitted only when its full 24-second allowance remains. Runtime `End`
+accepts failed scans immediately and limits its return lease to eight seconds.
+Cleanup errors are logged without replacing the original failure. If recovery
+replies are lost, the gateway keeps voice ownership through the return lease.
+Background object work never inherits
 this permission. A general `/find` request is refused while any voice owner exists.
 
 The runtime owns the search across three authored `look_around` stops. It saves
@@ -98,8 +105,9 @@ unreachable points return `clamped` with no applied aim.
 
 Only a completed aim becomes the held lamp anchor; face gaze and visual speaker
 attention then leave that work spot alone. Speech and idle clips use the held
-anchor. Explicit movement, `gaze resume`, character restart or selecting Idle
-mode releases that attention hold. Stop, rest, speech and foreground controls
+anchor, with comfort fitting active. Explicit movement, character restart or
+selecting Idle mode releases that attention hold. Gaze resume and confirmed
+wake after a soft Stop preserve the work hold. Stop, rest, speech and foreground controls
 revoke an in-progress search; its old owner cannot restart it. Search, aim,
 desk-plane accuracy and beam alignment remain lamp-unverified.
 

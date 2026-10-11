@@ -1,3 +1,5 @@
+const AIM_LIGHT_TIMEOUT_SECONDS: u64 = 65;
+
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
@@ -183,7 +185,7 @@ impl Gateway {
             let response = gateway
                 .client
                 .post(format!("{}/api/v2/operations", gateway.url))
-                .timeout(Duration::from_secs(65))
+                .timeout(Duration::from_secs(AIM_LIGHT_TIMEOUT_SECONDS))
                 .bearer_auth(&gateway.token)
                 .json(&parameters)
                 .send()

@@ -10,6 +10,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import logging
 import math
 import os
 import re
@@ -38,6 +39,13 @@ MAX_BODY_BYTES = 262_144
 MAX_SPEECH_BYTES = 8 * 1024 * 1024
 MAX_PREVIEW_SCENE_BYTES = 3_000
 MAX_RESPONSE_BYTES = 1_048_576
+# Includes recovery and closing the voice interval; coordinator keeps its gate
+# for 65 s. The cross-process timing test protects that ordering.
+AIM_TOTAL_SECONDS = 58.
+AIM_RECOVERY_SECONDS = 14.
+AIM_VOICE_END_SECONDS = 2.
+FIND_TIMEOUT_SECONDS = 24.  # frame wait (5) + child (15) + reap/IPC margin
+LOG = logging.getLogger(__name__)
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 JOINT_NAMES = (
     "base_yaw_joint",
@@ -136,19 +144,28 @@ class UnixOrionClient:
         self.socket_path = socket_path
         self.timeout_seconds = timeout_seconds
 
-    def request(self, command: str) -> dict[str, Any]:
+    def request(self, command: str, *, deadline=None) -> dict[str, Any]:
         if not command or "\n" in command or "\r" in command or "\0" in command:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_command", "Invalid local command.")
 
         try:
+            until = min(deadline if deadline is not None else math.inf,
+                        time.monotonic() + self.timeout_seconds)
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(self.timeout_seconds)
+                def remaining():
+                    timeout = until - time.monotonic()
+                    if timeout <= 0:
+                        raise TimeoutError('Runtime request deadline exceeded')
+                    client.settimeout(timeout)
+                remaining()
                 client.connect(self.socket_path)
+                remaining()
                 client.sendall(command.encode("utf-8") + b"\n")
                 client.shutdown(socket.SHUT_WR)
                 chunks: list[bytes] = []
                 received = 0
                 while True:
+                    remaining()
                     chunk = client.recv(65_536)
                     if not chunk:
                         break
@@ -438,20 +455,39 @@ class OrionGateway:
             connection.close()
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "Orion's camera service is unavailable.") from error
 
-    def find_object(self, category, session=None):
+    def find_object(self, category, session=None, *, deadline=None):
         if self.hardware != 'v2' or not self.camera_is_enabled():
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_off', 'Camera is unavailable or disabled.')
-        connection = http.client.HTTPConnection('localhost', timeout=60)
+        until = min(deadline if deadline is not None else math.inf,
+                    time.monotonic() + FIND_TIMEOUT_SECONDS)
+        connection = http.client.HTTPConnection('localhost', timeout=FIND_TIMEOUT_SECONDS)
         connection.sock = socket.socket(socket.AF_UNIX)
-        connection.sock.settimeout(60)
+        transport = connection.sock
+        response = None
+        def remaining():
+            timeout = until - time.monotonic()
+            if timeout <= 0:
+                raise TimeoutError('Object lookup deadline exceeded')
+            transport.settimeout(timeout)
         try:
+            remaining()
             connection.sock.connect(self.vision_socket)
             payload = {'category': category}
             if session is not None:
                 payload['session'] = session
+            remaining()
             connection.request('POST', '/find', json.dumps(payload), {'Content-Type': 'application/json'})
+            remaining()
             response = connection.getresponse()
-            encoded = response.read(32769)
+            # read1 performs at most one raw read, so a dribbling peer cannot
+            # renew the socket timeout indefinitely with partial JSON.
+            encoded = bytearray()
+            while not response.isclosed() and len(encoded) <= 32768:
+                remaining()
+                chunk = response.read1(32769 - len(encoded))
+                if not chunk:
+                    break
+                encoded.extend(chunk)
             if len(encoded) > 32768:
                 raise ValueError('Oversized object response')
             value = json.loads(encoded)
@@ -465,6 +501,8 @@ class OrionGateway:
         except (OSError, http.client.HTTPException, ValueError) as error:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'find_unavailable', 'Object lookup failed.') from error
         finally:
+            if response is not None:
+                response.close()
             connection.close()
 
     def aim_light(self, payload):
@@ -478,15 +516,28 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_off', 'Camera is unavailable or disabled.')
         token = secrets.token_hex(16)
         mode = self.get_tracking_mode()['tracking_mode']
-        deadline = time.monotonic() + 52
+        total_deadline = time.monotonic() + AIM_TOTAL_SECONDS
+        deadline = total_deadline - AIM_RECOVERY_SECONDS
+        recovery_deadline = total_deadline - AIM_VOICE_END_SECONDS
         begun = False
         interval = False
-        def work(action, **fields):
-            return self._checked('aim-light ' + json.dumps({'action': action, 'token': token, **fields}))
+        primary_error = None
+        def checked(command, until=deadline):
+            if time.monotonic() >= until:
+                raise GatewayError(HTTPStatus.GATEWAY_TIMEOUT, 'aim_timeout', 'Aiming timed out.')
+            return self._checked(command, deadline=until)
+        def work(action, until=deadline, **fields):
+            return checked('aim-light ' + json.dumps({'action': action, 'token': token, **fields}), until)
+        def find():
+            guard()
+            # Do not admit inference that could outlive the normal-work budget.
+            if deadline - time.monotonic() < FIND_TIMEOUT_SECONDS:
+                raise GatewayError(HTTPStatus.GATEWAY_TIMEOUT, 'aim_timeout', 'No time remains for another lookup.')
+            return self.find_object(payload['category'], session, deadline=deadline)
         def guard():
             if not self.camera_is_enabled() or self.get_tracking_mode()['tracking_mode'] != mode:
                 raise GatewayError(HTTPStatus.CONFLICT, 'camera_changed', 'Camera or tracking changed during aiming.')
-            voice = self._checked('voice status')
+            voice = checked('voice status')
             if ((session is not None and voice.get('vision_session') != session)
                     or (session is None and voice['voice'].get('session'))):
                 raise GatewayError(HTTPStatus.CONFLICT, 'voice_active', 'The voice-safe aiming interval ended.')
@@ -495,11 +546,11 @@ class OrionGateway:
         def wait_movement(result, check=True):
             if result.get('run_id') is None:
                 return
-            until = time.monotonic() + 10
+            until = min(time.monotonic() + 10, deadline if check else recovery_deadline)
             while time.monotonic() < until:
                 if check:
                     guard()
-                status = self._checked('status')
+                status = checked('status', until)
                 motion = next((item for item in (status.get('motion'), status.get('last_motion'))
                                if item and item.get('run_id') == result['run_id']), None)
                 if not motion:
@@ -508,22 +559,22 @@ class OrionGateway:
                     return
                 if motion['state'] not in ('executing', 'settling'):
                     raise GatewayError(HTTPStatus.CONFLICT, 'aim_interrupted', 'Aiming did not complete.')
-                time.sleep(.05)
+                time.sleep(min(.05, max(0, until - time.monotonic())))
             raise GatewayError(HTTPStatus.GATEWAY_TIMEOUT, 'aim_timeout', 'Aiming did not settle.')
         try:
             if session is not None:
-                self._checked(f'voice {session} vision_begin')
                 interval = True
+                checked(f'voice {session} vision_begin')
             guard()
-            work('begin')
             begun = True
-            found = self.find_object(payload['category'], session)
+            work('begin')
+            found = find()
             for index in range(3):
                 if found['status'] != 'not_found':
                     break
                 guard()
                 wait_movement(work('scan', index=index))
-                found = self.find_object(payload['category'], session)
+                found = find()
             guard()
             if found['status'] != 'found':
                 return {'ok': True, **found, 'moved': False}
@@ -544,17 +595,37 @@ class OrionGateway:
                 raise GatewayError(HTTPStatus.CONFLICT, 'aim_interrupted', 'The aimed pose was not accepted.')
             work('end')
             begun = False
-            self._checked('routines ' + json.dumps({'action': 'set_mode', 'mode': 'lamp'}))
+            checked('routines ' + json.dumps({'action': 'set_mode', 'mode': 'lamp'}))
             return {**result, 'moved': True, 'category': payload['category']}
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
+            cleanup_error = None
+            recovery_hold_until = min(recovery_deadline,
+                time.monotonic() + AIM_RECOVERY_SECONDS - AIM_VOICE_END_SECONDS)
             try:
                 if begun:
                     # The owner token makes recovery inert after Stop, rest,
                     # speech, or another foreground action revokes this request.
-                    wait_movement(work('end'), check=False)
+                    wait_movement(work('end', until=recovery_deadline), check=False)
+            except Exception as error:
+                cleanup_error = error
+                LOG.warning('Aiming recovery failed: %s', error)
+                # End has an eight-second runtime lease, including failed
+                # scans. If its reply or status is lost, retain voice ownership
+                # through the reserved recovery window before releasing it.
+                while time.monotonic() < recovery_hold_until:
+                    time.sleep(max(0, min(.05, recovery_hold_until - time.monotonic())))
             finally:
                 if interval:
-                    self._checked(f'voice {session} vision_end')
+                    try:
+                        checked(f'voice {session} vision_end', total_deadline)
+                    except Exception as error:
+                        cleanup_error = cleanup_error or error
+                        LOG.warning('Closing aiming voice interval failed: %s', error)
+            if primary_error is None and cleanup_error is not None:
+                raise cleanup_error
 
     def status(self) -> dict[str, Any]:
         runtime = self.client.request("status")
@@ -1826,8 +1897,8 @@ class OrionGateway:
             )
         return self._checked(command)
 
-    def _checked(self, command: str) -> dict[str, Any]:
-        response = self.client.request(command)
+    def _checked(self, command: str, *, deadline=None) -> dict[str, Any]:
+        response = self.client.request(command, **({'deadline': deadline} if deadline is not None else {}))
         if response.get("ok") is False:
             raise GatewayError(
                 HTTPStatus.CONFLICT,

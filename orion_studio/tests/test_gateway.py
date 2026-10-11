@@ -373,6 +373,7 @@ class CameraProxyTests(unittest.TestCase):
         self.rest_checked = threading.Event()
         self.snapshot_renewed = threading.Event()
         self.vision_requests = []
+        self.find_reply = (200, {'status': 'not_found', 'candidates': []})
         self.detections = dict(capture_boottime_ns='12345678901234567', age_ms=25,
             detections=[dict(box=[.1, .2, .3, .4], score=.95, track_id=7, chosen_target=True,
                              capture_boottime_ns='12345678901234567')])
@@ -380,6 +381,16 @@ class CameraProxyTests(unittest.TestCase):
 
         class VisionHandler(BaseHTTPRequestHandler):
             def log_message(self, *args): pass
+            def do_POST(self):
+                owner.vision_requests.append(self.path)
+                self.rfile.read(int(self.headers['Content-Length']))
+                status, value = owner.find_reply
+                body = json.dumps(value).encode()
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             def do_GET(self):
                 owner.vision_requests.append(self.path)
                 if owner.off:
@@ -441,6 +452,15 @@ class CameraProxyTests(unittest.TestCase):
             self.assertEqual(response.read(), b'[]')
             self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'tauri://localhost')
         self.client.request.assert_not_called()
+
+    def test_find_reads_http10_body_with_an_absolute_deadline(self):
+        self.assertEqual(self.gateway.find_object('book', deadline=time.monotonic() + 2),
+                         self.find_reply[1])
+        self.assertEqual(self.vision_requests, ['/find'])
+        with self.assertRaises(GatewayError) as caught:
+            self.gateway.find_object('book', deadline=time.monotonic() - 1)
+        self.assertEqual(caught.exception.code, 'find_unavailable')
+        self.assertEqual(self.vision_requests, ['/find'])
 
     def test_detections_require_an_existing_healthy_viewer_and_are_not_logged_or_saved(self):
         with self.assertRaises(urllib.error.HTTPError) as error:
