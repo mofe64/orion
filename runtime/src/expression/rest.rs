@@ -46,7 +46,7 @@ struct PendingAttention {
 
 enum AttentionTarget {
     Side(String),
-    Bearing(f64, f64),
+    Bearing(f64, f64, Option<u64>),
     Scan,
 }
 
@@ -159,13 +159,14 @@ impl RestCoordinator {
         &mut self,
         session: &str,
         bearing: Option<(f64, f64)>,
+        track_id: Option<u64>,
         expires_at: f64,
     ) {
         if !matches!(self.state, RestState::Disabled | RestState::Fault) {
             self.attention = Some(PendingAttention {
                 session: session.into(),
                 target: bearing.map_or(AttentionTarget::Scan, |(az, el)| {
-                    AttentionTarget::Bearing(az, el)
+                    AttentionTarget::Bearing(az, el, track_id)
                 }),
                 expires_at,
             });
@@ -332,8 +333,13 @@ impl RestCoordinator {
                         AttentionTarget::Side(side) => {
                             let _ = character.attend(&side, 0.75, now, core);
                         }
-                        AttentionTarget::Bearing(az, el) => {
-                            let _ = character.attend_bearing(Some((az, el)), now, core);
+                        AttentionTarget::Bearing(az, el, track_id) => {
+                            let _ = character.attend_tracked_bearing(
+                                Some((az, el)),
+                                track_id,
+                                now,
+                                core,
+                            );
                         }
                         AttentionTarget::Scan => {
                             let _ = character.attend_bearing(None, now, core);

@@ -23,6 +23,29 @@ def intrinsics():
     return Intrinsics([[125, 0, 160], [0, 125, 120], [0, 0, 1]], [-.05, .005, 0, 0])
 
 
+class ConversationTargetTests(unittest.TestCase):
+    def test_speaker_pin_does_not_switch_to_a_larger_bystander_and_expires(self):
+        now = [10.]
+        pipeline = FacePipeline(MagicMock(), intrinsics(), MagicMock(), clock=lambda: now[0],
+                                boot_clock=lambda: 10_000_000_000)
+        pipeline.reset(True)
+        tracks = pipeline.tracker.update(10_000_000_000,
+            [face((100, 100), 50), face((200, 100), 35)],
+            [{'azimuth': .2, 'elevation': .1}, {'azimuth': -.4, 'elevation': .1}])
+        result = pipeline.speaker(9_000_000_000)
+        chosen = result['speaker']['track_id']
+        speaker = next(track for track in tracks if track.id == chosen)
+        other = next(track for track in tracks if track.id != chosen)
+        other.face = face((200, 100), 150)
+        self.assertIs(pipeline._choose_target(tracks, 10_000_000_000), speaker)
+        self.assertIsNone(pipeline._choose_target([other], 10_000_000_000))
+        now[0] = 14.
+        self.assertIs(pipeline._choose_target([other], 10_000_000_000), other)
+        pipeline.speaker(9_000_000_000)
+        pipeline.reset(False)
+        self.assertIsNone(pipeline.speaker_track_id)
+
+
 def face(centre=(160, 120), size=40, frontal=True):
     x, y = centre
     return Face([x - size / 2, y - size / 2, size, size],

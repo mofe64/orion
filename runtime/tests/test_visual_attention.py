@@ -1,9 +1,39 @@
 import time
+import json
 
 from daemon_support import DaemonTestCase, daemon, request
 
 
 class VisualAttentionTests(DaemonTestCase):
+    def test_conversation_tracks_only_its_speaker_between_replies_and_clear_settles(self):
+        from test_gaze import boottime_ns
+        def target(azimuth, track=7):
+            return 'gaze target ' + json.dumps(dict(track_id=track, capture_boottime_ns=boottime_ns(),
+                azimuth=azimuth, elevation=.1, confidence=.95, **{'class': 'face'}))
+        with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
+            self.wait_for_rest(path, 'awake')
+            session = 'a'*32
+            self.voice(path, session, 'wake', 'endpoint', 'confirmed', 'attend_bearing .3 .1 0 7')
+            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .28)
+            first = request(path, 'character status')['character']['active_anchor']
+            self.assertFalse(request(path, target(.6, 8))['accepted'])
+            self.assertTrue(request(path, target(.32))['accepted'])
+            self.assertEqual(request(path, 'character status')['character']['active_anchor'], first)
+            self.assertTrue(request(path, target(.6))['accepted'])
+            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .58)
+            second = request(path, 'character status')['character']['active_anchor']
+            # The daemon's recording audio device completes immediately;
+            # sustained speech ownership is exercised in the Rust regression.
+            self.assertTrue(request(path, target(-.2))['accepted'])
+            self.ok(path, 'gaze clear')
+            self.wait_for(path, 'character status', lambda s: s['character'].get('active_clip') != 'attention_return')
+            self.assertAlmostEqual(request(path, 'character status')['character']['active_anchor']['base_yaw_joint'],
+                second['base_yaw_joint'], delta=.001)
+            self.assertFalse(request(path, target(-.2))['accepted'])
+            request(path, 'stop')  # Idle Stop may report no movement; its gaze latch still applies.
+            self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
+            self.assertFalse(request(path, target(-.2))['ok'])
+
     def test_enabled_gaze_and_owned_confirmed_fresh_session_are_required(self):
         with daemon(hardware='v2', following=True, gaze=False) as path:
             for verb in ('attend_bearing .4 .1 0', 'attend_scan 0'):

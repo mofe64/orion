@@ -74,7 +74,7 @@ values; they change gaze character, never calibration or the motor ceiling:
 The existing compiler previews each plan with a conservative shared peak
 ceiling of 1.5 rad/s, including anchor return. A fixed-budget FK solve chooses
 the nearer calibrated limit for unreachable bearings. Each generated
-`simulation_preview` performance contains an aim/hold and a zero-offset
+performance contains an aim/hold and a zero-offset
 settle; shoulder and elbow retain their anchor-relative zero offsets.
 The neck counter-rotation is a starting guess for FK, not a bearing-to-angle
 conversion. Lamp tuning and physical acceptance remain unverified.
@@ -278,6 +278,30 @@ No loader silently drops an invalid field, clips an authored absolute target,
 or substitutes a missing pose.
 
 ## Animation catalogue
+
+### Generated speaker attention
+
+`gaze_attention` is the V2 speaker-facing turn and conversation adjustment.
+`attention_return` restores a held anchor or shortens an interrupted adjustment.
+They are generated in memory and use the ordinary calibrated motion compiler.
+The ten authoring decisions are:
+
+1. Face the confirmed speaker: the neck leads, then the base catches up.
+2. The eyeline faces the person while the arm silhouette stays at its anchor.
+3. The neck's first drawing announces the larger base turn.
+4. Wrist pitch and neck counter-rotation preserve the eyeline; the arm stays quiet.
+5. The facing drawing settles before becoming the conversation anchor. Returns
+   settle at the previously committed anchor.
+6. URDF FK coordinates swivel, base and pitch instead of equating bearings to joints.
+7. The shared 1.5 rad/s compiled ceiling and bounded 0.65-radian base travel
+   keep the motion readable; deadband updates avoid continuous fidgeting.
+8. Home and conversational anchors support it. A held desk-light anchor excludes it.
+9. Speech freezes its anchor. Scene, Stop and rest preempt attention. Target
+   loss or tracking clear revokes the track and replaces only its owned spline
+   with a continuous anchor return. Failure never commits a target anchor.
+10. V2 FK/compiler and simulated-daemon regressions check identity, deadband,
+    speech freeze, calibrated motion and return. Moving-speaker, two-person,
+    cable-clearance and interruption checks remain owed on the lamp.
 
 V2 speech reactions use dedicated `speak_react_*` assets. Listening and scenes
 retain their own subtler motions, including `acknowledge_nod` and `disagree_soft`.

@@ -36,6 +36,8 @@ class FacePipeline:
         self.target_selected = False
         self.last_gaze_capture = 0
         self.target_track_id = None
+        self.speaker_track_id = None
+        self.speaker_until = 0.
         self.challenger_track_id = None
         self.challenger_since_ns = None
         self.objects = objects
@@ -60,6 +62,8 @@ class FacePipeline:
             self.preview_generation += 1
             self.tracker.clear()
             self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
+            self.speaker_track_id = None
+            self.speaker_until = 0.
             self.changed.notify_all()
         if not enabled:
             with self.commands:
@@ -212,10 +216,20 @@ class FacePipeline:
 
     def speaker(self, since_ns):
         with self.changed:
-            return self.tracker.speaker(since_ns, self.boot_clock())
+            result = self.tracker.speaker(since_ns, self.boot_clock())
+            chosen = result['speaker']
+            if chosen:
+                self.speaker_track_id = chosen['track_id']
+                self.speaker_until = self.clock() + 3.
+                self.target_track_id = self.speaker_track_id
+                self.challenger_track_id = self.challenger_since_ns = None
+            return result
 
     def _choose_target(self, tracks, stamp):
-        # Only gaze selection remembers a target; speaker selection stays in Tracker.
+        if self.speaker_track_id is not None and self.clock() < self.speaker_until:
+            # A disappearing speaker never causes a turn to a bystander.
+            return next((track for track in tracks if track.id == self.speaker_track_id), None)
+        self.speaker_track_id = None
         current = next((track for track in tracks if track.id == self.target_track_id), None)
         if current is None:
             chosen = choose_track(tracks)
@@ -260,8 +274,16 @@ class FacePipeline:
             if now >= self.next_voice_poll:
                 try:
                     active = self.client.voice_active()
-                except (OSError, ValueError):
+                except (OSError, ValueError, KeyError, TypeError):
                     active = True  # Reduced CPU use while voice state is unknown.
+                if self.speaker_track_id is not None:
+                    try:
+                        conversing = self.client.conversation_active()
+                    except (OSError, ValueError, KeyError, TypeError):
+                        conversing = False
+                    if conversing:
+                        with self.changed:
+                            self.speaker_until = now + 3.
                 self.rate_hz = VOICE_HZ if active else IDLE_HZ
                 if active and last_inference is not None:
                     next_inference = max(next_inference, last_inference + 1 / VOICE_HZ)
@@ -312,6 +334,8 @@ class FacePipeline:
                     self.error = str(error)
                     self.tracker.clear()
                     self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
+                    self.speaker_track_id = None
+                    self.speaker_until = 0.
                     self.latest_preview = None
                 with self.commands:
                     self._clear_target()

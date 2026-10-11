@@ -380,8 +380,10 @@ On V2, after the runtime acknowledges `voice SESSION confirmed`, the listener
 asks the user-only vision Unix socket `GET /speaker?since_ns=…`. The window
 begins two seconds before the wake candidate and uses `CLOCK_BOOTTIME`, matching
 camera captures. The request times out after 300 ms and transfers metadata only.
-Capture continues in its own task. A conversation requests visual attention
-once; duplicate confirmations cannot repeat it. Barge-in sessions never turn.
+Capture continues in its own task. Each confirmed voice turn requests visual
+attention once; duplicate confirmations for the same session cannot repeat it.
+A follow-up uses its own session and refreshes the speaker selection. Barge-in
+sessions never request a turn.
 
 Vision keeps at most 32 mouth signatures per track and examines up to three
 seconds. Each signature expresses the mouth corners relative to the eye centre,
@@ -396,7 +398,7 @@ then the largest face as a nearest-face proxy. YuNet mouth corners provide a
 heuristic, not a speech or lip-opening measurement. Speaker selection on the
 lamp remains unverified. See [vision setup and tracking](../vision/README.md#face-tracking).
 
-The listener sends `voice SESSION attend_bearing AZ EL AGE_MS`, with base
+The listener sends `voice SESSION attend_bearing AZ EL AGE_MS TRACK_ID`, with base
 azimuth/elevation in radians and age computed from the selected capture. Queue
 delay is added before delivery. V2 gaze is enabled by default; `--gaze off` or
 unavailable camera geometry rejects visual attention. An accepted current wake
@@ -412,6 +414,18 @@ motion and refreshes feedback before compilation and the speed check.
 Only successful measured completion installs that temporary
 anchor; the existing conversation hold and return restore the saved anchor.
 Scenes, speech, Stop and unavailable character states retain priority.
+
+Vision pins the selected track while the confirmed conversation remains active,
+including its echo guard and follow-up window. A larger bystander cannot replace
+it. The pin expires within three seconds when voice status is absent or cannot
+be verified. While the speaker remains visible, fresh `gaze target` updates for
+that track can adjust the held conversation anchor between replies. Movement
+requires more than the gaze deadband, uses the same neck-first compiler path,
+and commits the anchor only after measured completion. Other face tracks are
+ignored. Each spoken reply freezes its starting anchor. Tracking clear revokes
+the speaker track and smoothly shortens an owned adjustment back to its last
+committed anchor; a later confirmed turn may select the speaker again. This
+continuous conversation behavior is on by default and remains lamp-unverified.
 
 A working camera with no recent face sends `voice SESSION attend_scan AGE_MS`.
 Gaze compiles one small neck sweep and settles to the original anchor, then

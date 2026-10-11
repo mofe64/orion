@@ -133,9 +133,9 @@ Gaze reports `enabled:false, state:"unavailable"` with the startup error, and
 the daemon; resume requests cannot repair missing geometry. Explicitly disabled
 gaze reports `state:"off"`.
 
-Native MuJoCo checks tracking and software ownership. These are
-`simulation_preview` performances: physical tracking, safe cable motion,
-speed/deadband tuning and camera alignment remain unverified on the lamp.
+Native MuJoCo checks tracking and software ownership through the production
+compiler. Conversation retargeting and its interruption return remain
+lamp-unverified.
 
 ## Desk-light aiming
 
@@ -590,7 +590,9 @@ The rest coordinator waits for home and checks that the observation is still
 younger than three seconds before requesting attention.
 
 On V2 the listener asks local vision for a speaker, then sends
-`voice SESSION attend_bearing AZ EL AGE_MS`. This requires enabled gaze, finite
+`voice SESSION attend_bearing AZ EL AGE_MS [TRACK_ID]`. The optional positive
+track ID enables continued speaker following; omission keeps the original
+single-turn hold. This requires enabled gaze, finite
 base-frame radians, and the current confirmed session. The same three-second
 age rule includes command-queue and homing delay. Gaze compiles a neck-first
 turn, and successful measured completion captures the temporary facing anchor.
@@ -601,6 +603,10 @@ before compiling the attention trajectory and checking its speed. Scene,
 speech and Stop retain priority; an accepted current-session wake confirmation
 can clear a powered character's Stop latch before visual attention is queued.
 Disable blocks visual attention until explicit recovery.
+Fresh face targets for the selected track can re-aim between replies after a
+4° bearing change. Bystanders, stale captures, speech and held desk-light
+anchors cannot update the facing anchor. `gaze clear` revokes the selected
+speaker and settles only its owned adjustment back to the committed anchor.
 `voice SESSION attend_scan AGE_MS` makes one short calibrated neck sweep when
 the camera reports no face. Camera-off or unavailable vision sends no attention.
 See [speaker selection and freshness](../docs/voice-architecture.md#direction-evidence).

@@ -222,11 +222,13 @@ Confirmed-wake recovery rearms attention before bearing delivery without startup
 or torque commands. Explicit character start after disable follows the measured
 home lifecycle. Powered foreground work retains ownership. Gaze can replace lower
 priority idle or thinking motion and suppresses idle while its run settles.
-Streamed gaze never wakes a resting lamp, enables torque or moves the anchor. The
+Streamed idle gaze never wakes a resting lamp, enables torque or moves the anchor.
+Confirmed conversation tracking may update the temporary speaker-facing anchor
+between replies; speech freezes it until the reply ends. The
 [runtime command contract](../runtime/README.md#bearing-gaze-v2) and
 [tuning values](motion-reference.md#bearing-gaze-tuning) define the interface.
-Physical gaze behaviour remains unverified; native MuJoCo validates software
-tracking and calibrated samples.
+Continuous conversation retargeting remains lamp-unverified; native MuJoCo
+validates software tracking and calibrated samples.
 
 Confirmed voice sessions can request small absolute turns toward the speaker
 (`attention_left` and `attention_right`). The

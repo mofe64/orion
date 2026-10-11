@@ -52,8 +52,9 @@ def boottime_ns():
 def age_attention_command(command, elapsed_seconds):
     fields = command.split()
     if ((len(fields) == 4 and fields[2] in {"attend_left", "attend_right", "attend_scan"})
-            or (len(fields) == 6 and fields[2] == "attend_bearing")):
-        fields[-1] = str(float(fields[-1]) + elapsed_seconds * 1000)
+            or (len(fields) in (6, 7) and fields[2] == "attend_bearing")):
+        age_index = 5 if fields[2] == "attend_bearing" else 3
+        fields[age_index] = str(float(fields[age_index]) + elapsed_seconds * 1000)
         return " ".join(fields)
     return command
 
@@ -95,7 +96,10 @@ async def visual_attention(path, since_ns, clock=boottime_ns):
             if (not math.isfinite(azimuth) or not math.isfinite(elevation)
                     or abs(azimuth) > math.pi or abs(elevation) > math.pi/2):
                 return None
-            return f"attend_bearing {azimuth:.9f} {elevation:.9f} {age_ms:.3f}"
+            track_id = speaker.get("track_id")
+            if type(track_id) is not int or track_id < 1:
+                return None
+            return f"attend_bearing {azimuth:.9f} {elevation:.9f} {age_ms:.3f} {track_id}"
     except (OSError, ValueError, KeyError, TypeError, asyncio.TimeoutError, asyncio.IncompleteReadError):
         return None
     finally:
@@ -149,7 +153,7 @@ class SatelliteSession:
         self.observation = {"side": "unknown", "confidence": 0.0}
         self.observed_at = float("-inf")
         self.wake_since_ns = 0
-        self.visual_attention_requested = False
+        self.visual_attention_session = None
         self.quiet_ms = 0
         self.onset_ms = 0
         self.guard_started = 0.0
@@ -261,7 +265,7 @@ class SatelliteSession:
         self.session_id = uuid.uuid4().hex
         self.phase = "wake"
         self.wake_since_ns = max(0, boottime_ns() - 2_000_000_000)
-        self.visual_attention_requested = False
+        self.visual_attention_session = None
         config = EndpointConfig(speech_rms=self.noise.threshold())
         self.endpoint = self.endpoint_factory(config)
         self.followup_endpoint = self.endpoint_factory(config)
@@ -613,8 +617,8 @@ async def serve(args):
         await confirm_activity(identity)
         side, confidence = observation["side"], observation["confidence"]
         direction_age = session.clock() - observed_at
-        if not skip_attention and hardware == "v2" and session.session_id == identity and not session.visual_attention_requested:
-            session.visual_attention_requested = True
+        if not skip_attention and hardware == "v2" and session.session_id == identity and session.visual_attention_session != identity:
+            session.visual_attention_session = identity
             attention = await visual_attention(getattr(args, "vision_socket", "/tmp/orion-vision.sock"), session.wake_since_ns)
             if attention is not None and session.session_id == identity:
                 expression(attention, identity)

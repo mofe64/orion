@@ -271,8 +271,14 @@ the largest. A fresh current target stays selected despite small area changes.
 Another frontal face must maintain at least 1.5 times its box area for one
 second to replace it; losing the target allows immediate reselection. Missing
 challenger detections or loss of that advantage resets the interval. This
-hysteresis affects gaze only; speaker selection keeps its mouth-motion,
+hysteresis affects idle gaze only; speaker selection keeps its mouth-motion,
 frontality and area ordering.
+A selected `/speaker` track is pinned for the confirmed conversation, including
+guard and follow-up windows. It cannot switch to a larger bystander while
+pinned. Voice-state polls renew a three-second lease; an absent speaker emits
+no substitute target, and privacy/mode changes or tracking failures clear the
+pin. The returned track ID lets the runtime admit only that speaker's fresh
+updates between replies. A later confirmed turn can select a speaker again.
 Targets and clears go only through runtime `gaze`. V2 servers enable gaze by
 default; `--gaze off` disables it, and movement still requires powered character
 mode. Stop reports `state:"stopped"` and the originating `stop_command`. A confirmed

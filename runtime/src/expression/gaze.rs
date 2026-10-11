@@ -171,6 +171,32 @@ impl GazeCoordinator {
         now: f64,
         core: &RuntimeCore<D>,
     ) -> Result<()> {
+        self.validate_target(&target, core)?;
+        if self
+            .last_capture
+            .is_some_and(|previous| target.capture_boottime_ns <= previous)
+        {
+            return Err(Error::InvalidArgument(
+                "Gaze capture timestamps must increase".into(),
+            ));
+        }
+        if !self.active() {
+            self.started_at = now;
+            self.last_update = f64::NEG_INFINITY;
+        }
+        self.last_capture = Some(target.capture_boottime_ns);
+        self.status.track_id = Some(target.track_id);
+        self.target = Some(target); // One latest-value slot; never queue a stream.
+        self.explicit_clear = false;
+        self.status.error = None;
+        Ok(())
+    }
+
+    pub(crate) fn validate_target<D: RuntimeDriver>(
+        &self,
+        target: &GazeTarget,
+        core: &RuntimeCore<D>,
+    ) -> Result<()> {
         if !self.status.enabled {
             return Err(Error::InvalidState("Gaze is unavailable".into()));
         }
@@ -197,23 +223,6 @@ impl GazeCoordinator {
                 "Invalid or stale gaze target bearing".into(),
             ));
         }
-        if self
-            .last_capture
-            .is_some_and(|previous| target.capture_boottime_ns <= previous)
-        {
-            return Err(Error::InvalidArgument(
-                "Gaze capture timestamps must increase".into(),
-            ));
-        }
-        if !self.active() {
-            self.started_at = now;
-            self.last_update = f64::NEG_INFINITY;
-        }
-        self.last_capture = Some(target.capture_boottime_ns);
-        self.status.track_id = Some(target.track_id);
-        self.target = Some(target); // One latest-value slot; never queue a stream.
-        self.explicit_clear = false;
-        self.status.error = None;
         Ok(())
     }
 
@@ -319,7 +328,7 @@ impl GazeCoordinator {
             .collect();
         let mut definition = MotionDefinition {
             name: name.into(),
-            description: "One visual wake-attention decision; simulation_preview".into(),
+            description: "Capture-grounded speaker attention with a measured facing settle".into(),
             space: MotionSpace::AnchorRelative,
             return_to_anchor: true,
             style: MotionStyle {
@@ -562,7 +571,7 @@ impl GazeCoordinator {
             .collect();
         let mut definition = MotionDefinition {
             name: "gaze_performance".into(),
-            description: "Capture-grounded gaze; simulation_preview".into(),
+            description: "Capture-grounded gaze with an anchor return".into(),
             space: MotionSpace::AnchorRelative,
             return_to_anchor: true,
             style: MotionStyle {
@@ -903,6 +912,62 @@ mod tests {
             .attend_bearing(Some((0.4, 0.)), 0., &mut core)
             .unwrap_err();
         assert!(error.to_string().contains("Gaze is unavailable"));
+    }
+
+    #[test]
+    fn conversation_anchor_is_frozen_during_speech_and_retargets_afterward() {
+        let (mut core, _, boot) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0.0, &mut core).unwrap();
+        let tick = |step: u64,
+                    speaking,
+                    character: &mut crate::CharacterCoordinator,
+                    core: &mut RuntimeCore<FollowingDriver>| {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, core, false, None, speaking, None, None)
+                .unwrap();
+        };
+        for step in 1..=250 {
+            tick(step, false, &mut character, &mut core);
+        }
+        character
+            .attend_tracked_bearing(Some((0.4, 0.0)), Some(1), 5.0, &mut core)
+            .unwrap();
+        for step in 251..=400 {
+            tick(step, false, &mut character, &mut core);
+        }
+        let facing = character.status().active_anchor.clone().unwrap();
+        assert!((facing["base_yaw_joint"] - 0.4).abs() < 0.01);
+        for step in 401..=450 {
+            tick(step, true, &mut character, &mut core);
+            assert!(
+                !character
+                    .queue_gaze_target(
+                        target(boot.load(Ordering::Relaxed), 0.8),
+                        step as f64 * 0.02,
+                        &mut core
+                    )
+                    .unwrap()
+            );
+            assert_eq!(character.status().active_anchor.as_ref(), Some(&facing));
+        }
+        tick(451, false, &mut character, &mut core);
+        assert!(
+            character
+                .queue_gaze_target(target(boot.load(Ordering::Relaxed), 0.8), 9.02, &mut core)
+                .unwrap()
+        );
+        for step in 452..=600 {
+            tick(step, false, &mut character, &mut core);
+        }
+        assert!(
+            (character.status().active_anchor.as_ref().unwrap()["base_yaw_joint"] - 0.8).abs()
+                < 0.01
+        );
     }
 
     #[test]

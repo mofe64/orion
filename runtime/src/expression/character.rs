@@ -247,6 +247,9 @@ pub struct CharacterStatus {
 struct Attention {
     /// Visual attention is lower priority than explicit foreground movement.
     visual: bool,
+    speaker_track_id: Option<u64>,
+    bearing: Option<(f64, f64)>,
+    last_capture: Option<u64>,
     /// The anchor to restore after the attention period ends.
     previous: JointPositions,
     /// The currently tracked attention movement, either the outward turn or the return.
@@ -447,8 +450,54 @@ impl CharacterCoordinator {
     pub fn gaze_status(&self) -> super::gaze::GazeStatus {
         self.gaze.status()
     }
-    pub fn clear_gaze(&mut self) {
+    pub fn clear_gaze<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<()> {
         self.gaze.clear();
+        if let Some(attention) = self.attention.as_mut().filter(|attention| attention.visual) {
+            attention.speaker_track_id = None;
+            attention.bearing = None;
+            attention.last_capture = None;
+            // Privacy/mode/target loss may shorten only our own adjustment.
+            // Settle back to the last committed anchor, without touching a
+            // scene or speech run that has already taken ownership.
+            if attention.run_id.is_some_and(|id| {
+                core.snapshot()
+                    .motion
+                    .as_ref()
+                    .is_some_and(|motion| motion.run_id == id)
+            }) && let Some(anchor) = self.status.active_anchor.clone()
+            {
+                let run = attention.run_id.unwrap();
+                attention.run_id = Some(
+                    if core
+                        .snapshot()
+                        .motion
+                        .as_ref()
+                        .is_some_and(|motion| motion.state == MovementPhase::Executing)
+                    {
+                        core.extend_character_performance(
+                            run,
+                            attention_return_motion(),
+                            anchor,
+                            now,
+                        )?
+                    } else {
+                        checked(core.handle_command("stop", now))?;
+                        core.play_generated_anchored_relative(
+                            attention_return_motion(),
+                            anchor,
+                            now,
+                        )?
+                    },
+                );
+                attention.returning = false;
+                self.status.active_clip = Some("attention_return".into());
+            }
+        }
+        Ok(())
     }
     pub(crate) fn forget_gaze_for_external_stop(&mut self, command: super::gaze::GazeStopCommand) {
         self.gaze.suspend(command);
@@ -491,7 +540,6 @@ impl CharacterCoordinator {
             || self.foreground_pending
             || self.foreground_scene_run_id.is_some()
             || self.speech_motion_run_id.is_some()
-            || self.attention.is_some()
             || !matches!(
                 self.status.state,
                 CharacterState::HomeIdle
@@ -501,6 +549,9 @@ impl CharacterCoordinator {
             )
         {
             return Ok(false);
+        }
+        if self.attention.is_some() {
+            return self.update_speaker_bearing(target, now, core);
         }
         // Validate before preempting lower-priority work. Replacing the one
         // queued target must not cancel an existing gaze spline.
@@ -634,6 +685,9 @@ impl CharacterCoordinator {
         // returning is false, as we are starting a new attention run
         self.attention = Some(Attention {
             visual: false,
+            speaker_track_id: None,
+            bearing: None,
+            last_capture: None,
             previous,
             run_id: Some(run_id),
             returning: false,
@@ -655,6 +709,16 @@ impl CharacterCoordinator {
     pub fn attend_bearing<D: RuntimeDriver>(
         &mut self,
         bearing: Option<(f64, f64)>,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<CharacterStatus> {
+        self.attend_tracked_bearing(bearing, None, now, core)
+    }
+
+    pub fn attend_tracked_bearing<D: RuntimeDriver>(
+        &mut self,
+        bearing: Option<(f64, f64)>,
+        speaker_track_id: Option<u64>,
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<CharacterStatus> {
@@ -693,7 +757,12 @@ impl CharacterCoordinator {
                 "Attention requires an available powered character.".into(),
             ));
         }
-        if self.attention.is_some() {
+        if let Some(attention) = self.attention.as_mut() {
+            // A confirmed follow-up can select its speaker afresh. Continuous
+            // updates still arrive through gaze target and obey the deadband.
+            if attention.visual && !attention.returning {
+                attention.speaker_track_id = speaker_track_id;
+            }
             return Ok(self.status.clone());
         }
         let previous = self
@@ -707,6 +776,9 @@ impl CharacterCoordinator {
         let run_id = core.play_generated_anchored_relative(definition, facing, now)?;
         self.attention = Some(Attention {
             visual: true,
+            speaker_track_id,
+            bearing,
+            last_capture: None,
             previous,
             run_id: Some(run_id),
             returning: false,
@@ -716,6 +788,54 @@ impl CharacterCoordinator {
         self.status.active_clip = Some(name);
         self.reset_timers(now);
         Ok(self.status.clone())
+    }
+
+    /// Command-time planning, never detector work or IK in the servo tick.
+    fn update_speaker_bearing<D: RuntimeDriver>(
+        &mut self,
+        target: super::gaze::GazeTarget,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<bool> {
+        let attention = self.attention.as_ref().unwrap();
+        if !attention.visual
+            || attention.returning
+            || now >= attention.expires_at
+            || attention.run_id.is_some()
+            || attention.speaker_track_id != Some(target.track_id)
+            || target.category.as_deref() != Some("face")
+            || attention
+                .last_capture
+                .is_some_and(|previous| target.capture_boottime_ns <= previous)
+        {
+            return Ok(false);
+        }
+        self.gaze.validate_target(&target, core)?;
+        if let Some((az, el)) = attention.bearing {
+            let delta = target.azimuth - az;
+            if delta.sin().atan2(delta.cos()).hypot(target.elevation - el)
+                <= super::gaze::GAZE_DEADBAND_RAD
+            {
+                self.attention.as_mut().unwrap().last_capture = Some(target.capture_boottime_ns);
+                return Ok(true);
+            }
+        }
+        let anchor = self
+            .status
+            .active_anchor
+            .clone()
+            .ok_or_else(|| Error::InvalidState("Speaker following needs an anchor".into()))?;
+        self.preempt_idle_or_thinking(now, core)?;
+        let bearing = (target.azimuth, target.elevation);
+        let (definition, facing) = self.gaze.attention_motion(Some(bearing), &anchor, core)?;
+        let run_id = core.play_generated_anchored_relative(definition, facing, now)?;
+        let attention = self.attention.as_mut().unwrap();
+        attention.bearing = Some(bearing);
+        attention.last_capture = Some(target.capture_boottime_ns);
+        attention.run_id = Some(run_id);
+        self.status.active_clip = Some("gaze_attention".into());
+        self.reset_timers(now);
+        Ok(true)
     }
 
     /// Returns a reference to the character's current status struct.

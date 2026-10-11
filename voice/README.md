@@ -74,7 +74,10 @@ baseline and opens the teal follow-up invitation.
 without HAT mixer commands; `--capture-channels 2|6` and `--processed-channel N`
 select the verified XVF3800 stream. The processed channel feeds the listener
 without averaging raw microphone channels. V2 attention asks the local vision
-service after confirmed wake, using built-in wide-lens intrinsics. V2 runtime
+service once per confirmed wake or follow-up session, using built-in wide-lens
+intrinsics. It passes the selected track ID with the bearing so the runtime can
+follow that speaker between replies. Duplicate confirmation cannot reselect.
+V2 runtime
 enables gaze by default; `--gaze off`, camera-off or unavailable vision suppresses
 attention. `--vision-socket`
 defaults to `/tmp/orion-vision.sock`. See

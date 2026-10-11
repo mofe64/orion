@@ -37,6 +37,9 @@ class VisualAttentionTests(unittest.IsolatedAsyncioTestCase):
                     await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': identity, 'followup': False}))
                     await asyncio.sleep(.1)
                     query.assert_awaited_once()
+                    await client.send(json.dumps({'type': 'wake.confirmed', 'sessionId': identity, 'followup': True}))
+                    await asyncio.sleep(.1)
+                    query.assert_awaited_once()  # Duplicate feedback cannot reselect a bystander.
                 else:
                     query.assert_not_awaited()
                 await client.close()
@@ -80,13 +83,13 @@ class VisualAttentionTests(unittest.IsolatedAsyncioTestCase):
                 server.close(); await server.wait_closed()
 
     async def test_queries_metadata_and_sends_bearing_with_capture_age(self):
-        value = {'speaker': {'capture_boottime_ns': 1_500_000_000, 'azimuth': .4, 'elevation': .1}}
+        value = {'speaker': {'track_id': 7, 'capture_boottime_ns': 1_500_000_000, 'azimuth': .4, 'elevation': .1}}
         command, requests = await self.query(value)
-        self.assertEqual(command, 'attend_bearing 0.400000000 0.100000000 500.000')
+        self.assertEqual(command, 'attend_bearing 0.400000000 0.100000000 500.000 7')
         self.assertIn('GET /speaker?since_ns=100 ', requests[0])
         self.assertNotIn('frame', requests[0])
         self.assertEqual(age_attention_command('voice owner ' + command, .25),
-            'voice owner attend_bearing 0.400000000 0.100000000 750.0')
+            'voice owner attend_bearing 0.400000000 0.100000000 750.0 7')
 
     async def test_no_face_scans_once_but_off_unavailable_stale_or_invalid_never_turns(self):
         command, _ = await self.query({'speaker': None, 'observed_boottime_ns': 1_900_000_000})

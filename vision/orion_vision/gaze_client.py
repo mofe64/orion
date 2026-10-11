@@ -86,3 +86,8 @@ class GazeClient:
         voice = self.command("voice status")["voice"]
         return bool(voice.get("session") and voice.get("confirmed")
             and voice.get("phase") not in ("guard", "window", "unavailable", ""))
+
+    def conversation_active(self):
+        voice = self.command("voice status")["voice"]
+        return bool(voice.get("session") and voice.get("confirmed")
+                    and voice.get("phase") not in ("unavailable", ""))

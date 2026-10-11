@@ -176,7 +176,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
             .as_deref_mut()
             .ok_or_else(|| crate::Error::InvalidState("Character is unavailable".into()))?;
         if command == "gaze clear" {
-            coordinator.clear_gaze();
+            coordinator.clear_gaze(now_seconds, core)?;
         } else if command == "gaze resume" {
             coordinator.resume_gaze(core)?;
         }
@@ -663,7 +663,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             .to_string();
         }
         let parts: Vec<_> = fields.split_whitespace().collect();
-        if parts.len() < 2 || parts.len() > 5 {
+        if parts.len() < 2 || parts.len() > 6 {
             return serde_json::json!({"ok": false, "error": "Expected voice SESSION EVENT"})
                 .to_string();
         }
@@ -676,9 +676,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             if !character.gaze_status().enabled {
                 return serde_json::json!({"ok":false,"error":"Gaze is unavailable"}).to_string();
             }
-            let parsed = (|| -> Result<(Option<(f64, f64)>, f64), &'static str> {
+            let parsed = (|| -> Result<(Option<(f64, f64)>, f64, Option<u64>), &'static str> {
                 let (bearing, age) = match parts[1] {
-                    "attend_bearing" if parts.len() == 5 => {
+                    "attend_bearing" if matches!(parts.len(), 5 | 6) => {
                         let az = parts[2].parse::<f64>().map_err(|_| "Invalid bearing")?;
                         let el = parts[3].parse::<f64>().map_err(|_| "Invalid bearing")?;
                         if !az.is_finite()
@@ -691,15 +691,30 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                         (Some((az, el)), parts[4])
                     }
                     "attend_scan" if parts.len() == 3 => (None, parts[2]),
-                    _ => return Err("Expected attend_bearing AZ EL AGE_MS or attend_scan AGE_MS"),
+                    _ => {
+                        return Err(
+                            "Expected attend_bearing AZ EL AGE_MS [TRACK_ID] or attend_scan AGE_MS",
+                        );
+                    }
                 };
                 let age = age.parse::<f64>().map_err(|_| "Invalid direction age")?;
                 if !age.is_finite() || age < 0.0 {
                     return Err("Invalid direction age");
                 }
-                Ok((bearing, age))
+                let track_id = if parts.len() == 6 {
+                    let id = parts[5]
+                        .parse::<u64>()
+                        .map_err(|_| "Invalid speaker track ID")?;
+                    if id == 0 {
+                        return Err("Invalid speaker track ID");
+                    }
+                    Some(id)
+                } else {
+                    None
+                };
+                Ok((bearing, age, track_id))
             })();
-            let (bearing, age) = match parsed {
+            let (bearing, age, track_id) = match parsed {
                 Ok(value) => value,
                 Err(error) => return serde_json::json!({"ok":false,"error":error}).to_string(),
             };
@@ -707,6 +722,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 rest.queue_bearing_attention(
                     parts[0],
                     bearing,
+                    track_id,
                     now_seconds + (3000.0 - age) / 1000.0,
                 );
             }
