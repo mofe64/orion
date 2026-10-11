@@ -281,8 +281,16 @@ resumes detection. With two people standing still, confirm gaze keeps one
 target. Keep the Studio camera open for ten minutes, toggling camera capture
 off and on once. Check advancing `capture_boottime_ns`, `camera_restarts: 0`,
 and the service cgroup's `cpu.stat` `nr_throttled`; record temperature after
-ten minutes idle with the camera on. These checks and the matched ASR trial
-are lamp-unverified.
+ten minutes idle with the camera on.
+
+The 2026-10-11 lamp check of release `bf05dcd720e5-1f0261b6` passed a 600 s
+Studio-viewed run at 640×360, `CPUQuota=150%` and `Nice=10`. Capture timestamps
+and inference counts advanced, `camera_restarts` remained zero, and
+`nr_throttled` stayed at 1 with no added throttling time. Temperature rose from
+51.8°C to 59.5°C. Studio recovered after the intentional camera off/on toggle.
+Mofe also confirmed the Tracking Off/Faces, steady two-person gaze and matched
+ASR comparison acceptance checks passed. Numeric ASR timing samples were not
+supplied with that confirmation.
 
 ### Fixed-audio ASR timing trial
 
@@ -344,7 +352,8 @@ use at least 20 timed runs for the comparison. Diagnostics use stderr and
 failure returns `ok: false` with a nonzero exit status. Calculate slowdown as
 `100 × (faces_median_ms / off_median_ms - 1)` and compare p95 separately.
 Repeat the pair in reverse order to check thermal drift. Target at most 10%
-median slowdown. Actual Pi timings remain lamp-unverified.
+median slowdown. The acceptance confirmation is recorded above; retain both
+JSON files when repeating the measurement.
 
 ### Capture timing record
 

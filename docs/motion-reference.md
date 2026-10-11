@@ -377,6 +377,80 @@ The runtime-generated `speaking_performance` and interruption-only `speak_settle
 
 ### Poses and scenes
 
+#### V2 desk reaches
+
+`lean_reach_low`, `lean_reach_left` and `lean_reach_right` are ordinary powered
+catalogue poses. They aim the light at a desk point 0.28 m from the base.
+They use the `directional` idle profile to avoid yaw clips around the held
+work area. Geometry and calibrated compilation are verified; physical contact,
+tipping, cable clearance, readability and shoulder load are lamp-unverified.
+
+| Pose | Single idea and lead | Main silhouette | Secondary head and base |
+| --- | --- | --- | --- |
+| `lean_reach_low` | Shoulder and elbow reach decisively forward | Light about 22 cm forward and 24 cm high | Centred base and neck; wrist pitches the beam onto the desk |
+| `lean_reach_left` | Shoulder and elbow extend toward the left work area | Open elbow, light about 19 cm radially forward and 29 cm high | Base faces 0.55 rad left; centred neck and downward wrist preserve the work point |
+| `lean_reach_right` | Shoulder and elbow extend toward the right work area | Mirror of the left reach, with the same arm height | Base faces 0.55 rad right; neck and wrist remain secondary |
+
+The ten authoring answers apply to each pose:
+
+1. The single idea and leading joints are listed in the table.
+2. The main drawing is the extended arm carrying the head out over the desk;
+   the table specifies the low or lateral silhouette.
+3. These poses define the reach apex. An expressive entry must supply a small
+   shoulder/elbow pullback before reaching; the pose itself contains no timing.
+4. The head follows the arm and keeps the beam on the selected desk point.
+   The side reaches turn the base only enough to face their work area.
+5. Settle is justified at the held work point and at the final anchor return.
+6. Coupled shoulder/elbow travel carries the head along an arc. The comfort
+   hull constrains their combined angles.
+7. Commission each pose from home with at least four seconds of authored
+   travel. Expressive transitions must keep a slower return that reads as weight.
+8. Home is the commissioning start. Idle and speech clips compile around all
+   three held reach anchors under the existing amplitude scaling.
+9. A pose does not schedule itself. Explicit playback retains ordinary Stop,
+   cancellation and timeout semantics; no failure changes the character anchor.
+   Autonomous entry/return and interruption choreography belong to the calling
+   behaviour, which must use the compiler and preserve the Stop latch.
+10. FK and MuJoCo check aim, geometry and contact along interpolated entry
+    paths; calibrated compilation checks each pose and catalogue clip. On the
+    lamp, enter slowly, check contact and tipping, record shoulder servo load
+    at each apex, and verify the silhouette before enabling autonomous reaches.
+
+#### Lean IK and table points
+
+`motion::ik::solve_lean` returns `aimed`, `clamped`, or `unreachable`. It is a
+pose planner, not an execution interface. A caller must compile its result
+through `MotionSequence` with live calibration and call
+`ComfortBox::validate_sequence` before installing the movement. Unreachable
+results contain no pose. Invalid input and anchors outside the envelope are
+errors. No solver, geometry loading or file access runs in the 50 Hz tick.
+
+Points use base-frame metres: forward is −Y, the lamp's right is −X, and up
+is +Z. The supported work region is ahead of the base, at or above its table
+plane, outside the central 5 cm radius. `FramePose::table_point` intersects a
+forward optical ray with a horizontal plane (normally `z = 0`) using both the
+capture-time camera position and rotation. Upward, parallel and backward rays
+have no table point; invalid or nonfinite rays are rejected.
+
+The inverse solver reads the V2 chain's link lengths and baked joint frames
+from `Kinematics`. It uses the law of cosines and home's elbow branch, with no
+additional calibration offsets. Lean zero keeps the arm at the anchor and
+aims the head. Lean one requests the wrist near full geometric extension on
+the shoulder-to-target ray. The envelope shortens that request toward the
+anchor; head pitch then aims from the shortened wrist, including the LED ring's
+mount offset. If wrist limits prevent aim, a bounded search shortens the arm
+further. A yaw boundary can leave residual error, reported in `aim_error_rad`
+with `clamped`; callers must not describe that result as exact aim.
+
+The V2 profile's `comfort_box.poses` selects home, rest, speech anchors and
+the reach poses. Startup planners derive the five joint spans and a convex
+hull of their `(shoulder_pitch_joint, elbow_pitch_joint)` pairs. The hull
+rejects combinations that fit individual spans but extend outside the authored
+arm envelope. The live calibration must contain every reference pose.
+Including rest defines a boundary; it does not authorize vision to enter rest,
+enable torque or wake the lamp. The hull is a geometric constraint, not proof
+that every interior pose is collision-free. Lamp commissioning remains required.
+
 `home`, `attentive`, `thinking`, `curious`, `delight`, `look_left`, and
 `look_right` are powered character anchors with distinct readable silhouettes.
 `home` holds the lamp head on a forward, slightly lowered cartoon eyeline rather

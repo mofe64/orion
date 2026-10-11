@@ -1,5 +1,6 @@
 // Declare submodules for motion
 pub mod calibration;
+pub mod ik;
 pub mod kinematics;
 pub mod library;
 pub use library as motion;

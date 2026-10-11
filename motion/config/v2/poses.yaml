@@ -1,6 +1,39 @@
 format_version: 2
 units: radians
 poses:
+  lean_reach_low:
+    description: Arm-led reach toward a desk point 28 cm ahead; lamp contact, tipping and shoulder load unverified.
+    tags: [powered, idle_anchor, desk_reach]
+    default_lighting: warm_idle_breathe
+    idle_profile: directional
+    positions:
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 1.2
+      elbow_pitch_joint: -0.4
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.221483
+  lean_reach_left:
+    description: Arm-led open-elbow reach toward a desk point 28 cm away to the left; lamp contact, tipping and shoulder load unverified.
+    tags: [powered, idle_anchor, desk_reach]
+    default_lighting: warm_idle_breathe
+    idle_profile: directional
+    positions:
+      base_yaw_joint: -0.55
+      shoulder_pitch_joint: 1.18
+      elbow_pitch_joint: -0.8
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.584949
+  lean_reach_right:
+    description: Arm-led open-elbow reach toward a desk point 28 cm away to the right; lamp contact, tipping and shoulder load unverified.
+    tags: [powered, idle_anchor, desk_reach]
+    default_lighting: warm_idle_breathe
+    idle_profile: directional
+    positions:
+      base_yaw_joint: 0.55
+      shoulder_pitch_joint: 1.18
+      elbow_pitch_joint: -0.8
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.584949
   home:
     description: V2 powered home measured on 2026-10-08 relative to the captured physical
       calibration zero.

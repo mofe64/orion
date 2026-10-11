@@ -24,6 +24,8 @@ pub struct HardwareProfile {
     pub scenes: String,
     pub scene: String,
     pub joints: std::collections::BTreeMap<String, JointProfile>,
+    #[serde(default)]
+    pub comfort_box: Option<crate::motion::ik::ComfortBoxConfig>,
 }
 #[derive(Debug, Deserialize)]
 pub struct LightingProfile {

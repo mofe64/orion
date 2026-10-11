@@ -42,6 +42,40 @@ impl FramePose {
         std::array::from_fn(|i| self.position[i] + rotated[i])
     }
 
+    /// Express a base-frame vector in this local frame (rotation transpose).
+    pub fn inverse_rotate_vector(&self, vector: [f64; 3]) -> [f64; 3] {
+        std::array::from_fn(|i| (0..3).map(|j| self.rotation[j][i] * vector[j]).sum())
+    }
+
+    pub fn inverse_transform_point(&self, point: [f64; 3]) -> [f64; 3] {
+        self.inverse_rotate_vector(std::array::from_fn(|i| point[i] - self.position[i]))
+    }
+
+    /// Intersect a forward local ray with a horizontal plane in base metres.
+    /// Parallel, upward, and behind-camera intersections have no desk point.
+    pub fn table_point(&self, ray: [f64; 3], table_z: f64) -> Result<Option<[f64; 3]>> {
+        let norm = ray[0].hypot(ray[1]).hypot(ray[2]);
+        if !norm.is_finite() || norm < 1e-12 || !table_z.is_finite() {
+            return Err(invalid(
+                "Table intersection requires a finite nonzero ray and plane",
+            ));
+        }
+        if ray[2] <= 0.0 {
+            return Ok(None);
+        }
+        let direction = self.rotate_vector(ray.map(|v| v / norm));
+        if direction[2] >= -1e-6 {
+            return Ok(None);
+        }
+        let distance = (table_z - self.position[2]) / direction[2];
+        if distance <= 0.0 || !distance.is_finite() {
+            return Ok(None);
+        }
+        Ok(Some(std::array::from_fn(|i| {
+            self.position[i] + distance * direction[i]
+        })))
+    }
+
     fn compose(self, local: Self) -> Self {
         Self {
             position: self.transform_point(local.position),
@@ -110,6 +144,60 @@ impl Kinematics {
             camera: evaluate(&self.camera, positions),
             light: evaluate(&self.light, positions),
         })
+    }
+
+    /// Pose immediately after a movable joint, with the same calibrated inputs
+    /// as FK. Used only by planners, outside RuntimeCore's control tick.
+    pub fn joint_frame(&self, name: &str, positions: &JointPositions) -> Result<FramePose> {
+        self.fk(positions)?;
+        let index = self
+            .light
+            .iter()
+            .position(|joint| joint.name == name)
+            .ok_or_else(|| invalid(format!("No light-chain joint {name}")))?;
+        Ok(evaluate(&self.light[..=index], positions))
+    }
+
+    /// Extract the two-link planar mechanism, including its baked joint-frame
+    /// rotations. Reject a different mechanism instead of silently fitting it.
+    pub(crate) fn planar_arm(&self) -> Result<([f64; 2], f64)> {
+        let names = [
+            "base_yaw_joint",
+            "shoulder_pitch_joint",
+            "elbow_pitch_joint",
+            "head_pitch_joint",
+            "head_roll_joint",
+            "light_joint",
+        ];
+        if self.light.iter().map(|j| j.name.as_str()).ne(names) {
+            return Err(invalid("Lean IK requires the V2 light chain"));
+        }
+        for (index, joint) in self.light.iter().enumerate().take(5) {
+            let expected = if index == 0 || index == 4 {
+                [0.0, 0.0, -1.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            if joint.axis != Some(expected) || joint.origin.position[0].abs() > 1e-9 {
+                return Err(invalid("Lean IK requires V2 joint axes in one arm plane"));
+            }
+            if index < 4 && joint.origin.position[1].abs() > 1e-9 {
+                return Err(invalid("Lean IK requires aligned pitch joint centres"));
+            }
+            let r = joint.origin.rotation;
+            if (r[0][0] - 1.0).abs() > 1e-9 || r[0][1].abs() > 1e-9 || r[0][2].abs() > 1e-9 {
+                return Err(invalid("Lean IK requires pitch-only joint origins"));
+            }
+        }
+        let lengths = [
+            self.light[2].origin.position[2],
+            self.light[3].origin.position[2],
+        ];
+        if lengths.iter().any(|v| *v <= 0.0) {
+            return Err(invalid("Lean IK requires positive link lengths"));
+        }
+        let r = self.light[2].origin.rotation;
+        Ok((lengths, r[2][1].atan2(r[1][1])))
     }
 
     fn parse(xml: &str) -> Result<Self> {
