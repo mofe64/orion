@@ -38,6 +38,7 @@ pub struct GazeStatus {
     pub base_step_speed_rad_s: f64,
     pub neck_step_speed_rad_s: f64,
     pub state: &'static str,
+    pub stop_command: Option<&'static str>,
     pub track_id: Option<u64>,
     pub run_id: Option<u64>,
     pub clamped: bool,
@@ -61,8 +62,14 @@ pub struct GazeCoordinator {
 enum GazeAvailability {
     Off,
     Ready,
-    Stopped,
+    Stopped(GazeStopCommand),
     Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GazeStopCommand {
+    Stop,
+    Disable,
 }
 
 impl Default for GazeCoordinator {
@@ -74,6 +81,7 @@ impl Default for GazeCoordinator {
                 base_step_speed_rad_s: BASE_CATCHUP_SPEED_RAD_S,
                 neck_step_speed_rad_s: GAZE_NECK_STEP_SPEED_RAD_S,
                 state: "off",
+                stop_command: None,
                 track_id: None,
                 run_id: None,
                 clamped: false,
@@ -110,21 +118,34 @@ impl GazeCoordinator {
         self.forget();
     }
     pub(crate) fn is_stopped(&self) -> bool {
-        self.availability == GazeAvailability::Stopped
+        matches!(self.availability, GazeAvailability::Stopped(_))
     }
-    pub(crate) fn suspend(&mut self) {
-        if self.availability == GazeAvailability::Ready {
-            self.availability = GazeAvailability::Stopped;
+    pub(crate) fn wake_can_resume(&self) -> bool {
+        self.availability == GazeAvailability::Stopped(GazeStopCommand::Stop)
+    }
+    pub(crate) fn suspend(&mut self, command: GazeStopCommand) {
+        // Disable is stronger than Stop. A later Stop/clear cannot convert a
+        // deliberate torque-off latch into one that voice can clear.
+        if matches!(
+            self.availability,
+            GazeAvailability::Ready | GazeAvailability::Stopped(GazeStopCommand::Stop)
+        ) {
+            self.availability = GazeAvailability::Stopped(command);
         }
         self.status.enabled = false;
         self.forget();
     }
-    pub(crate) fn resume(&mut self) -> Result<()> {
+    pub(crate) fn resume(&mut self, powered: bool) -> Result<()> {
         if matches!(
             self.availability,
             GazeAvailability::Off | GazeAvailability::Unavailable
         ) {
             return Err(Error::InvalidState("Gaze is unavailable".into()));
+        }
+        if !powered {
+            return Err(Error::InvalidState(
+                "Gaze resume requires powered holding torque; use character start.".into(),
+            ));
         }
         self.availability = GazeAvailability::Ready;
         self.status.enabled = true;
@@ -132,7 +153,14 @@ impl GazeCoordinator {
         Ok(())
     }
     pub fn status(&self) -> GazeStatus {
-        self.status.clone()
+        GazeStatus {
+            stop_command: match self.availability {
+                GazeAvailability::Stopped(GazeStopCommand::Stop) => Some("stop"),
+                GazeAvailability::Stopped(GazeStopCommand::Disable) => Some("disable"),
+                _ => None,
+            },
+            ..self.status.clone()
+        }
     }
     pub fn active(&self) -> bool {
         self.target.is_some() || self.status.run_id.is_some()
@@ -336,7 +364,7 @@ impl GazeCoordinator {
         self.status.state = match self.availability {
             GazeAvailability::Off => "off",
             GazeAvailability::Ready => "idle",
-            GazeAvailability::Stopped => "stopped",
+            GazeAvailability::Stopped(_) => "stopped",
             GazeAvailability::Unavailable => "unavailable",
         };
         self.explicit_clear = false;
@@ -826,6 +854,48 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_wake_never_starts_a_disabled_or_cancelled_startup_character() {
+        for commands in [&[][..], &["configure"], &["configure", "enable"]] {
+            let (poses, motions) = libraries();
+            let driver = FollowingDriver {
+                positions: poses.pose("home").unwrap().clone(),
+                writes: Vec::new(),
+                next_velocity: Arc::new(AtomicU64::new(0)),
+            };
+            let mut core = RuntimeCore::new(driver, poses, motions).unwrap();
+            for command in commands {
+                let response: serde_json::Value =
+                    serde_json::from_str(&core.handle_command(command, 0.)).unwrap();
+                assert_eq!(response["ok"], true);
+            }
+            let mode = core.mode();
+            let mut character = crate::CharacterCoordinator::new(1);
+            character.set_gaze_enabled(true);
+            character.forget_gaze_for_external_stop(GazeStopCommand::Stop);
+            assert!(
+                !character.resume_gaze_for_confirmed_wake(&core).unwrap(),
+                "{commands:?}"
+            );
+            assert_eq!(core.mode(), mode);
+            assert!(!character.status().enabled);
+            assert!(core.snapshot().motion.is_none());
+            assert!(core.driver().writes.is_empty());
+            assert_eq!(character.gaze_status().state, "stopped");
+        }
+        let (mut core, _, _) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        character.forget_gaze_for_external_stop(GazeStopCommand::Stop);
+        let response: serde_json::Value =
+            serde_json::from_str(&core.handle_command("stop", 0.1)).unwrap();
+        assert_eq!(response["ok"], true);
+        assert!(!character.resume_gaze_for_confirmed_wake(&core).unwrap());
+        assert!(core.snapshot().motion.is_none());
+        assert_eq!(character.gaze_status().state, "stopped");
+    }
+
+    #[test]
     fn disabled_visual_attention_reports_unavailable() {
         let (mut core, _, _) = following();
         let mut character = crate::CharacterCoordinator::new(1);
@@ -840,7 +910,7 @@ mod tests {
         let (mut core, anchor, boot) = following();
         let mut gaze = GazeCoordinator::default();
         gaze.set_enabled(true);
-        gaze.suspend();
+        gaze.suspend(GazeStopCommand::Stop);
         gaze.clear();
         gaze.yield_to_priority(0., &mut core);
         for seconds in 1..=120 {
@@ -855,7 +925,7 @@ mod tests {
             assert!(core.snapshot().motion.is_none());
         }
         assert_eq!(gaze.status().state, "stopped");
-        gaze.resume().unwrap();
+        gaze.resume(core.mode().torque_is_enabled()).unwrap();
         assert_eq!(gaze.status().state, "idle");
         gaze.queue(target(boot.load(Ordering::Relaxed), 0.4), 120., &core)
             .unwrap();

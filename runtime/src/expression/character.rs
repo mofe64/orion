@@ -442,31 +442,27 @@ impl CharacterCoordinator {
     pub fn clear_gaze(&mut self) {
         self.gaze.clear();
     }
-    pub(crate) fn forget_gaze_for_external_stop(&mut self) {
-        self.gaze.suspend();
+    pub(crate) fn forget_gaze_for_external_stop(&mut self, command: super::gaze::GazeStopCommand) {
+        self.gaze.suspend(command);
     }
-    pub(crate) fn resume_gaze(&mut self) -> Result<()> {
-        self.gaze.resume()
+    pub(crate) fn resume_gaze<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) -> Result<()> {
+        self.gaze.resume(core.mode().torque_is_enabled())
     }
-    /// An accepted wake can recover Stop, but cannot opt into disabled gaze or
-    /// interrupt an already powered foreground owner. Torque-off recovery uses
-    /// normal measured home startup before the rest coordinator admits attention.
+    /// Wake can clear Stop only for an already powered, enabled character.
+    /// Read-only runtime access prevents voice recovery from enabling torque or
+    /// starting home. Disable requires explicit recovery even after manual enable.
     pub(crate) fn resume_gaze_for_confirmed_wake<D: RuntimeDriver>(
         &mut self,
-        now: f64,
-        core: &mut RuntimeCore<D>,
+        core: &RuntimeCore<D>,
     ) -> Result<bool> {
-        if !self.gaze.is_stopped() {
+        if !self.gaze.wake_can_resume()
+            || !core.mode().torque_is_enabled()
+            || !self.status.enabled
+            || self.starting_run_id.is_some()
+        {
             return Ok(false);
         }
-        if !self.status.enabled
-            || self.starting_run_id.is_some()
-            || matches!(core.mode(), RuntimeMode::Observe | RuntimeMode::Configured)
-        {
-            self.start(now, core)?;
-        } else {
-            self.gaze.resume()?;
-        }
+        self.resume_gaze(core)?;
         Ok(true)
     }
     pub fn queue_gaze_target<D: RuntimeDriver>(
@@ -811,7 +807,7 @@ impl CharacterCoordinator {
         // Do not clear Stop if startup was rejected by a foreground owner or
         // failed to restore torque/home. Explicit --gaze off stays off.
         if self.gaze.is_stopped() {
-            self.gaze.resume()?;
+            self.resume_gaze(core)?;
         }
         // record the movemnet so that our character state can track it on tick
         self.starting_run_id = response.get("run_id").and_then(serde_json::Value::as_u64);

@@ -191,13 +191,15 @@ after one second; the last plan holds briefly and returns. Calibration and
 settle checks remain in the trajectory compiler and runtime.
 
 Foreground work, speech, rest and Stop preempt gaze. Stop and disable latch
-gaze off with `state:"stopped"`. A successful `character start`, an accepted
-current-session wake confirmation, or `gaze resume` clears the latch. These
-events cannot override configured-off or unavailable gaze. Targets, clears,
+gaze off with `state:"stopped"` and the originating `stop_command`. A successful
+`character start` clears either latch. Current-session wake confirmation clears
+only a Stop latch on an already powered, enabled character with startup complete.
+`gaze resume` requires existing torque; a disable latch needs explicit recovery.
+These events cannot override configured-off or unavailable gaze. Targets, clears,
 idle time, returning vision and stale wake sessions cannot undo Stop.
-Confirmed-wake recovery rearms attention before bearing delivery; torque-off
-recovery follows the measured home lifecycle, while powered foreground work
-retains ownership. Gaze can replace lower
+Confirmed-wake recovery rearms attention before bearing delivery without startup
+or torque commands. Explicit character start after disable follows the measured
+home lifecycle. Powered foreground work retains ownership. Gaze can replace lower
 priority idle or thinking motion and suppresses idle while its run settles.
 Streamed gaze never wakes a resting lamp, enables torque or moves the anchor. The
 [runtime command contract](../runtime/README.md#bearing-gaze-v2) and

@@ -113,11 +113,16 @@ discarding measured velocity. Targets older than one second stop extensions;
 the last plan holds for up to another 1.1 seconds and settles. `gaze clear` shortens that hold.
 Scenes, direct foreground movement, speech, rest and Stop preempt gaze.
 Stop and disable latch gaze off: subsequent targets cannot restart it.
-Status shows `state:"stopped"` until a successful `character start`, an accepted
-confirmation of the current wake session, or `gaze resume` clears the latch.
-Wake recovery after disable restores torque and completes home before attention;
-it leaves powered scene or speech work in control. `gaze resume` only clears the
-latch: scripts must restore torque and character mode separately if needed.
+Status shows `state:"stopped"` with `stop_command:"stop"` or `"disable"`.
+A confirmed current-session wake clears a Stop latch only when character mode
+is enabled, startup has finished and holding torque is already on. This recovery
+never starts home or enables torque; powered scene or speech work retains control.
+After disable, use `character start` to restore torque, start home and clear the
+latch. Wake cannot clear a disable latch, even after manual `enable`.
+`gaze resume` refuses while torque is off. Scripts can explicitly `enable` then
+`gaze resume`; resume only clears the latch, without starting home or arming rest.
+Successful recovery sets `stop_command` to `null`. A later Stop cannot downgrade
+a disable latch.
 Targets, `gaze clear`, idle time, returning vision and stale wake sessions cannot
 clear Stop. None of these recovery requests override `--gaze off`.
 
@@ -550,8 +555,9 @@ onboard coordinator for Qwen confirmation and transcription. See [Pi voice setup
 V1 serving starts character mode by default: configure servos, enable holding
 torque, move home, then enter idle after measured completion. V2 defaults to
 maintenance startup with character mode off. Use `--character-on-start on|off`
-to choose explicitly. On V2 with gaze available, Stop's gaze latch can also be
-cleared by a confirmed wake; see [bearing gaze](#bearing-gaze-v2).
+to choose explicitly. On V2 with gaze available, a confirmed wake can clear
+Stop's gaze latch for an already powered, enabled character; it cannot recover
+disable. See [bearing gaze](#bearing-gaze-v2).
 A timed-out or cancelled home
 movement leaves character off; the terminal movement remains visible in status.
 
@@ -573,7 +579,8 @@ solves the remaining bearing with the neck. It rejects a final pose outside
 calibrated reach. Owned background motion is stopped and feedback refreshed
 before compiling the attention trajectory and checking its speed. Scene,
 speech and Stop retain priority; an accepted current-session wake confirmation
-clears Stop's gaze latch before visual attention is queued.
+can clear a powered character's Stop latch before visual attention is queued.
+Disable blocks visual attention until explicit recovery.
 `voice SESSION attend_scan AGE_MS` makes one short calibrated neck sweep when
 the camera reports no face. Camera-off or unavailable vision sends no attention.
 See [speaker selection and freshness](../docs/voice-architecture.md#direction-evidence).

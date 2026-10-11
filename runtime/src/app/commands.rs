@@ -161,7 +161,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
         if command == "gaze clear" {
             coordinator.clear_gaze();
         } else if command == "gaze resume" {
-            coordinator.resume_gaze()?;
+            coordinator.resume_gaze(core)?;
         }
         return Ok(serde_json::json!({"ok":true,"gaze":coordinator.gaze_status()}).to_string());
     }
@@ -712,7 +712,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             if feedback.confirm(parts[0], now_seconds) {
                 // Ownership/confirmation must be accepted before clearing Stop.
                 // Rearm attention before the listener's ordered bearing request.
-                match character.resume_gaze_for_confirmed_wake(now_seconds, core) {
+                match character.resume_gaze_for_confirmed_wake(core) {
                     Ok(true) => rest.started(),
                     Ok(false) => {}
                     Err(error) => eprintln!("oriond: stopped gaze recovery failed: {error}"),
@@ -775,7 +775,11 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         if matches!(command, "stop" | "disable") {
             // The core command owns cancellation. Neutral must not cancel the
             // gaze run first and turn a successful Stop into "no movement".
-            character.forget_gaze_for_external_stop();
+            character.forget_gaze_for_external_stop(if command == "disable" {
+                crate::expression::gaze::GazeStopCommand::Disable
+            } else {
+                crate::expression::gaze::GazeStopCommand::Stop
+            });
             let _ = character.set_reaction("neutral", now_seconds, core);
         }
         if !speech.is_active() && !scenes.is_active() {

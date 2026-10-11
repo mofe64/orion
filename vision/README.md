@@ -183,8 +183,10 @@ privacy off/on. `looking_at_orion` is a landmark symmetry heuristic for a
 frontal face. Selection uses the largest frontal face, otherwise the largest.
 Targets and clears go only through runtime `gaze`. V2 servers enable gaze by
 default; `--gaze off` disables it, and movement still requires powered character
-mode. Stop reports `state:"stopped"`; only character start, a confirmed wake or
-scripted `gaze resume` clears that latch. Returning vision cannot clear it.
+mode. Stop reports `state:"stopped"` and the originating `stop_command`. A confirmed
+wake can clear Stop only on a powered, enabled character. Disable needs explicit
+character start, or power restoration followed by scripted `gaze resume`.
+Returning vision cannot clear either latch. See [runtime recovery](../runtime/README.md#bearing-gaze-v2).
 Missing runtime camera geometry reports gaze unavailable without stopping the
 daemon. Rejected gaze commands preserve tracks and observations;
 the worker polls gaze availability every three seconds before sending targets
