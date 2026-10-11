@@ -44,8 +44,8 @@ returns the complete setting map; `POST` accepts a partial map of known boolean
 keys, serializes concurrent edits and atomically replaces the file with mode
 0600. A failed write preserves the previous preferences.
 
-Object glances are implemented and lamp-unverified. The other four settings are
-reserved for their pending behaviours. Studio exposes each control when its
+Object glances and mutual gaze are implemented and lamp-unverified. The other
+three settings are reserved for their pending behaviours. Studio exposes each control when its
 behaviour is implemented. Vision watches the file beside its camera preference;
 changing it invalidates pending autonomous observations without resetting the
 runtime's curiosity budget. Settings survive deployment and rollback.

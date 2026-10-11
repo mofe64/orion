@@ -109,3 +109,14 @@ class BehaviourTests(unittest.TestCase):
         pipeline.reset(False)
         self.assertEqual(pipeline.object_map.entries, [])
         release.set()
+
+    def test_metadata_carries_only_fresh_coarse_faces_and_no_pixels(self):
+        pipeline, client, _, _ = self.pipeline()
+        track = Mock(id=7, state=[.2, -.1])
+        track.face.looking_at_orion = True
+        pipeline._surroundings(10_000_000_000, [track])
+        value = client.surroundings.call_args.args[0]
+        self.assertEqual(value['faces'], [{'track_id': 7, 'azimuth': .2, 'elevation': -.1, 'frontal': True}])
+        self.assertFalse(value['looking_away'])
+        self.assertEqual(value['objects'], [])
+        self.assertNotIn('image', json.dumps(value))

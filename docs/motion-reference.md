@@ -1296,3 +1296,36 @@ The ten authoring answers are:
 10. Checks: V2 compiled-envelope, shared-budget, stale-context and privacy-return
     tests. Visual MuJoCo and lamp checks with differently placed objects remain
     owed. Verify that the ordinary idle cadence and subtle scale still read.
+
+### Mutual-gaze responses
+
+`mutual_gaze_notice`, `mutual_gaze_hi` and `mutual_gaze_away` are normal V2
+anchor-relative catalogue clips. They are head-only variants of the curious
+look and acknowledgement, suitable for a small autonomous response. The runtime
+centres their intermediate drawings on the held gaze posture and retains the
+original character anchor for every final settle. All three are lamp-unverified.
+
+1. Idea and lead: notice uses pitch first, then neck; hi is one pitch nod; away
+   is one neck-led withdrawal. The arm and base remain secondary and still.
+2. Silhouette: notice slightly pitches and angles the head; hi makes one shallow
+   pitch stroke/recovery; away presents a small sideways turn.
+3. Anticipation: notice has a 0.15-second beat before its curious drawing; hi and
+   away follow the observed dwell or departure, without another preparatory swing.
+4. Followers: a small pitch detail supports away. No shoulder/elbow accent is added.
+5. Settle: notice settles for readable eye contact; hi settles at its recovery;
+   away settles briefly at its side drawing. Every clip ends at the anchor.
+6. Arc: calibrated quintic curves coordinate the head channels. Continuations
+   inherit commanded position, velocity and acceleration.
+7. Weight: notice holds for observation, hi uses a restrained 0.28/0.32-second
+   stroke/recovery, and away takes 0.55 seconds plus a 0.35-second hold.
+8. Anchors: the runtime requires a powered idle anchor and preflights the complete
+   curve against V2 calibration and the comfort box. At home, pitch does not move
+   below its validated lower boundary.
+9. Interruption: privacy and stale context request an owned return; a proven
+   existing return finishes if replacing it would cross the envelope. Higher
+   priority commands retain ownership. An episode admits no more stages after
+   eight seconds and never resets the Stop latch.
+10. Checks: continuous-dwell, track pinning, bounded stages, privacy return,
+    shared habituation, voice preemption and calibrated catalogue tests.
+    Visual MuJoCo and lamp checks remain owed, especially the small nod at home
+    and the return during a look-away.

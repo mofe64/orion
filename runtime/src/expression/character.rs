@@ -12,6 +12,8 @@ use crate::motion::pose::JointPositions;
 use crate::motion::style::MotionStyle;
 #[path = "aim_light.rs"]
 mod aim_light;
+#[path = "reactions.rs"]
+mod reactions;
 #[path = "surroundings.rs"]
 mod surroundings;
 pub(crate) use aim_light::WorkRequest;
@@ -461,8 +463,6 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.gaze.clear();
-        self.surroundings.clear();
-        self.settle_object_idle(now, core)?;
         if let Some(attention) = self.attention.as_mut().filter(|attention| attention.visual) {
             attention.speaker_track_id = None;
             attention.bearing = None;
@@ -556,6 +556,10 @@ impl CharacterCoordinator {
             )
         {
             return Ok(false);
+        }
+        if self.surroundings.reaction.is_some() {
+            // Face observations continue; this one bounded response owns motion.
+            return Ok(true);
         }
         if self.attention.is_some() {
             return self.update_speaker_bearing(target, now, core);
@@ -1131,6 +1135,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
+        self.preempt_reaction(now, core)?;
         self.gaze.yield_to_priority(now, core);
         // if we have an active idle or thinking run, and the runtime is still moving,
         // send a stop command to cancel the movement
@@ -1298,6 +1303,7 @@ impl CharacterCoordinator {
             self.preempt_for_foreground(now, core)?;
         }
         self.settle_object_idle(now, core)?;
+        self.settle_reaction(now, core)?;
         if self.tick_work(now, core)? {
             return Ok(());
         }
@@ -1580,6 +1586,9 @@ impl CharacterCoordinator {
             self.reset_timers(now);
         }
 
+        if self.surroundings.reaction.is_some() {
+            return Ok(());
+        }
         if !self.foreground_pending
             && self.attention.is_none()
             && let Some(anchor) = self.status.active_anchor.clone()

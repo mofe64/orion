@@ -544,3 +544,8 @@ the watchdog keep running independently. The map excludes people and face-box
 overlaps and expires entries after ten minutes. Privacy or tracking changes
 clear it. See [autonomous vision restraint](../docs/motion-architecture.md#autonomous-vision-restraint)
 and [behaviour settings](../docs/configuration.md#character-behaviours).
+
+`gaze surroundings` also reports fresh face track IDs, base-frame bearings and
+coarse frontal-face flags at most twice per second. These fields contain no
+pixels. Runtime uses them for opt-in [mutual gaze](../docs/motion-architecture.md#mutual-gaze)
+and the shared respect-focus policy; camera or mode changes invalidate them.

@@ -22,6 +22,14 @@ pub(crate) struct MappedObject {
     pub capture_boottime_ns: String,
     pub point: Option<[f64; 3]>,
 }
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SeenFace {
+    pub track_id: u64,
+    pub azimuth: f64,
+    pub elevation: f64,
+    pub frontal: bool,
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Surroundings {
@@ -31,6 +39,8 @@ pub(crate) struct Surroundings {
     pub settings: BehaviourSettings,
     pub objects: Vec<MappedObject>,
     pub looking_away: Option<bool>,
+    #[serde(default)]
+    pub faces: Vec<SeenFace>,
 }
 #[derive(Debug)]
 struct ObjectGlance {
@@ -41,24 +51,27 @@ struct ObjectGlance {
 }
 #[derive(Debug, Default)]
 pub(super) struct SurroundingsState {
-    budget: CuriosityBudget,
+    pub(super) budget: CuriosityBudget,
     received: Option<f64>,
     stamp: u64,
-    settings: BehaviourSettings,
+    pub(super) settings: BehaviourSettings,
     glance: Option<ObjectGlance>,
     last_object: Option<String>,
     glance_count: u8,
     active_object: bool,
-    runtime_allowed: bool,
+    pub(super) runtime_allowed: bool,
+    pub(super) mutual: super::reactions::MutualPolicy,
+    pub(super) reaction: Option<super::reactions::Reaction>,
 }
 impl SurroundingsState {
     pub(super) fn clear(&mut self) {
         self.received = None;
         self.glance = None;
         self.settings = BehaviourSettings::default();
+        self.mutual.clear();
         // Budget and last target survive privacy/mode changes.
     }
-    fn fresh(&self, now: f64) -> bool {
+    pub(super) fn fresh(&self, now: f64) -> bool {
         self.received
             .is_some_and(|at| (0.0..=2.0).contains(&(now - at)))
     }
@@ -70,12 +83,18 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.surroundings.clear();
-        self.settle_object_idle(now, core)
+        self.settle_object_idle(now, core)?;
+        self.settle_reaction(now, core)
     }
     pub(crate) fn set_curiosity_available(&mut self, allowed: bool) {
         self.surroundings.runtime_allowed = allowed;
     }
     pub(crate) fn curiosity_ready<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
+        self.curiosity_available()
+            && self.surroundings.reaction.is_none()
+            && core.mode() == RuntimeMode::Holding
+    }
+    pub(super) fn curiosity_available(&self) -> bool {
         self.surroundings.runtime_allowed
             && self.status.enabled
             && self.gaze.status().enabled
@@ -90,18 +109,25 @@ impl CharacterCoordinator {
                 self.status.state,
                 CharacterState::HomeIdle | CharacterState::PoseIdle
             )
-            && core.mode() == RuntimeMode::Holding
     }
     pub(crate) fn observe_surroundings<D: RuntimeDriver>(
         &mut self,
         value: Surroundings,
         now: f64,
-        core: &RuntimeCore<D>,
+        core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         let boot = core
             .camera_boottime_ns()
             .ok_or_else(|| Error::InvalidState("V2 camera clock unavailable".into()))?;
         if value.objects.len() > 32
+            || value.faces.len() > 16
+            || value.faces.iter().any(|face| {
+                face.track_id == 0
+                    || !face.azimuth.is_finite()
+                    || !face.elevation.is_finite()
+                    || face.azimuth.abs() > std::f64::consts::PI
+                    || face.elevation.abs() > std::f64::consts::FRAC_PI_2
+            })
             || value.capture_boottime_ns <= self.surroundings.stamp
             || value.capture_boottime_ns > boot.saturating_add(50_000_000)
             || boot.saturating_sub(value.capture_boottime_ns) > 1_000_000_000
@@ -122,6 +148,9 @@ impl CharacterCoordinator {
             .surroundings
             .budget
             .observe_focus(now, value.looking_away);
+        if let Err(error) = self.observe_mutual(&value.faces, now, core) {
+            eprintln!("oriond: mutual gaze declined: {error}");
+        }
         if !self.surroundings.settings.object_glances {
             self.surroundings.glance = None;
             return Ok(());
@@ -311,7 +340,7 @@ mod tests {
             .unwrap()
         };
         character
-            .observe_surroundings(message(boot.load(Ordering::Relaxed)), 5., &core)
+            .observe_surroundings(message(boot.load(Ordering::Relaxed)), 5., &mut core)
             .unwrap();
         assert!(
             character
@@ -342,7 +371,7 @@ mod tests {
         assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
         boot.fetch_add(1, Ordering::Relaxed);
         character
-            .observe_surroundings(message(boot.load(Ordering::Relaxed)), 5.1, &core)
+            .observe_surroundings(message(boot.load(Ordering::Relaxed)), 5.1, &mut core)
             .unwrap();
         assert_eq!(
             character.surroundings.glance.as_ref().unwrap().id,
@@ -360,7 +389,7 @@ mod tests {
         character.surroundings.clear();
         boot.fetch_add(1, Ordering::Relaxed);
         character
-            .observe_surroundings(message(boot.load(Ordering::Relaxed)), 5.2, &core)
+            .observe_surroundings(message(boot.load(Ordering::Relaxed)), 5.2, &mut core)
             .unwrap();
         for _ in 0..3 {
             assert!(

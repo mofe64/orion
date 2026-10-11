@@ -146,10 +146,36 @@ disabled settings and quiet hours close admission. A caller reserves budget
 after checking its candidate and motion; failed execution does not refund it.
 
 The policy has bounded in-memory state and no detector, motion or servo IO.
-Object idle glances use this policy. The remaining optional behaviours are
+Object idle glances and mutual gaze use this policy. The remaining optional behaviours are
 pending. The runtime closes admission during active lamp routines (including
 wind-down and sunrise), alerts and rest; it has no independent clock-based
 quiet-hours schedule.
+
+### Mutual gaze
+
+With `mutual_gaze` enabled, 1.5 seconds of continuous frontal-face observations
+can admit one silent response. YuNet landmark symmetry is a coarse cue; it is
+not an eye-gaze measurement. The response keeps one track for an eight-second
+observation window. It makes a small head-pitch adjustment, sometimes adds a
+curious neck turn, and can add a tiny acknowledgement after another two seconds
+of looking. If that person turns away or disappears during the window, a small
+look-away becomes eligible after 0.6 seconds, once the owned motion can transition.
+
+The complete bounded episode spends one shared curiosity reservation. Repeated
+looks use the same face-track habituation key; toggling settings cannot refill
+it. New faces do not replace the chosen person mid-episode. Motion centres on
+the held gaze posture, while its final keyframe returns to the unchanged
+character anchor. Detector metadata prepares and compiles each continuation at
+command time; no detector or IK runs in the servo control tick. Calibration and
+the coupled comfort box validate the whole curve, including position, velocity
+and acceleration inherited from the preceding drawing.
+
+Privacy, stale observations, Tracking Off and disabling the setting request an
+owned anchor return. If shortening the proven tail would overshoot the comfort
+boundary while braking, its existing validated anchor return finishes instead.
+No further acknowledgement is appended. Wake, speech, rest, Stop and foreground
+commands retain priority and never reset the budget. This behaviour is
+lamp-unverified.
 
 ### Object-directed idle glances
 

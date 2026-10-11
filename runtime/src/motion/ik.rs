@@ -161,7 +161,7 @@ impl ComfortBox {
             if !self.contains(
                 &sequence.sample((sample as f64 * 0.02).min(sequence.duration_seconds()))?,
             ) {
-                return Err(invalid("Compiled lean leaves the comfort box"));
+                return Err(invalid("Compiled motion leaves the comfort box"));
             }
         }
         Ok(())

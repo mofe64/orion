@@ -26,3 +26,25 @@ class SurroundingsTests(DaemonTestCase):
             self.ok(path, 'gaze surroundings clear')
             self.assertFalse(request(path, 'gaze surroundings status')['ready'])
             self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
+
+    def test_mutual_gaze_waits_for_dwell_and_yields_to_unconfirmed_wake(self):
+        import time
+        with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
+            self.wait_for_rest(path, 'awake')
+            def observe():
+                return 'gaze surroundings ' + json.dumps({
+                    'capture_boottime_ns': boottime_ns(), 'camera_on': True, 'tracking_mode': 'faces',
+                    'settings': {'mutual_gaze': True}, 'objects': [], 'looking_away': False,
+                    'faces': [{'track_id': 1, 'azimuth': .06, 'elevation': 0., 'frontal': True}]})
+            self.ok(path, observe())
+            self.assertNotEqual(request(path, 'character status')['character'].get('active_clip'), 'mutual_gaze_notice')
+            for _ in range(7):
+                time.sleep(.25)
+                self.ok(path, observe())
+            self.assertEqual(request(path, 'character status')['character'].get('active_clip'), 'mutual_gaze_notice')
+            anchor = request(path, 'character status')['character']['active_anchor']
+            self.voice(path, 'b'*32, 'wake')
+            self.ok(path, observe())
+            self.assertFalse(request(path, 'gaze surroundings status')['ready'])
+            self.wait_for(path, 'character status', lambda status: not (status['character'].get('active_clip') or '').startswith('mutual_gaze'))
+            self.assertEqual(request(path, 'character status')['character']['active_anchor'], anchor)

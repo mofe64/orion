@@ -1,6 +1,7 @@
 """One inference worker and one replaceable frame slot; no callback inference."""
 from threading import Condition, Event, Lock, Thread
 import time
+import math
 
 from .gaze_client import boottime_ns
 from .tracker import MAX_AGE_NS, Tracker, choose_track
@@ -124,6 +125,9 @@ class FacePipeline:
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': 'faces' if self.enabled else 'off',
             'objects': self.object_map.snapshot(self.boot_clock()),
+            'faces': [{'track_id': track.id, 'azimuth': float(math.atan2(math.sin(track.state[0]), math.cos(track.state[0]))),
+                       'elevation': float(track.state[1]), 'frontal': track.face.looking_at_orion}
+                      for track in tracks],
             'looking_away': not any(track.face.looking_at_orion for track in tracks) if tracks else None})
 
     def close(self):

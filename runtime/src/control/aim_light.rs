@@ -10,6 +10,46 @@ pub(crate) struct PreparedAim {
 }
 
 impl<D: RuntimeDriver> RuntimeCore<D> {
+    pub(crate) fn validate_curiosity_motion(
+        &self,
+        definition: &MotionDefinition,
+        anchor: &JointPositions,
+        replacing: Option<(u64, f64)>,
+    ) -> Result<()> {
+        let limits = self.driver.joint_limits()?;
+        let scale = definition.uniform_amplitude_scale(anchor, &limits)?;
+        let state = replacing
+            .filter(|(id, _)| {
+                self.active_movement
+                    .as_ref()
+                    .is_some_and(|motion| motion.status.run_id == *id)
+            })
+            .and_then(|(_, now)| {
+                self.motion_sequence.as_ref().map(|sequence| {
+                    sequence.sample_state((now - self.movement_started_at).max(0.0))
+                })
+            })
+            .transpose()?;
+        let (positions, velocities, accelerations) = state.map_or_else(
+            || (self.measured_positions(), self.measured_velocities(), None),
+            |state| (state.positions, state.velocities, Some(state.accelerations)),
+        );
+        let sequence = MotionSequence::compile_scaled_calibrated(
+            definition,
+            positions,
+            velocities,
+            accelerations,
+            anchor.clone(),
+            scale,
+            &limits,
+        )?;
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        comfort.validate_sequence(&sequence)
+    }
     pub fn configure_comfort_box(&mut self, config: ComfortBoxConfig) -> Result<()> {
         let comfort = ComfortBox::from_config(&config, &self.poses, &self.driver.joint_limits()?)?;
         self.comfort = Some((config, comfort));
