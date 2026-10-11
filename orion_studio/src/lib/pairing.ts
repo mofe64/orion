@@ -67,6 +67,7 @@ export class PairingController {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private failures = 0;
   private writes: Promise<unknown> = Promise.resolve();
+  private codeRequest: AbortController | undefined;
   constructor(private store: PairingStore = nativePairingStore,
     private probe: Probe = { status: getStatus, capabilities: getCapabilities }) {
     this.snapshot = { ...INITIAL, persistent: store.persistent !== false };
@@ -78,6 +79,7 @@ export class PairingController {
     this.listeners.forEach((listener) => listener());
   }
   private reset() {
+    this.cancelCodeRequest();
     clearTimeout(this.timer); this.timer = undefined; this.failures = 0;
     return ++this.generation;
   }
@@ -94,11 +96,13 @@ export class PairingController {
     this.offline("loading");
     try {
       await this.writes;
+      if (generation !== this.generation) return;
       const target = await this.store.load();
       if (generation !== this.generation) return;
       this.target = target;
       this.publish({ paired: !!target, address: target?.url ?? null });
-      await this.refreshLamps();
+      await this.refreshLamps(generation);
+      if (generation !== this.generation) return;
       if (!target) { this.offline("unpaired"); return; }
       this.offline("connecting");
       await this.poll(generation);
@@ -119,7 +123,8 @@ export class PairingController {
       this.target = target;
       this.publish({ phase: "connected", paired: true, address: target.url,
         connection: target, status, capabilities, error: null });
-      await this.refreshLamps();
+      await this.refreshLamps(generation);
+      if (generation !== this.generation) return false;
       this.schedule(generation, 1000);
       return true;
     } catch (error) {
@@ -130,15 +135,22 @@ export class PairingController {
     }
   }
   async requestCode(address: string) {
+    this.cancelCodeRequest();
+    const request = new AbortController();
+    this.codeRequest = request;
     try {
-      const result = await requestPairingCode(normalizeGatewayUrl(address));
+      const result = await requestPairingCode(normalizeGatewayUrl(address), request.signal);
+      if (request.signal.aborted) return null;
       this.publish({ error: null });
       return result;
     } catch (error) {
-      this.publish({ error: this.pairingCodeError(error) });
+      if (!request.signal.aborted) this.publish({ error: this.pairingCodeError(error) });
       return null;
+    } finally {
+      if (this.codeRequest === request) this.codeRequest = undefined;
     }
   }
+  cancelCodeRequest() { this.codeRequest?.abort(); this.codeRequest = undefined; }
   async pairWithCode(address: string, code: string) {
     const generation = this.reset();
     this.offline("connecting");
@@ -207,15 +219,18 @@ export class PairingController {
       if (generation !== this.generation) return;
       this.target = null;
       this.publish({ ...INITIAL, persistent: this.store.persistent !== false, phase: "unpaired" });
-      await this.refreshLamps();
+      await this.refreshLamps(generation);
       // Another saved lamp becomes active after forgetting this one; connect to it.
       if (this.snapshot.lamps?.length && generation === this.generation) await this.start();
     } catch (error) {
       if (generation === this.generation) this.offline("error", String(error instanceof Error ? error.message : error));
     }
   }
-  private async refreshLamps() {
-    if (this.store.list) this.publish({ lamps: await this.store.list() });
+  private async refreshLamps(generation: number) {
+    if (this.store.list) {
+      const lamps = await this.store.list();
+      if (generation === this.generation) this.publish({ lamps });
+    }
   }
   /** Make another saved lamp active and connect to it. */
   async switchTo(url: string) {

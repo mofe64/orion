@@ -164,10 +164,10 @@ export interface PairingCodeResult {
   message?: string;
 }
 
-async function pairingRequest<T>(url: string, path: string, timeout: number, code?: string): Promise<T> {
+async function pairingRequest<T>(url: string, path: string, timeout: number, code?: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${url.replace(/\/$/, "")}${path}`, {
     method: "POST",
-    signal: AbortSignal.timeout(timeout),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout),
     redirect: "error",
     ...(code === undefined ? {} : {
       headers: { "Content-Type": "application/json" },
@@ -179,8 +179,8 @@ async function pairingRequest<T>(url: string, path: string, timeout: number, cod
   return body as T;
 }
 
-export function requestPairingCode(url: string): Promise<PairingCodeResult> {
-  return pairingRequest(url, "/api/v2/pair/code", 40000);
+export function requestPairingCode(url: string, signal?: AbortSignal): Promise<PairingCodeResult> {
+  return pairingRequest(url, "/api/v2/pair/code", 40000, undefined, signal);
 }
 
 export function exchangePairingCode(url: string, code: string): Promise<{ api_version: 2; token: string }> {

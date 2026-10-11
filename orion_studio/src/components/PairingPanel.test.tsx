@@ -17,7 +17,7 @@ describe("saved pairing controls", () => {
     expect(html).toContain("Orion will say a 6-digit code. Type it here.");
     expect(html).not.toContain('type="password"');
   });
-  it.each(["connected", "reconnecting", "disconnected"] as const)("allows editing an address while %s", phase => {
+  it.each(["loading", "connecting", "connected", "reconnecting", "disconnected"] as const)("allows editing an address while %s", phase => {
     const state: ConnectionSnapshot = {
       phase, persistent: true, paired: true, address: "http://orion.mynet:7447",
       connection: null, status: null, capabilities: null, error: null,
@@ -25,14 +25,27 @@ describe("saved pairing controls", () => {
     const html = renderToStaticMarkup(<PairingPanel controller={new PairingController()}
       state={state} onClose={() => {}} />);
     expect(html).toContain('class="quiet-button">Change address</button>');
+    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Change address<\/button>/);
     if (phase === "disconnected") expect(html).toContain(">Connect</button>");
     expect(html).not.toContain(">Reconnect</button>");
     expect(html).not.toContain('type="password"');
   });
 
-  it("lists other saved lamps and offers pairing another one", () => {
+  it.each(["loading", "connecting"] as const)("keeps the pairing form usable during background %s", phase => {
     const state: ConnectionSnapshot = {
-      phase: "connected", persistent: true, paired: true, address: "http://ariadne-robot.local:7447",
+      phase, persistent: true, paired: false, address: "http://ariadne-robot.local:7447",
+      connection: null, status: null, capabilities: null, error: null,
+    };
+    const html = renderToStaticMarkup(<PairingPanel controller={new PairingController()} state={state} onClose={() => {}} />);
+    expect(html).toContain("Get code");
+    expect(html).not.toContain("disabled=");
+    expect(html).toContain("Cancel connection");
+    expect(html).toContain("Use a token instead");
+  });
+
+  it.each(["connecting", "connected"] as const)("allows switching saved lamps while %s", phase => {
+    const state: ConnectionSnapshot = {
+      phase, persistent: true, paired: true, address: "http://ariadne-robot.local:7447",
       connection: null, status: null, capabilities: null, error: null,
       lamps: [{ url: "http://ariadne-robot.local:7447", active: true }, { url: "http://orion.local:7447", active: false }],
     };
@@ -40,5 +53,6 @@ describe("saved pairing controls", () => {
     expect(html).toContain("Switch to orion.local");
     expect(html).not.toContain("Switch to ariadne-robot.local");
     expect(html).toContain("Connect another Orion");
+    expect(html).not.toContain("disabled=");
   });
 });

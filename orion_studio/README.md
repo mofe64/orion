@@ -52,6 +52,10 @@ Studio reconnects after startup or network loss. **Disconnect** pauses retries
 for that session; **Forget this Orion on this computer** removes the saved pairing.
 **Change address** reuses the saved token and verifies the new address before
 replacing the saved connection. A failed check keeps the previous pairing.
+Background connection attempts leave address editing, pairing and saved-lamp
+switching available. **Cancel connection** stops the current attempt without
+forgetting saved lamps. **Cancel request** stops waiting for a spoken code and
+keeps an already connected lamp active.
 Browser development keeps the connection in memory for the current tab.
 See [saved pairing](../docs/configuration.md#saved-pairing) for storage and limits.
 

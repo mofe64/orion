@@ -93,6 +93,20 @@ describe("pairing and reconnect", () => {
     expect(await controller.requestCode(target.url)).toBeNull();
     expect(controller.current().error).toBe("Orion is busy. Wait 15 seconds, then ask for a new code.");
   });
+  it("cancels a code request without disconnecting the active lamp or displaying its late result", async () => {
+    const { controller, store } = setup();
+    await controller.start();
+    const pending = deferred<{ api_version: number; expires_in_seconds: number }>();
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: () => pending.promise });
+    vi.stubGlobal("fetch", fetch);
+    const requesting = controller.requestCode("other-orion.local");
+    controller.cancelCodeRequest();
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+    pending.resolve({ api_version: 2, expires_in_seconds: 300 });
+    expect(await requesting).toBeNull();
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: target, error: null });
+    expect(store.save).not.toHaveBeenCalled();
+  });
   it("ignores a late token exchange after forgetting the lamp", async () => {
     const { controller, store } = setup(null);
     const pending = deferred<{ api_version: number; token: string }>();
@@ -240,6 +254,19 @@ describe("pairing and reconnect", () => {
     await controller.start();
     pending.resolve(null); await oldStart;
     expect(controller.current().phase).toBe("connected");
+  });
+  it("does not return to connecting when a cancelled startup finishes listing saved lamps", async () => {
+    const { store, probe } = setup();
+    const pending = deferred<[]>();
+    const list = vi.fn(() => pending.promise);
+    const controller = new PairingController({ ...store, list }, probe);
+    const starting = controller.start();
+    await vi.waitFor(() => expect(list).toHaveBeenCalled());
+    controller.disconnect();
+    pending.resolve([]);
+    await starting;
+    expect(controller.current().phase).toBe("disconnected");
+    expect(probe.status).not.toHaveBeenCalled();
   });
   it.each(["orion.local", "orion.local:7447", "http://orion.local:7447/"])("normalizes %s", (value) => {
     expect(normalizeGatewayUrl(value)).toBe(target.url);
