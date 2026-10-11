@@ -154,12 +154,14 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
         })?;
         return Ok(serde_json::to_string(&core.camera_rays(request)?)?);
     }
-    if command == "gaze status" || command == "gaze clear" {
+    if matches!(command, "gaze status" | "gaze clear" | "gaze resume") {
         let coordinator = character
             .as_deref_mut()
             .ok_or_else(|| crate::Error::InvalidState("Character is unavailable".into()))?;
         if command == "gaze clear" {
             coordinator.clear_gaze();
+        } else if command == "gaze resume" {
+            coordinator.resume_gaze()?;
         }
         return Ok(serde_json::json!({"ok":true,"gaze":coordinator.gaze_status()}).to_string());
     }

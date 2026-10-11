@@ -187,7 +187,8 @@ has zero offsets and settles at the anchor. A lost target stops extensions
 after one second; the last plan holds briefly and returns. Calibration and
 settle checks remain in the trajectory compiler and runtime.
 
-Foreground work, speech, rest and Stop preempt gaze. Gaze can replace lower
+Foreground work, speech, rest and Stop preempt gaze. Stop and disable latch
+gaze off until an explicit `gaze resume`; streamed vision targets cannot undo it. Gaze can replace lower
 priority idle or thinking motion and suppresses idle while its run settles.
 It never wakes a resting lamp, enables torque or moves the anchor. The
 [runtime command contract](../runtime/README.md#bearing-gaze-v2-opt-in) and

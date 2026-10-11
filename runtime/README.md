@@ -83,11 +83,14 @@ as `camera-rays`, and each target's timestamp must increase:
 gaze target {"track_id":1,"capture_boottime_ns":123456789000,"azimuth":0.4,"elevation":0.0,"confidence":0.95,"class":"face"}
 gaze status
 gaze clear
+gaze resume
 ```
 
 Targets contain bearings, never joints. Optional `range` is positive metres;
 orientation gaze does not use it to move the arm. `gaze status` reports opt-in,
-track and run IDs, tracking/settling state, clamping, extension count and error.
+track and run IDs, tracking/settling state, clamping, extension count, error, and the compiled peak
+and base/neck planning-step speeds. Clamping compares the bounded aim pose
+with the requested bearing, including steps that have yet to reach the target.
 An unavailable powered character, foreground work or speech drops the target
 with `ok:true, accepted:false`; an invalid, stale or disabled request is rejected.
 
@@ -98,12 +101,16 @@ URDF FK solves the tilted swivel geometry. Both models use calibrated angles
 directly. Every extension uses the existing spline compiler, calibration and
 settle checks, and ends at the immutable anchor.
 
-Yaw and neck tuning caps are 1.5 and 2.5 rad/s. Base catch-up uses 0.6 rad/s;
-the compiler preview conservatively limits the shared peak to 1.5 rad/s,
+Neck planning steps use 2.5 rad/s and base catch-up steps use 0.6 rad/s;
+these size keyframe increments. The compiler preview limits every joint to
+a shared peak of 1.5 rad/s,
 including the return. A moving handover above that speed waits rather than
 discarding measured velocity. Targets older than one second stop extensions;
-the last plan holds briefly and settles. `gaze clear` shortens that hold.
+the last plan holds for up to another 1.1 seconds and settles. `gaze clear` shortens that hold.
 Scenes, direct foreground movement, speech, rest and Stop preempt gaze.
+Stop and disable latch gaze off: subsequent targets cannot restart it.
+`gaze resume` explicitly clears that latch and requires startup `--gaze on`;
+it does not enable torque or start the character.
 
 Native MuJoCo checks tracking and software ownership. These are
 `simulation_preview` performances: physical tracking, safe cable motion,

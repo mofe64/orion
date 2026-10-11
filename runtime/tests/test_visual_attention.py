@@ -71,7 +71,10 @@ class VisualAttentionTests(DaemonTestCase):
                 self.voice(path, session, 'wake', 'endpoint', 'confirmed', 'attend_bearing .4 .1 0')
                 self.wait_for(path, 'status', lambda s: s['motion'] is not None and s['motion']['name'] == 'gaze_attention')
                 self.ok(path, command)
-                self.ok(path, f'voice {session} attend_bearing .4 .1 0')
+                response = request(path, f'voice {session} attend_bearing .4 .1 0')
+                self.assertEqual(response['ok'], command != 'stop')
+                if command == 'stop':
+                    self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
                 if command.startswith('scene'):
                     self.wait_for(path, 'scene status', lambda s: s.get('scene') is None)
                 time.sleep(.25)

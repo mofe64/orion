@@ -440,7 +440,10 @@ impl CharacterCoordinator {
         self.gaze.clear();
     }
     pub(crate) fn forget_gaze_for_external_stop(&mut self) {
-        self.gaze.forget();
+        self.gaze.suspend();
+    }
+    pub(crate) fn resume_gaze(&mut self) -> Result<()> {
+        self.gaze.resume()
     }
     pub fn queue_gaze_target<D: RuntimeDriver>(
         &mut self,

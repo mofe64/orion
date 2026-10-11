@@ -8,8 +8,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 pub const GAZE_DEADBAND_RAD: f64 = 4.0 * std::f64::consts::PI / 180.0;
-pub const GAZE_BASE_SPEED_RAD_S: f64 = 1.5;
-pub const GAZE_NECK_SPEED_RAD_S: f64 = 2.5;
+pub const GAZE_COMPILED_PEAK_RAD_S: f64 = 1.5;
+pub const GAZE_NECK_STEP_SPEED_RAD_S: f64 = 2.5;
 pub const GAZE_UPDATE_SECONDS: f64 = 0.1;
 const BASE_CATCHUP_SPEED_RAD_S: f64 = 0.6;
 const NECK_LEAD_SECONDS: f64 = 0.2;
@@ -34,6 +34,9 @@ pub struct GazeTarget {
 #[derive(Clone, Debug, Serialize)]
 pub struct GazeStatus {
     pub enabled: bool,
+    pub peak_speed_rad_s: f64,
+    pub base_step_speed_rad_s: f64,
+    pub neck_step_speed_rad_s: f64,
     pub state: &'static str,
     pub track_id: Option<u64>,
     pub run_id: Option<u64>,
@@ -45,6 +48,7 @@ pub struct GazeStatus {
 #[derive(Debug)]
 pub struct GazeCoordinator {
     status: GazeStatus,
+    configured: bool,
     target: Option<GazeTarget>,
     last_capture: Option<u64>,
     started_at: f64,
@@ -57,6 +61,9 @@ impl Default for GazeCoordinator {
         Self {
             status: GazeStatus {
                 enabled: false,
+                peak_speed_rad_s: GAZE_COMPILED_PEAK_RAD_S,
+                base_step_speed_rad_s: BASE_CATCHUP_SPEED_RAD_S,
+                neck_step_speed_rad_s: GAZE_NECK_STEP_SPEED_RAD_S,
                 state: "off",
                 track_id: None,
                 run_id: None,
@@ -64,6 +71,7 @@ impl Default for GazeCoordinator {
                 extensions: 0,
                 error: None,
             },
+            configured: false,
             target: None,
             last_capture: None,
             started_at: 0.0,
@@ -75,11 +83,24 @@ impl Default for GazeCoordinator {
 
 impl GazeCoordinator {
     pub fn set_enabled(&mut self, enabled: bool) {
+        self.configured = enabled;
         self.status.enabled = enabled;
         self.status.state = if enabled { "idle" } else { "off" };
         if !enabled {
             self.forget();
         }
+    }
+    pub(crate) fn suspend(&mut self) {
+        self.status.enabled = false;
+        self.forget();
+    }
+    pub(crate) fn resume(&mut self) -> Result<()> {
+        if !self.configured {
+            return Err(Error::InvalidState("Gaze resume requires --gaze on".into()));
+        }
+        self.status.enabled = true;
+        self.forget();
+        Ok(())
     }
     pub fn status(&self) -> GazeStatus {
         self.status.clone()
@@ -221,7 +242,7 @@ impl GazeCoordinator {
             .map(|pose| {
                 let seconds = pose
                     .iter()
-                    .map(|(joint, q)| 1.875 * (q - last[joint]).abs() / GAZE_BASE_SPEED_RAD_S)
+                    .map(|(joint, q)| 1.875 * (q - last[joint]).abs() / GAZE_COMPILED_PEAK_RAD_S)
                     .fold(0.3_f64, f64::max);
                 last = pose.clone();
                 MotionKeyframe {
@@ -265,11 +286,11 @@ impl GazeCoordinator {
                 &limits,
             )?;
             let peak = compiled.peak_velocity_rad_s();
-            if peak <= GAZE_BASE_SPEED_RAD_S * (1.0 + 1e-9) {
+            if peak <= GAZE_COMPILED_PEAK_RAD_S * (1.0 + 1e-9) {
                 return Ok((definition, end));
             }
             for frame in &mut definition.keyframes {
-                frame.duration_seconds *= peak / GAZE_BASE_SPEED_RAD_S * 1.02;
+                frame.duration_seconds *= peak / GAZE_COMPILED_PEAK_RAD_S * 1.02;
             }
         }
         Err(Error::InvalidState(
@@ -418,7 +439,10 @@ impl GazeCoordinator {
                     .map(|joint| (joint.name.clone(), joint.velocity))
                     .collect()
             });
-        if velocity.values().any(|v| v.abs() > GAZE_BASE_SPEED_RAD_S) {
+        if velocity
+            .values()
+            .any(|v| v.abs() > GAZE_COMPILED_PEAK_RAD_S)
+        {
             return Ok(None);
         }
         let acceleration = commanded.as_ref().map(|state| state.accelerations.clone());
@@ -449,19 +473,23 @@ impl GazeCoordinator {
                     // swivel geometry instead of treating joint angles as bearings.
                     *aim.get_mut("head_roll_joint").unwrap() -= base - start["base_yaw_joint"];
                 }
-                let (solved, clamped) =
+                let (solved, _) =
                     solve_aim(model, &aim, target.azimuth, target.elevation, &limits)?;
-                self.status.clamped = clamped;
                 for name in ["head_roll_joint", "head_pitch_joint"] {
-                    let step = GAZE_NECK_SPEED_RAD_S * GAZE_UPDATE_SECONDS / 1.875;
+                    let step = GAZE_NECK_STEP_SPEED_RAD_S * GAZE_UPDATE_SECONDS / 1.875;
                     *aim.get_mut(name).unwrap() =
                         start[name] + (solved[name] - start[name]).clamp(-step, step);
                 }
             }
+            let achieved =
+                Bearing::from_direction(model.fk(&aim)?.camera.rotate_vector([0., 0., 1.]));
+            self.status.clamped = angle_difference(achieved.azimuth, target.azimuth).abs()
+                > GAZE_DEADBAND_RAD
+                || (achieved.elevation - target.elevation).abs() > GAZE_DEADBAND_RAD;
         }
         let return_seconds = start
             .iter()
-            .map(|(name, value)| 1.875 * (value - anchor[name]).abs() / GAZE_BASE_SPEED_RAD_S)
+            .map(|(name, value)| 1.875 * (value - anchor[name]).abs() / GAZE_COMPILED_PEAK_RAD_S)
             .fold(0.55_f64, f64::max);
         let offsets = aim
             .iter()
@@ -505,7 +533,7 @@ impl GazeCoordinator {
             ],
         };
         // Preview with the same compiler, state and calibration used at install.
-        // Its shared peak ceiling is conservatively 1.5 rad/s, below both caps.
+        // Its shared peak ceiling is 1.5 rad/s; planning step speeds are separate.
         for _ in 0..4 {
             let scale = definition.uniform_amplitude_scale(anchor, &limits)?;
             let sequence = MotionSequence::compile_scaled_calibrated(
@@ -518,11 +546,11 @@ impl GazeCoordinator {
                 &limits,
             )?;
             let peak = sequence.peak_velocity_rad_s();
-            if peak <= GAZE_BASE_SPEED_RAD_S * (1.0 + 1e-9) {
+            if peak <= GAZE_COMPILED_PEAK_RAD_S * (1.0 + 1e-9) {
                 return Ok(Some(definition));
             }
             for frame in &mut definition.keyframes {
-                frame.duration_seconds *= peak / GAZE_BASE_SPEED_RAD_S * 1.02;
+                frame.duration_seconds *= peak / GAZE_COMPILED_PEAK_RAD_S * 1.02;
             }
         }
         Ok(None)
@@ -800,7 +828,7 @@ mod tests {
         .unwrap();
         let early = compiled.sample(0.2).unwrap();
         assert!(early["head_roll_joint"].abs() > early["base_yaw_joint"].abs() + 0.01);
-        assert!(compiled.peak_velocity_rad_s() <= GAZE_BASE_SPEED_RAD_S * (1.0 + 1e-9));
+        assert!(compiled.peak_velocity_rad_s() <= GAZE_COMPILED_PEAK_RAD_S * (1.0 + 1e-9));
         character
             .attend_bearing(Some((0.4, 0.1)), 3.0, &mut core)
             .unwrap();
@@ -893,6 +921,50 @@ mod tests {
     }
 
     #[test]
+    fn bounded_aim_reports_the_achieved_azimuth_and_full_loop_respects_near_limits() {
+        for azimuth in [2.9, -2.9, 1.6, -1.6, 3.1] {
+            let (mut core, anchor, boot) = following();
+            let mut gaze = GazeCoordinator::default();
+            gaze.set_enabled(true);
+            gaze.queue(target(1_000_000_000, azimuth), 0.0, &core)
+                .unwrap();
+            let plan = gaze.plan(0.0, &anchor, &core).unwrap().unwrap();
+            let aim: JointPositions = plan.keyframes[0]
+                .target
+                .iter()
+                .map(|(name, offset)| (name.clone(), anchor[name] + offset))
+                .collect();
+            let achieved = Bearing::from_direction(
+                core.camera_kinematics()
+                    .unwrap()
+                    .fk(&aim)
+                    .unwrap()
+                    .camera
+                    .rotate_vector([0., 0., 1.]),
+            );
+            assert!(angle_difference(achieved.azimuth, azimuth).abs() > GAZE_DEADBAND_RAD);
+            assert!(
+                gaze.status.clamped,
+                "bounded aim misses {azimuth}: {achieved:?}"
+            );
+            for tick in 1..=1200 {
+                advance(
+                    &mut gaze,
+                    &mut core,
+                    &anchor,
+                    &boot,
+                    tick,
+                    (tick % 5 == 0).then_some(azimuth),
+                );
+            }
+            assert!(core.driver().writes.len() > 1100);
+            for pose in &core.driver().writes {
+                core.driver().validate_positions(pose).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn neck_leads_base_then_centres_and_every_compiled_sample_is_calibrated() {
         let (mut core, anchor, boot) = following();
         let mut gaze = GazeCoordinator::default();
@@ -935,11 +1007,11 @@ mod tests {
         for pair in core.driver().writes.windows(2) {
             assert!(
                 (pair[1]["base_yaw_joint"] - pair[0]["base_yaw_joint"]).abs() / 0.02
-                    <= GAZE_BASE_SPEED_RAD_S + 0.001
+                    <= GAZE_COMPILED_PEAK_RAD_S + 0.001
             );
             assert!(
                 (pair[1]["head_roll_joint"] - pair[0]["head_roll_joint"]).abs() / 0.02
-                    <= GAZE_NECK_SPEED_RAD_S + 0.001
+                    <= GAZE_COMPILED_PEAK_RAD_S + 0.001
             );
         }
     }

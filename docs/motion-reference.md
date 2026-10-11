@@ -64,8 +64,8 @@ values; they change gaze character, never calibration or the motor ceiling:
 | Centre/target deadband | 4° |
 | Maximum extension frequency | 10 Hz |
 | Neck lead before base catch-up | 200 ms |
-| Base yaw cap | 1.5 rad/s |
-| Neck swivel cap | 2.5 rad/s |
+| Every-joint compiled peak ceiling | 1.5 rad/s |
+| Neck planning-step speed | 2.5 rad/s |
 | Base catch-up planning speed | 0.6 rad/s |
 | Target freshness | 1 second in CLOCK_BOOTTIME |
 

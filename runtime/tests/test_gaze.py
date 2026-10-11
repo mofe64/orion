@@ -28,10 +28,40 @@ def gaze_target(azimuth=.4):
 
 
 class GazeDaemonTests(DaemonTestCase):
+    def test_stop_and_disable_latch_off_until_explicit_gaze_resume(self):
+        for command in ('stop', 'disable'):
+            with self.subTest(command=command), daemon(hardware='v2', following=True,
+                    automatic_character=True, gaze=True) as path:
+                self.wait_for_rest(path, 'awake')
+                self.assertTrue(request(path, gaze_target())['accepted'])
+                self.wait_for(path, 'gaze status', lambda s: s['gaze']['state'] == 'tracking')
+                self.ok(path, command)
+                for _ in range(7):
+                    response = request(path, gaze_target())
+                    self.assertFalse(response.get('accepted', False), response)
+                    self.assertIsNone(request(path, 'gaze status')['gaze']['run_id'])
+                    self.assertIsNone(request(path, 'status')['motion'])
+                    time.sleep(.1)
+                self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
+                if command == 'disable':
+                    self.ok(path, 'enable')
+                    self.assertFalse(request(path, gaze_target()).get('accepted', False))
+                self.ok(path, 'gaze resume')
+                self.assertTrue(request(path, gaze_target())['accepted'])
+                self.wait_for(path, 'gaze status', lambda s: s['gaze']['state'] == 'tracking')
+
+    def test_status_distinguishes_compiled_peak_from_planning_steps(self):
+        with daemon(hardware='v2', following=True, gaze=True) as path:
+            status = request(path, 'gaze status')['gaze']
+            self.assertEqual(status['peak_speed_rad_s'], 1.5)
+            self.assertEqual(status['base_step_speed_rad_s'], .6)
+            self.assertEqual(status['neck_step_speed_rad_s'], 2.5)
+
     def test_default_off_rejects_targets_and_status_and_clear_remain_available(self):
         with daemon(hardware='v2', following=True) as path:
             self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
             self.assertFalse(request(path, gaze_target())['ok'])
+            self.assertFalse(request(path, 'gaze resume')['ok'])
             self.ok(path, 'gaze clear')
             self.assertFalse(request(path, 'gaze target {"joints":{}}')['ok'])
 
