@@ -489,26 +489,12 @@ mod tests {
         character.observe_hands(1, None, 5., &mut core).unwrap();
         advance(&mut core, &mut character, &boot, 5., 12., true);
         let anchor = character.status.active_anchor.clone().unwrap();
-        let config = crate::motion::ik::ComfortBoxConfig {
-            poses: vec![
-                "home",
-                "rest",
-                "attentive",
-                "thinking",
-                "curious",
-                "delight",
-                "look_left",
-                "look_right",
-                "attention_left",
-                "attention_right",
-                "lean_reach_low",
-                "lean_reach_left",
-                "lean_reach_right",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        };
+        let config = crate::HardwareVersion::V2
+            .profile()
+            .comfort_box
+            .as_ref()
+            .unwrap()
+            .clone();
         let comfort = crate::motion::ik::ComfortBox::from_config(
             &config,
             core.poses(),

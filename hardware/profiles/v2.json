@@ -11,7 +11,7 @@
   "scenes": "scenes/v2",
   "scene": "simulation/mujoco/v2/scene.xml",
   "comfort_box": {
-    "poses": ["home", "rest", "attentive", "thinking", "curious", "delight", "look_left", "look_right", "attention_left", "attention_right", "lean_reach_low", "lean_reach_left", "lean_reach_right"]
+    "poses": ["home", "attentive", "delight", "lean_reach_low", "lean_reach_left", "lean_reach_right"]
   },
   "joints": {
     "base_yaw_joint": {"servo_id": 1, "physical_joint": "base_yaw"},

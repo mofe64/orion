@@ -63,7 +63,18 @@ impl ComfortBox {
             .collect();
         let mut arms = Vec::new();
         for name in &config.poses {
-            let pose = poses.pose(name)?;
+            let definition = poses.definition(name)?;
+            if !definition.tags.iter().any(|tag| tag == "powered")
+                || definition
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "shutdown_only" || tag == "simulation_preview")
+            {
+                return Err(invalid(format!(
+                    "Comfort pose {name} must be a powered non-preview pose"
+                )));
+            }
+            let pose = &definition.positions;
             for (joint, range) in &mut joint_ranges {
                 let value = pose[joint];
                 let limit = limits[joint.as_str()];
@@ -154,16 +165,9 @@ impl ComfortBox {
         ))
     }
 
-    /// Nearest point in the joint box and arm polygon. Only completion-sized
-    /// measurement error may be recovered; this never widens target limits.
-    pub fn tracking_start(
-        &self,
-        measured: &JointPositions,
-        tolerance: f64,
-    ) -> Result<JointPositions> {
-        if !tolerance.is_finite()
-            || tolerance < 0.0
-            || measured.len() != self.joint_ranges.len()
+    /// Nearest point in the joint box and arm polygon, without expanding either.
+    pub fn nearest_pose(&self, measured: &JointPositions) -> Result<JointPositions> {
+        if measured.len() != self.joint_ranges.len()
             || self
                 .joint_ranges
                 .keys()
@@ -197,6 +201,19 @@ impl ComfortBox {
             pose.insert(SHOULDER.into(), nearest[0]);
             pose.insert(ELBOW.into(), nearest[1]);
         }
+        Ok(pose)
+    }
+
+    /// Recover only completion-sized measurement error for a planning reference.
+    pub fn tracking_start(
+        &self,
+        measured: &JointPositions,
+        tolerance: f64,
+    ) -> Result<JointPositions> {
+        if !tolerance.is_finite() || tolerance < 0.0 {
+            return Err(invalid("Invalid comfort recovery tolerance"));
+        }
+        let pose = self.nearest_pose(measured)?;
         if measured
             .iter()
             .any(|(n, v)| (v - pose[n]).abs() > tolerance + EPS)
@@ -281,7 +298,7 @@ impl LeanSolution {
 /// Analytic two-link inverse kinematics, preserving home's elbow branch.
 /// Zero lean preserves the arm position while aiming; one requests the wrist
 /// near maximum extension on the shoulder-to-target ray. The comfort hull
-/// clips that request toward the anchor, then pitch re-aims from that wrist.
+/// projects that request to the nearest powered arm pose, then re-aims the wrist.
 pub fn solve_lean(
     model: &Kinematics,
     comfort: &ComfortBox,
@@ -342,12 +359,16 @@ pub fn solve_lean(
         (-local[1]).atan2(local[2]) - (lower * bend.sin()).atan2(upper + lower * bend.cos()),
     );
     posed.insert(ELBOW.into(), bend - elbow_origin);
-    // Clip the arm displacement before aiming from the shortened wrist. The
-    // bearing is independent of the arm's extension fraction.
+    // Project the requested arm pose onto the powered polygon. A ray from a
+    // boundary anchor can hit the hull almost immediately even when a nearby
+    // committed reach is available. Nearest projection is continuous and the
+    // convex segment from the anchor remains contained.
     let yaw = posed[YAW];
     posed.insert(YAW.into(), anchor[YAW]);
     posed.insert(NECK.into(), anchor[NECK]);
-    let (mut posed, arm_scale) = comfort.project(anchor, &posed)?;
+    let bounded = comfort.nearest_pose(&posed)?;
+    let arm_clamped = posed.iter().any(|(n, v)| (v - bounded[n]).abs() > EPS);
+    let mut posed = bounded;
     let [yaw_min, yaw_max] = comfort.joint_ranges[YAW];
     posed.insert(YAW.into(), yaw.clamp(yaw_min, yaw_max));
     let [neck_min, neck_max] = comfort.joint_ranges[NECK];
@@ -364,7 +385,7 @@ pub fn solve_lean(
         return Ok(LeanSolution::unreachable());
     }
     let aim_error_rad = (dot / norm(delta)).clamp(-1.0, 1.0).acos();
-    let clamped = arm_scale < 1.0 - EPS || pitch_scale < 1.0 - EPS || aim_error_rad > 1e-5;
+    let clamped = arm_clamped || pitch_scale < 1.0 - EPS || aim_error_rad > 1e-5;
     Ok(LeanSolution {
         status: if clamped {
             LeanStatus::Clamped
@@ -558,7 +579,7 @@ mod tests {
         let (model, poses, limits, comfort) = setup();
         let home = poses.pose("home").unwrap();
         let mut solutions = 0;
-        for x in [-0.20, -0.10, 0.0, 0.10, 0.20] {
+        for x in [-0.15, -0.10, 0.0, 0.10, 0.15] {
             for y in [-0.30, -0.40, -0.60] {
                 for lean in [0.7, 0.8, 0.9] {
                     let target = [x, y, 0.0];
@@ -583,6 +604,18 @@ mod tests {
             }
         }
         assert_eq!(solutions, 45);
+    }
+
+    #[test]
+    fn desk_targets_outside_powered_yaw_report_clamping_instead_of_exact_aim() {
+        let (model, poses, _, comfort) = setup();
+        let home = poses.pose("home").unwrap();
+        for x in [-0.2, 0.2] {
+            let solution = solve_lean(&model, &comfort, home, home, [x, -0.3, 0.], 0.8).unwrap();
+            assert_eq!(solution.status, LeanStatus::Clamped);
+            assert!(solution.aim_error_rad.unwrap() > 0.01);
+            assert!(comfort.contains(solution.positions.as_ref().unwrap()));
+        }
     }
 
     #[test]
@@ -744,6 +777,45 @@ mod tests {
                 .unwrap();
             }
         }
+    }
+
+    #[test]
+    fn powered_hull_excludes_rest_preview_and_the_unsafe_hands_elbow() {
+        let (model, poses, limits, comfort) = setup();
+        let config = HardwareVersion::V2.profile().comfort_box.as_ref().unwrap();
+        for excluded in [
+            "rest",
+            "thinking",
+            "curious",
+            "look_left",
+            "look_right",
+            "attention_left",
+            "attention_right",
+        ] {
+            let mut invalid = config.clone();
+            invalid.poses.push(excluded.into());
+            assert!(
+                ComfortBox::from_config(&invalid, &poses, &limits).is_err(),
+                "{excluded}"
+            );
+        }
+        let pose = solve_lean(
+            &model,
+            &comfort,
+            poses.pose("home").unwrap(),
+            poses.pose("desk_work").unwrap(),
+            [0.14, -0.32, 0.],
+            0.35,
+        )
+        .unwrap()
+        .positions
+        .unwrap();
+        assert!(comfort.contains(&pose));
+        assert!(pose[ELBOW] < -0.28, "{pose:?}");
+        let mut contact_side = pose.clone();
+        contact_side.insert(SHOULDER.into(), 0.663);
+        contact_side.insert(ELBOW.into(), -0.008);
+        assert!(!comfort.contains(&contact_side));
     }
 
     #[test]

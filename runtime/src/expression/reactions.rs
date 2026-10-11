@@ -469,6 +469,7 @@ impl CharacterCoordinator {
                 *frame.target.entry(joint.clone()).or_default() += position - anchor[joint];
             }
         }
+        core.fit_character_comfort(&mut definition, anchor)?;
         Ok(definition)
     }
     pub(super) fn preempt_reaction<D: RuntimeDriver>(

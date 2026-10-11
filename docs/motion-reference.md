@@ -493,20 +493,22 @@ The inverse solver reads the V2 chain's link lengths and baked joint frames
 from `Kinematics`. It uses the law of cosines and home's elbow branch, with no
 additional calibration offsets. Lean zero keeps the arm at the anchor and
 aims the head. Lean one requests the wrist near full geometric extension on
-the shoulder-to-target ray. The envelope shortens that request toward the
-anchor; head pitch then aims from the shortened wrist, including the LED ring's
+the shoulder-to-target ray. The envelope projects that requested arm pose to the nearest point in its
+powered hull; head pitch then aims from the bounded wrist, including the LED ring's
 mount offset. If wrist limits prevent aim, a bounded search shortens the arm
 further. A yaw boundary can leave residual error, reported in `aim_error_rad`
 with `clamped`; callers must not describe that result as exact aim.
 
-The V2 profile's `comfort_box.poses` selects home, rest, speech anchors and
-the reach poses. Startup planners derive the five joint spans and a convex
+The V2 profile's `comfort_box.poses` selects powered catalogue poses: home,
+attentive, delight and the three reach poses. Shutdown-only `rest` and all
+`simulation_preview` poses are excluded, and configuration validation rejects
+either category. Startup planners derive the five joint spans and a convex
 hull of their `(shoulder_pitch_joint, elbow_pitch_joint)` pairs. The hull
-rejects combinations that fit individual spans but extend outside the authored
+rejects combinations that fit individual spans but extend outside this powered
 arm envelope. The live calibration must contain every reference pose.
-Including rest defines a boundary; it does not authorize vision to enter rest,
-enable torque or wake the lamp. The hull is a geometric constraint, not proof
-that every interior pose is collision-free. Lamp commissioning remains required.
+The hull is a geometric constraint, not proof that every interior pose is
+collision-free. Reference poses marked lamp-unverified still need physical
+commissioning; torque-free rest cannot establish powered clearance.
 
 `home`, `attentive`, `thinking`, `curious`, `delight`, `look_left`, and
 `look_right` are powered character anchors with distinct readable silhouettes.

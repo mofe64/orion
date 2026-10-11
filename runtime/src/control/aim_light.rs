@@ -255,7 +255,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     pub(crate) fn set_character_comfort(&mut self, enabled: bool) {
         self.character_comfort = enabled;
     }
-    pub(super) fn fit_character_comfort(
+    pub(crate) fn fit_character_comfort(
         &self,
         definition: &mut MotionDefinition,
         anchor: &JointPositions,
