@@ -11,10 +11,12 @@ dependencies = [
   "numpy==2.2.4",
   "simplejpeg==1.9.0",
   "picamera2==0.3.25; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "opencv-python-headless==4.11.0.86",
 ]
 
 [project.scripts]
 orion-vision = "orion_vision.service:main"
+orion-vision-calibrate = "orion_vision.calibration:main"
 
 [tool.setuptools.packages.find]
 include = ["orion_vision*"]

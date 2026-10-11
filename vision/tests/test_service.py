@@ -178,6 +178,34 @@ class SocketTests(unittest.TestCase):
         response1.close(); client1.close()
         response2.close(); client2.close()
 
+    def test_tracking_observations_and_privacy_use_the_same_source_lifecycle(self):
+        from orion_vision.calibration import Intrinsics
+        from orion_vision.detect_faces import Face
+        from orion_vision.pipeline import FacePipeline
+        detector, client = MagicMock(), MagicMock()
+        detector.detect.return_value = [Face([100, 80, 40, 40],
+            [[110, 90], [130, 90], [120, 100], [113, 110], [127, 110]], .95)]
+        client.voice_active.return_value = False
+        client.bearings.return_value = [{"azimuth": .2, "elevation": .1}]
+        pipeline = FacePipeline(detector, Intrinsics([[125, 0, 160], [0, 125, 120], [0, 0, 1]], [0]*4, .1), client)
+        self.vision.close()
+        self.vision = Vision(self.source, self.preference, pipeline=pipeline)
+        self.server.vision = self.vision
+        self.vision.start()
+        eventually(lambda: client.target.called)
+        connection, response = self.request('/observations')
+        observations = json.loads(response.read())
+        connection.close()
+        self.assertEqual(response.status, 200)
+        self.assertAlmostEqual(observations[0]['azimuth'], .2, places=12)
+        np.testing.assert_allclose(observations[0]['box'], [100/320, 80/240, 40/320, 40/240])
+        self.assertIsNone(self.vision.latest)  # Inference does not demand main RGB.
+        self.preference.write_text('{"camera_enabled":false}')
+        eventually(lambda: not self.vision.enabled and self.source.thread is None)
+        eventually(lambda: not pipeline.enabled)
+        self.assertEqual(pipeline.observations(), [])
+        self.assertTrue(client.clear.called)
+
 
 class MetadataTests(unittest.TestCase):
     def test_mid_exposure_units_and_invalid_metadata(self):

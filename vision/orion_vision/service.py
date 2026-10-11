@@ -41,9 +41,11 @@ def exposure_midpoint(metadata):
 
 
 class Vision:
-    def __init__(self, source, preference_file, encoder=simplejpeg.encode_jpeg, clock=time.monotonic):
+    def __init__(self, source, preference_file, encoder=simplejpeg.encode_jpeg, clock=time.monotonic,
+                 pipeline=None, detection_error=None):
         self.source, self.preference_file, self.encoder = source, Path(preference_file), encoder
         self.clock = clock
+        self.pipeline, self.detection_error = pipeline, detection_error
         self.changed = Condition()
         self.encode_lock = Lock()
         self.stop = Event()
@@ -62,6 +64,8 @@ class Vision:
         self.thread = None
 
     def start(self):
+        if self.pipeline:
+            self.pipeline.start()
         self.thread = Thread(target=self._watch, name="vision-privacy", daemon=True)
         self.thread.start()
 
@@ -71,6 +75,8 @@ class Vision:
             self.changed.notify_all()
         if self.thread is not None:
             self.thread.join(timeout=2)
+        if self.pipeline:
+            self.pipeline.close()
 
     def _disable(self):
         with self.changed:
@@ -81,6 +87,8 @@ class Vision:
             self.snapshot_until = 0.
             self.changed.notify_all()
         self.source.close()
+        if self.pipeline:
+            self.pipeline.reset(False)
 
     def _watch(self):
         retry_at = 0.
@@ -95,7 +103,12 @@ class Vision:
                         self.error = None
                         generation = self.generation
                     try:
-                        self.source.start(lambda capture: self.publish(capture, generation), self.wants_rgb)
+                        if self.pipeline:
+                            self.pipeline.reset(True)
+                            self.source.start(lambda capture: self.publish(capture, generation), self.wants_rgb,
+                                              lambda: self.enabled)
+                        else:
+                            self.source.start(lambda capture: self.publish(capture, generation), self.wants_rgb)
                     except Exception as error:
                         LOG.exception("Camera start failed")
                         self._disable()
@@ -122,6 +135,8 @@ class Vision:
             if capture.rgb is None:
                 self.cached = None
             self.changed.notify_all()
+            if self.pipeline:
+                self.pipeline.submit(stamp, capture.lores)
 
     def wants_rgb(self):
         # This callback does no I/O or encoding. Stream admission happens
@@ -155,7 +170,8 @@ class Vision:
             if not self.enabled or self.error:
                 return 503, {"error": {"code": "camera_unavailable", "message": self.error or "Camera is starting"}}
             return 200, {"camera_enabled": True, "capture_boottime_ns": self.last_capture or None,
-                         "clock": "CLOCK_BOOTTIME", "stream_clients": self.clients, "dropped_frames": self.dropped}
+                         "clock": "CLOCK_BOOTTIME", "stream_clients": self.clients, "dropped_frames": self.dropped,
+                         "detection": self.pipeline.status() if self.pipeline else {"error": self.detection_error}}
 
     def jpeg(self, after=0):
         # Shared cache and throttle: ten viewers do not cause ten encodes.
@@ -237,7 +253,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/health":
                 return self.respond(200, body)
             if self.path == "/observations":
-                return self.respond(200, [])
+                return self.respond(200, vision.pipeline.observations() if vision.pipeline else [])
             if self.path not in ("/frame.jpg", "/stream"):
                 return self.respond(404, {"error": {"code": "not_found"}})
             with vision.viewing(snapshot=self.path == "/frame.jpg"):
@@ -284,6 +300,13 @@ def main():
     parser.add_argument("--preference-file", type=Path, default=Path.home() / ".config/orion/camera.json")
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--replay", type=Path, help="Directory of synthetic JPEG test inputs")
+    from .calibration import DEFAULT_PATH, Intrinsics
+    from .detect_faces import MODEL_PATH, YuNet
+    from .gaze_client import GazeClient
+    from .pipeline import FacePipeline
+    parser.add_argument("--intrinsics", type=Path, default=DEFAULT_PATH)
+    parser.add_argument("--face-model", type=Path, default=MODEL_PATH)
+    parser.add_argument("--runtime-socket", type=Path, default=Path("/tmp/oriond.sock"))
     args = parser.parse_args()
     camera = json.loads(args.profile.read_text()).get("camera", {})
     if camera.get("enabled") is not True:
@@ -302,7 +325,14 @@ def main():
                 args.socket.unlink()
             else:
                 raise RuntimeError("Vision socket already has a running owner")
-    vision = Vision(source, args.preference_file)
+    pipeline, detection_error = None, None
+    try:
+        pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.load(args.intrinsics),
+                                GazeClient(args.runtime_socket))
+    except (OSError, ValueError, KeyError) as error:
+        detection_error = str(error)
+        LOG.warning("Face tracking unavailable: %s", error)
+    vision = Vision(source, args.preference_file, pipeline=pipeline, detection_error=detection_error)
     server = VisionServer(args.socket, vision)
     def stop(signum, frame):
         vision.stop.set()

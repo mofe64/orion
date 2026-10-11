@@ -278,7 +278,7 @@ class StackScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("pisp_be is not loaded", result.stderr)
 
-    def installer(self, wrong_host=False, moved_tag=False, no_conflicts=False):
+    def installer(self, wrong_host=False, moved_tag=False, no_conflicts=False, bad_model=False):
         release = self.root / "os-release"
         release.write_text("ID=ubuntu\nVERSION_ID=24.04\n")
         model = self.root / "model"
@@ -307,7 +307,19 @@ if [[ $1 == install ]]; then
 fi
 ''')
         python = self.tool("python3", 'if [[ $* == *sys.version_info* ]]; then echo 3.12; fi\n')
+        # Synthetic model bytes exercise the actual shell hash/install path.
+        import hashlib
+        payload = b'corrupt' if bad_model else b'synthetic-yunet'
+        self.tool('curl', f"printf '%s' '{payload.decode()}' > \"${{@: -1}}\"\n")
+        self.tool('sha256sum', '''
+read -r expected path
+actual=$(shasum -a 256 "$path")
+test "${actual%% *}" = "$expected"
+''')
         source = (SCRIPTS / "install-camera-stack.sh").read_text()
+        self.assertIn('8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4', source)
+        source = source.replace('8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4',
+                                hashlib.sha256(b'synthetic-yunet').hexdigest())
         source = source.replace("if (( EUID != 0 )); then", "if false; then")
         source = source.replace("/etc/os-release", str(release)).replace("/proc/device-tree/model", str(model))
         source = source.replace("export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/sbin",
@@ -339,6 +351,15 @@ fi
         self.assertIn("import pykms", log)
         self.assertEqual(log.count("usermod -a -G video camera-user"), 2)
         self.assertFalse(list(self.root.glob("build.*")))
+        self.assertEqual((self.prefix / 'share/orion/vision/face_detection_yunet_2023mar.onnx').read_bytes(), b'synthetic-yunet')
+
+    def test_bad_model_hash_never_replaces_installed_asset(self):
+        path = self.prefix / 'share/orion/vision/face_detection_yunet_2023mar.onnx'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'previous verified asset')
+        result = self.installer(bad_model=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(path.read_bytes(), b'previous verified asset')
 
     def test_wrong_platform_stops_before_package_changes(self):
         result = self.installer(wrong_host=True)

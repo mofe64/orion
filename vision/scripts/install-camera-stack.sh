@@ -50,7 +50,7 @@ if (( ${#conflicts[@]} )); then
     apt-get purge -y "${conflicts[@]}"
 fi
 apt-get install -y --no-install-recommends \
-    build-essential git meson ninja-build pkg-config cmake \
+    build-essential git meson ninja-build pkg-config cmake curl \
     libboost-dev libboost-program-options-dev nlohmann-json3-dev \
     libgnutls28-dev libssl-dev libevent-dev libudev-dev libyaml-dev \
     libjpeg-dev libtiff-dev libpng-dev libexif-dev libdrm-dev libfmt-dev libcap-dev \
@@ -123,6 +123,16 @@ udevadm trigger --subsystem-match=dma_heap
 if [[ -n ${camera_user} ]]; then
     usermod -a -G video "${camera_user}"
 fi
+
+# The inference asset is data, not a captured frame. Pin the upstream commit
+# and verify before replacing the installed model, including on repeated runs.
+yunet_file=face_detection_yunet_2023mar.onnx
+yunet_sha=8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
+yunet_url=https://media.githubusercontent.com/media/opencv/opencv_zoo/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_detection_yunet/${yunet_file}
+curl --fail --location --retry 3 "${yunet_url}" --output "${build_root}/${yunet_file}"
+printf '%s  %s\n' "${yunet_sha}" "${build_root}/${yunet_file}" | sha256sum --check --status
+install -d /usr/local/share/orion/vision
+install -m 0644 "${build_root}/${yunet_file}" "/usr/local/share/orion/vision/${yunet_file}"
 
 echo "Installed libpisp ${libpisp_tag}, libcamera ${libcamera_tag}, rpicam-apps ${rpicam_tag}."
 echo "Run vision/scripts/verify-camera-stack.sh. If the sensor is missing, configure its IMX708 overlay for the fitted CSI port and reboot."

@@ -3,7 +3,8 @@
 ## Setup on Ubuntu 24.04 / Raspberry Pi 5
 
 The service owns the V2 IMX708 Wide camera and keeps frames in memory. It
-serves HTTP on `/tmp/orion-vision.sock`; it performs no detection or movement.
+serves HTTP on `/tmp/orion-vision.sock`. With fitted intrinsics and the pinned
+YuNet model, it tracks faces and sends base bearings to runtime gaze.
 
 Run from the Orion checkout on the Pi, with camera applications stopped:
 
@@ -88,13 +89,14 @@ The service runs as the Pi user with supplementary group `video`, `Nice=10`,
 | `/health` | Camera state, latest `capture_boottime_ns`, drops and connected streams |
 | `/frame.jpg` | Latest main frame resized to 640×360; timestamp in `X-Capture-Boottime-Ns` |
 | `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
-| `/observations` | Empty list; detection is not implemented |
+| `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
 
 JPEGs are encoded on demand and cached across viewers at at most 15 fps.
 Disconnected viewers cause encoding to stop. Capture converts RGB only while
 a stream client is connected or a snapshot was requested in the last two
-seconds. Idle callbacks publish metadata only, so health timestamps continue
-without full-frame copies. The first viewing request waits up to one second
+seconds. Callbacks without viewing demand omit the main RGB copy. Tracking
+copies the 320×240 lores YUV buffer independently, so detection continues
+without full-frame RGB copies. The first viewing request waits up to one second
 for an RGB frame. Capture retains a single latest RGB buffer, so slow consumers
 drop frames rather than accumulating a queue.
 `Picamera2Source` uses 1280×720 `BGR888`, whose Python byte order is RGB.
@@ -124,13 +126,69 @@ uv run --project vision orion-vision --profile hardware/profiles/v2.json \
   --replay /path/to/synthetic-fixtures --socket /tmp/orion-vision-test.sock
 ```
 
-`FrameSource.start(callback, wants_rgb)` supplies capture metadata and an RGB
+`FrameSource.start(callback, wants_rgb, wants_lores=None)` supplies capture metadata and an RGB
 array only when the demand callback returns true; otherwise `Capture.rgb` is
-`None`. `close()` stops capture. `ReplaySource` reads only synthetic JPEG fixtures.
+`None`. Optional lores demand supplies a copied packed YUV420 buffer for the
+worker (RGB for synthetic replay). `close()` stops capture. `ReplaySource` reads only synthetic JPEG fixtures.
 `MujocoSource` raises an explicit not-implemented error. Picamera2 is restricted
 to Linux aarch64 in the manifest. uv's exact metadata entry for the Linux-only
 `python-prctl` sdist allows locking on a workstation. The local release builder
 compiles it into a wheel before transfer to the Pi.
+
+## Face calibration and tracking
+
+The native installer downloads YuNet 2023mar from OpenCV Zoo commit
+`47534e27c9851bb1128ccc0102f1145e27f23f98` to
+`/usr/local/share/orion/vision/face_detection_yunet_2023mar.onnx`, verifying
+SHA-256 `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4`
+before replacement. The service verifies that hash again before model loading.
+OpenCV headless is pinned to 4.11.0.86 in the vision lockfile.
+
+Stop the vision service before calibration so the camera has one owner:
+
+```bash
+systemctl --user stop orion-vision.service
+uv run --project vision orion-vision-calibrate --profile hardware/profiles/v2.json \
+  --columns 9 --rows 6 --square-mm 25 --views 24 --seconds 90
+systemctl --user start orion-vision.service
+```
+
+Use the inner corner counts and measured square size of your board. Move and
+tilt it across the view, including the edges; at least 12 distinct views are
+required. The CLI fits OpenCV's fisheye model for the exact 320×240 lores stream.
+It saves only numerical intrinsics to `~/.config/orion/camera-v2.json` and
+refuses RMS reprojection error above 0.5 pixels, preserving any previous fit.
+Camera-off settings are respected. A low fitting error does not validate the
+camera mount or timestamp alignment; check those on the lamp too.
+
+One worker runs YuNet at up to 10 Hz idle and 3 Hz from confirmed wake through
+reply playback. It polls `voice status`; unavailable voice state uses 3 Hz.
+OpenCV uses one thread. The latest lores frame replaces pending work; inference,
+YUV conversion, sockets and model loading never run in the camera callback.
+ISP padding is removed after packed YUV conversion. No inference frames are
+saved or sent off the Pi.
+
+The worker undistorts face box centres to unit camera rays, asks `oriond`
+`camera-rays` at the exposure midpoint, then associates base azimuth/elevation
+with a constant-velocity Kalman filter and a 20° nearest-neighbour gate. Tracks
+expire after one second. IDs increase for the service lifetime, including after
+privacy off/on. `looking_at_orion` is a landmark symmetry heuristic for a
+frontal face. Selection uses the largest frontal face, otherwise the largest.
+Targets and clears go only through runtime `gaze`; enable runtime `--gaze on`
+to allow movement. Calibration and motion limits stay owned by the runtime.
+
+`/observations` includes `id`, `class`, `track_id`, base `azimuth`/`elevation`
+in radians, `capture_boottime_ns`, observation `age_ms`, `track_age_ms`,
+confidence, frontality, normalized `box`, `box_pixels`, five pixel landmarks,
+and `image_size`. Health includes detection rate, drops and error. Missing or
+invalid intrinsics/model leave streaming available with detection unavailable.
+Override paths with `--intrinsics`, `--face-model`, and `--runtime-socket`.
+
+Hardware acceptance remains unverified: walk slowly across the room and record
+neck-first tracking for review. Repeat identical-audio P0 ASR trials with the
+service at these rates under `CPUQuota=60%`/`Nice=10`; the target is at most 10%
+ASR slowdown. Check longer thermal load, the fitted lens/mount, capture-time
+alignment and camera-off closure/gaze cancellation on the lamp.
 
 ### Measurement environment
 
