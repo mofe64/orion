@@ -216,7 +216,13 @@ The worker undistorts face box centres to unit camera rays, asks `oriond`
 with a constant-velocity Kalman filter and a 20° nearest-neighbour gate. Tracks
 expire after one second. IDs increase for the service lifetime, including after
 privacy off/on. `looking_at_orion` is a landmark symmetry heuristic for a
-frontal face. Selection uses the largest frontal face, otherwise the largest.
+frontal face. Initial gaze selection uses the largest frontal face, otherwise
+the largest. A fresh current target stays selected despite small area changes.
+Another frontal face must maintain at least 1.5 times its box area for one
+second to replace it; losing the target allows immediate reselection. Missing
+challenger detections or loss of that advantage resets the interval. This
+hysteresis affects gaze only; speaker selection keeps its mouth-motion,
+frontality and area ordering.
 Targets and clears go only through runtime `gaze`. V2 servers enable gaze by
 default; `--gaze off` disables it, and movement still requires powered character
 mode. Stop reports `state:"stopped"` and the originating `stop_command`. A confirmed
@@ -270,7 +276,8 @@ check longer thermal load, the fitted lens/mount, capture-time alignment and
 camera-off closure/gaze cancellation.
 
 Verify Off removes boxes and following and drops detector CPU, then Faces
-resumes detection. Keep the Studio camera open for ten minutes, toggling camera capture
+resumes detection. With two people standing still, confirm gaze keeps one
+target. Keep the Studio camera open for ten minutes, toggling camera capture
 off and on once. Check advancing `capture_boottime_ns`, `camera_restarts: 0`,
 and the service cgroup's `cpu.stat` `nr_throttled`; record temperature after
 ten minutes idle with the camera on. These checks and the matched ASR trial

@@ -7,6 +7,8 @@ from .tracker import MAX_AGE_NS, Tracker, choose_track
 
 IDLE_HZ, VOICE_HZ = 10, 3
 GAZE_RETRY_SECONDS = 3.
+TARGET_AREA_RATIO = 1.5
+TARGET_HOLD_NS = 1_000_000_000
 
 
 class FacePipeline:
@@ -31,6 +33,9 @@ class FacePipeline:
         self.gaze_error = None
         self.target_selected = False
         self.last_gaze_capture = 0
+        self.target_track_id = None
+        self.challenger_track_id = None
+        self.challenger_since_ns = None
 
     def start(self):
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
@@ -44,6 +49,7 @@ class FacePipeline:
             self.latest_preview = None
             self.preview_generation += 1
             self.tracker.clear()
+            self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
             self.changed.notify_all()
         if not enabled:
             with self.commands:
@@ -135,6 +141,28 @@ class FacePipeline:
         with self.changed:
             return self.tracker.speaker(since_ns, self.boot_clock())
 
+    def _choose_target(self, tracks, stamp):
+        # Only gaze selection remembers a target; speaker selection stays in Tracker.
+        current = next((track for track in tracks if track.id == self.target_track_id), None)
+        if current is None:
+            chosen = choose_track(tracks)
+            self.target_track_id = chosen.id if chosen else None
+            self.challenger_track_id = self.challenger_since_ns = None
+            return chosen
+        area = current.face.box[2] * current.face.box[3]
+        challenger = choose_track([track for track in tracks if track.id != current.id
+            and track.capture_ns == stamp and track.face.looking_at_orion
+            and track.face.box[2] * track.face.box[3] >= TARGET_AREA_RATIO * area])
+        if challenger is None:
+            self.challenger_track_id = self.challenger_since_ns = None
+        elif challenger.id != self.challenger_track_id:
+            self.challenger_track_id, self.challenger_since_ns = challenger.id, stamp
+        elif stamp - self.challenger_since_ns >= TARGET_HOLD_NS:
+            self.target_track_id = challenger.id
+            self.challenger_track_id = self.challenger_since_ns = None
+            return challenger
+        return current
+
     def _run(self):
         next_inference = 0.
         last_inference = None
@@ -180,7 +208,7 @@ class FacePipeline:
                     fresh = self.tracker.update(stamp, faces, bearings)
                     tracks = [track for track in self.tracker.tracks
                         if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
-                    chosen = choose_track(tracks)
+                    chosen = self._choose_target(tracks, stamp)
                     if rgb is not None and preview_generation == self.preview_generation:
                         detections = [{"box": track.observation(stamp)["box"],
                             "score": track.face.confidence, "track_id": track.id,
@@ -200,6 +228,7 @@ class FacePipeline:
                 with self.changed:
                     self.error = str(error)
                     self.tracker.clear()
+                    self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
                     self.latest_preview = None
                 with self.commands:
                     self._clear_target()

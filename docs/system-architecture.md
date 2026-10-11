@@ -106,8 +106,8 @@ Nice gives voice work scheduling priority; quota throttling can suspend camera
 threads and stall capture silently. A watchdog reopens the source after a
 capture-publication gap, invalidating callbacks from the closed source. Health
 retains the restart count across camera toggles. See [vision operating limits](../vision/README.md#service-setup-and-development).
-The quota change, automatic recovery and tracking modes are implemented and
-lamp-unverified; hardware checks are listed in
+The quota change, automatic recovery, tracking modes and two-person target
+stability are implemented and lamp-unverified; hardware checks are listed in
 the [vision acceptance procedure](../vision/README.md#face-tracking).
 
 ### Listener and voice service
