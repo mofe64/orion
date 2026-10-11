@@ -1857,6 +1857,10 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                         self.end_headers()
                         self.wfile.write(body)
                     return
+                # WebKit cancels x-mixed-replace fetch loads that are not image
+                # elements. Generic multipart keeps the same JPEG framing and
+                # lets authenticated fetch clients read the bytes themselves.
+                content_type = re.sub(r"^multipart/x-mixed-replace(?=\s*;)", "multipart/mixed", content_type, flags=re.IGNORECASE)
                 with gateway.camera_viewers.watching() as viewers:
                     self.send_response(HTTPStatus.OK)
                     self._cors_headers()

@@ -2,13 +2,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MultipartJpegParser } from "./cameraStream";
 import { getCameraSnapshot, setCameraEnabled, watchCamera } from "./gateway";
 
-const type = "multipart/x-mixed-replace; boundary=orion-frame";
+const type = "multipart/mixed; boundary=orion-frame";
 const encode = (value: string) => new TextEncoder().encode(value);
 const part = (jpeg = "JPEG", stamp = "12345678901234567") => encode(`--orion-frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\nX-Capture-Boottime-Ns: ${stamp}\r\n\r\n${jpeg}\r\n`);
 const connection = { url: "http://orion/", token: "private-token" };
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("multipart JPEG parser", () => {
+  it.each(["mixed", "x-mixed-replace"])("accepts the %s stream type", subtype => {
+    const parser = new MultipartJpegParser(`multipart/${subtype}; boundary="orion-frame"`);
+    expect(parser.push(part())).toHaveLength(1);
+    parser.finish();
+  });
   it("handles every possible split in boundaries, headers, images and terminators", () => {
     const wire = part();
     for (let split = 0; split <= wire.length; split++) {
@@ -43,6 +48,21 @@ describe("multipart JPEG parser", () => {
 });
 
 describe("authenticated camera transport", () => {
+  it("keeps the failure visible throughout the wait and next connection attempt", async () => {
+    const controller = new AbortController();
+    const states: [string, string | undefined][] = [];
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Camera transport failed")));
+    await watchCamera(connection, () => {}, (state, message) => {
+      states.push([state, message]);
+      if (states.length === 4) controller.abort();
+    }, controller.signal, 0);
+    expect(states).toEqual([
+      ["connecting", undefined],
+      ["reconnecting", "Camera transport failed"],
+      ["reconnecting", "Camera transport failed"],
+      ["reconnecting", "Camera transport failed"],
+    ]);
+  });
   it("reconnects after EOF and uses a fresh parser for the new stream", async () => {
     const controller = new AbortController();
     const received: string[] = [];

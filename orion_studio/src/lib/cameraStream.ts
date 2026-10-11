@@ -25,7 +25,7 @@ export class MultipartJpegParser {
   constructor(contentType: string) {
     const match = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
     const boundary = match?.[1] ?? match?.[2];
-    if (!/^multipart\/x-mixed-replace\s*;/i.test(contentType) || !boundary || !/^[\w.-]{1,70}$/.test(boundary)) {
+    if (!/^multipart\/(?:mixed|x-mixed-replace)\s*;/i.test(contentType) || !boundary || !/^[\w.-]{1,70}$/.test(boundary)) {
       throw new Error("Camera stream has no valid multipart boundary.");
     }
     this.boundary = bytes(`--${boundary}`);

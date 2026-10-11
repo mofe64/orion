@@ -489,8 +489,9 @@ class CameraProxyTests(unittest.TestCase):
 
     def test_stream_starts_and_clears_marker_and_preserves_multipart(self):
         with urllib.request.urlopen(self.request('stream')) as response:
-            self.assertIn('boundary=orion-frame', response.headers['Content-Type'])
-            self.assertIn(b'Content-Length: 4\r\n\r\nJPEG\r\n', response.read())
+            self.assertEqual(response.headers['Content-Type'], 'multipart/mixed; boundary=orion-frame')
+            self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'tauri://localhost')
+            self.assertEqual(response.read(), b'--orion-frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n' * 5)
         self.assertEqual(self.gateway.camera_viewers.clients, 0)
         self.assertEqual(self.marker_commands(), ['camera-viewer 3', 'camera-viewer 0'])
 

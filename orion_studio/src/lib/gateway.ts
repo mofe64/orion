@@ -122,8 +122,9 @@ function cameraRetry(delay: number, signal: AbortSignal): Promise<void> {
 export async function watchCamera(connection: GatewayConnection, onFrame: (frame: CameraFrame) => void | Promise<void>,
   onState: (state: CameraStreamState, message?: string) => void, signal: AbortSignal, retryDelay = 1000): Promise<void> {
   let reconnecting = false;
+  let retryMessage: string | undefined;
   while (!signal.aborted) {
-    onState(reconnecting ? "reconnecting" : "connecting");
+    onState(reconnecting ? "reconnecting" : "connecting", retryMessage);
     const idle = new AbortController();
     const combined = AbortSignal.any([signal, idle.signal]);
     let timer = setTimeout(() => idle.abort(), 8000);
@@ -138,7 +139,10 @@ export async function watchCamera(connection: GatewayConnection, onFrame: (frame
         if (done) { parser.finish(); break; }
         clearTimeout(timer); timer = setTimeout(() => idle.abort(), 5000);
         const frames = parser.push(value);
-        if (frames.length && !combined.aborted) { await onFrame(frames[frames.length - 1]); if (!combined.aborted) onState("live"); }
+        if (frames.length && !combined.aborted) {
+          await onFrame(frames[frames.length - 1]);
+          if (!combined.aborted) { retryMessage = undefined; onState("live"); }
+        }
       }
     } catch (error) {
       if (signal.aborted) return;
@@ -146,14 +150,15 @@ export async function watchCamera(connection: GatewayConnection, onFrame: (frame
       if (error instanceof GatewayError && (error.status === 401 || error.status === 403)) {
         onState("unavailable", "Reconnect Orion to view its camera."); return;
       }
-      onState("reconnecting", error instanceof Error ? error.message : "Camera connection dropped.");
+      retryMessage = error instanceof Error ? error.message : "Camera connection dropped.";
+      onState("reconnecting", retryMessage);
     } finally {
       clearTimeout(timer);
       await reader?.cancel().catch(() => {});
       reader?.releaseLock();
       idle.abort();
     }
-    if (!signal.aborted) { reconnecting = true; onState("reconnecting"); await cameraRetry(retryDelay, signal); }
+    if (!signal.aborted) { reconnecting = true; onState("reconnecting", retryMessage); await cameraRetry(retryDelay, signal); }
   }
 }
 

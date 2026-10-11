@@ -161,6 +161,7 @@ The observations endpoint returns an empty list until detection is implemented.
 Leaving Home or Debug cancels the stream and releases its viewer indication.
 Dropped streams reconnect automatically; `camera_off` waits for an explicit
 privacy change, and invalid credentials require reconnecting Orion.
+The last stream error stays visible while retrying and clears when frames resume.
 
 The gateway protects all camera routes with the existing bearer token:
 
@@ -177,8 +178,12 @@ rest starts; automatic reconnect resumes the feed after waking. Missing or
 unavailable rest telemetry also prevents viewing. Camera-off responses retain
 HTTP 503 and `error.code: camera_off`. Studio uses
 `fetch` with an Authorization header and incrementally parses parts by their
-Content-Length; it never places a token in an image URL. JPEG decoding and
-rendering keep the latest complete frame, and disconnecting aborts pending
+Content-Length; it never places a token in an image URL. The gateway serves
+`multipart/mixed` with the vision service's JPEG boundaries unchanged:
+WebKit cancels `multipart/x-mixed-replace` responses fetched as raw data.
+Studio also accepts the older type for other browser engines. Updating a Mac
+Studio frontend requires the matching gateway update on the Pi for live viewing.
+JPEG decoding and rendering keep the latest complete frame, and disconnecting aborts pending
 network work. The gateway accepts at most eight concurrent stream and snapshot
 requests.
 
