@@ -16,6 +16,12 @@ const WRIST: &str = "head_pitch_joint";
 const NECK: &str = "head_roll_joint";
 const YAW: &str = "base_yaw_joint";
 const EPS: f64 = 1e-9;
+/// Validated poses are measured examples, not exact walls. Planning (IK targets,
+/// projection, recovery references) stays inside the polygon and spans they
+/// define. Executed curves may pass up to one completion tolerance beyond them
+/// (never past calibration), so measured droop and smooth flow near a vertex
+/// do not force every keyframe to stop.
+pub const COMFORT_MARGIN_RAD: f64 = 0.05;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +33,8 @@ pub struct ComfortBoxConfig {
 #[derive(Clone, Debug)]
 pub struct ComfortBox {
     joint_ranges: BTreeMap<String, [f64; 2]>,
+    /// Calibrated safe range; the execution margin never passes it.
+    calibration: BTreeMap<String, [f64; 2]>,
     /// Counterclockwise convex hull in (shoulder, elbow) calibrated radians.
     arm_hull: Vec<[f64; 2]>,
 }
@@ -91,6 +99,18 @@ impl ComfortBox {
             }
             arms.push([pose[SHOULDER], pose[ELBOW]]);
         }
+        // Base yaw turns the whole arm over its own base, and the neck swivel
+        // turns only the head: neither moves mass off the footprint or the arm
+        // toward the base. Pose spans would make gaze and idle lopsided (the
+        // powered poses have no rightward swivel), so they keep calibration.
+        for joint in [YAW, NECK] {
+            let limit = limits[joint];
+            joint_ranges.insert(joint.into(), [limit.lower_rad, limit.upper_rad]);
+        }
+        let calibration = limits
+            .iter()
+            .map(|(name, limit)| ((*name).to_owned(), [limit.lower_rad, limit.upper_rad]))
+            .collect();
         let arm_hull = convex_hull(arms);
         if arm_hull.len() < 3 {
             return Err(invalid(
@@ -99,25 +119,69 @@ impl ComfortBox {
         }
         Ok(Self {
             joint_ranges,
+            calibration,
             arm_hull,
         })
     }
 
+    /// Execution envelope: the validated set plus `COMFORT_MARGIN_RAD`.
     pub fn contains(&self, pose: &JointPositions) -> bool {
-        pose.len() == self.joint_ranges.len()
-            && self.joint_ranges.iter().all(|(name, [lo, hi])| {
-                pose.get(name)
-                    .is_some_and(|v| v.is_finite() && *v >= lo - EPS && *v <= hi + EPS)
-            })
-            && self
-                .arm_hull
-                .iter()
-                .zip(self.arm_hull.iter().cycle().skip(1))
-                .all(|(a, b)| cross(*a, *b, [pose[SHOULDER], pose[ELBOW]]) >= -EPS)
+        self.contains_within(pose, COMFORT_MARGIN_RAD)
     }
 
-    /// Uniformly shorten the anchor-to-target joint-space segment. Clipping
-    /// against the hull's half planes preserves coupled arm containment.
+    /// Planning envelope: the validated polygon and spans themselves.
+    pub fn plans(&self, pose: &JointPositions) -> bool {
+        self.contains_within(pose, 0.0)
+    }
+
+    fn contains_within(&self, pose: &JointPositions, margin: f64) -> bool {
+        pose.len() == self.joint_ranges.len()
+            && self.joint_ranges.iter().all(|(name, [lo, hi])| {
+                let [cal_lo, cal_hi] = self.calibration[name];
+                pose.get(name).is_some_and(|v| {
+                    v.is_finite()
+                        && *v >= (lo - margin).max(cal_lo) - EPS
+                        && *v <= (hi + margin).min(cal_hi) + EPS
+                })
+            })
+            && self.arm_distance([pose[SHOULDER], pose[ELBOW]]) <= margin + EPS
+    }
+
+    /// Zero inside the validated arm polygon, else the distance to its edge.
+    fn arm_distance(&self, point: [f64; 2]) -> f64 {
+        if self
+            .arm_hull
+            .iter()
+            .zip(self.arm_hull.iter().cycle().skip(1))
+            .all(|(a, b)| cross(*a, *b, point) >= 0.0)
+        {
+            return 0.0;
+        }
+        let nearest = self.nearest_on_hull(point);
+        (nearest[0] - point[0]).hypot(nearest[1] - point[1])
+    }
+
+    fn nearest_on_hull(&self, point: [f64; 2]) -> [f64; 2] {
+        self.arm_hull
+            .iter()
+            .zip(self.arm_hull.iter().cycle().skip(1))
+            .map(|(a, b)| {
+                let edge = [b[0] - a[0], b[1] - a[1]];
+                let t = (((point[0] - a[0]) * edge[0] + (point[1] - a[1]) * edge[1])
+                    / (edge[0] * edge[0] + edge[1] * edge[1]))
+                    .clamp(0., 1.);
+                [a[0] + t * edge[0], a[1] + t * edge[1]]
+            })
+            .min_by(|a, b| {
+                ((a[0] - point[0]).hypot(a[1] - point[1]))
+                    .total_cmp(&((b[0] - point[0]).hypot(b[1] - point[1])))
+            })
+            .unwrap()
+    }
+
+    /// Uniformly shorten the anchor-to-target joint-space segment so the target
+    /// lies in the planning envelope. The anchor may sit within the execution
+    /// margin (measured droop); the result never moves further out than it.
     pub fn project(
         &self,
         anchor: &JointPositions,
@@ -142,20 +206,30 @@ impl ComfortBox {
                 scale = scale.min((lo - anchor[name]) / delta);
             }
         }
+        let mut scale = scale.clamp(0.0, 1.0);
         let start = [anchor[SHOULDER], anchor[ELBOW]];
         let end = [target[SHOULDER], target[ELBOW]];
-        for (a, b) in self
-            .arm_hull
-            .iter()
-            .zip(self.arm_hull.iter().cycle().skip(1))
-        {
-            let from = cross(*a, *b, start).max(0.0);
-            let to = cross(*a, *b, end);
-            if to < -EPS {
-                scale = scale.min(from / (from - to));
+        let at = |s: f64| {
+            [
+                start[0] + s * (end[0] - start[0]),
+                start[1] + s * (end[1] - start[1]),
+            ]
+        };
+        // Distance to the convex polygon is convex along the segment, so the
+        // allowed scales form one interval from zero; bisection finds its end.
+        let allowed = self.arm_distance(start);
+        if self.arm_distance(at(scale)) > allowed + EPS {
+            let (mut inside, mut outside) = (0.0, scale);
+            for _ in 0..48 {
+                let mid = 0.5 * (inside + outside);
+                if self.arm_distance(at(mid)) <= allowed + EPS {
+                    inside = mid;
+                } else {
+                    outside = mid;
+                }
             }
+            scale = inside;
         }
-        let scale = scale.clamp(0.0, 1.0);
         Ok((
             anchor
                 .iter()
@@ -165,7 +239,7 @@ impl ComfortBox {
         ))
     }
 
-    /// Nearest point in the joint box and arm polygon, without expanding either.
+    /// Nearest point in the planning envelope.
     pub fn nearest_pose(&self, measured: &JointPositions) -> Result<JointPositions> {
         if measured.len() != self.joint_ranges.len()
             || self
@@ -180,24 +254,9 @@ impl ComfortBox {
             .iter()
             .map(|(n, [lo, hi])| (n.clone(), measured[n].clamp(*lo, *hi)))
             .collect();
-        if !self.contains(&pose) {
-            let point = [pose[SHOULDER], pose[ELBOW]];
-            let nearest = self
-                .arm_hull
-                .iter()
-                .zip(self.arm_hull.iter().cycle().skip(1))
-                .map(|(a, b)| {
-                    let edge = [b[0] - a[0], b[1] - a[1]];
-                    let t = (((point[0] - a[0]) * edge[0] + (point[1] - a[1]) * edge[1])
-                        / (edge[0] * edge[0] + edge[1] * edge[1]))
-                        .clamp(0., 1.);
-                    [a[0] + t * edge[0], a[1] + t * edge[1]]
-                })
-                .min_by(|a, b| {
-                    ((a[0] - point[0]).hypot(a[1] - point[1]))
-                        .total_cmp(&((b[0] - point[0]).hypot(b[1] - point[1])))
-                })
-                .unwrap();
+        let point = [pose[SHOULDER], pose[ELBOW]];
+        if self.arm_distance(point) > 0.0 {
+            let nearest = self.nearest_on_hull(point);
             pose.insert(SHOULDER.into(), nearest[0]);
             pose.insert(ELBOW.into(), nearest[1]);
         }
@@ -249,10 +308,34 @@ impl ComfortBox {
                 *value -= (start[n] - projected[n]) * remaining;
             }
             if !self.contains(&pose) {
-                return Err(invalid("Compiled motion leaves the comfort box"));
+                return Err(invalid(format!(
+                    "Compiled motion leaves the comfort box at {t:.2} s: {}",
+                    self.violation(&pose)
+                )));
             }
         }
         Ok(())
+    }
+
+    /// The first joint range or arm-polygon excess, for diagnostics.
+    fn violation(&self, pose: &JointPositions) -> String {
+        for (name, [lo, hi]) in &self.joint_ranges {
+            let [cal_lo, cal_hi] = self.calibration[name];
+            let (lo, hi) = (
+                (lo - COMFORT_MARGIN_RAD).max(cal_lo),
+                (hi + COMFORT_MARGIN_RAD).min(cal_hi),
+            );
+            let value = pose[name];
+            if value < lo - EPS || value > hi + EPS {
+                return format!("{name} {value:.3} outside [{lo:.3}, {hi:.3}]");
+            }
+        }
+        format!(
+            "shoulder/elbow ({:.3}, {:.3}) is {:.3} rad beyond the validated arm polygon (margin {COMFORT_MARGIN_RAD})",
+            pose[SHOULDER],
+            pose[ELBOW],
+            self.arm_distance([pose[SHOULDER], pose[ELBOW]])
+        )
     }
 
     /// Per-joint compiler limits alone cannot prove coupled containment.
@@ -607,15 +690,21 @@ mod tests {
     }
 
     #[test]
-    fn desk_targets_outside_powered_yaw_report_clamping_instead_of_exact_aim() {
+    fn side_targets_use_calibrated_yaw_and_only_beyond_it_report_clamping() {
         let (model, poses, _, comfort) = setup();
         let home = poses.pose("home").unwrap();
+        // Yaw and neck swivel keep calibration, so side desk points beyond
+        // the powered poses' ±0.55 rad still aim exactly.
         for x in [-0.2, 0.2] {
             let solution = solve_lean(&model, &comfort, home, home, [x, -0.3, 0.], 0.8).unwrap();
-            assert_eq!(solution.status, LeanStatus::Clamped);
-            assert!(solution.aim_error_rad.unwrap() > 0.01);
+            assert!(solution.aim_error_rad.unwrap() < 1_f64.to_radians());
             assert!(comfort.contains(solution.positions.as_ref().unwrap()));
         }
+        // About 1.51 rad to the right is past the calibrated base yaw.
+        let solution = solve_lean(&model, &comfort, home, home, [0.5, -0.03, 0.], 0.8).unwrap();
+        assert_eq!(solution.status, LeanStatus::Clamped);
+        assert!(solution.aim_error_rad.unwrap() > 0.01);
+        assert!(comfort.contains(solution.positions.as_ref().unwrap()));
     }
 
     #[test]
@@ -825,16 +914,19 @@ mod tests {
         let mut measured = anchor.clone();
         *measured.get_mut(SHOULDER).unwrap() += 0.02;
         let recovery = compiled(&measured, anchor, &limits);
-        assert!(comfort.validate_sequence(&recovery).is_err());
+        // Measured droop just past a validated vertex is outside the planning
+        // envelope but within the execution margin.
+        assert!(!comfort.plans(&measured) && comfort.contains(&measured));
         comfort.validate_measured_sequence(&recovery, 0.05).unwrap();
-        // A small excursion at a later target is not tracking error.
+        // An excursion past the margin at a later target is not tracking error.
+        *measured.get_mut(SHOULDER).unwrap() = anchor[SHOULDER];
+        *measured.get_mut(ELBOW).unwrap() = anchor[ELBOW] + 0.08;
         let excursion = compiled(anchor, &measured, &limits);
         assert!(
             comfort
                 .validate_measured_sequence(&excursion, 0.05)
                 .is_err()
         );
-        *measured.get_mut(SHOULDER).unwrap() += 0.1;
         assert!(comfort.tracking_start(&measured, 0.05).is_err());
     }
 

@@ -113,7 +113,12 @@ runtime/target/release/oriond --hardware v2 --check --port /dev/ttyACM0
 
 For motion development, use `--serve --hardware v2 --character-on-start off`
 and the existing [hardware lifecycle](../runtime/README.md#physical-hardware).
-V2 does not inherit V1's measured gravity-gain overrides.
+V2 does not inherit V1's measured gravity-gain overrides. Its own profile
+(`make_orion_v2_servo_profiles` in `runtime/src/devices/sts3215/driver.rs`)
+sets shoulder P = 32 and elbow P = 48. At P = 32 the elbow held the desk
+reach poses 0.066–0.076 rad short at about 0.4 A, outside the 0.05 rad
+completion tolerance. P = 48 is lamp-unverified: check that every
+`lean_reach_*` pose completes and that the elbow neither hums nor oscillates.
 
 ## LED and USB audio setup
 

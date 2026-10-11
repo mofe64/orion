@@ -67,16 +67,21 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
 }
 
 /// V2 keeps the factory profile except on its two gravity-loaded arm joints:
-/// at P = 16 they settle outside the completion tolerance under load, so they
-/// use P = 32. V2's head pitch holds its poses at the factory gain.
+/// at P = 16 they settle outside the completion tolerance under load, so the
+/// shoulder uses P = 32. The extended desk reaches load the elbow to about
+/// 0.4 A; at P = 32 it holds them 0.066–0.076 rad short (measured 2026-10-11),
+/// outside the 0.05 rad completion tolerance, so the elbow uses P = 48.
+/// V2's head pitch holds its poses at the factory gain.
 pub fn make_orion_v2_servo_profiles() -> ServoProfiles {
     let mut profiles: ServoProfiles = crate::ORION_JOINT_NAMES
         .iter()
         .map(|name| ((*name).to_owned(), JointServoProfile::default()))
         .collect();
-    for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
-        profiles.get_mut(joint).unwrap().p_coefficient = 32;
-    }
+    profiles
+        .get_mut("shoulder_pitch_joint")
+        .unwrap()
+        .p_coefficient = 32;
+    profiles.get_mut("elbow_pitch_joint").unwrap().p_coefficient = 48;
     profiles
 }
 
@@ -985,6 +990,19 @@ mod tests {
             2
         );
         assert_eq!(driver.transport.registers[&(2, Register::DCoefficient)], 32);
+    }
+
+    #[test]
+    fn v2_profile_stiffens_only_the_gravity_loaded_arm() {
+        let profiles = make_orion_v2_servo_profiles();
+        let p = |joint: &str| profiles[joint].p_coefficient;
+        assert_eq!(p("shoulder_pitch_joint"), 32);
+        // Desk reaches hold about 0.4 A on the elbow; P = 32 droops past the
+        // completion tolerance there.
+        assert_eq!(p("elbow_pitch_joint"), 48);
+        for joint in ["base_yaw_joint", "head_roll_joint", "head_pitch_joint"] {
+            assert_eq!(p(joint), JointServoProfile::default().p_coefficient);
+        }
     }
 
     #[test]

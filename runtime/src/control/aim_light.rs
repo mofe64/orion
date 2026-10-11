@@ -255,6 +255,35 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     pub(crate) fn set_character_comfort(&mut self, enabled: bool) {
         self.character_comfort = enabled;
     }
+    /// Shrink every offset by one factor so each keyframe lies inside the
+    /// comfort box. The clip keeps its shape, arrivals, overlap and overshoot;
+    /// the caller still validates the compiled curve and falls back to
+    /// `fit_character_comfort` when the curve bows outside.
+    pub(crate) fn scale_character_comfort(
+        &self,
+        definition: &mut MotionDefinition,
+        anchor: &JointPositions,
+    ) -> Result<()> {
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let mut scale = 1.0_f64;
+        for target in definition.resolved_targets(anchor)? {
+            scale = scale.min(comfort.project(anchor, &target)?.1);
+        }
+        if scale < 1.0 {
+            for frame in &mut definition.keyframes {
+                for offset in frame.target.values_mut() {
+                    *offset *= scale;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Last resort: project each keyframe separately and stop at every one, so
+    /// each segment is a straight joint-space line inside the convex box.
     pub(crate) fn fit_character_comfort(
         &self,
         definition: &mut MotionDefinition,
@@ -415,12 +444,13 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let prepared = self.prepare_work_motion(
             "aim_light",
             vec![(pullback, 0.35), (lead, 0.65), (target.clone(), 2.5)],
+            None,
         )?;
         Ok((solution, Some(prepared)))
     }
 
     pub(crate) fn prepare_work_return(&self, anchor: &JointPositions) -> Result<PreparedAim> {
-        self.prepare_work_motion("aim_light_return", vec![(anchor.clone(), 3.5)])
+        self.prepare_work_motion("aim_light_return", vec![(anchor.clone(), 3.5)], None)
     }
 
     pub(crate) fn prepare_work_scan(
@@ -464,13 +494,23 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .zip(&motion.keyframes)
             .map(|(pose, frame)| Ok((comfort.project(anchor, &pose)?.0, frame.duration_seconds)))
             .collect::<Result<Vec<_>>>()?;
-        self.prepare_work_motion("look_around", frames)
+        let authored = motion
+            .keyframes
+            .iter()
+            .map(|frame| (frame.arrival, frame.hold_seconds))
+            .collect();
+        self.prepare_work_motion("look_around", frames, Some(authored))
     }
 
+    /// `authored` carries each frame's arrival and hold; `None` flows through
+    /// every frame except the last. If that curve bows outside the comfort
+    /// box, every frame settles instead, so each segment is a straight
+    /// joint-space line inside the convex box.
     fn prepare_work_motion(
         &self,
         name: &str,
         targets: Vec<(JointPositions, f64)>,
+        authored: Option<Vec<(KeyframeArrival, f64)>>,
     ) -> Result<PreparedAim> {
         if !self.mode.torque_is_enabled() {
             return Err(Error::InvalidState(
@@ -493,34 +533,54 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         // the shoulder/elbow spline outside the coupled comfort polygon.
         style.joint_lag = 0.;
         style.overshoot_scale = 0.;
-        let definition = MotionDefinition {
-            name: name.into(),
-            description: "Owned desk-light movement".into(),
-            space: MotionSpace::Absolute,
-            style,
-            return_to_anchor: false,
-            keyframes: targets
-                .into_iter()
-                .map(|(target, duration_seconds)| MotionKeyframe {
-                    pose_name: None,
-                    target,
-                    duration_seconds,
-                    arrival: KeyframeArrival::Settle,
-                    hold_seconds: 0.,
-                    marker: None,
-                })
-                .collect(),
+        let last = targets.len() - 1;
+        let limits = self.driver.joint_limits()?;
+        let compile = |all_settle: bool| -> Result<MotionSequence> {
+            let definition = MotionDefinition {
+                name: name.into(),
+                description: "Owned desk-light movement".into(),
+                space: MotionSpace::Absolute,
+                style,
+                return_to_anchor: false,
+                keyframes: targets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (target, duration_seconds))| {
+                        let (arrival, hold_seconds) = match &authored {
+                            Some(frames) => frames[i],
+                            None => (KeyframeArrival::Through, 0.),
+                        };
+                        MotionKeyframe {
+                            pose_name: None,
+                            target: target.clone(),
+                            duration_seconds: *duration_seconds,
+                            arrival: if all_settle || i == last {
+                                KeyframeArrival::Settle
+                            } else {
+                                arrival
+                            },
+                            hold_seconds,
+                            marker: None,
+                        }
+                    })
+                    .collect(),
+            };
+            let sequence = MotionSequence::compile_scaled_calibrated(
+                &definition,
+                start.clone(),
+                self.measured_velocities(),
+                None,
+                start.clone(),
+                1.,
+                &limits,
+            )?;
+            comfort.validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)?;
+            Ok(sequence)
         };
-        let sequence = MotionSequence::compile_scaled_calibrated(
-            &definition,
-            start.clone(),
-            self.measured_velocities(),
-            None,
-            start,
-            1.,
-            &self.driver.joint_limits()?,
-        )?;
-        comfort.validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)?;
+        let sequence = match compile(false) {
+            Ok(sequence) => sequence,
+            Err(_) => compile(true)?,
+        };
         Ok(PreparedAim {
             sequence,
             target,
@@ -564,7 +624,7 @@ mod recovery_tests {
         let anchor = core.hands_light_target(&desk, [0.14, -0.32, 0.]).unwrap();
         let mut measured = anchor.clone();
         *measured.get_mut("shoulder_pitch_joint").unwrap() += 0.02;
-        assert!(!core.comfort.as_ref().unwrap().1.contains(&measured));
+        assert!(!core.comfort.as_ref().unwrap().1.plans(&measured));
         core.driver.positions = measured.clone();
         core.tick(0.1).unwrap();
         (core, anchor, measured)
@@ -631,6 +691,52 @@ mod recovery_tests {
                 );
             }
         }
+    }
+
+    fn moving_through(sequence: &MotionSequence, keyframe: usize) -> bool {
+        let time = sequence.keyframe_arrival_time(keyframe).unwrap();
+        sequence
+            .sample_state(time)
+            .unwrap()
+            .velocities
+            .values()
+            .any(|v| v.abs() > 1e-3)
+    }
+
+    #[test]
+    fn desk_reach_and_search_flow_through_their_internal_keyframes() {
+        let (mut core, _, _) = following();
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
+        let home = core.poses.pose("home").unwrap().clone();
+        let (_, prepared) = core
+            .prepare_light_target(&home, [0., -0.28, 0.], 0.8)
+            .unwrap();
+        let reach = prepared.unwrap().sequence;
+        // The anticipation is a reversal (zero velocity by nature); the arm
+        // lead then hands over to the reach without a stop.
+        assert!(moving_through(&reach, 1));
+        // The first search stop keeps look_around's authored 0.4 s hold.
+        let scan = core.prepare_work_scan(&home, 0).unwrap().sequence;
+        assert!(scan.duration_seconds() >= 0.35 + 0.65 + 1.6 + 0.4 - 1e-9);
+    }
+
+    #[test]
+    fn desk_anchor_idle_keeps_its_authored_flow() {
+        let (mut core, anchor, _) = fixture();
+        core.set_character_comfort(true);
+        let definition = core.motions.motion("idle_breathe").unwrap().clone();
+        let internal = definition.keyframes.len() - 1;
+        core.play_generated_anchored_relative(definition, anchor, 0.1)
+            .unwrap();
+        let sequence = core.motion_sequence.as_ref().unwrap();
+        assert!((0..internal).any(|k| moving_through(sequence, k)));
     }
 
     #[test]

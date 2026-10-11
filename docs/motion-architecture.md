@@ -186,16 +186,23 @@ The authored anticipation and arm lead are adapted to the measured start;
 shoulder and elbow lead before the camera pitches down. Completion establishes
 the desk pose as the character anchor. The `directional` idle profile avoids
 outward yaw clips near range limits. Subsequent generated idle/speech drawings
-are projected into the coupled comfort box, use synchronous settle curves and
-are checked over their complete trajectory. This protection applies while a Hands or successfully aimed desk-light anchor
+keep their authored arrivals, joint lag and overshoot: every offset shrinks by
+one factor until each keyframe lies in the planning envelope, and the complete
+trajectory is checked against the execution envelope. Only a drawing whose
+curve still leaves it falls back to per-keyframe projection with a settle at
+every keyframe. This protection applies while a Hands or successfully aimed desk-light anchor
 is held; it does not change ordinary home animation.
 
-Measured starts may differ from the comfort hull by the runtime's 0.05-radian
-completion tolerance. Planning projects that reference into the hull while
-compiled output retains the actual measured start. Validation allows only that
-initial error, decaying along the first quintic segment to zero at its first
-settled keyframe. Later targets and curves must remain inside the original
-hull; larger errors are refused. A generated clip rejected by validation is
+The comfort box has two envelopes. Planning (IK targets, projection and
+recovery references) stays inside the validated poses' shoulder–elbow hull
+and joint spans. Executed curves may pass up to `COMFORT_MARGIN_RAD`
+(0.05 rad, the completion tolerance, never past calibration) beyond them, so
+measured droop and smooth flow near a validated vertex do not force stops.
+Measured starts may differ from the planning envelope by the same 0.05 rad;
+compiled output retains the actual measured start, and larger errors are
+refused. Base yaw and neck swivel use calibration rather than pose spans:
+neither moves mass off the base or the arm toward it, and the powered poses
+include no rightward swivel. A generated clip rejected by validation is
 logged and skipped, with `character.last_rejection` available in status, rather
 than ending the daemon. Driver IO faults retain their existing handling.
 

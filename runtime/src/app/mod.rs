@@ -250,7 +250,8 @@ mod tests {
         let factory = crate::JointServoProfile::default();
         for name in ORION_JOINT_NAMES {
             let expected = match name {
-                "shoulder_pitch_joint" | "elbow_pitch_joint" => 32,
+                "shoulder_pitch_joint" => 32,
+                "elbow_pitch_joint" => 48,
                 _ => factory.p_coefficient,
             };
             assert_eq!(profiles[name].p_coefficient, expected, "{name}");

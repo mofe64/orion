@@ -478,7 +478,7 @@ the coupled arm envelope.
 `motion::ik::solve_lean` returns `aimed`, `clamped`, or `unreachable`. It is a
 pose planner, not an execution interface. A caller must compile its result
 through `MotionSequence` with live calibration and call
-`ComfortBox::validate_sequence` before installing the movement. Unreachable
+`ComfortBox::validate_measured_sequence` before installing the movement. Unreachable
 results contain no pose. Invalid input and anchors outside the envelope are
 errors. No solver, geometry loading or file access runs in the 50 Hz tick.
 
@@ -496,16 +496,21 @@ aims the head. Lean one requests the wrist near full geometric extension on
 the shoulder-to-target ray. The envelope projects that requested arm pose to the nearest point in its
 powered hull; head pitch then aims from the bounded wrist, including the LED ring's
 mount offset. If wrist limits prevent aim, a bounded search shortens the arm
-further. A yaw boundary can leave residual error, reported in `aim_error_rad`
+further. A calibrated yaw boundary can leave residual error, reported in `aim_error_rad`
 with `clamped`; callers must not describe that result as exact aim.
 
 The V2 profile's `comfort_box.poses` selects powered catalogue poses: home,
 attentive, delight and the three reach poses. Shutdown-only `rest` and all
 `simulation_preview` poses are excluded, and configuration validation rejects
-either category. Startup planners derive the five joint spans and a convex
-hull of their `(shoulder_pitch_joint, elbow_pitch_joint)` pairs. The hull
+either category. Startup planners derive the shoulder, elbow and head-pitch spans and a convex
+hull of their `(shoulder_pitch_joint, elbow_pitch_joint)` pairs; base yaw and
+neck swivel keep calibration. The hull
 rejects combinations that fit individual spans but extend outside this powered
-arm envelope. The live calibration must contain every reference pose.
+arm envelope. Planning stays inside the hull and spans; executed curves may
+exceed them by `COMFORT_MARGIN_RAD` (0.05 rad) within calibration. Desk-light
+reaches flow through their anticipation and arm-lead keyframes, and the search
+keeps `look_around`'s authored arrivals and holds; each falls back to a settle
+at every keyframe only when its curve leaves the execution envelope. The live calibration must contain every reference pose.
 The hull is a geometric constraint, not proof that every interior pose is
 collision-free. Reference poses marked lamp-unverified still need physical
 commissioning; torque-free rest cannot establish powered clearance.

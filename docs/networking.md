@@ -139,6 +139,36 @@ with a static camera subnet limits which wired network works; `NO-CARRIER`
 also requires a working cable and link partner. Check the effective generated
 network configuration and `networkctl status eth0` before changing managers.
 
+## Studio name lookup
+
+Studio's desktop service looks the paired hostname up once, with a 10-second
+budget separate from each request's 3-second timeout, and reuses the
+addresses that answered (IPv4 first). It looks the name up again only when a
+cached address stops answering, such as after a DHCP change. Studio's window
+connects through the system web stack, so Home can keep working while a slow
+lookup fails the desktop service's voice, personality and memory requests.
+
+Measured on 11 October 2026 with Ariadne on home Wi-Fi: the Mac received no
+IPv4 mDNS answer for `ariadne-robot.local`, and its IPv6 link-local answer
+arrived after about 5 seconds. The Pi's `wlan0` had Wi-Fi power saving on,
+which commonly drops Raspberry Pi multicast. Check and disable it:
+
+```bash
+iw dev wlan0 get power_save
+sudo nmcli connection modify "$(nmcli -t -f NAME,DEVICE connection show --active | grep ':wlan0$' | cut -d: -f1)" 802-11-wireless.powersave 2
+sudo nmcli connection up "$(nmcli -t -f NAME,DEVICE connection show --active | grep ':wlan0$' | cut -d: -f1)"
+```
+
+Reconnecting drops SSH briefly; keep the lamp at rest. From the Mac, an IPv4
+lookup should then answer within a second:
+
+```bash
+curl -4 -s -m 3 -o /dev/null -w '%{http_code} %{time_namelookup}s\n' http://ariadne-robot.local:7447/api/v2/voice/status
+```
+
+`401` means the gateway answered and needs Studio's token. The Pi advertises
+only its hostname; `orion.local` resolves only on networks that add it.
+
 ## Development validation
 
 ```bash

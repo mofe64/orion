@@ -871,31 +871,51 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             Some(state) => state.velocities,
             None => self.measured_velocities(),
         };
-        if self.character_comfort {
-            self.fit_character_comfort(&mut definition, &anchor)?;
-        }
-        let limits = self.driver.joint_limits()?;
-        let amplitude_scale = definition.uniform_amplitude_scale(&anchor, &limits)?;
-        let targets = definition.resolved_targets_with_scale(&anchor, amplitude_scale)?;
-        for target in &targets {
-            self.driver.validate_positions(target)?;
-        }
-        let sequence = MotionSequence::compile_scaled_calibrated(
-            &definition,
-            start,
-            velocity,
-            acceleration,
-            anchor,
-            amplitude_scale,
-            &limits,
-        )?;
-        if self.character_comfort {
-            self.comfort
-                .as_ref()
-                .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
-                .1
-                .validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)?;
-        }
+        let compile =
+            |definition: &MotionDefinition| -> Result<(MotionSequence, Vec<JointPositions>)> {
+                let limits = self.driver.joint_limits()?;
+                let amplitude_scale = definition.uniform_amplitude_scale(&anchor, &limits)?;
+                let targets = definition.resolved_targets_with_scale(&anchor, amplitude_scale)?;
+                for target in &targets {
+                    self.driver.validate_positions(target)?;
+                }
+                let sequence = MotionSequence::compile_scaled_calibrated(
+                    definition,
+                    start.clone(),
+                    velocity.clone(),
+                    acceleration.clone(),
+                    anchor.clone(),
+                    amplitude_scale,
+                    &limits,
+                )?;
+                if self.character_comfort {
+                    self.comfort
+                        .as_ref()
+                        .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+                        .1
+                        .validate_measured_sequence(&sequence, COMPLETION_POSITION_TOLERANCE_RAD)?;
+                }
+                Ok((sequence, targets))
+            };
+        // At a desk anchor, first keep the clip's authored flow and shrink it
+        // uniformly. Only a curve that still bows outside the comfort box
+        // falls back to stopping at every keyframe.
+        let (sequence, targets) = if self.character_comfort {
+            let mut scaled = definition.clone();
+            self.scale_character_comfort(&mut scaled, &anchor)?;
+            match compile(&scaled) {
+                Ok(result) => {
+                    definition = scaled;
+                    result
+                }
+                Err(_) => {
+                    self.fit_character_comfort(&mut definition, &anchor)?;
+                    compile(&definition)?
+                }
+            }
+        } else {
+            compile(&definition)?
+        };
         let target = targets
             .last()
             .cloned()
