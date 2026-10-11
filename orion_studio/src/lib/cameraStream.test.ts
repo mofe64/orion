@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MultipartJpegParser } from "./cameraStream";
-import { getCameraSnapshot, setCameraEnabled, watchCamera } from "./gateway";
+import { getCameraDetections, getCameraSnapshot, setCameraEnabled, watchCamera } from "./gateway";
 
 const type = "multipart/mixed; boundary=orion-frame";
 const encode = (value: string) => new TextEncoder().encode(value);
@@ -48,6 +48,14 @@ describe("multipart JPEG parser", () => {
 });
 
 describe("authenticated camera transport", () => {
+  it("fetches detections without caching and preserves the exact capture timestamp", async () => {
+    const value = { capture_boottime_ns: "12345678901234567", age_ms: 20, detections: [] };
+    const fetcher = vi.fn().mockResolvedValue(Response.json(value)); vi.stubGlobal("fetch", fetcher);
+    expect(await getCameraDetections(connection)).toEqual(value);
+    expect(fetcher).toHaveBeenCalledWith("http://orion/api/v2/camera/detections", expect.objectContaining({
+      cache: "no-store", headers: { Authorization: "Bearer private-token" }, redirect: "error",
+    }));
+  });
   it("keeps the failure visible throughout the wait and next connection attempt", async () => {
     const controller = new AbortController();
     const states: [string, string | undefined][] = [];

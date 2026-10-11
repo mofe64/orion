@@ -89,11 +89,25 @@ export interface CameraObservation {
   class: string;
   box: [number, number, number, number]; // Normalised x, y, width, height.
 }
+export interface CameraDetection {
+  box: [number, number, number, number];
+  score: number;
+  track_id: number;
+  chosen_target: boolean;
+  capture_boottime_ns: string;
+}
+export interface CameraDetectionBatch {
+  capture_boottime_ns: string | null;
+  age_ms: number | null;
+  detections: CameraDetection[];
+}
 export type CameraStreamState = "connecting" | "live" | "reconnecting" | "off" | "unavailable";
 export const setCameraEnabled = (connection: GatewayConnection, camera_enabled: boolean) =>
   request<{ camera_enabled: boolean }>(connection, "/api/v2/camera/enabled", { method: "POST", body: JSON.stringify({ camera_enabled }) });
 export const getCameraObservations = (connection: GatewayConnection, signal?: AbortSignal) =>
   request<CameraObservation[]>(connection, "/api/v2/camera/observations", { signal });
+export const getCameraDetections = (connection: GatewayConnection, signal?: AbortSignal) =>
+  request<CameraDetectionBatch>(connection, "/api/v2/camera/detections", { signal, cache: "no-store" });
 
 async function cameraResponse(connection: GatewayConnection, path: string, signal: AbortSignal) {
   const response = await fetch(`${connection.url.replace(/\/$/, "")}/api/v2/camera/${path}`, {

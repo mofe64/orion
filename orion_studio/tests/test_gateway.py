@@ -330,7 +330,7 @@ class HttpAuthenticationTests(unittest.TestCase):
         self.assertEqual(context.exception.code, HTTPStatus.UNAUTHORIZED)
 
     def test_every_camera_endpoint_requires_authentication(self):
-        for path in ('stream', 'snapshot', 'observations', 'enabled'):
+        for path in ('stream', 'snapshot', 'observations', 'detections', 'enabled'):
             with self.subTest(path=path):
                 document = {'camera_enabled': True} if path == 'enabled' else None
                 with self.assertRaises(urllib.error.HTTPError) as result:
@@ -366,6 +366,9 @@ class CameraProxyTests(unittest.TestCase):
         self.rest_checked = threading.Event()
         self.snapshot_renewed = threading.Event()
         self.vision_requests = []
+        self.detections = dict(capture_boottime_ns='12345678901234567', age_ms=25,
+            detections=[dict(box=[.1, .2, .3, .4], score=.95, track_id=7, chosen_target=True,
+                             capture_boottime_ns='12345678901234567')])
         owner = self
 
         class VisionHandler(BaseHTTPRequestHandler):
@@ -388,7 +391,8 @@ class CameraProxyTests(unittest.TestCase):
                             self.wfile.flush(); time.sleep(.04)
                     except OSError: pass
                 else:
-                    body = b'JPEG' if self.path == '/frame.jpg' else b'[]'
+                    body = (b'JPEG' if self.path == '/frame.jpg' else
+                            json.dumps(owner.detections).encode() if self.path == '/detections' else b'[]')
                     self.send_response(200)
                     self.send_header("Content-Type", "image/jpeg" if self.path == '/frame.jpg' else "application/json")
                     self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -430,6 +434,42 @@ class CameraProxyTests(unittest.TestCase):
             self.assertEqual(response.read(), b'[]')
             self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'tauri://localhost')
         self.client.request.assert_not_called()
+
+    def test_detections_require_an_existing_healthy_viewer_and_are_not_logged_or_saved(self):
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(self.request('detections'))
+        self.assertEqual(error.exception.code, 503)
+        self.assertEqual(json.loads(error.exception.read())['error']['code'], 'camera_not_viewed')
+        self.assertEqual(self.vision_requests, [])
+        self.assertEqual(self.marker_commands(), [])
+        before = set(self.vision_path.parent.iterdir())
+        with patch('builtins.print') as logged, self.gateway.camera_viewers.watching():
+            with urllib.request.urlopen(self.request('detections')) as response:
+                self.assertEqual(json.load(response), self.detections)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'tauri://localhost')
+            self.gateway.camera_viewers.healthy = False
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(self.request('detections'))
+            self.assertEqual(error.exception.code, 503)
+            self.assertNotIn('chosen_target', repr(logged.call_args_list))
+            self.assertNotIn('12345678901234567', repr(logged.call_args_list))
+        self.assertEqual(self.vision_requests, ['/detections'])
+        self.assertEqual(set(self.vision_path.parent.iterdir()), before)
+
+    def test_detections_recheck_viewer_health_after_the_upstream_read(self):
+        connection, response = Mock(), Mock(status=200)
+        response.getheader.return_value = 'application/json'
+        def read(_):
+            self.gateway.camera_viewers.healthy = False
+            return json.dumps(self.detections).encode()
+        response.read.side_effect = read
+        with self.gateway.camera_viewers.watching(), patch.object(self.gateway, 'open_camera', return_value=(connection, response)):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(self.request('detections'))
+            self.assertEqual(error.exception.code, 503)
+            self.assertNotIn('detections', json.loads(error.exception.read()))
+        connection.close.assert_called_once()
 
     def test_authenticated_snapshot_takes_marker_lease_without_clearing_it(self):
         with urllib.request.urlopen(self.request('snapshot')) as response:

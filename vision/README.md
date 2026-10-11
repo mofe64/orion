@@ -91,19 +91,34 @@ The service runs as the Pi user with supplementary group `video`, `Nice=10`,
 | `/frame.jpg` | Latest main frame resized to 640×360; timestamp in `X-Capture-Boottime-Ns` |
 | `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
 | `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
+| `/detections` | Latest preview detection batch; 503 `camera_not_viewed` without a stream or snapshot lease |
 | `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window |
 
 JPEGs are encoded on demand and cached across viewers at at most 15 fps.
+With detection available, preview JPEGs use completed inference captures: up to
+10 fps idle and 3 fps during voice activity. If detection fails, JPEGs use the
+ordinary latest capture. A completed preview pairs its RGB buffer with fresh
+detections from that exact capture, so retained gaze tracks never create boxes
+on another frame.
 Disconnected viewers cause encoding to stop. Capture converts RGB only while
 a stream client is connected or a snapshot was requested in the last two
 seconds. Callbacks without viewing demand omit the main RGB copy. Tracking
 copies the 320×240 lores YUV buffer independently, so detection continues
 without full-frame RGB copies. The first viewing request waits up to one second
-for an RGB frame. Capture retains a single latest RGB buffer, so slow consumers
-drop frames rather than accumulating a queue.
+for an RGB frame. Capture retains one latest RGB buffer; inference retains at
+most one pending, one in-flight and one completed preview. They remain in memory
+and slow consumers drop frames rather than accumulating a queue. Viewer departure
+discards preview pixels without cancelling gaze tracking.
 `Picamera2Source` uses 1280×720 `BGR888`, whose Python byte order is RGB.
 `make_array("main")` supplies the one owned copy when RGB is requested;
 callbacks do not encode or write frames.
+
+`/detections` returns `capture_boottime_ns` as an exact decimal string, `age_ms`
+at response creation, and a `detections` array. Each item has a normalized
+`box: [x, y, width, height]` in the stream image, `score`, `track_id`,
+`chosen_target` and the same timestamp string. A frame with no faces has an
+empty array even while gaze retains a track. Requests never create or extend
+a viewer lease. Detection batches and boxes are never persisted or logged.
 
 `capture_boottime_ns` names Linux `CLOCK_BOOTTIME`, which includes suspend.
 It is `SensorTimestamp` (exposure start) plus `ExposureTime * 1000 / 2`

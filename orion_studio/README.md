@@ -166,8 +166,15 @@ speech and alarm lighting. The band remains steady while streaming and for
 at least three seconds after a snapshot. Rest states suppress it along with
 viewing. See the [runtime indicator contract](../runtime/README.md#camera-viewer-indicator).
 
-Debug's **Show camera observations** toggle draws boxes on a separate canvas.
-The observations endpoint returns an empty list until detection is implemented.
+Home draws face boxes on a separate canvas over the live feed, with track IDs
+and a yellow highlight for the chosen target. Debug's **Show face boxes** toggle
+controls the same overlay. Boxes require an exact match between the detection
+batch and JPEG capture timestamp; timestamps remain decimal strings to preserve
+nanosecond precision. Studio includes request time in the reported capture age
+and clears boxes at 300 ms, even when frames or detection requests stall. A new
+frame, reconnect, camera-off or lost viewer lease clears mismatched evidence.
+Boxes stay in memory and are never saved or logged; saved snapshots contain only
+the camera JPEG.
 Leaving Home or Debug cancels the stream and releases its viewer indication.
 Dropped streams reconnect automatically; `camera_off` waits for an explicit
 privacy change, and invalid credentials require reconnecting Orion.
@@ -180,6 +187,7 @@ The gateway protects all camera routes with the existing bearer token:
 | `GET /api/v2/camera/stream` | Proxy the multipart JPEG feed |
 | `GET /api/v2/camera/snapshot` | Proxy one 640×360 JPEG |
 | `GET /api/v2/camera/observations` | Proxy observation JSON |
+| `GET /api/v2/camera/detections` | Proxy fresh preview boxes while an existing healthy viewer holds the lease |
 | `POST /api/v2/camera/enabled` | Save `{"camera_enabled": true}` or `false` |
 
 Streams and snapshots return HTTP 503 with `error.code: camera_resting` while
@@ -207,6 +215,8 @@ after delivery, retaining the indication for at least three seconds. The last
 viewer clears the marker only after that snapshot hold has elapsed; otherwise
 the runtime lease expires naturally. See the [runtime marker contract](../runtime/README.md#camera-viewer-indicator)
 and [vision setup](../vision/README.md#service-setup-and-development).
+Detection requests use the existing viewer lease and check it before and after
+the vision response. Polling boxes cannot start viewing or extend the indication.
 
 ## Animation library and scene editor
 

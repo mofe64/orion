@@ -259,6 +259,12 @@ class CameraViewers:
                     self.healthy = False
                     return
 
+    def require_viewing(self):
+        with self.lock:
+            if not self.clients or not self.healthy:
+                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_not_viewed",
+                    "A healthy camera viewer is required for face boxes.")
+
 
 class OrionGateway:
     """Allowlisted semantic translation; this class never controls hardware."""
@@ -337,6 +343,9 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_off", "Camera is disabled.")
         if path in ("/stream", "/frame.jpg"):
             self.require_camera_awake()
+        if path == "/detections":
+            self.require_camera_awake()
+            self.camera_viewers.require_viewing()
         connection = http.client.HTTPConnection("localhost", timeout=2)
         connection.sock = socket.socket(socket.AF_UNIX)
         connection.sock.settimeout(2)
@@ -1709,7 +1718,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
             camera_paths = {"/api/v2/camera/stream": "/stream", "/api/v2/camera/snapshot": "/frame.jpg",
-                            "/api/v2/camera/observations": "/observations"}
+                            "/api/v2/camera/observations": "/observations",
+                            "/api/v2/camera/detections": "/detections"}
             if path in camera_paths:
                 return self._proxy_camera(camera_paths[path])
             if path == "/api/v2/voice/status":
@@ -1846,6 +1856,11 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_off", "Camera is disabled.")
                             if not viewers.healthy:
                                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable", "Orion's camera viewer indicator is unavailable.")
+                        if path == "/detections":
+                            gateway.require_camera_awake()
+                            gateway.camera_viewers.require_viewing()
+                            if not gateway.camera_is_enabled():
+                                raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_off", "Camera is disabled.")
                         self.send_response(response.status)
                         self._cors_headers()
                         self.send_header("Content-Type", content_type)

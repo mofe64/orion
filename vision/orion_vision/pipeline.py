@@ -16,6 +16,8 @@ class FacePipeline:
         self.changed, self.stop = Condition(), Event()
         self.commands = Lock()
         self.pending = None
+        self.latest_preview = None
+        self.preview_generation = 0
         self.enabled = False
         self.generation = 0
         self.dropped = self.inferences = 0
@@ -39,6 +41,8 @@ class FacePipeline:
             self.enabled = enabled
             self.generation += 1
             self.pending = None
+            self.latest_preview = None
+            self.preview_generation += 1
             self.tracker.clear()
             self.changed.notify_all()
         if not enabled:
@@ -53,7 +57,7 @@ class FacePipeline:
         if self.thread:
             self.thread.join(timeout=2)
 
-    def submit(self, stamp, buffer, metadata=None, geometry=None):
+    def submit(self, stamp, buffer, metadata=None, geometry=None, rgb=None):
         with self.changed:
             if self.enabled and buffer is not None:
                 if self.intrinsics.geometry is not None:
@@ -62,10 +66,24 @@ class FacePipeline:
                     except ValueError as error:
                         self.dropped += 1
                         self.error = str(error)
+                        self.clear_preview()
                         return
                 self.dropped += self.pending is not None
-                self.pending = (stamp, buffer, self.generation)
+                self.pending = (stamp, buffer, self.generation, rgb, self.preview_generation)
                 self.changed.notify()
+
+    def preview(self):
+        with self.changed:
+            return self.latest_preview if self.enabled else None
+
+    def clear_preview(self):
+        # Viewer departure invalidates RGB in flight without resetting gaze tracks.
+        with self.changed:
+            self.latest_preview = None
+            self.preview_generation += 1
+            if self.pending is not None:
+                stamp, buffer, generation, _, _ = self.pending
+                self.pending = (stamp, buffer, generation, None, self.preview_generation)
 
     def observations(self):
         with self.changed:
@@ -143,7 +161,7 @@ class FacePipeline:
             with self.changed:
                 if not self.enabled or self.pending is None:
                     continue
-                stamp, buffer, generation = self.pending
+                stamp, buffer, generation, rgb, preview_generation = self.pending
                 self.pending = None
             last_inference = self.clock()
             next_inference = last_inference + 1 / self.rate_hz
@@ -157,11 +175,20 @@ class FacePipeline:
                     # Drop late results instead of sending a stale target.
                     if not 0 <= self.boot_clock() - stamp <= 1_000_000_000:
                         self.error = "Detection result is stale"
+                        self.latest_preview = None
                         continue
-                    self.tracker.update(stamp, faces, bearings)
+                    fresh = self.tracker.update(stamp, faces, bearings)
                     tracks = [track for track in self.tracker.tracks
                         if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
                     chosen = choose_track(tracks)
+                    if rgb is not None and preview_generation == self.preview_generation:
+                        detections = [{"box": track.observation(stamp)["box"],
+                            "score": track.face.confidence, "track_id": track.id,
+                            "chosen_target": track is chosen, "capture_boottime_ns": str(stamp)}
+                            for track in fresh]
+                        self.latest_preview = (stamp, rgb, detections)
+                    else:
+                        self.latest_preview = None
                 with self.commands:
                     with self.changed:
                         if not self.enabled or generation != self.generation:
@@ -173,5 +200,6 @@ class FacePipeline:
                 with self.changed:
                     self.error = str(error)
                     self.tracker.clear()
+                    self.latest_preview = None
                 with self.commands:
                     self._clear_target()

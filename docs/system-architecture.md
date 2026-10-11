@@ -70,6 +70,12 @@ follows viewing demand. No captured frame is written to disk. Inference and
 gaze movement are not implemented by this
 service skeleton.
 
+Viewer previews pair completed detections with RGB from the same capture. The
+authenticated gateway proxies `/detections` only with a healthy viewer lease;
+polling cannot create one. Studio matches exact timestamp strings and removes
+boxes at 300 ms, including request delay in their age. This metadata remains in
+memory and never enters stored snapshots or logs.
+
 Vision observes the saved camera privacy setting outside camera callbacks.
 Disabling it purges frame/JPEG buffers and closes capture within one second;
 existing streams end and every endpoint returns `503 camera_off`. Capture

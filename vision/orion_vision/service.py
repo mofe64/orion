@@ -135,9 +135,11 @@ class Vision:
             self.latest = (stamp, capture.rgb) if capture.rgb is not None else None
             if capture.rgb is None:
                 self.cached = None
+                if self.pipeline:
+                    self.pipeline.clear_preview()
             self.changed.notify_all()
             if self.pipeline:
-                self.pipeline.submit(stamp, capture.lores, capture.metadata, capture.geometry)
+                self.pipeline.submit(stamp, capture.lores, capture.metadata, capture.geometry, rgb=capture.rgb)
 
     def wants_rgb(self):
         # This callback does no I/O or encoding. Stream admission happens
@@ -158,6 +160,23 @@ class Vision:
             if not snapshot:
                 with self.changed:
                     self.clients -= 1
+                    if not self.wants_rgb():
+                        self.latest = self.cached = None
+                        if self.pipeline:
+                            self.pipeline.clear_preview()
+
+    def detections(self):
+        with self.changed:
+            if not self.wants_rgb():
+                return 503, {"error": {"code": "camera_not_viewed", "message": "A camera viewer is required"}}
+            if not self.pipeline:
+                return 503, {"error": {"code": "detection_unavailable", "message": "Face detection is unavailable"}}
+            preview = self.pipeline.preview()
+            if preview is None:
+                return 200, {"capture_boottime_ns": None, "age_ms": None, "detections": []}
+            stamp, _, detections = preview
+            age_ms = max(0, self.pipeline.boot_clock() - stamp) / 1e6
+            return 200, {"capture_boottime_ns": str(stamp), "age_ms": age_ms, "detections": detections}
 
     def wait_for_jpeg(self):
         with self.changed:
@@ -181,6 +200,11 @@ class Vision:
                 if self.status()[0] != 200 or self.latest is None:
                     return None
                 stamp, rgb = self.latest
+                # Inference previews keep boxes and pixels from one capture. When
+                # detection is unavailable, the ordinary camera feed still works.
+                preview = self.pipeline.preview() if self.pipeline else None
+                if preview is not None:
+                    stamp, rgb, _ = preview
                 if self.cached and (stamp == self.cached[0] or time.monotonic() - self.last_encode < 1 / 15):
                     return self.cached if self.cached[0] > after else None
                 if stamp <= after:
@@ -255,6 +279,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, body)
             if self.path == "/observations":
                 return self.respond(200, vision.pipeline.observations() if vision.pipeline else [])
+            if self.path == "/detections":
+                status, body = vision.detections()
+                return self.respond(status, body)
             if urlsplit(self.path).path == "/speaker":
                 if not vision.pipeline:
                     return self.respond(503, {"error": {"code": "detection_unavailable"}})

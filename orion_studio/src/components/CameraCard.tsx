@@ -1,72 +1,96 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
-import { getCameraObservations, getCameraSnapshot, setCameraEnabled, watchCamera,
-  type CameraObservation, type CameraStreamState, type GatewayConnection } from "../lib/gateway";
+import { getCameraDetections, getCameraSnapshot, setCameraEnabled, watchCamera,
+  type CameraDetection, type CameraStreamState, type GatewayConnection } from "../lib/gateway";
+import { CameraOverlay } from "../lib/cameraOverlay";
 import "./CameraCard.css";
 
 const labels: Record<CameraStreamState, string> = {
   connecting: "Connecting camera…", live: "Live", reconnecting: "Reconnecting camera…", off: "Camera is off", unavailable: "Camera unavailable",
 };
 
-export function drawCameraObservations(context: CanvasRenderingContext2D, observations: CameraObservation[], width: number, height: number) {
+export function drawCameraDetections(context: CanvasRenderingContext2D, detections: CameraDetection[], width: number, height: number) {
   context.clearRect(0, 0, width, height);
-  context.strokeStyle = "#78e6cf"; context.fillStyle = "#78e6cf"; context.lineWidth = 2; context.font = "14px sans-serif";
-  for (const observation of observations) {
-    if (!Array.isArray(observation.box) || observation.box.length !== 4 || observation.box.some(v => !Number.isFinite(v) || v < 0 || v > 1)) continue;
-    const [x, y, w, h] = observation.box;
+  context.font = "14px sans-serif";
+  for (const detection of detections) {
+    if (!Array.isArray(detection.box) || detection.box.length !== 4 || detection.box.some(v => !Number.isFinite(v) || v < 0 || v > 1) ||
+        !Number.isSafeInteger(detection.track_id) || detection.track_id < 1 || !Number.isFinite(detection.score) ||
+        detection.score < 0 || detection.score > 1 || typeof detection.chosen_target !== "boolean") continue;
+    const [x, y, w, h] = detection.box;
+    if (w <= 0 || h <= 0 || x + w > 1 + 1e-9 || y + h > 1 + 1e-9) continue;
+    context.strokeStyle = detection.chosen_target ? "#ffe299" : "#78e6cf";
+    context.fillStyle = context.strokeStyle; context.lineWidth = detection.chosen_target ? 3 : 2;
     context.strokeRect(x * width, y * height, w * width, h * height);
-    context.fillText(`${observation.class} · ${observation.id}`, x * width + 4, Math.max(16, y * height - 5));
+    context.fillText(`Face ${detection.track_id}${detection.chosen_target ? " · target" : ""}`, x * width + 4, Math.max(16, y * height - 5));
   }
 }
 
-export function CameraCard({ connection, overlay = false }: { connection: GatewayConnection | null; overlay?: boolean }) {
+export function CameraCard({ connection, overlay = true }: { connection: GatewayConnection | null; overlay?: boolean }) {
   const image = useRef<HTMLCanvasElement>(null);
   const boxes = useRef<HTMLCanvasElement>(null);
   const epoch = useRef(0);
+  const overlayData = useRef(new CameraOverlay());
+  const overlayEnabled = useRef(overlay); overlayEnabled.current = overlay;
+  const live = useRef(false);
+  const refreshDetections = useRef<(() => void) | null>(null);
+  const paintOverlay = useCallback(() => {
+    overlayData.current.render(overlayEnabled.current && live.current, detections => {
+      const context = boxes.current?.getContext("2d");
+      if (context) drawCameraDetections(context, detections, 640, 360);
+    });
+  }, []);
   const [state, setState] = useState<CameraStreamState>("connecting");
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [streamError, setStreamError] = useState("");
   const [revision, setRevision] = useState(0);
-  const [observations, setObservations] = useState<CameraObservation[]>([]);
 
   useEffect(() => {
     const generation = ++epoch.current;
     const controller = new AbortController();
+    live.current = false; overlayData.current.clear(); paintOverlay();
     setEnabled(null); setState("connecting"); setError(""); setStreamError(""); setPending(false);
     image.current?.getContext("2d")?.clearRect(0, 0, 640, 360);
     if (connection) void watchCamera(connection, async frame => {
+      const receivedAt = performance.now();
       const bitmap = await createImageBitmap(new Blob([new Uint8Array(frame.jpeg)], { type: "image/jpeg" }));
-      try { if (generation === epoch.current && !controller.signal.aborted) image.current?.getContext("2d")?.drawImage(bitmap, 0, 0, 640, 360); }
+      try { if (generation === epoch.current && !controller.signal.aborted) {
+        image.current?.getContext("2d")?.drawImage(bitmap, 0, 0, 640, 360);
+        overlayData.current.frame(frame.captureBoottimeNs, receivedAt); live.current = true; paintOverlay();
+        refreshDetections.current?.();
+      } }
       finally { bitmap.close(); }
     }, (value, message) => {
       if (generation !== epoch.current || controller.signal.aborted) return;
       setState(value); setStreamError(message ?? "");
+      live.current = value === "live";
+      if (!live.current) overlayData.current.clear();
+      paintOverlay();
       if (value === "live") setEnabled(true);
       if (value === "off") { setEnabled(false); image.current?.getContext("2d")?.clearRect(0, 0, 640, 360); }
     }, controller.signal);
-    return () => { epoch.current++; controller.abort(); };
-  }, [connection, revision]);
+    return () => { epoch.current++; controller.abort(); live.current = false; overlayData.current.clear(); paintOverlay(); };
+  }, [connection, revision, paintOverlay]);
 
   useEffect(() => {
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
-    setObservations([]);
+    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>; let inFlight = false;
+    overlayData.current.clearDetections(); paintOverlay();
     const poll = async () => {
-      if (!connection || !overlay || state !== "live") return;
+      if (!connection || !overlay || state !== "live" || inFlight || controller.signal.aborted) return;
+      clearTimeout(timer); inFlight = true;
+      const requestedAt = performance.now();
       try {
-        const values = await getCameraObservations(connection, AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
-        if (!controller.signal.aborted) setObservations(values);
-      } catch { if (!controller.signal.aborted) setObservations([]); }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 500);
+        const batch = await getCameraDetections(connection, AbortSignal.any([controller.signal, AbortSignal.timeout(300)]));
+        if (!controller.signal.aborted) { overlayData.current.update(batch, requestedAt); paintOverlay(); }
+      } catch { if (!controller.signal.aborted) { overlayData.current.clearDetections(); paintOverlay(); } }
+      finally { inFlight = false; }
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 100);
     };
+    refreshDetections.current = () => void poll();
     void poll();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [connection, overlay, state]);
-  useEffect(() => {
-    const context = boxes.current?.getContext("2d");
-    if (context) drawCameraObservations(context, overlay && state === "live" ? observations : [], 640, 360);
-  }, [observations, overlay, state]);
+    return () => { controller.abort(); clearTimeout(timer); refreshDetections.current = null; overlayData.current.clearDetections(); paintOverlay(); };
+  }, [connection, overlay, state, paintOverlay]);
 
   const toggle = async (desired?: boolean) => {
     if (!connection || desired === undefined && enabled === null || pending) return;

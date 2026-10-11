@@ -8,7 +8,7 @@ const base = { runtime:{torque_enabled:true,mode:"ready",motion:null},character:
 function markup(status:GatewayStatus|null,connected=true) { return renderToStaticMarkup(<Debug voice={voice} status={status} connection={connected ? {url:"http://test",token:"test"}:null} onRefresh={vi.fn()} onHistory={vi.fn()}/>); }
 describe("Debug torque release availability",()=>{
   it("offers the camera overlay separately from runtime controls", () => {
-    expect(markup(base)).toContain("Show camera observations");
+    expect(markup(base)).toContain("Show face boxes");
     expect(markup(base)).toContain('aria-label="Orion camera"');
     const v1 = {...base, runtime:{...base.runtime,hardware:"v1"}} as GatewayStatus;
     expect(markup(v1)).not.toContain('aria-label="Orion camera"');
