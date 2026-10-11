@@ -421,6 +421,16 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
+def optional_model(name, factory, path):
+    try:
+        return factory(path)
+    except Exception as error:
+        # Optional native backends can fail with ImportError, cv2.error or a
+        # child-process startup error as well as missing/corrupt model files.
+        LOG.warning("%s detector unavailable: %s", name, error)
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", type=Path, default=Path("/tmp/orion-vision.sock"))
@@ -460,8 +470,8 @@ def main():
             else:
                 raise RuntimeError("Vision socket already has a running owner")
     pipeline, detection_error = None, None
-    objects = YoloNCNN(args.object_model)
-    palms = PalmDetector(args.palm_model)
+    objects = optional_model("Object", YoloNCNN, args.object_model)
+    palms = optional_model("Palm", PalmDetector, args.palm_model)
     try:
         pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.camera_module_3_wide(),
                                 GazeClient(args.runtime_socket), objects=objects, palms=palms)
@@ -470,6 +480,8 @@ def main():
     except (OSError, ValueError, KeyError) as error:
         detection_error = str(error)
         LOG.warning("Face tracking unavailable: %s", error)
+        if objects is not None:
+            objects.close()
     vision = Vision(source, args.preference_file, pipeline=pipeline, detection_error=detection_error,
                     tracking_file=args.tracking_preference_file)
     server = VisionServer(args.socket, vision)

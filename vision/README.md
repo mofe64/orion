@@ -146,7 +146,9 @@ exporter is not permission to change those hashes. The builder copies only
 the matching files into its release, and the Pi checks them and loads NCNN
 before activation. A missing or mismatched export fails preparation. The Pi
 never installs Torch or performs conversion. `--object-model` selects the
-release-local directory; service startup also verifies both hashes.
+release-local directory; service startup also verifies both hashes. If the object
+model or its native backend cannot load, the service logs the error and reports
+`objects_available: false`; capture and face tracking remain available.
 
 The lockfile replaces NCNN's desktop `opencv-python` dependency with pinned
 `opencv-python-headless==4.11.0.86` and retains its other dependencies. A bare
@@ -582,7 +584,10 @@ package or worker thread is added.
 The camera-stack installer and release deployment download the pinned asset,
 verify it before replacement and fail on missing/corrupt model data. Release
 units point at their own model, preserving activation/rollback consistency.
-The service fails startup if that required asset cannot be loaded.
+If the palm model cannot load, the service logs the error and reports
+`palms_available: false`; capture, face tracking and object lookup remain available.
+Hands reports the detector as unavailable until the asset is repaired and the
+service restarted.
 
 Hands reports only `hand_count` and the optional averaged base-frame
 `hand_point` through `gaze surroundings`. A one-second capture gap or missing

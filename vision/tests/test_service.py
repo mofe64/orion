@@ -27,6 +27,52 @@ def eventually(predicate, timeout=1):
     raise AssertionError("Timed out waiting for condition")
 
 
+class StartupTests(unittest.TestCase):
+    def test_optional_model_failures_keep_capture_and_faces_running(self):
+        from orion_vision.service import main
+        # Exercise main, capture and the real inference worker for each optional
+        # model independently, including native import/hash/load failures.
+        for missing in ('objects', 'palms'):
+            for error in (FileNotFoundError('missing model'), ValueError('SHA mismatch'),
+                          ImportError('ncnn'), RuntimeError('native load failed')):
+                with self.subTest(model=missing, error=type(error).__name__), tempfile.TemporaryDirectory() as tmp:
+                    directory = Path(tmp)
+                    (directory / 'test.jpg').write_bytes(simplejpeg.encode_jpeg(np.zeros((360, 640, 3), np.uint8)))
+                    profile = directory / 'profile.json'
+                    profile.write_text(json.dumps({'camera': {'enabled': True, 'index': 0, 'hflip': False, 'vflip': False}}))
+                    detector, objects, palms, client = (MagicMock() for _ in range(4))
+                    detector.detect.return_value = []
+                    client.voice_active.return_value = False
+                    argv = ['vision', '--profile', str(profile), '--replay', tmp,
+                            '--socket', str(directory / 'vision.sock'),
+                            '--preference-file', str(directory / 'camera.json')]
+
+                    def check_server(path, vision):
+                        server = MagicMock()
+                        def serve(**kwargs):
+                            eventually(lambda: vision.last_capture > 0 and detector.detect.called, timeout=2)
+                            status, health = vision.status()
+                            self.assertEqual(status, 200)
+                            self.assertEqual(health['detection']['objects_available'], missing != 'objects')
+                            self.assertEqual(health['detection']['palms_available'], missing != 'palms')
+                            self.assertIsNone(health['detection']['error'])
+                        server.serve_forever.side_effect = serve
+                        return server
+
+                    with patch.object(sys, 'argv', argv), patch('orion_vision.service.signal.signal'), \
+                         patch('orion_vision.service.VisionServer', side_effect=check_server), \
+                         patch('orion_vision.detect_faces.YuNet', return_value=detector), \
+                         patch('orion_vision.gaze_client.GazeClient', return_value=client), \
+                         patch('orion_vision.detect_objects.YoloNCNN', return_value=objects,
+                               side_effect=error if missing == 'objects' else None), \
+                         patch('orion_vision.detect_hands.PalmDetector', return_value=palms,
+                               side_effect=error if missing == 'palms' else None), \
+                         self.assertLogs('orion_vision.service', level='WARNING'):
+                        main()
+                    if missing != 'objects':
+                        objects.close.assert_called_once()
+
+
 class SocketTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
