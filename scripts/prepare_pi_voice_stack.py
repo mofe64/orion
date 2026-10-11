@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Download pinned Pi assets and prepare environments without changing services."""
+"""Download pinned shared Pi runtime assets without building code or environments."""
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import tarfile
 import tempfile
 import urllib.request
@@ -125,6 +123,12 @@ def prepare_assets(root):
     for url, relative, digest in MODEL_ASSETS:
         download(root, url, relative, digest)
     prepare_piper_alba(root)
+    entries = []
+    for folder in [root / 'models', root / 'cache/hf']:
+        for path in folder.rglob('*'):
+            if path.is_file() and not path.is_symlink():
+                entries.append(dict(path=str(path), bytes=path.stat().st_size))
+    (root / 'model-files.json').write_text(json.dumps(entries, indent=2))
 
 
 def main():
@@ -133,30 +137,7 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     prepare_assets(root)
-    project = Path(__file__).resolve().parents[1]
-    uv = shutil.which('uv') or str(Path.home() / '.local/bin/uv')
-    for component, python, extras in [('speech', '3.11', ['--extra', 'pi']), ('voice', '3.12', [])]:
-        environment = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(project / component / '.venv'))
-        subprocess.run([uv, 'sync', '--project', str(project / component), '--python', python,
-                        '--locked', *extras], env=environment, check=True)
-        with (root / f'{component}-packages.txt').open('w') as output:
-            subprocess.run([uv, 'pip', 'freeze', '--python', str(project / component / '.venv/bin/python')],
-                           check=True, stdout=output)
-    environment = dict(os.environ, HF_HOME=str(root / 'cache/hf'), HF_HUB_OFFLINE='0',
-                       ORION_SPEECH_BACKEND='pi', PYTHONPATH=str(project / 'speech'), ORION_TTS_THREADS='3')
-    environment['ORION_PIPER_MODEL_DIR'] = str(root / 'models/piper-alba-medium')
-    subprocess.run([str(project / 'speech/.venv/bin/python'), '-c',
-        "from orion_speech_worker.piper import PiperAlbaSynthesizer; "
-        "audio=list(PiperAlbaSynthesizer('piper-alba-medium').stream('Orion is ready.')); "
-        "assert audio and all(chunk.sample_rate == 24000 for chunk in audio)"],
-        env=environment, check=True)
-    entries = []
-    for folder in [root / 'models', root / 'cache/hf']:
-        for path in folder.rglob('*'):
-            if path.is_file() and not path.is_symlink():
-                entries.append(dict(path=str(path), bytes=path.stat().st_size))
-    (root / 'model-files.json').write_text(json.dumps(entries, indent=2))
-    print('Pi speech assets prepared; running services were not changed.')
+    print('Shared Pi assets prepared; no compilation or package installation ran.')
 
 
 if __name__ == '__main__':

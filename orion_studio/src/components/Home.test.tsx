@@ -51,12 +51,12 @@ describe("Home control availability", () => {
     const status = { character: { enabled: false }, runtime: { motion: null }, scene: { active: { run_id: 2 } }, speech: { active: null } } as unknown as GatewayStatus;
     const html = renderToStaticMarkup(<Home {...props} status={status} connection={{ url: "http://localhost:7447", token: "test" }} />);
     expect(html).toContain("Not set in this session");
-    const expressions = html.split('class="oh-expression-list"')[1];
+    const expressions = html.split('class="oh-expression-list"')[1].split("</div>")[0];
     expect(expressions.match(/disabled=""/g)).toHaveLength(2);
     expect(html).not.toMatch(/id="lamp-brightness"[^>]*disabled/);
-    expect(html).not.toContain('class="oh-dial"');
+    expect(html).not.toContain('class="oh-dial-value"');
     expect(html).not.toContain('class="oh-apply"');
-    expect(html).toContain("Orion does not report its brightness.");
+    expect(html).toContain("Orion does not report its brightness");
     expect(html).toContain("Model preview, not live position");
   });
 });
@@ -77,7 +77,7 @@ it.each(["scene", "speech", "motion", "alarm"])("blocks owner Expressions during
   const status = { character:{enabled:false},runtime:{motion:activity === "motion" ? {name:"owner_motion"} : null},scene:{active:activity === "scene" ? {run_id:1}:null},speech:{active:activity === "speech" ? {run_id:2}:null},routines:activity === "alarm" ? {ringing:true,alerts:[]}:undefined } as unknown as GatewayStatus;
   const ownerCatalog = {...catalog,scenes:{...catalog.scenes,owner_wave:{format_version:2,name:"owner_wave",source:"user",description:"",motion:[],lighting:[],audio:[],finish:{anchor:"final_pose",lighting:"off"}}}} as ProjectCatalog;
   const html = renderToStaticMarkup(<Home {...props} catalog={ownerCatalog} connection={{url:"http://test",token:"test"}} status={status} />);
-  const expressions=html.split('class="oh-expression-list"')[1];
+  const expressions=html.split('class="oh-expression-list"')[1].split("</div>")[0];
   expect(expressions).toContain("Owner wave");
   expect(expressions.match(/disabled=""/g)).toHaveLength(3);
 });

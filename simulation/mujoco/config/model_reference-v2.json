@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "hardware": "v2",
+  "alignment_method": "Studio's V2 model was visually aligned with a photo of the assembled lamp holding its powered home pose (2026-10-11). The V2 URDF's all-zero pose is an upright arm, which is not the captured calibration zero.",
+  "joint_reference_radians": {
+    "base_yaw_joint": 0.0,
+    "shoulder_pitch_joint": 0.908,
+    "elbow_pitch_joint": -1.086,
+    "head_roll_joint": 0.0,
+    "head_pitch_joint": -0.06
+  },
+  "reference_formula": "model_angle = calibrated_angle - joint_reference; Studio applies this offset only to the 3D preview."
+}

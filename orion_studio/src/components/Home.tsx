@@ -132,19 +132,18 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
     <div className="oh-layout">
       <div className="oh-left">
         <section className="oh-robot" aria-label="Orion mode and preview">
-          <header className="oh-panel-heading"><h2>Your Orion</h2><span className="oh-state">{characterLabel}</span></header>
+          <header className="oh-panel-heading"><h2>Your Orion</h2><div className="oh-panel-tools"><span className="oh-state">{characterLabel}</span><button className="oh-chip-button" disabled={disabled || !status} onClick={() => void act(status?.character.enabled ? "Pause mode" : "Resume mode", value => changeCharacterMode(async enabled => { await setCharacterMode(value, enabled); }, !status?.character.enabled))}>{status?.character.enabled ? "Pause mode" : "Resume mode"}</button></div></header>
           <div className="oh-model"><Suspense fallback={<p className="oh-model-loading" role="status">Loading Orion’s 3D model…</p>}>
-            <RobotViewport catalog={catalog} joints={catalog.poses.attentive.positions} light={previewLight} mode="home" theme={theme} />
+            <RobotViewport catalog={catalog} joints={(catalog.poses.home ?? catalog.poses.attentive).positions} light={previewLight} mode="home" theme={theme} />
           </Suspense></div>
-          <p className="oh-model-caption">Attentive pose · Model preview, not live position</p>
-          <div className="oh-modes" role="group" aria-label="Orion mode">
+          <p className="oh-model-caption">Home pose · Model preview, not live position</p>
+          <div className="oh-mode-row"><div className="oh-modes" role="group" aria-label="Orion mode">
             <button className="oh-mode" disabled={disabled || ringing} aria-pressed={!!status?.character.enabled && userMode === "idle"} onClick={() => void act("Idle mode", value => setUserMode(value, "idle"))}><Sparkles size={18} /><span><strong>Idle mode</strong><small>Rest after 30 minutes</small></span></button>
             <button className="oh-mode" disabled={disabled || ringing} aria-pressed={!!status?.character.enabled && userMode === "lamp"} onClick={() => void act("Lamp mode", value => setUserMode(value, "lamp"))}><Sun size={18} /><span><strong>Lamp mode</strong><small>Stay on with animations</small></span></button>
           </div>
-          <button className="quiet-button oh-mode-pause" disabled={disabled || !status} onClick={() => void act(status?.character.enabled ? "Pause mode" : "Resume mode", value => changeCharacterMode(async enabled => { await setCharacterMode(value, enabled); }, !status?.character.enabled))}>{status?.character.enabled ? "Pause mode" : "Resume mode"}</button>
           <div className="oh-rest-action">
             <button className="oh-mode" disabled={disabled || resting || status?.runtime.motion?.name === "rest"} onClick={() => void act("Go to rest", restOrion)}><Moon size={18} /><span><strong>Go to rest</strong><small>Gently settle down</small></span></button>
-          </div>
+          </div></div>
           {feedback("mode")}
         </section>
         <div className="oh-talk"><span className="oh-mic"><Mic size={19} /></span><span><strong>Listening</strong><small>{voiceLabel}</small></span><button className="studio-switch" role="switch" aria-label="Orion listening" aria-checked={listening} disabled={!voiceAvailable} onClick={onVoice}><span /></button></div>
@@ -153,31 +152,37 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
       <section className="oh-lamp" aria-label="Lamp controls" aria-busy={pending !== null}>
         <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={lightOn} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled || resting} onClick={() => { commitLamp.cancel(); lampDirty.current = false; applyLight({ enabled: !lightOn, mood, brightness, hue }); }}><span /></button></header>
         <p id="lamp-command-state">{!connection ? "Connect to control the light" : resting ? (lightOn ? "Fading off for rest" : "Off while resting · lamp setting saved") : status?.rest ? `Light ${lightOn ? "on" : "off"}` : appliedLamp ? `Last set: ${appliedLamp.enabled ? `${appliedLamp.mood} · On` : "Off"}` : "Not set in this session"}</p>
-        <div className="oh-brightness-label"><label htmlFor="lamp-brightness">Brightness</label><output htmlFor="lamp-brightness">{brightnessChosen || appliedLamp ? `${brightness}%` : "Not set in this session"}</output></div>
+        <div className="oh-dial">
+          <svg viewBox="0 0 216 216" aria-hidden="true"><circle className="oh-dial-track" cx="108" cy="108" r="91" fill="none" strokeWidth="8" strokeLinecap="round" strokeDasharray="429 572" />{(brightnessChosen || appliedLamp) && <circle className="oh-dial-value" cx="108" cy="108" r="91" fill="none" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${429 * brightness / 100} 572`} />}</svg>
+          <div><output htmlFor="lamp-brightness">{brightnessChosen || appliedLamp ? <>{brightness}<small>%</small></> : "–"}</output><label htmlFor="lamp-brightness">{brightnessChosen || appliedLamp ? "Brightness" : "Not set in this session"}</label></div>
+        </div>
         <div className="oh-range"><SunDim size={18} /><input id="lamp-brightness" type="range" min="1" max="100" value={brightness} disabled={!connection} aria-describedby="lamp-brightness-help" aria-valuetext={brightnessChosen || appliedLamp ? `${brightness}%` : "Choose brightness; Orion does not report its current level"} onChange={event => { setBrightness(Number(event.target.value)); setBrightnessChosen(true); lampDirty.current = true; }} onPointerUp={releaseLight} onKeyUp={releaseLight} onBlur={releaseLight} /><Sun size={18} /></div>
-        <p className="oh-note" id="lamp-brightness-help">Orion does not report its brightness. This slider shows the setting you choose in this session.</p>
         <fieldset className="oh-light-moods"><legend>Light mood</legend><div>{(["Warm white", "Custom color"] as const).map(value => <button key={value} type="button" aria-pressed={mood === value} disabled={disabled} onClick={() => { setMood(value); commitLamp.queue({ enabled: true, mood: value, brightness, hue }); }}>{value}</button>)}</div></fieldset>
         {mood === "Custom color" && <div className="oh-color"><div><label htmlFor="lamp-color">Choose your color</label><span className="oh-swatch" style={{ background: `hsl(${hue} 75% 65%)` }} aria-hidden="true" /></div><input className="orion-hue-slider" id="lamp-color" type="range" min="0" max="360" value={hue} aria-valuetext={hueName(hue)} disabled={!connection} onChange={event => { setHue(Number(event.target.value)); lampDirty.current = true; }} onPointerUp={releaseLight} onKeyUp={releaseLight} onBlur={releaseLight} /></div>}
-        <p className="oh-note">Brightness and color apply when you release the control and turn the lamp on. Orion keeps its light off while resting.</p>
         {feedback("lamp")}
-        <p className="oh-note" id="lamp-command-help">{status?.rest ? "The switch shows runtime light power. Rest keeps the light off; your lamp setting is saved." : "The switch shows your last lamp command. Idle mode, Lamp mode and speech can temporarily take over the light."}</p>
+        <p className="oh-note" id="lamp-brightness-help">Changes apply when you let go and turn the lamp on. Orion does not report its brightness, so the dial shows what you set here.</p>
+        <p className="oh-note" id="lamp-command-help">{status?.rest ? "Rest keeps the light off and saves your setting." : "Idle mode, Lamp mode and speech can briefly take over the light."}</p>
       </section>
     </div>
-    {status?.routines && <section className="oh-alerts" aria-label="Timers, alarms and reminders">
-      <header className="oh-panel-heading"><h2>Timers, alarms and reminders</h2>{ringing && <button className="quiet-button" disabled={disabled} onClick={() => void act("Stop alarm", value => updateRoutines(value, { action: "stop" }))}>Stop sound</button>}</header>
-      {ringing && <p role="alert">Say “Hey Orion” to stop the sound. It stops automatically after five minutes.</p>}
-      {activeAlerts.length ? <ul>{activeAlerts.map(alert => <li key={alert.id}><span>{alert.label || (alert.kind === "timer" ? "Timer" : "Alarm")} · {alert.state === "ringing" ? "Ringing" : alert.state === "missed" ? "Missed" : alert.state === "announcing" ? "Announcing" : alertTime(alert.due_unix)}{alert.repeat && ` · ${alert.repeat.days.join(", ")} at ${alert.repeat.time}`}</span>{alert.state !== "missed" && <button className="quiet-button" disabled={disabled} aria-label={`Cancel ${alert.label || `${alert.kind} ${alert.id}`}`} onClick={() => void act("Cancel alert", value => updateRoutines(value, { action: "cancel", id: alert.id }))}>{alert.repeat ? "Cancel occurrence" : "Cancel"}</button>}{alert.repeat && alert.state !== "missed" && <button className="quiet-button" disabled={disabled} aria-label={`Cancel series ${alert.label || alert.id}`} onClick={() => void act("Cancel alert series", value => updateRoutines(value, { action: "cancel", id: alert.id, series: true }))}>Cancel series</button>}</li>)}</ul> : <p>Ask Orion to set a timer or an alarm.</p>}
-      <AlarmForm disabled={disabled} onSave={request => act("New alarm", value => updateRoutines(value, request))} />
-      <ReminderForm disabled={disabled} onSave={request => act("New reminder", value => updateRoutines(value, request))} />
-      {status.routines.error && <p role="alert">{status.routines.error}</p>}
-      {feedback("alert")}
-    </section>}
-    <ListsCard connection={connection} />
-    {status?.runtime.hardware !== "v1" && <CameraCard connection={connection} />}
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>See all <ArrowUpRight size={15} /></button></header>
       <div className="oh-expression-list">{quickExpressions(catalog).map(({name}) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(assetDisplayName(name), value => runScene(value, name))}><span className="oh-expression-icon"><Sparkles size={16} /></span>{assetDisplayName(name)}<Play className="oh-arrow" size={14} /></button>)}</div>
       {feedback("expression")}
     </section>
+    <div className="oh-secondary">
+      <div className="oh-column">
+        {status?.routines && <section className="oh-card oh-alerts" aria-label="Timers, alarms and reminders">
+          <header className="oh-panel-heading"><h2>Timers, alarms and reminders</h2>{ringing && <button className="quiet-button" disabled={disabled} onClick={() => void act("Stop alarm", value => updateRoutines(value, { action: "stop" }))}>Stop sound</button>}</header>
+          {ringing && <p role="alert">Say “Hey Orion” to stop the sound. It stops automatically after five minutes.</p>}
+          {activeAlerts.length ? <ul>{activeAlerts.map(alert => <li key={alert.id}><span>{alert.label || (alert.kind === "timer" ? "Timer" : "Alarm")} · {alert.state === "ringing" ? "Ringing" : alert.state === "missed" ? "Missed" : alert.state === "announcing" ? "Announcing" : alertTime(alert.due_unix)}{alert.repeat && ` · ${alert.repeat.days.join(", ")} at ${alert.repeat.time}`}</span>{alert.state !== "missed" && <button className="quiet-button" disabled={disabled} aria-label={`Cancel ${alert.label || `${alert.kind} ${alert.id}`}`} onClick={() => void act("Cancel alert", value => updateRoutines(value, { action: "cancel", id: alert.id }))}>{alert.repeat ? "Cancel occurrence" : "Cancel"}</button>}{alert.repeat && alert.state !== "missed" && <button className="quiet-button" disabled={disabled} aria-label={`Cancel series ${alert.label || alert.id}`} onClick={() => void act("Cancel alert series", value => updateRoutines(value, { action: "cancel", id: alert.id, series: true }))}>Cancel series</button>}</li>)}</ul> : <p>Ask Orion to set a timer or an alarm.</p>}
+          <details className="oh-disclosure"><summary>New alarm</summary><AlarmForm disabled={disabled} onSave={request => act("New alarm", value => updateRoutines(value, request))} /></details>
+          <details className="oh-disclosure"><summary>New reminder</summary><ReminderForm disabled={disabled} onSave={request => act("New reminder", value => updateRoutines(value, request))} /></details>
+          {status.routines.error && <p role="alert">{status.routines.error}</p>}
+          {feedback("alert")}
+        </section>}
+        <ListsCard connection={connection} />
+      </div>
+      {status?.runtime.hardware !== "v1" && <CameraCard connection={connection} />}
+    </div>
     {onDiagnostics && <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>}
     {status?.rest?.error && <p className="oh-feedback" role="alert">{status.rest.error}</p>}
   </section>;

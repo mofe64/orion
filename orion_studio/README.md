@@ -135,10 +135,14 @@ released setting applies after that request finishes. Choosing a mood also appli
 it. These changes turn the lamp on;
 rest keeps its light off. Navigation or a connection change cancels pending
 commits. The switch applies immediately and uses runtime light power when reported.
-Orion does not report brightness, so the single slider shows **Not set in this
+Orion does not report brightness, so the brightness dial shows **Not set in this
 session** until the owner chooses or successfully sets a value. Speech, scenes and
-rest can override visible output. The 3D model supports rotation at fixed zoom and
-displays a static pose with a neutral light until a lamp setting is accepted.
+rest can override visible output. The 3D model shows the hardware's `home` pose,
+supports rotation at fixed zoom and uses a neutral light until a lamp setting is
+accepted. It is a preview, not live joint telemetry.
+
+New alarms and reminders open from collapsed rows in the timers card. Lists and,
+on V2, the camera share the row below Expressions.
 
 Expressions shows up to six built-in gestures and published owner scenes. When
 both collections are large, three places go to each; **See all** opens Animation.

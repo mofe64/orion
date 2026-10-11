@@ -4,6 +4,7 @@ import posesYaml from "../../../motion/config/v1/poses.yaml?raw";
 import posesYamlV2 from "../../../motion/config/v2/poses.yaml?raw";
 import calibration from "../../../simulation/mujoco/config/servo_calibration.json";
 import modelReference from "../../../simulation/mujoco/config/model_reference.json";
+import modelReferenceV2 from "../../../simulation/mujoco/config/model_reference-v2.json";
 import orionUrdf from "../../../description/urdf/orion.urdf?raw";
 import orionUrdfV2 from "../../../description/urdf/orion-v2.urdf?raw";
 import { JOINT_NAMES, LIGHTING_EFFECTS, MOTION_STYLES } from "../types";
@@ -185,8 +186,10 @@ export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
     cueUrls,
     urdf: orionUrdfV2,
     meshUrls: meshUrls(FILES.v2.meshes),
-    // The V2 calibration zero is the CAD zero pose, so no model offset applies.
-    urdfJointOffsets: Object.fromEntries(JOINT_NAMES.map((name) => [name, 0])) as JointPositions,
+    // The V2 calibration zero is not the URDF's upright all-zero pose; see the reference file.
+    urdfJointOffsets: Object.fromEntries(
+      JOINT_NAMES.map((name) => [name, -Number(modelReferenceV2.joint_reference_radians[name])]),
+    ) as JointPositions,
     jointLimits: urdfJointLimits(orionUrdfV2),
   },
 };

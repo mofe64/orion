@@ -1,7 +1,7 @@
 """Committed releases must not merge over operator edits in the Pi checkout."""
 from pathlib import Path
 import json
-import re
+import os
 import shutil
 import subprocess
 import sys
@@ -11,11 +11,10 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
-from deploy_pi_release import snapshot_commit
-import deploy_pi_release
-
-FUNCTION = re.search(r'^extract_revision_scripts\(\) \{\n.*?^\}',
-                     (SCRIPTS / 'pi_deploy_remote.sh').read_text(), re.M | re.S).group()
+from build_pi_release import snapshot_commit
+import build_pi_release
+from pi_release_platform import TARGET_PLATFORM
+from types import SimpleNamespace
 
 
 class DeploymentSnapshotTests(unittest.TestCase):
@@ -60,12 +59,9 @@ class DeploymentSnapshotTests(unittest.TestCase):
         for path, content in before.items():
             self.assertEqual((self.root / path).read_bytes(), content)
 
-    def test_remote_bootstrap_uses_committed_script(self):
-        destination = self.base / 'bootstrap'; destination.mkdir()
-        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', FUNCTION + '\nextract_revision_scripts "$1" "$2"',
-                                 'test', self.incoming, str(destination)], cwd=self.root, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((destination / 'scripts/deploy_pi_release.py').read_text(), 'committed deployment')
+    def test_bundle_source_uses_committed_deployment_helpers(self):
+        release = snapshot_commit(self.root, self.incoming, self.base / 'releases')
+        self.assertEqual((release / 'scripts/deploy_pi_release.py').read_text(), 'committed deployment')
 
     def test_invalid_revision_creates_no_release(self):
         with self.assertRaises(subprocess.CalledProcessError):
@@ -80,29 +76,56 @@ class DeploymentSnapshotTests(unittest.TestCase):
 
 
 class ReleaseBuildTests(unittest.TestCase):
-    def test_camera_build_uses_system_python_site_packages_and_locked_vision_environment(self):
+    def test_small_local_cache_is_kept_and_hardlinks_are_counted_once(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            release = root / 'release'; release.mkdir()
-            shutil.copytree(SCRIPTS.parent / 'hardware/profiles', release / 'hardware/profiles')
-            (release / 'release.json').write_text('{"revision":"fixture","hardware":"v2"}')
-            with patch.object(deploy_pi_release, 'run') as run, patch.object(deploy_pi_release.shutil, 'copy2'):
-                deploy_pi_release.build_release(release, root)
-        commands = [tuple(map(str, call.args)) for call in run.call_args_list]
-        self.assertIn(('uv', 'venv', '--python', '/usr/bin/python3', '--system-site-packages', str(release / 'vision/.venv')), commands)
-        self.assertIn(('uv', 'sync', '--project', str(release / 'vision'), '--locked', '--python', '/usr/bin/python3'), commands)
-        self.assertTrue(any(str(release / 'vision/tests') in command for command in commands))
-        self.assertFalse(any('install-camera-stack.sh' in argument for command in commands for argument in command))
+            cache = Path(directory)
+            (cache / 'wheel').write_bytes(bytes(20))
+            os.link(cache / 'wheel', cache / 'linked-wheel')
+            build_pi_release.trim_local_cache(cache, limit=25)
+            self.assertTrue((cache / 'wheel').exists())
+            self.assertTrue((cache / 'linked-wheel').exists())
 
-    def test_pi_skips_both_native_simulations_and_keeps_other_runtime_tests(self):
+    def test_large_local_cache_is_cleared_without_replacing_lock_or_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / 'cache'; cache.mkdir()
+            lock = cache / 'build.lock'; lock.touch()
+            identity = lock.stat().st_ino
+            (cache / 'target').mkdir()
+            (cache / 'target/binary').write_bytes(bytes(20))
+            outside = root / 'outside'; outside.mkdir()
+            (outside / 'keep').write_text('keep')
+            (cache / 'linked-directory').symlink_to(outside)
+            build_pi_release.trim_local_cache(cache, limit=10)
+            self.assertEqual(list(cache.iterdir()), [lock])
+            self.assertEqual(lock.stat().st_ino, identity)
+            self.assertEqual((outside / 'keep').read_text(), 'keep')
+
+    def test_local_build_keeps_runtime_tests_and_packages_only_runtime_binaries(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             release = root / 'release'; release.mkdir()
             shutil.copytree(SCRIPTS.parent / 'hardware/profiles', release / 'hardware/profiles')
-            (release / 'release.json').write_text(json.dumps({'revision': 'fixture'}))
-            with patch.object(deploy_pi_release, 'run') as run, \
-                 patch.object(deploy_pi_release.shutil, 'copy2'):
-                deploy_pi_release.build_release(release, root)
+            (release / 'release.json').write_text(json.dumps({
+                'revision': 'a' * 12, 'commit': 'a' * 40, 'hardware': 'v2', 'release_id': 'a' * 12 + '-12345678'}))
+            cache = root / 'cache/release'; cache.mkdir(parents=True)
+            for component, binaries in build_pi_release.BINARY_COMPONENTS.items():
+                for binary in binaries:
+                    (cache / binary).write_text('production binary')
+            for name in ['runtime/target/debug/debris', 'voice/.venv/debris', 'voice/build/debris',
+                         'orion_studio/node_modules/debris', 'scripts/__pycache__/debris']:
+                path = release / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('cache')
+            with patch.object(build_pi_release, 'run') as run, \
+                 patch.object(build_pi_release, 'package_python') as packages, \
+                 patch.object(build_pi_release.os, 'uname', return_value=SimpleNamespace(sysname='Linux', machine='aarch64')), \
+                 patch.object(build_pi_release, 'read_platform', return_value=TARGET_PLATFORM), \
+                 patch.dict(build_pi_release.os.environ, CARGO_TARGET_DIR=str(cache.parent)):
+                build_pi_release.build_in_container(release, root / 'bundle', TARGET_PLATFORM)
+            self.assertEqual([call.args[1] for call in packages.call_args_list], ['voice', 'speech', 'vision'])
+            staged = root / 'bundle/release'
+            for name in ['runtime/target/debug', 'voice/.venv', 'voice/build', 'orion_studio/node_modules', 'scripts/__pycache__']:
+                self.assertFalse((staged / name).exists(), name)
+            self.assertEqual((staged / 'runtime/target/release/oriond').read_text(), 'production binary')
         commands = [tuple(map(str, call.args)) for call in run.call_args_list]
         runtime = next(args for args in commands if args[:2] == ('cargo', 'test')
                        and str(release / 'runtime/Cargo.toml') in args)
@@ -117,6 +140,9 @@ class ReleaseBuildTests(unittest.TestCase):
                      'control::core::tests::enforces_configuration_and_torque_lifecycle'):
             self.assertFalse(any(skip in name for skip in skips), name)
         self.assertIn('--all-targets', runtime)
+        builds = [command for command in commands if command[:2] == ('cargo', 'build')]
+        self.assertEqual(len(builds), 2)
+        self.assertTrue(all('--release' in command and '--locked' in command for command in builds))
         service = next(args for args in commands if args[:2] == ('cargo', 'test')
                        and str(release / 'orion-service/Cargo.toml') in args)
         self.assertNotIn('--skip', service)

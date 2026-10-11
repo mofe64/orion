@@ -17,11 +17,13 @@ export function ReminderForm({ disabled, onSave }: { disabled: boolean; onSave: 
     try { if (await onSave(reminderRequest(text, date, time, days))) setText(""); }
     catch (value) { setError(value instanceof Error ? value.message : String(value)); }
   }}>
-    <h3>New reminder</h3>
-    <label>Reminder text<input required maxLength={200} value={text} disabled={disabled} onChange={event => setText(event.target.value)} /></label>
-    {!days.length && <label>Date (this device’s time zone)<input type="date" required value={date} disabled={disabled} onChange={event => setDate(event.target.value)} /></label>}
-    <label>Time{days.length ? " (Orion’s local time)" : ""}<input type="time" required value={time} disabled={disabled} onChange={event => setTime(event.target.value)} /></label>
-    <fieldset disabled={disabled}><legend>Repeat days (optional)</legend>{WEEKDAYS.map(day => <label key={day}><input type="checkbox" checked={days.includes(day)} onChange={event => setDays(event.target.checked ? [...days, day] : days.filter(value => value !== day))} />{day}</label>)}</fieldset>
-    <button type="submit" disabled={disabled}>Save reminder</button>{error && <p role="alert">{error}</p>}
+    <div className="oh-form-fields">
+      <label className="oh-field-wide">Reminder text<input required maxLength={200} value={text} disabled={disabled} onChange={event => setText(event.target.value)} /></label>
+      {!days.length && <label>Date (this device’s time zone)<input type="date" required value={date} disabled={disabled} onChange={event => setDate(event.target.value)} /></label>}
+      <label>Time{days.length ? " (Orion’s local time)" : ""}<input type="time" required value={time} disabled={disabled} onChange={event => setTime(event.target.value)} /></label>
+    </div>
+    <fieldset className="oh-days" disabled={disabled}><legend>Repeat days (optional)</legend>{WEEKDAYS.map(day => <label key={day}><input type="checkbox" checked={days.includes(day)} onChange={event => setDays(event.target.checked ? [...days, day] : days.filter(value => value !== day))} /><span>{day}</span></label>)}</fieldset>
+    <div className="oh-form-footer"><button className="primary-button" type="submit" disabled={disabled}>Save reminder</button></div>
+    {error && <p role="alert" className="settings-error">{error}</p>}
   </form>;
 }

@@ -124,9 +124,18 @@ telemetry.
 
 ## Assets and installed releases
 
-The deployment builds runtime, gateway, listener and voice-service code from one
-Git commit in a separate release directory. Python environments belong to that
-release. Shared model files and native inference tools live under
+The computer prepares runtime, gateway, listener and voice-service code from one
+Git commit in a temporary folder. A local Ubuntu 24.04 ARM64 Docker environment
+builds production binaries and Python wheels and runs software tests. The Pi's
+OS, architecture, glibc and system Python are checked before preparation and
+again before installation. Compiler and package caches stay on the computer.
+
+The Pi verifies a checksummed bundle, checks installation space and installs
+only its prebuilt wheels with source builds, package registry access and caching
+disabled. Python environments are created at their final release paths. Camera
+environments see the provisioned system `libcamera` and `pykms` bindings.
+Transfer files and wheels are temporary; active and rollback releases keep their
+installed dependencies. Shared model files and native inference tools live under
 `~/.local/share/orion/voice-stack/`.
 
 The runtime and gateway keep the existing catalog root, normally

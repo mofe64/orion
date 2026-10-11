@@ -195,8 +195,10 @@ Command-line flags override the deployment environment:
 | `ORION_PI_HARDWARE` | Required; no deployment default | `--hardware v1\|v2` |
 
 The script validates these values before SSH and requires a trusted host key.
-It builds from the selected remote commit. The Pi checkout, including its local
-edits, remains the catalog and Git source for preparing releases. Activation
+It probes the robot's OS before building the selected remote commit on the
+computer in an Ubuntu 24.04 ARM64 Docker environment. The Pi installs prebuilt
+packages without compiling or retaining installation caches. The Pi checkout,
+including its local edits, remains the live asset catalog. Activation
 replaces managed built-in YAML from that commit; user assets are preserved.
 
 Activation changes executable paths in the base units and overrides, the speech

@@ -21,7 +21,8 @@ include = ["orion_vision*"]
 
 # The 1.8.1 sdist's setup.py declares no runtime dependencies, but aborts on
 # non-Linux hosts before producing metadata. Supply that exact metadata so
-# uv can lock Pi dependencies on a workstation; the Pi still builds prctl.
+# uv can lock Pi dependencies on a workstation. The local release builder
+# compiles prctl into a wheel before transfer to the Pi.
 [[tool.uv.dependency-metadata]]
 name = "python-prctl"
 version = "1.8.1"

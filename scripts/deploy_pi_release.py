@@ -1,117 +1,115 @@
 #!/usr/bin/env python3
-"""Build a complete immutable Pi release from a Git commit, then activate it."""
+"""Install a locally built Pi bundle without compiling or retaining package caches."""
 import argparse
-import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
-import uuid
 
 from install_pi_voice_stack import deployment_lock
+from pi_release_bundle import inspect_archive, install_wheels, sha256, verify_payload
+from pi_release_platform import builder_image, check_platform, read_platform
 from pi_service_config import services_for_release
-
-
-# Sources, two Python environments and binaries for one release.
-MINIMUM_FREE_BYTES = 3 * 10**9
+from prepare_pi_voice_stack import prepare_assets
 
 
 def run(*args, **kwargs):
-    return subprocess.run([str(a) for a in args], check=True, **kwargs)
+    return subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
-def snapshot_commit(source, revision, releases, hardware="v1"):
-    commit = run('git', '-C', source, 'rev-parse', '--verify', f'{revision}^{{commit}}', capture_output=True, text=True).stdout.strip()
-    release = releases / f'{commit[:12]}-{uuid.uuid4().hex[:8]}'
-    release.mkdir(parents=True)
-    try:
-        with tempfile.TemporaryFile() as archive:
-            run('git', '-C', source, 'archive', '--format=tar', commit, stdout=archive)
-            archive.seek(0)
-            with tarfile.open(fileobj=archive) as package:
-                package.extractall(release, filter='data')
-        (release / 'release.json').write_text(json.dumps({'revision': commit[:12], 'commit': commit, 'source': str(source), 'hardware': hardware}, indent=2))
-    except BaseException:
-        shutil.rmtree(release)
-        raise
-    return release
+def prepare_environments(release, wheels):
+    components = ('voice', 'speech', 'vision') if 'orion-vision' in services_for_release(release) else ('voice', 'speech')
+    for component in components:
+        python = '3.11' if component == 'speech' else '/usr/bin/python3'
+        extra = ['--system-site-packages'] if component == 'vision' else []
+        environment = release / component / '.venv'
+        run('uv', 'venv', '--no-config', '--offline', '--no-cache', '--no-python-downloads',
+            '--python', python, *extra, environment)
+        install_wheels(environment / 'bin/python', wheels / component, run)
+    if 'vision' in components:
+        run(release / 'vision/.venv/bin/python', '-c', 'import libcamera, pykms, picamera2')
 
 
-def build_release(release, root):
-    env = dict(os.environ, ORION_BUILD_REVISION=json.loads((release / 'release.json').read_text())['revision'])
-    # Use a separate shared build cache, copying binaries into their permanent release paths.
-    # Neither the old runtime binary nor the old Python environments are overwritten.
-    env['CARGO_TARGET_DIR'] = str(root / 'build')
-    run('python3', '-m', 'unittest', 'discover', '-s', release / 'scripts/tests', '-q', cwd=release)
-    run('python3', release / 'scripts/prepare_pi_voice_stack.py', '--root', root, env=env)
-    if 'orion-vision' in services_for_release(release):
-        # Native stack provisioning is explicit: never rebuild shared libraries
-        # beneath the live release while preparing its replacement.
-        run('/usr/bin/python3', '-c', 'import libcamera, pykms')
-        run('uv', 'venv', '--python', '/usr/bin/python3', '--system-site-packages', release / 'vision/.venv')
-        run('uv', 'sync', '--project', release / 'vision', '--locked', '--python', '/usr/bin/python3')
-        run(release / 'vision/.venv/bin/python', '-m', 'unittest', 'discover', '-s', release / 'vision/tests', '-q', cwd=release)
-    for component in ('runtime', 'orion-service'):
-        # Build beside the live voice services on an 8 GB Pi; limit peak memory.
-        args = ['cargo', 'test', '--locked', '--manifest-path', str(release / component / 'Cargo.toml'), '--all-targets', '-j', '1']
-        if component == 'runtime':
-            # Native MuJoCo tests require the workstation's root simulation
-            # environment, which is not prepared in hardware Pi releases.
-            args += ['--', '--skip', 'native_mujoco']
-        run(*args, cwd=release, env=env)
-        run('cargo', 'build', '--release', '--locked', '--manifest-path', release / component / 'Cargo.toml', '-j', '1', cwd=release, env=env)
-    for component, binaries in [('runtime', ['oriond', 'orion-trajectory']), ('orion-service', ['orion-service'])]:
-        target = release / component / 'target/release'; target.mkdir(parents=True)
-        for binary in binaries:
-            shutil.copy2(root / 'build/release' / binary, target / binary)
-    for component in ('voice', 'speech'):
-        run(release / component / '.venv/bin/python', '-m', 'unittest', 'discover', '-s', release / component / 'tests', '-q', cwd=release)
-    run('python3', '-m', 'unittest', 'discover', '-s', release / 'orion_studio/tests', '-q', cwd=release)
+def validate_voice(release, root):
     run(release / 'voice/.venv/bin/python', '-c',
         'from pathlib import Path; from orion_voice.rustpotter import RustpotterWakeDetector; '
         'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_trained_080.rpw"), .80).process(bytes(640)); '
         'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_reference.rpw"), .35).process(bytes(640)); '
         'import numpy as np; from orion_voice.verifier import AcousticVerifier; '
         'AcousticVerifier(Path("voice/models/verifier")).feed(np.zeros(1280, dtype=np.int16))', cwd=release)
+    environment = {**os.environ, 'HF_HOME': str(root / 'cache/hf'), 'HF_HUB_OFFLINE': '1',
+                   'ORION_SPEECH_BACKEND': 'pi', 'PYTHONPATH': str(release / 'speech'),
+                   'ORION_TTS_THREADS': '3', 'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium')}
+    run(release / 'speech/.venv/bin/python', '-c',
+        "from orion_speech_worker.piper import PiperAlbaSynthesizer; "
+        "audio=list(PiperAlbaSynthesizer('piper-alba-medium').stream('Orion is ready.')); "
+        "assert audio and all(chunk.sample_rate == 24000 for chunk in audio)", env=environment, cwd=release)
+
+
+def prepare_bundle(bundle, digest, root, hardware):
+    if sha256(bundle) != digest:
+        raise RuntimeError('Transferred release checksum does not match; no services were changed')
+    with tarfile.open(bundle) as archive:
+        manifest, required = inspect_archive(archive)
+        if manifest['hardware'] != hardware:
+            raise RuntimeError('Bundle hardware selection does not match the deployment')
+        builder_image(manifest['platform'])
+        check_platform(manifest['platform'], read_platform())
+        with deployment_lock(root):
+            if (root / 'pending-installation.json').exists():
+                raise RuntimeError('Recover the interrupted deployment with install_pi_voice_stack.py --rollback first')
+            free = shutil.disk_usage(root).free
+            if free < required:
+                raise RuntimeError(f'Only {free / 1e9:.1f} GB free; unpacking and installing this bundle needs '
+                                   f'{required / 1e9:.1f} GB, including reserved headroom')
+            release = root / 'releases' / manifest['release_id']
+            if release.exists():
+                raise RuntimeError(f'Release already exists: {release}')
+            with tempfile.TemporaryDirectory(dir=root, prefix='.incoming-') as directory:
+                staging = Path(directory)
+                archive.extractall(staging, filter='data')
+                verify_payload(staging, manifest)
+                release.parent.mkdir(exist_ok=True)
+                (staging / 'release').rename(release)
+                try:
+                    prepare_environments(release, staging / 'wheels')
+                    # Models/native inference tools are shared runtime assets; this does not build code.
+                    prepare_assets(root)
+                    validate_voice(release, root)
+                except BaseException:
+                    shutil.rmtree(release)
+                    raise
+            print(f'Prepared {release}. No compilation ran on the Pi.', flush=True)
+            return release
+
+
+def interrupted(signum, frame):
+    raise KeyboardInterrupt('Deployment interrupted')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--hardware', choices=('v1', 'v2'), required=True, help='Target lamp hardware; v2 uses the V2.1 mechanism')
-    parser.add_argument('--source', type=Path, required=True)
-    parser.add_argument('--revision', required=True, help='Committed Git ref; working-tree edits are never discarded or deployed implicitly')
+    parser.add_argument('--bundle', type=Path, required=True)
+    parser.add_argument('--sha256', required=True)
+    parser.add_argument('--hardware', choices=('v1', 'v2'), required=True)
     parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/orion/voice-stack')
-    parser.add_argument('--runtime-project', type=Path, default=Path.home() / 'dev/orion', help='Live catalog; built-in YAML updates, user assets and calibration are preserved')
+    parser.add_argument('--runtime-project', type=Path, default=Path.home() / 'orion')
     parser.add_argument('--prepare-only', action='store_true')
     args = parser.parse_args()
-    if os.uname().machine != 'aarch64' or os.geteuid() == 0:
-        raise RuntimeError('Run this command as the Pi user on 64-bit Linux')
-    source, root = args.source.resolve(), args.root.resolve()
-    for tool in ('cargo', 'git', 'python3', 'uv'):
-        if not shutil.which(tool):
-            raise RuntimeError(f'Install {tool} before preparing a Pi release')
-    free = shutil.disk_usage(root if root.exists() else root.parent).free
-    if free < MINIMUM_FREE_BYTES:
-        raise RuntimeError(f'Only {free / 1e9:.1f} GB free; a release needs about '
-                           f'{MINIMUM_FREE_BYTES / 1e9:.0f} GB. Remove old folders in {root / "releases"}')
-    with deployment_lock(root):
-        if (root / 'pending-installation.json').exists():
-            raise RuntimeError('Recover the interrupted deployment with install_pi_voice_stack.py --rollback first')
-        release = snapshot_commit(source, args.revision, root / 'releases', args.hardware)
-        print(f'Preparing {release}. Existing services and the source checkout remain unchanged.', flush=True)
-        try:
-            build_release(release, root)
-        except BaseException:
-            # Only this newly-created, never-activated release is disposable.
-            shutil.rmtree(release)
-            raise
+    if os.uname().sysname != 'Linux' or os.uname().machine != 'aarch64' or os.geteuid() == 0:
+        raise RuntimeError('Run this command as the Pi user on ARM64 Linux')
+    if not shutil.which('uv'):
+        raise RuntimeError('Install uv and Python 3.11 before installing a Pi release')
+    signal.signal(signal.SIGTERM, interrupted)
+    release = prepare_bundle(args.bundle.resolve(), args.sha256, args.root.resolve(), args.hardware)
     if args.prepare_only:
-        print(f'Prepared {release}; activate with scripts/install_pi_voice_stack.py --release {release}')
+        print(f'Activate with python3 {release}/scripts/install_pi_voice_stack.py --release {release} '
+              f'--runtime-project {args.runtime_project.resolve()}', flush=True)
         return
-    # The installer takes its own lock and captures the current state immediately before switching.
-    run('python3', release / 'scripts/install_pi_voice_stack.py', '--root', root,
+    run('/usr/bin/python3', release / 'scripts/install_pi_voice_stack.py', '--root', args.root.resolve(),
         '--release', release, '--runtime-project', args.runtime_project.resolve())
 
 

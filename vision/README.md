@@ -129,7 +129,8 @@ array only when the demand callback returns true; otherwise `Capture.rgb` is
 `None`. `close()` stops capture. `ReplaySource` reads only synthetic JPEG fixtures.
 `MujocoSource` raises an explicit not-implemented error. Picamera2 is restricted
 to Linux aarch64 in the manifest. uv's exact metadata entry for the Linux-only
-`python-prctl` sdist allows locking on a workstation; the Pi still builds it.
+`python-prctl` sdist allows locking on a workstation. The local release builder
+compiles it into a wheel before transfer to the Pi.
 
 ### Measurement environment
 

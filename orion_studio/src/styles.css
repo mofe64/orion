@@ -43,6 +43,7 @@ button, select, input[type="range"] { cursor: pointer; }
 button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity: .48; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: .15rem solid var(--accent); outline-offset: .15rem; }
 input, select, textarea { width: 100%; min-height: 2.75rem; border: 1px solid var(--line); border-radius: .45rem; color: var(--text); background: var(--surface-1); padding: .65rem .75rem; }
+input[type="checkbox"], input[type="radio"] { width: 1rem; min-height: 0; height: 1rem; margin: 0; padding: 0; flex-shrink: 0; accent-color: var(--accent); }
 textarea { resize: vertical; line-height: 1.55; }
 label { display: grid; gap: .4rem; color: var(--muted); font-size: .75rem; font-weight: 650; letter-spacing: .02em; }
 h1, h2, p { margin: 0; }

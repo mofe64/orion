@@ -41,12 +41,11 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
   const canSave = desktop && canSaveVoiceSettings(voice, draft, "codex", connected);
   return <section className="settings-page settings-owner" aria-labelledby="settings-title"><header className="settings-heading"><h1 id="settings-title">Settings</h1><p>Make Orion feel at home.</p></header>
     <div className="settings-stack">
-      <section className="settings-card"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Changes apply immediately on Orion." : "Connect Orion to use its controls."}</p></div></header>
+      <section className="settings-card"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Changes apply immediately on Orion." : "Connect Orion to use its controls."}</p></div><button className="quiet-button" onClick={onConnect}>Manage connection</button></header>
         <div className="settings-row"><div><strong>Orion mode</strong><p>{connected ? orionStateLabel(status) : "Connect Orion to view its mode."}</p></div><button className="quiet-button" type="button" onClick={onHome}>Change mode on Home</button></div>
         <SettingToggle label="Listening" help={voice.label} checked={voice.listening} disabled={!connected || voice.snapshot.muted === undefined || voice.toggling} onChange={() => void voice.toggle()} />
         {voice.notice && <p role="status">{voice.listeningError ? voice.notice : `Saved. ${voice.notice}`}</p>}<FailureNotice value={voice.listeningError} />
         <SoundSettings embedded connected={connected} connectionScope={connectionScope} routines={status?.routines} onSound={onSound} />
-        <button className="quiet-button" onClick={onConnect}>Manage connection</button>
       </section>
       <section className="settings-card"><header><Sparkles size={20} /><div><h2>Personality and memory</h2><p>Changes save automatically and start a fresh conversation on Orion’s next request.</p></div></header><AgentProfileSettings onboard desktop={desktop} connected={connected} connectionScope={connectionScope} /></section>
       <LocationSettings desktop={desktop} connected={connected} connectionScope={connectionScope} />

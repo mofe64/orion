@@ -43,7 +43,11 @@
 .home-dashboard .viewport-orbit-controls { position: absolute; inset: auto 0 -2.5rem; height: 2.5rem; display: flex; align-items: center; justify-content: center; gap: .75rem; color: var(--muted); font-size: .7rem; background: var(--surface-1); }
 .home-dashboard .viewport-orbit-controls button { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); background: transparent; }
 .home-dashboard .oh-model-caption { font-size: .7rem; text-align: center; margin: .45rem 0 1rem; }
+.home-dashboard .oh-mode-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: .65rem; }
 .home-dashboard .oh-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+.home-dashboard .oh-panel-tools { display: flex; align-items: center; gap: .5rem; }
+.home-dashboard .oh-chip-button { min-height: 2rem; padding: 0 .75rem; border: 1px solid var(--line); border-radius: 2rem; color: var(--muted); background: transparent; font-size: .7rem; font-weight: 600; }
+.home-dashboard .oh-chip-button:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
 .home-dashboard .oh-mode { display: flex; align-items: center; gap: .6rem; text-align: left; padding: .9rem .8rem; border: 1px solid transparent; border-radius: 1rem; background: var(--surface-2); }
 .home-dashboard .oh-mode[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-soft); opacity: 1; }
 .home-dashboard .oh-mode strong { display: block; font-weight: 550; font-size: .8rem; }
@@ -60,17 +64,22 @@
 .home-dashboard .oh-switch span { width: 1.5rem; height: 1.5rem; border-radius: 50%; background: white; transition: transform .18s var(--ease-out); }
 .home-dashboard .oh-switch[aria-checked="true"] { background: var(--accent); }
 .home-dashboard .oh-switch[aria-checked="true"] span { transform: translateX(1.05rem); }
-.home-dashboard .oh-brightness-label { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; margin: 1.5rem 0 .5rem; font-size: .8rem; }
-.home-dashboard .oh-brightness-label output { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
-.home-dashboard .oh-lamp .oh-note { margin-top: .5rem; padding-top: .5rem; }
-.home-dashboard .oh-rest-action { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-.home-dashboard .oh-rest-action .oh-mode { width: 100%; }
-.home-dashboard .oh-mode-pause { margin-top: .75rem; }
+.home-dashboard .oh-dial { position: relative; display: grid; place-items: center; width: 12.5rem; max-width: 100%; aspect-ratio: 1; margin: 1.25rem auto .25rem; }
+.home-dashboard .oh-dial svg { position: absolute; width: 100%; height: 100%; transform: rotate(135deg); }
+.home-dashboard .oh-dial-track { stroke: var(--line-strong); }
+.home-dashboard .oh-dial-value { stroke: var(--accent); transition: stroke-dasharray .2s var(--ease-out); }
+.home-dashboard .oh-dial > div { text-align: center; }
+.home-dashboard .oh-dial output { display: block; font-size: 3.1rem; letter-spacing: -.06em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.home-dashboard .oh-dial output small { font-size: 1.35rem; }
+.home-dashboard .oh-dial label { display: block; margin-top: .3rem; color: var(--muted); font-size: .7rem; font-weight: 400; letter-spacing: 0; }
+.home-dashboard .oh-lamp .oh-note { margin-top: 0; padding-top: .6rem; }
+.home-dashboard .oh-lamp .oh-note:first-of-type { margin-top: auto; padding-top: 1.25rem; }
+.home-dashboard .oh-rest-action { display: grid; }
 .home-dashboard .oh-disconnected { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; border-block: 1px solid var(--line); padding-block: 1.5rem; }
 .home-dashboard .oh-range { display: flex; align-items: center; gap: .75rem; color: var(--muted); margin: 0 .25rem 1.35rem; }
 .home-dashboard input[type="range"] { min-height: 1.8rem; accent-color: var(--accent); padding: 0; border: 0; background: transparent; }
 .home-dashboard .oh-light-moods { margin: 0 0 1rem; padding: 0; border: 0; min-width: 0; }
-.home-dashboard .oh-light-moods legend { font-size: .75rem; color: var(--muted); margin-bottom: .65rem; }
+.home-dashboard .oh-light-moods legend { font-size: .75rem; color: var(--muted); margin-bottom: .65rem; padding: 0; }
 .home-dashboard .oh-light-moods > div { display: flex; gap: .4rem; }
 .home-dashboard .oh-light-moods button { flex: 1; padding: .75rem .35rem; border: 1px solid transparent; border-radius: .75rem; color: var(--muted); background: var(--surface-2); font-size: .75rem; }
 .home-dashboard .oh-light-moods button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
@@ -78,7 +87,7 @@
 .home-dashboard .oh-color > div { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .6rem; }
 .home-dashboard .oh-color label { font-size: .75rem; font-weight: 400; }
 .home-dashboard .oh-note { margin-top: auto; padding-top: 1.25rem; font-size: .7rem; }
-.home-dashboard .oh-expressions { margin-top: 1.6rem; }
+.home-dashboard .oh-expressions { margin-top: 2rem; }
 .home-dashboard .oh-quick-actions { display: flex; gap: .75rem; margin-top: 1.5rem; }
 .home-dashboard .oh-text-button { display: flex; align-items: center; gap: .35rem; color: var(--muted); background: transparent; border: 0; padding: .5rem 0; font-size: .75rem; }
 .home-dashboard .oh-expression-list { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: .8rem; }
@@ -92,7 +101,7 @@
   .home-shell .topbar-actions { gap: .3rem; }
 }
 @media (min-width: 651px) and (max-width: 850px) {
-  .home-dashboard .oh-modes { grid-template-columns: 1fr; }
+  .home-dashboard .oh-mode-row, .home-dashboard .oh-modes { grid-template-columns: 1fr; }
   .home-dashboard .oh-robot, .home-dashboard .oh-lamp { padding: 1rem; }
 }
 @media (max-width: 650px) {
@@ -101,7 +110,7 @@
   .home-dashboard .oh-panel-heading { flex-wrap: wrap; }
   .home-dashboard .oh-model { height: 19rem; }
   .home-dashboard .oh-robot, .home-dashboard .oh-lamp { padding: 1rem; }
-  .home-dashboard .oh-modes { grid-template-columns: 1fr; }
+  .home-dashboard .oh-mode-row, .home-dashboard .oh-modes { grid-template-columns: 1fr; }
   .home-dashboard .oh-mode { padding: .85rem .5rem; gap: .4rem; }
   .home-dashboard .oh-mode svg { width: .95rem; }
   .home-shell .mode-tabs { order: 0; width: auto; margin-left: auto; }
@@ -118,13 +127,45 @@
 
 }
 
-.oh-alerts { margin-top: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; }
-.oh-alerts ul { padding: 0; list-style: none; }
-.oh-alerts li { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; }
-.oh-alerts p { color: var(--muted); }
-
-.oh-reminder-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 20px; }
-.oh-reminder-form h3 { width: 100%; margin: 0; }
-.oh-reminder-form > label { display: grid; gap: 6px; }
-.oh-reminder-form fieldset { display: flex; flex-wrap: wrap; gap: 8px; border: 0; padding: 0; }
-.oh-reminder-form fieldset label { display: flex; align-items: center; gap: 4px; }
+/* Secondary cards share the panel treatment of the robot and lamp panels. */
+.home-dashboard .oh-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; margin-top: 2rem; }
+.home-dashboard .oh-column { display: grid; gap: 1rem; min-width: 0; }
+.home-dashboard .oh-card, .home-dashboard .camera-card { min-width: 0; padding: 1.4rem; border: 1px solid var(--line); border-radius: 1.5rem; background: var(--surface-1); }
+.home-dashboard .oh-card > p { margin-top: .5rem; }
+.home-dashboard .oh-card ul { margin: .9rem 0 0; padding: 0; list-style: none; }
+.home-dashboard .oh-alerts li { display: flex; align-items: center; gap: .5rem; padding: .65rem 0; border-top: 1px solid var(--line); font-size: .8rem; }
+.home-dashboard .oh-alerts li > span { flex: 1; min-width: 0; }
+.home-dashboard .oh-alerts li .quiet-button, .home-dashboard .oh-card-actions .quiet-button, .home-dashboard .oh-confirm button { min-height: 2.25rem; border-radius: .7rem; font-size: .72rem; }
+.home-dashboard .oh-disclosure { margin-top: 1rem; border-top: 1px solid var(--line); }
+.home-dashboard .oh-disclosure summary { display: flex; align-items: center; justify-content: space-between; padding: .85rem 0 .25rem; color: var(--text); font-size: .8rem; font-weight: 550; cursor: pointer; list-style: none; }
+.home-dashboard .oh-disclosure summary::-webkit-details-marker { display: none; }
+.home-dashboard .oh-disclosure summary::after { content: "+"; color: var(--muted); font-size: 1.1rem; font-weight: 400; }
+.home-dashboard .oh-disclosure[open] summary::after { content: "–"; }
+.home-dashboard .oh-reminder-form { display: grid; gap: .9rem; padding: .6rem 0 .4rem; }
+.home-dashboard .oh-form-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: .75rem; }
+.home-dashboard .oh-field-wide { grid-column: 1 / -1; }
+.home-dashboard .oh-card label { font-size: .72rem; font-weight: 550; letter-spacing: 0; }
+.home-dashboard .oh-card input:not([type="checkbox"]), .home-dashboard .oh-card select { min-height: 2.5rem; padding: .55rem .75rem; border-radius: .7rem; background: var(--surface-2); font-size: .8rem; }
+.home-dashboard .oh-days { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; padding: 0; border: 0; min-width: 0; }
+.home-dashboard .oh-days legend { margin-bottom: .5rem; padding: 0; color: var(--muted); font-size: .72rem; font-weight: 550; }
+.home-dashboard .oh-days label { position: relative; display: block; }
+.home-dashboard .oh-days input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.home-dashboard .oh-days span { display: grid; place-items: center; min-width: 2.6rem; min-height: 2.25rem; padding: 0 .5rem; border: 1px solid var(--line); border-radius: .7rem; color: var(--muted); background: var(--surface-2); font-size: .72rem; text-transform: capitalize; }
+.home-dashboard .oh-days input:checked + span { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.home-dashboard .oh-days input:focus-visible + span { outline: .15rem solid var(--accent); outline-offset: .15rem; }
+.home-dashboard .oh-form-footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .75rem; }
+.home-dashboard .oh-check { display: flex; align-items: center; gap: .5rem; margin-right: auto; color: var(--muted); }
+.home-dashboard .oh-form-footer .primary-button, .home-dashboard .oh-inline-form .primary-button { min-height: 2.5rem; border-radius: .7rem; }
+.home-dashboard .oh-select { width: auto; min-height: 2.25rem; padding: .3rem 2rem .3rem .75rem; }
+.home-dashboard .oh-list-items li { padding: .55rem 0; border-top: 1px solid var(--line); }
+.home-dashboard .oh-list-items label { display: flex; align-items: center; gap: .6rem; color: var(--text); font-size: .8rem; font-weight: 400; }
+.home-dashboard .oh-inline-form { display: flex; align-items: end; gap: .6rem; margin-top: 1rem; }
+.home-dashboard .oh-inline-form label { flex: 1; }
+.home-dashboard .oh-card-actions, .home-dashboard .oh-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: 1rem; }
+.home-dashboard .oh-confirm p { flex-basis: 100%; }
+.home-dashboard .camera-card .camera-picture { border-radius: 1rem; }
+/* V1 has no camera: let the timers and lists cards share the row instead. */
+.home-dashboard .oh-secondary:not(:has(> .camera-card)) > .oh-column { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+@media (max-width: 900px) {
+  .home-dashboard .oh-secondary, .home-dashboard .oh-secondary:not(:has(> .camera-card)) > .oh-column { grid-template-columns: minmax(0, 1fr); }
+}

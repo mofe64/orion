@@ -45,7 +45,7 @@ function title(event: Record<string, unknown>): string | null {
   }
 }
 
-export function VoiceHistory({ onBack, connected, desktop = isTauri() }: { onBack: () => void; connected: boolean; desktop?: boolean }) {
+export function VoiceHistory({ connected, desktop = isTauri() }: { connected: boolean; desktop?: boolean }) {
   const available = connected && desktop;
   const [turns, setTurns] = useState<Summary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export function VoiceHistory({ onBack, connected, desktop = isTauri() }: { onBac
   let previousDay = "";
   const elapsed = turn ? new Date(turn.updatedAt).getTime() - new Date(turn.startedAt).getTime() : 0;
   return <section className="settings-page voice-history" aria-labelledby="voice-history-title">
-    <header className="voice-history-heading"><div><button className="quiet-button" type="button" onClick={onBack}>← Back to Home</button><h1 id="voice-history-title">History</h1><p>Saved on Orion. Times show what happened during each voice request.</p></div><button className="quiet-button" type="button" disabled={!available || loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
+    <header className="voice-history-heading"><div><h1 id="voice-history-title">History</h1><p>Saved on Orion. Times show what happened during each voice request.</p></div><button className="quiet-button" type="button" disabled={!available || loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
     {!desktop ? <p role="status" className="settings-help">Open Orion Studio’s desktop app and connect Orion to read conversation history.</p> : !connected && <p role="status" className="settings-help">Connect Orion to read its conversation history.</p>}
     <FailureNotice value={error} />
     <div className="voice-history-layout"><aside className="voice-history-list" aria-label="Conversations">
