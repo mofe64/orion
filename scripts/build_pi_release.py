@@ -13,6 +13,7 @@ import uuid
 from pi_release_bundle import install_wheels, pack_bundle, write_manifest
 from pi_release_platform import builder_image, check_platform, read_platform
 from pi_service_config import services_for_release
+from deploy_pi_release import validate_listener
 
 
 RUST_VERSION = '1.98.0'
@@ -71,6 +72,8 @@ def package_python(release, component, wheels):
     run('uv', 'venv', '--python', python, environment)
     install_wheels(environment / 'bin/python', wheels, run)
     run(environment / 'bin/python', '-m', 'unittest', 'discover', '-s', release / component / 'tests', '-q', cwd=release)
+    if component == 'voice':
+        validate_listener(release)
 
 
 def ignore_build_files(directory, names):

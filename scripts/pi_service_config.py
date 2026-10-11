@@ -30,6 +30,7 @@ PATH_SUFFIXES = (
     'vision/.venv/bin/orion-vision',
     'voice/models/wake/hey_orion_trained_080.rpw',
     'voice/models/wake/hey_orion_reference.rpw',
+    'voice/models/verifier',
     'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh',
 )
 
@@ -121,6 +122,10 @@ def listener_start(start, release):
             start += f' --wake-model {wanted_model}'
     elif model is None:
         start += f' --wake-model {release}/voice/models/wake/{REFERENCE_WAKE_MODEL}'
+    # Wheel-installed code lives in site-packages; models stay in the release.
+    # Preserve explicit custom verifiers and the operator's ASR fallback choice.
+    if not re.search(r'(?<!\S)--(?:verifier-dir(?:\s|=)|no-verifier(?:\s|$))', start):
+        start += f' --verifier-dir {release}/voice/models/verifier'
     if '--local-processor' not in start:
         start += ' --local-processor'
     return start

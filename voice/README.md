@@ -10,8 +10,8 @@ waking and character feedback.
 
 Use [Pi installation and deployment](../docs/quickstart.md#prepare-a-new-pi)
 to prepare the listener with the complete voice stack. The Pi needs working
-[ReSpeaker audio](../hardware/audio/README.md), calibration and a Rust toolchain.
-Deployment builds the native Rustpotter adapter and checks the active
+[ReSpeaker audio](../hardware/audio/README.md) and calibration.
+Deployment builds the native Rustpotter adapter locally and checks the active
 reference model, retained trained model and packaged phrase verifier. See [wake-word training](../docs/wake-word-training.md)
 for the evidence and rollback policy.
 
@@ -20,6 +20,11 @@ active release. Its WebSocket endpoint uses port 7448 and the Pi's
 `~/.config/orion/studio-token`. The managed `--local-processor` setting reserves
 processing ownership for a loopback connection. Separate authenticated controls
 can inspect or change microphone mute.
+
+The service passes explicit `--wake-model` and `--verifier-dir` paths under the
+active release's `voice/models/`. Model files live outside the installed Python
+wheel. Deployment checks those model arguments through the installed listener
+parser before activation, so model discovery does not depend on `site-packages`.
 
 ## Capture and sessions
 

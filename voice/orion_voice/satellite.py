@@ -934,7 +934,7 @@ async def serve(args):
                 await daemon_command(f"voice {session.session_id} cancel", args.daemon_socket)
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7448)
@@ -960,7 +960,7 @@ def main():
     parser.add_argument("--xvf-min-energy", type=float, default=os.environ.get("ORION_XVF_MIN_ENERGY", "0"))
     parser.add_argument("--daemon-socket", default="/tmp/oriond.sock")
     parser.add_argument("--vision-socket", default="/tmp/orion-vision.sock")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 0 < args.threshold <= 1:
         parser.error("--threshold must be in (0, 1]")
     if args.device is None:
@@ -969,7 +969,11 @@ def main():
         parser.error("--processed-channel must be within --capture-channels")
     if args.hardware == "v1" and args.capture_channels != 2:
         parser.error("V1 requires two raw microphone channels")
-    asyncio.run(serve(args))
+    return args
+
+
+def main():
+    asyncio.run(serve(parse_args()))
 
 
 if __name__ == "__main__":

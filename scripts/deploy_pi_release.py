@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+import shlex
 import signal
 import subprocess
 import tarfile
@@ -12,7 +13,7 @@ import tempfile
 from install_pi_voice_stack import deployment_lock
 from pi_release_bundle import inspect_archive, install_wheels, sha256, verify_payload
 from pi_release_platform import builder_image, check_platform, read_platform
-from pi_service_config import services_for_release
+from pi_service_config import listener_start, services_for_release
 from prepare_pi_voice_stack import prepare_assets
 
 
@@ -33,13 +34,21 @@ def prepare_environments(release, wheels):
         run(release / 'vision/.venv/bin/python', '-c', 'import libcamera, pykms, picamera2')
 
 
-def validate_voice(release, root):
+def validate_listener(release):
+    # Parse the same managed model arguments as systemd using the installed wheel.
+    # A hard-coded smoke-test path can pass while the listener's defaults fail.
+    arguments = shlex.split(listener_start('orion-listener --token-file /dev/null', release))[1:]
     run(release / 'voice/.venv/bin/python', '-c',
         'from pathlib import Path; from orion_voice.rustpotter import RustpotterWakeDetector; '
+        'from orion_voice.satellite import parse_args; args = parse_args(); '
         'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_trained_080.rpw"), .80).process(bytes(640)); '
-        'RustpotterWakeDetector(Path("voice/models/wake/hey_orion_reference.rpw"), .35).process(bytes(640)); '
+        'RustpotterWakeDetector(args.wake_model, args.threshold).process(bytes(640)); '
         'import numpy as np; from orion_voice.verifier import AcousticVerifier; '
-        'AcousticVerifier(Path("voice/models/verifier")).feed(np.zeros(1280, dtype=np.int16))', cwd=release)
+        'AcousticVerifier(args.verifier_dir).feed(np.zeros(1280, dtype=np.int16))', *arguments, cwd=release)
+
+
+def validate_voice(release, root):
+    validate_listener(release)
     environment = {**os.environ, 'HF_HOME': str(root / 'cache/hf'), 'HF_HUB_OFFLINE': '1',
                    'ORION_SPEECH_BACKEND': 'pi', 'PYTHONPATH': str(release / 'speech'),
                    'ORION_TTS_THREADS': '3', 'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium')}

@@ -1,9 +1,16 @@
 import unittest
+from pathlib import Path
+import shlex
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 import numpy as np
 from orion_voice.satellite import SatelliteSession, StereoCapture, main
 from orion_voice.direction import DirectionEstimator
+import orion_voice.satellite as satellite
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from pi_service_config import listener_start
 
 
 def frame(value=2000):
@@ -12,6 +19,17 @@ def frame(value=2000):
 
 
 class ListenerDefaultsTests(unittest.TestCase):
+    def test_managed_listener_finds_release_models_when_code_is_installed_in_a_wheel(self):
+        release = Path(__file__).resolve().parents[2]
+        command = listener_start('orion-listener --token-file /tmp/unused', release)
+        wheel_module = release / 'voice/.venv/lib/python3.12/site-packages/orion_voice/satellite.py'
+        with patch.object(satellite, '__file__', str(wheel_module)):
+            args = satellite.parse_args(shlex.split(command)[1:])
+        self.assertEqual(args.wake_model, release / 'voice/models/wake/hey_orion_reference.rpw')
+        self.assertEqual(args.verifier_dir, release / 'voice/models/verifier')
+        self.assertTrue(args.wake_model.is_file())
+        self.assertTrue((args.verifier_dir / 'config.json').is_file())
+
     def test_standalone_listener_uses_reference_wake_profile(self):
         seen = []
 
