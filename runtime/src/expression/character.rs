@@ -518,7 +518,6 @@ impl CharacterCoordinator {
     }
     pub(crate) fn resume_gaze<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) -> Result<()> {
         self.gaze.resume(core.mode().torque_is_enabled())?;
-        self.work_anchor = false;
         Ok(())
     }
     /// Wake can clear Stop only for an already powered, enabled character.

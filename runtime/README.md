@@ -144,8 +144,13 @@ lamp-unverified.
 for `scan` (`index`: 0–2), `target` (`point`: base-frame metres, `lean`: 0–1),
 `status`, and `end`. `scan`, `target` and a restoring `end` return a movement
 `run_id`; wait for measured completion. `status.committed` confirms a successful
-aim. An expired or revoked token cannot restore or change the anchor. There
-is no raw-joint input. The [motion catalogue](../docs/motion-reference.md#lean-ik-and-table-points)
+aim. Measured aim completion enables comfort fitting for layered idle and
+speech clips. Both End and lease expiry retain that desk-light hold. A soft
+Stop followed by confirmed wake, or explicit gaze resume, preserves it; Idle
+mode releases the gaze hold while retaining comfort fitting until another pose
+replaces the reach. Character start/home, rest and foreground movement release
+the desk-light anchor. An expired
+or revoked token cannot restore or change the anchor. There is no raw-joint input. The [motion catalogue](../docs/motion-reference.md#lean-ik-and-table-points)
 describes the envelope and generated approach. The authenticated gateway owns
 normal calls; direct callers must also respect camera privacy and voice exclusion.
 

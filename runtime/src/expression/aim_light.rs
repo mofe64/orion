@@ -42,6 +42,21 @@ pub(super) struct WorkState {
 impl CharacterCoordinator {
     pub(crate) fn release_work_anchor(&mut self) {
         self.work_anchor = false;
+        // Idle releases gaze ownership, but the reach remains the character's
+        // anchor until another pose replaces it. Keep its comfort fitting.
+    }
+
+    fn finish_work_hold<D: RuntimeDriver>(
+        &mut self,
+        held: bool,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) {
+        self.work = None;
+        self.work_anchor = held;
+        core.set_character_comfort(held || self.hands.owns_anchor());
+        self.status.state = self.idle_state();
+        self.reset_timers(now);
     }
 
     pub(crate) fn work_request<D: RuntimeDriver>(
@@ -152,10 +167,7 @@ impl CharacterCoordinator {
             }
             WorkRequest::End { .. } => {
                 if work.committed {
-                    self.work = None;
-                    self.work_anchor = true;
-                    self.status.state = self.idle_state();
-                    self.reset_timers(now);
+                    self.finish_work_hold(true, now, core);
                     Ok(json!({"ok":true}))
                 } else {
                     let prepared = core.prepare_work_return(&work.previous)?;
@@ -178,6 +190,26 @@ impl CharacterCoordinator {
         let Some(work) = &mut self.work else {
             return Ok(false);
         };
+        if let Some(run) = work.run {
+            if let Some(phase) = terminal_phase(core, run) {
+                work.run = None;
+                work.failed = phase != MovementPhase::Completed;
+                if !work.failed {
+                    if let Some(target) = work.aimed.take() {
+                        self.status.active_anchor = Some(target);
+                        work.committed = true;
+                        self.work_anchor = true;
+                        core.set_character_comfort(true);
+                    }
+                    if work.returning {
+                        self.status.active_anchor = Some(work.previous.clone());
+                        let held = work.previous_work_anchor;
+                        self.finish_work_hold(held, now, core);
+                        return Ok(false);
+                    }
+                }
+            }
+        }
         if now >= work.deadline {
             if work.run.is_some_and(|run| {
                 core.snapshot()
@@ -187,31 +219,116 @@ impl CharacterCoordinator {
             }) {
                 checked(core.handle_command("stop", now))?;
             }
-            self.work = None;
-            self.status.state = self.idle_state();
-            self.reset_timers(now);
+            let held = work.committed || work.previous_work_anchor;
+            self.finish_work_hold(held, now, core);
             return Ok(false);
         }
-        if let Some(run) = work.run {
-            if let Some(phase) = terminal_phase(core, run) {
-                work.run = None;
-                work.failed = phase != MovementPhase::Completed;
-                if !work.failed {
-                    if let Some(target) = work.aimed.take() {
-                        self.status.active_anchor = Some(target);
-                        work.committed = true;
-                    }
-                    if work.returning {
-                        self.status.active_anchor = Some(work.previous.clone());
-                        self.work_anchor = work.previous_work_anchor;
-                        self.work = None;
-                        self.status.state = self.idle_state();
-                        self.reset_timers(now);
-                        return Ok(false);
-                    }
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expression::gaze::{GazeStopCommand, tests::following};
+
+    #[test]
+    fn end_and_expiry_keep_fitted_reach_through_soft_stop_and_confirmed_wake() {
+        for expired in [false, true] {
+            let (mut core, _, _) = following();
+            let config = crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap();
+            let comfort = crate::motion::ik::ComfortBox::from_config(
+                &config,
+                core.poses(),
+                &core.driver().joint_limits().unwrap(),
+            )
+            .unwrap();
+            core.configure_comfort_box(config).unwrap();
+            let mut character = CharacterCoordinator::new(1);
+            character.set_gaze_enabled(true);
+            character.start(0., &mut core).unwrap();
+            for i in 1..=250 {
+                let t = i as f64 * 0.02;
+                core.tick(t).unwrap();
+                character
+                    .tick(t, &mut core, false, None, false, None, None)
+                    .unwrap();
+            }
+            let token = "a".repeat(32);
+            character
+                .work_request(
+                    WorkRequest::Begin {
+                        token: token.clone(),
+                    },
+                    5.,
+                    &mut core,
+                )
+                .unwrap();
+            character
+                .work_request(
+                    WorkRequest::Target {
+                        token: token.clone(),
+                        point: [0., -0.28, 0.],
+                        lean: 0.8,
+                    },
+                    5.,
+                    &mut core,
+                )
+                .unwrap();
+            for i in 251..=750 {
+                let t = i as f64 * 0.02;
+                core.tick(t).unwrap();
+                character
+                    .tick(t, &mut core, false, None, false, None, None)
+                    .unwrap();
+            }
+            assert!(character.work.as_ref().unwrap().committed);
+            let anchor = character.status.active_anchor.clone().unwrap();
+            assert!(anchor["shoulder_pitch_joint"] > 1.0);
+            if expired {
+                character.tick_work(65., &mut core).unwrap();
+            } else {
+                character
+                    .work_request(WorkRequest::End { token }, 15., &mut core)
+                    .unwrap();
+            }
+            assert!(character.work.is_none());
+            assert!(character.work_anchor);
+            character.forget_gaze_for_external_stop(GazeStopCommand::Stop);
+            character.clear_attention();
+            assert!(character.resume_gaze_for_confirmed_wake(&core).unwrap());
+            assert!(character.work_anchor);
+            assert_eq!(character.status.active_anchor.as_ref(), Some(&anchor));
+            // Both a held work anchor and Idle's released gaze hold keep the
+            // same reach protected until a foreground pose replaces it.
+            for (index, clip) in ["speak_react_happy", "idle_breathe"]
+                .into_iter()
+                .enumerate()
+            {
+                if index == 1 {
+                    character.release_work_anchor();
                 }
+                let at = 70. + index as f64 * 10.;
+                let definition = core.motions().motion(clip).unwrap().clone();
+                let run = core
+                    .play_generated_anchored_relative(definition, anchor.clone(), at)
+                    .unwrap();
+                for i in 1..=450 {
+                    core.tick(at + i as f64 * 0.02).unwrap();
+                    let pose = core
+                        .snapshot()
+                        .joints
+                        .iter()
+                        .map(|j| (j.name.clone(), j.position))
+                        .collect();
+                    assert!(comfort.contains(&pose), "{clip}: {pose:?}");
+                }
+                assert_eq!(terminal_phase(&core, run), Some(MovementPhase::Completed));
             }
         }
-        Ok(true)
     }
 }

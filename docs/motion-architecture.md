@@ -187,8 +187,8 @@ shoulder and elbow lead before the camera pitches down. Completion establishes
 the desk pose as the character anchor. The `directional` idle profile avoids
 outward yaw clips near range limits. Subsequent generated idle/speech drawings
 are projected into the coupled comfort box, use synchronous settle curves and
-are checked over their complete trajectory. This protection is scoped to a
-Hands-derived anchor; it does not change ordinary home animation.
+are checked over their complete trajectory. This protection applies while a Hands or successfully aimed desk-light anchor
+is held; it does not change ordinary home animation.
 
 Measured starts may differ from the comfort hull by the runtime's 0.05-radian
 completion tolerance. Planning projects that reference into the hull while

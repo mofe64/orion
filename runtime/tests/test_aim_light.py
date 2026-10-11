@@ -35,6 +35,12 @@ class AimLightTests(DaemonTestCase):
             self.assertGreater(new['shoulder_pitch_joint'], old['shoulder_pitch_joint'] + .4)
             self.assertTrue(work(path, 'end')['ok'])
             self.assertFalse(request(path, gaze_target())['accepted'])
+            request(path, 'stop')  # Holding has no active movement to cancel.
+            self.assertFalse(request(path, 'gaze status')['gaze']['enabled'])
+            self.voice(path, 'c' * 32, 'wake', 'endpoint', 'confirmed')
+            self.assertTrue(request(path, 'gaze status')['gaze']['enabled'])
+            self.assertFalse(request(path, gaze_target())['accepted'])
+            self.assertEqual(request(path, 'character status')['character']['active_anchor'], new)
 
     def test_scan_stops_restore_old_anchor_and_unreachable_never_moves(self):
         with daemon(hardware='v2', following=True, automatic_character=True) as path:
