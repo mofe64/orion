@@ -5,7 +5,7 @@ import math
 import cv2
 import numpy as np
 
-SIZE = (320, 240)
+SIZE = (640, 360)
 SENSOR_SIZE = (4608, 2592)
 SENSOR_OUTPUT_SIZE = (2304, 1296)  # Full-view 2x2 binning, not cropped 1536x864.
 SCALER_CROP = (0, 0, *SENSOR_SIZE)
@@ -50,11 +50,11 @@ def validate_lores(buffer, stride=None):
         raise ValueError("Lores buffer must contain uint8 pixels")
     if buffer.ndim == 3:
         if buffer.shape != (SIZE[1], SIZE[0], 3):
-            raise ValueError("Replay lores must be exactly 320x240 RGB")
+            raise ValueError(f"Replay lores must be exactly {SIZE[0]}x{SIZE[1]} RGB")
     elif (buffer.ndim != 2 or buffer.shape[0] != SIZE[1] * 3 // 2
           or buffer.shape[1] < SIZE[0] or buffer.shape[1] % 2
           or (stride is not None and buffer.shape[1] != stride)):
-        raise ValueError("Lores YUV geometry must be 320x240 with its configured stride")
+        raise ValueError(f"Lores YUV geometry must be {SIZE[0]}x{SIZE[1]} with its configured stride")
 
 
 @dataclass
@@ -114,7 +114,7 @@ class Intrinsics:
 
 def lores_bgr(buffer):
     validate_lores(buffer)
-    # PiSP pads the width to a stride (384 on the commissioned lamp).
+    # PiSP may pad the SIZE[0]-pixel width to the negotiated lores stride.
     # Keep the packed I420 planes intact until conversion; crop afterwards.
     if buffer.ndim == 3:
         return cv2.cvtColor(buffer, cv2.COLOR_RGB2BGR)  # synthetic replay

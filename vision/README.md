@@ -103,7 +103,7 @@ on another frame.
 Disconnected viewers cause encoding to stop. Capture converts RGB only while
 a stream client is connected or a snapshot was requested in the last two
 seconds. Callbacks without viewing demand omit the main RGB copy. Tracking
-copies the 320×240 lores YUV buffer independently, so detection continues
+copies the 640×360 lores YUV buffer independently, so detection continues
 without full-frame RGB copies. The first viewing request waits up to one second
 for an RGB frame. Capture retains one latest RGB buffer; inference retains at
 most one pending, one in-flight and one completed preview. They remain in memory
@@ -165,9 +165,11 @@ before replacement. The service verifies that hash again before model loading.
 OpenCV headless is pinned to 4.11.0.86 in the vision lockfile.
 
 The service configures the IMX708 Wide's full-view 2304×1296 RAW10 sensor mode
-and full-sensor `ScalerCrop`, with main 1280×720 RGB and lores 320×240 YUV420.
-Lores scales the same view independently in X and Y without another aspect-ratio
-crop. [Built-in intrinsics](orion_vision/intrinsics.py) derive an OpenCV fisheye
+and full-sensor `ScalerCrop`, with main 1280×720 RGB and lores 640×360 YUV420.
+The lores `SIZE` in [built-in intrinsics](orion_vision/intrinsics.py) also sets
+replay dimensions, detector input and observation box normalization. Keeping
+`preserve_ar: False` at 16:9 scales the full sensor view without squeezing faces
+or adding another aspect-ratio crop. The intrinsics derive an OpenCV fisheye
 model from the Camera Module 3 Wide's published focal length, pixel pitch and
 horizontal field of view, then apply the configured sensor, crop and lores scales.
 This is a nominal lens model; physical mount and timestamp alignment still need
@@ -184,6 +186,12 @@ OpenCV uses one thread. The latest lores frame replaces pending work; inference,
 YUV conversion, sockets and model loading never run in the camera callback.
 ISP padding is removed after packed YUV conversion. No inference frames are
 saved or sent off the Pi.
+
+YuNet uses `FACE_SCORE_THRESHOLD = 0.75` and NMS (non-maximum suppression) at
+0.3. Lamp measurements on 2026-10-11 scored a face at about 3 m at 0.59 in
+squeezed 320×240 input and 0.91 at 640×360. At about 1 m, scores of 0.900–0.915
+were marginal against the previous 0.9 cutoff. The larger 16:9 input preserves
+face proportions and more pixels; the lower cutoff leaves detection headroom.
 
 The worker undistorts face box centres to unit camera rays, asks `oriond`
 `camera-rays` at the exposure midpoint, then associates base azimuth/elevation
@@ -228,11 +236,37 @@ returns 503 `camera_off` and purges the mouth history too. See
 freshness and movement behavior. Multi-person speaker selection needs lamp
 validation; mouth-corner jitter and head turns can confuse the heuristic.
 
-Hardware acceptance remains unverified: walk slowly across the room and record
-neck-first tracking for review. Repeat identical-audio P0 ASR trials with the
-service at these rates under `CPUQuota=60%`/`Nice=10`; the target is at most 10%
-ASR slowdown. Check longer thermal load, the fitted lens/mount, capture-time
-alignment and camera-off closure/gaze cancellation on the lamp.
+After deployment, check the negotiated lores stride and YuNet's per-frame
+median/p95 time. On the lamp, compare reply latency on comparable spoken
+utterances with tracking running (10 Hz idle, 3 Hz during voice activity) and
+with `sudo systemctl stop orion-vision`. Restart it afterwards with
+`sudo systemctl restart orion-vision`. Run under `CPUQuota=60%`/`Nice=10` and
+target at most 10% slowdown; record ASR latency separately when available.
+The P0 comparison is manual; no fixed audio fixture or trial script exists.
+If that comparison fails, reduce `SIZE` to `(480, 270)` and repeat the checks.
+At 1, 2 and 3 m, confirm non-empty `/observations` and a stable track ID while
+standing still for 30 seconds. Check that the neck follows a slow side-to-side
+walk, then point the camera at the TV and posters for one minute and confirm
+there are no false faces. These checks need physical lamp validation. Also
+check longer thermal load, the fitted lens/mount, capture-time alignment and
+camera-off closure/gaze cancellation.
+
+An in-memory Pi probe on 2026-10-11 negotiated a 640-byte lores stride and a
+540×640 packed YUV buffer for `SIZE = (640, 360)`, with `preserve_ar: False`.
+The candidate detector used the pinned model, a 0.75 score cutoff, one OpenCV
+thread, `CPUQuota=60%` and `Nice=10`. After three warmup inferences, each phase
+ran for 12 seconds with capture continuing at 30 fps:
+
+| Requested detection rate | Measured rate | Inferences | Median time | p95 time |
+| --- | --- | --- | --- | --- |
+| 10 Hz | 7.92 Hz | 95 | 113.18 ms | 168.97 ms |
+| 3 Hz | 3.00 Hz | 36 | 59.90 ms | 90.76 ms |
+
+Times include YUV conversion and detection and measure wall time under the
+CPU cap. Each phase reused its initial latest frame once; other inferences
+sampled fresh captures. The 10 Hz phase exceeds the 100 ms frame budget.
+This probe establishes geometry and bounded-workload timing; ASR slowdown,
+distance tracking and false-face acceptance still need the manual lamp checks.
 
 ### Measurement environment
 
@@ -283,9 +317,11 @@ Repeat with `--label voice` during a voice conversation, using the same
 models, duration and cooling. `--camera` selects the enumerated index;
 `--hflip` and `--vflip` record and apply a fitted image transform.
 
-The camera produces main 1280×720 RGB and lores 320×240 YUV streams at a
-requested 30 fps. Five equal timed windows measure capture alone, YuNet at
-one and two threads, then YOLO at one and two threads. Startup, model loading,
+This standalone benchmark retains main 1280×720 RGB and lores 320×240 YUV
+streams at a requested 30 fps. Its timings do not measure the service's
+640×360 detector input or its 10/3 Hz rate limits. Five equal timed windows
+measure capture alone, YuNet at one and two threads, then YOLO at one and two
+threads. Startup, model loading,
 one inference warmup per configuration, and shutdown are outside `--duration`.
 A window can overrun by its last in-flight inference; actual elapsed time is
 reported. Both stream counts come from their shared completed requests, and

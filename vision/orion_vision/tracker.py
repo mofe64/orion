@@ -5,6 +5,8 @@ import math
 
 import numpy as np
 
+from .intrinsics import SIZE
+
 MAX_AGE_NS = 1_000_000_000
 ASSOCIATION_RADIANS = math.radians(20)
 MOUTH_MOTION_MIN = .05
@@ -53,15 +55,15 @@ class Track:
 
     def observation(self, now_ns):
         x, y, width, height = self.face.box
-        left, top = np.clip(x / 320, 0, 1), np.clip(y / 240, 0, 1)
-        right, bottom = np.clip((x + width) / 320, 0, 1), np.clip((y + height) / 240, 0, 1)
+        left, top = np.clip(x / SIZE[0], 0, 1), np.clip(y / SIZE[1], 0, 1)
+        right, bottom = np.clip((x + width) / SIZE[0], 0, 1), np.clip((y + height) / SIZE[1], 0, 1)
         return {"id": self.id, "class": "face", "track_id": self.id, "capture_boottime_ns": self.capture_ns,
             "azimuth": float(angle_delta(self.state[0])), "elevation": float(self.state[1]),
             "age_ms": max(0, now_ns - self.capture_ns) / 1e6,
             "track_age_ms": max(0, self.capture_ns - self.born_ns) / 1e6,
             "confidence": self.face.confidence, "looking_at_orion": self.face.looking_at_orion,
             "box": [float(left), float(top), float(right - left), float(bottom - top)],
-            "box_pixels": self.face.box, "landmarks": self.face.landmarks, "image_size": [320, 240]}
+            "box_pixels": self.face.box, "landmarks": self.face.landmarks, "image_size": list(SIZE)}
 
 
 class Tracker:

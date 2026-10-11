@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 import cv2
 import numpy as np
 
-from orion_vision.intrinsics import Intrinsics, lores_bgr
-from orion_vision.detect_faces import Face, MODEL_SHA256, YuNet
+from orion_vision.intrinsics import SIZE, Intrinsics, lores_bgr
+from orion_vision.detect_faces import FACE_SCORE_THRESHOLD, Face, MODEL_SHA256, YuNet
 from orion_vision.gaze_client import GazeClient, boottime_ns
 from orion_vision.pipeline import FacePipeline
 from orion_vision.sources import Picamera2Source
@@ -51,21 +51,22 @@ class IntrinsicsAndDetectorTests(unittest.TestCase):
         self.assertLess(float(max(errors)), math.radians(.2))
 
     def test_yuv_stride_crop_after_conversion_and_only_callback_copy(self):
-        buffer = np.zeros((360, 384), dtype=np.uint8)
-        self.assertEqual(lores_bgr(buffer).shape, (240, 320, 3))
+        stride = SIZE[0] + 64
+        buffer = np.zeros((SIZE[1] * 3 // 2, stride), dtype=np.uint8)
+        self.assertEqual(lores_bgr(buffer).shape, (SIZE[1], SIZE[0], 3))
         camera = MagicMock()
         module = MagicMock()
         module.Picamera2.return_value = camera
         camera.camera_configuration.return_value = {
             'sensor': {'output_size': (2304, 1296), 'bit_depth': 10},
-            'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
+            'lores': {'size': SIZE, 'format': 'YUV420', 'stride': stride}}
         with patch.dict('sys.modules', picamera2=module, libcamera=MagicMock()):
             source = Picamera2Source()
             self.addCleanup(source.close)
             publish = MagicMock()
             source.start(publish, lambda: False, lambda: True)
             self.assertEqual(camera.create_video_configuration.call_args.kwargs['lores'],
-                {'size': (320, 240), 'format': 'YUV420', 'preserve_ar': False})
+                {'size': SIZE, 'format': 'YUV420', 'preserve_ar': False})
             request = MagicMock()
             request.make_array.return_value = buffer
             camera.post_callback(request)
@@ -82,6 +83,16 @@ class IntrinsicsAndDetectorTests(unittest.TestCase):
         self.assertEqual(len(MODEL_SHA256), 64)
         self.assertTrue(face().looking_at_orion)
         self.assertFalse(face(frontal=False).looking_at_orion)
+
+    def test_yunet_uses_lores_geometry_and_lower_score_cutoff_with_same_nms(self):
+        with patch('orion_vision.detect_faces.Path.read_bytes', return_value=b'model'), \
+                patch('orion_vision.detect_faces.hashlib.sha256') as digest, \
+                patch('orion_vision.detect_faces.cv2.FaceDetectorYN.create') as create:
+            digest.return_value.hexdigest.return_value = MODEL_SHA256
+            YuNet('face.onnx')
+        self.assertEqual(FACE_SCORE_THRESHOLD, .75)
+        create.assert_called_once_with('face.onnx', '', SIZE, FACE_SCORE_THRESHOLD, .3, 5000,
+            cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU)
 
 
 class FakeRuntime(socketserver.UnixStreamServer):

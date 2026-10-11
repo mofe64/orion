@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from orion_vision.intrinsics import Intrinsics, lores_bgr
+from orion_vision.intrinsics import SIZE, Intrinsics, lores_bgr
 from orion_vision.gaze_client import GazeClient
 from orion_vision.pipeline import FacePipeline
 from orion_vision.sources import Picamera2Source
@@ -19,35 +19,36 @@ from test_tracking import FakeRuntime, eventually, face, intrinsics
 
 GEOMETRY = {'scaler_crop': [0, 0, 4608, 2592],
     'sensor_mode': {'output_size': [2304, 1296], 'bit_depth': 10},
-    'flips': {'hflip': False, 'vflip': False}, 'lores_stride': 384}
+    'flips': {'hflip': False, 'vflip': False}, 'lores_stride': SIZE[0] + 64}
 
 
 class GeometryTests(unittest.TestCase):
     def test_lores_rejects_wrong_resolution_dtype_and_short_stride_before_crop(self):
-        for buffer in (np.zeros((720, 640), np.uint8), np.zeros((360, 318), np.uint8),
-                       np.zeros((240, 321, 3), np.uint8), np.zeros((360, 384), np.float32)):
+        rows, stride = SIZE[1] * 3 // 2, GEOMETRY['lores_stride']
+        for buffer in (np.zeros((rows * 2, SIZE[0]), np.uint8), np.zeros((rows, SIZE[0] - 2), np.uint8),
+                       np.zeros((SIZE[1], SIZE[0] + 1, 3), np.uint8), np.zeros((rows, stride), np.float32)):
             with self.subTest(shape=buffer.shape), self.assertRaises(ValueError):
                 lores_bgr(buffer)
-        self.assertEqual(lores_bgr(np.zeros((360, 384), np.uint8)).shape, (240, 320, 3))
+        self.assertEqual(lores_bgr(np.zeros((rows, stride), np.uint8)).shape, (SIZE[1], SIZE[0], 3))
 
     def test_pipeline_drops_changed_crop_sensor_flip_and_stride(self):
         model = Intrinsics.camera_module_3_wide()
-        model.geometry['lores_stride'] = 384
+        model.geometry['lores_stride'] = GEOMETRY['lores_stride']
         pipeline = FacePipeline(MagicMock(), model, MagicMock())
         pipeline.reset(True)
-        buffer = np.zeros((360, 384), np.uint8)
+        buffer = np.zeros((SIZE[1] * 3 // 2, GEOMETRY['lores_stride']), np.uint8)
         geometry = {key: value for key, value in GEOMETRY.items() if key != 'scaler_crop'}
         pipeline.submit(100, buffer, {'ScalerCrop': GEOMETRY['scaler_crop']}, geometry)
         self.assertIsNotNone(pipeline.pending)
         pipeline.pending = None
         for key, value in [('scaler_crop', [1, 0, 4608, 2592]),
                            ('sensor_mode', {'output_size': [1536, 864], 'bit_depth': 10}),
-                           ('flips', {'hflip': True, 'vflip': False}), ('lores_stride', 320)]:
+                           ('flips', {'hflip': True, 'vflip': False}), ('lores_stride', SIZE[0])]:
             changed = copy.deepcopy(GEOMETRY)
             changed[key] = value
             pipeline.submit(200, buffer, {'ScalerCrop': changed.pop('scaler_crop')}, changed)
             self.assertIsNone(pipeline.pending, key)
-        pipeline.submit(300, np.zeros((360, 320), np.uint8),
+        pipeline.submit(300, np.zeros((SIZE[1] * 3 // 2, SIZE[0]), np.uint8),
             {'ScalerCrop': GEOMETRY['scaler_crop']}, geometry)
         self.assertIsNone(pipeline.pending)  # Buffer stride must match metadata too.
         self.assertEqual(pipeline.dropped, 5)
@@ -62,7 +63,7 @@ class GeometryTests(unittest.TestCase):
         module.Picamera2.return_value = camera
         camera.camera_configuration.return_value = {
             'sensor': {'output_size': (1536, 864), 'bit_depth': 10},
-            'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
+            'lores': {'size': SIZE, 'format': 'YUV420', 'stride': GEOMETRY['lores_stride']}}
         with patch.dict('sys.modules', picamera2=module, libcamera=MagicMock()):
             with self.assertRaisesRegex(ValueError, 'geometry'):
                 source.start(MagicMock(), lambda: False, lambda: True)

@@ -151,9 +151,8 @@ sys.exit(measure.main(["--yunet", "x", "--yolo-param", "y", "--yolo-bin", "z"]))
             ncnn.Net.return_value = net
             camera = MagicMock()
             camera.camera_properties = {"Model": "imx708_wide"}
-            config = {"main": {"size": (1280, 720), "format": "RGB888"},
-                      "lores": {"size": (320, 240), "format": "YUV420"}}
-            camera.camera_configuration.return_value = config
+            camera.create_video_configuration.side_effect = lambda **kwargs: kwargs
+            camera.camera_configuration.side_effect = lambda: camera.create_video_configuration.call_args.kwargs
             camera.start.side_effect = lambda **_: camera.post_callback(self.request(1, "yuv"))
             picamera = MagicMock(return_value=camera)
             picamera.global_camera_info.return_value = [{"Id": "test/cam0"}]
@@ -175,8 +174,11 @@ sys.exit(measure.main(["--yunet", "x", "--yolo-param", "y", "--yolo-bin", "z"]))
             self.assertTrue(result["ok"])
             self.assertEqual(settings, [("capture_only", None, 1), ("yunet", 1, 1), ("yunet", 2, 1),
                                         ("yolo11n_ncnn_320", 1, 1), ("yolo11n_ncnn_320", 2, 1)])
-            self.assertEqual(camera.create_video_configuration.call_args.kwargs["main"], config["main"])
-            self.assertEqual(camera.create_video_configuration.call_args.kwargs["lores"], config["lores"])
+            config = camera.create_video_configuration.call_args.kwargs
+            self.assertEqual(config["main"], {"size": (1280, 720), "format": "RGB888"})
+            self.assertEqual(config["lores"]["format"], "YUV420")
+            self.assertEqual(result["camera"]["streams"]["lores"]["size"], list(config["lores"]["size"]))
+            self.assertEqual(cv2.FaceDetectorYN.create.call_args.args[2], config["lores"]["size"])
             libcamera.Transform.assert_called_once_with(hflip=False, vflip=True)
             self.assertEqual(cv2.setNumThreads.call_args_list,
                              [unittest.mock.call(1), unittest.mock.call(2)] * 2)

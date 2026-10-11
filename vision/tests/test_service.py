@@ -13,6 +13,7 @@ import simplejpeg
 
 from orion_vision.service import Vision, VisionServer, camera_enabled, exposure_midpoint
 from orion_vision.sources import Capture, Picamera2Source, ReplaySource
+from orion_vision.intrinsics import SIZE
 from unittest.mock import MagicMock, patch
 import sys
 
@@ -200,7 +201,8 @@ class SocketTests(unittest.TestCase):
         connection.close()
         self.assertEqual(response.status, 200)
         self.assertAlmostEqual(observations[0]['azimuth'], .2, places=12)
-        np.testing.assert_allclose(observations[0]['box'], [100/320, 80/240, 40/320, 40/240])
+        np.testing.assert_allclose(observations[0]['box'], [100/SIZE[0], 80/SIZE[1], 40/SIZE[0], 40/SIZE[1]])
+        self.assertEqual(observations[0]['image_size'], list(SIZE))
         self.assertIsNone(self.vision.latest)  # Inference does not demand main RGB.
         connection, response = self.request('/speaker?since_ns=0')
         speaker = json.loads(response.read())
@@ -328,7 +330,7 @@ class StartupTests(unittest.TestCase):
         camera_module.Picamera2.return_value = camera
         camera.camera_configuration.return_value = {
             'sensor': {'output_size': (2304, 1296), 'bit_depth': 10},
-            'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
+            'lores': {'size': SIZE, 'format': 'YUV420', 'stride': SIZE[0] + 64}}
         detector, client = MagicMock(), MagicMock()
         detector.detect.return_value = [face()]
         client.voice_active.return_value = False
@@ -344,7 +346,7 @@ class StartupTests(unittest.TestCase):
                 request = MagicMock()
                 request.get_metadata.return_value = {'SensorTimestamp': boottime_ns(),
                     'ExposureTime': 0, 'ScalerCrop': (0, 0, 4608, 2592)}
-                request.make_array.return_value = np.zeros((360, 384), np.uint8)
+                request.make_array.return_value = np.zeros((SIZE[1] * 3 // 2, SIZE[0] + 64), np.uint8)
                 camera.post_callback(request)
                 eventually(lambda: client.target.called)
                 self.assertEqual(len(vision.pipeline.observations()), 1)

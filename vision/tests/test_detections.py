@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from orion_vision.pipeline import FacePipeline
+from orion_vision.intrinsics import SIZE
 from orion_vision.sources import Capture
 import test_service as service_tests
 from test_tracking import eventually, face, intrinsics
@@ -32,7 +33,8 @@ class PreviewTests(unittest.TestCase):
         self.assertIs(pixels, rgb)
         self.assertEqual([box['track_id'] for box in detections], [1, 2])
         self.assertEqual([box['chosen_target'] for box in detections], [True, False])
-        self.assertEqual(detections[0]['box'], [145 / 320, 105 / 240, 30 / 320, 30 / 240])
+        np.testing.assert_allclose(detections[0]['box'],
+            [145 / SIZE[0], 105 / SIZE[1], 30 / SIZE[0], 30 / SIZE[1]])
         self.assertEqual(detections[0]['score'], .95)
         self.assertEqual(detections[0]['capture_boottime_ns'], str(self.now))
         # Retained tracking evidence must never become a box in another frame.
@@ -90,7 +92,7 @@ class DetectionSocketTests(unittest.TestCase):
         pixels[:, :, 1] = 240
         with self.vision.viewing():
             self.vision.publish(Capture(pixels, {'SensorTimestamp': stamp, 'ExposureTime': 0},
-                                np.zeros((360, 320), np.uint8)), self.vision.generation)
+                                np.zeros((SIZE[1] * 3 // 2, SIZE[0]), np.uint8)), self.vision.generation)
             eventually(lambda: pipeline.preview() is not None)
             peer, image = self.request('/frame.jpg')
             image_stamp = image.headers['X-Capture-Boottime-Ns']

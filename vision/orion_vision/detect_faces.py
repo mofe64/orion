@@ -10,6 +10,10 @@ from .intrinsics import SIZE, lores_bgr
 
 MODEL_PATH = Path("/usr/local/share/orion/vision/face_detection_yunet_2023mar.onnx")
 MODEL_SHA256 = "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+# Lamp measurements (2026-10-11): at 3 m, squeezed 320x240 scored .59,
+# 320x180 .83, 427x240 .87 and 640x360 .91; at 1 m, .900-.915 was marginal
+# against the old .9 cutoff. Keep headroom for detection between those distances.
+FACE_SCORE_THRESHOLD = 0.75
 
 
 @dataclass
@@ -42,7 +46,7 @@ class YuNet:
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != MODEL_SHA256:
             raise ValueError("YuNet model SHA-256 mismatch")
         cv2.setNumThreads(1)
-        self.model = cv2.FaceDetectorYN.create(str(path), "", SIZE, .9, .3, 5000,
+        self.model = cv2.FaceDetectorYN.create(str(path), "", SIZE, FACE_SCORE_THRESHOLD, .3, 5000,
             cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU)
 
     def detect(self, buffer):

@@ -54,7 +54,7 @@ class Picamera2Source:
                 lores = actual['lores']
                 if (tuple(lores['size']) != SIZE or lores['format'] != 'YUV420'
                         or lores.get('preserve_ar', False)):
-                    raise ValueError("Configured lores geometry differs from 320x240 YUV420")
+                    raise ValueError(f"Configured lores geometry differs from {SIZE[0]}x{SIZE[1]} YUV420")
                 geometry = stream_geometry({'ScalerCrop': self.expected_geometry['scaler_crop']}, {
                     'sensor_mode': actual['sensor'], 'lores_stride': lores['stride'],
                     'flips': {'hflip': self.hflip, 'vflip': self.vflip}})
@@ -113,7 +113,8 @@ class ReplaySource:
                 lores = None
                 if lores_wanted:
                     height, width = image.shape[:2]
-                    lores = np.ascontiguousarray(image[np.arange(240) * height // 240][:, np.arange(320) * width // 320])
+                    lores = np.ascontiguousarray(image[np.arange(SIZE[1]) * height // SIZE[1]]
+                        [:, np.arange(SIZE[0]) * width // SIZE[0]])
                 # On Linux this is the same clock as SensorTimestamp; Replay is
                 # test input on hosts without CLOCK_BOOTTIME as well.
                 from .gaze_client import boottime_ns
