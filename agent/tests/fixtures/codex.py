@@ -4,6 +4,7 @@ import json
 import sys
 import uuid
 import time
+import base64
 from datetime import datetime
 
 thread_id = uuid.uuid4().hex
@@ -28,10 +29,12 @@ for line in sys.stdin:
         assert params['sandbox'] == 'read-only'
         assert params['ephemeral'] is True
         assert 'set_lighting' in params['baseInstructions']
-        assert {tool['name'] for tool in params['dynamicTools']} == {'aim_light', 'start_light_routine', 'stop_light_routine', 'get_weather', 'append_memory', 'search_memories', 'forget_memory', 'set_alert_sound', 'set_reminder', 'snooze_alert', 'add_list_item', 'list_items', 'remove_list_item', 'clear_list', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
+        assert {tool['name'] for tool in params['dynamicTools']} == {'look', 'aim_light', 'start_light_routine', 'stop_light_routine', 'get_weather', 'append_memory', 'search_memories', 'forget_memory', 'set_alert_sound', 'set_reminder', 'snooze_alert', 'add_list_item', 'list_items', 'remove_list_item', 'clear_list', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
         assert params['config']['web_search'] == 'live'
         result = {'thread': {'id': thread_id}}
     elif method == 'turn/start':
+        # Ordinary context must stay text-only, even after a visual exchange.
+        assert all(item['type'] == 'text' for item in params['input'])
         assert params['threadId'] == thread_id
         assert params['model'] == 'test-model'
         assert params['effort'] == 'high'
@@ -53,6 +56,34 @@ for line in sys.stdin:
             time.sleep(0.5)  # Keep the thinking interruption test deterministic.
         if text == 'hang':
             continue
+        if text in {'look-fixture', 'look-twice', 'look-rejected', 'look-attachment-rejected'}:
+            for index in range(2 if text == 'look-twice' else 1):
+                emit({'id':f'look-{index}', 'method':'item/tool/call', 'params':{
+                    'threadId':thread_id, 'turnId':turn_id, 'callId':f'look-{index}',
+                    'tool':'look', 'arguments':{}}})
+                reply = json.loads(sys.stdin.readline())
+                if text != 'look-rejected' and index == 0:
+                    assert reply['method'] == 'turn/steer'
+                    assert reply['params']['expectedTurnId'] == turn_id
+                    assert reply['params']['threadId'] == thread_id
+                    inputs = reply['params']['input']
+                    assert [item['type'] for item in inputs] == ['text', 'image']
+                    url = inputs[1]['url']
+                    assert url.startswith('data:image/jpeg;base64,')
+                    assert base64.b64decode(url.split(',')[1]) == b'\xff\xd8\xff\x00\xff\xd9'
+                    # Interleaved events must survive the steering RPC.
+                    emit({'method':'thread/status/changed','params':{'threadId':thread_id,'status':{'type':'active'}}})
+                    if text == 'look-attachment-rejected':
+                        emit({'id':reply['id'],'error':{'code':-32602,'message':'rejected '+url}})
+                    else:
+                        emit({'id':reply['id'],'result':{'turnId':turn_id}})
+                    reply = json.loads(sys.stdin.readline())
+                assert reply['id'] == f'look-{index}'
+                assert all(item['type'] == 'inputText' for item in reply['result']['contentItems'])
+                assert 'base64' not in json.dumps(reply)
+                expected = index == 0 and text not in {'look-rejected', 'look-attachment-rejected'}
+                assert reply['result']['success'] == expected
+            text = 'The test card is visible.' if text in {'look-fixture', 'look-twice'} else 'The camera request failed.'
         if text == 'approval':
             emit({'id': 'permission', 'method': 'item/commandExecution/requestApproval', 'params': {}})
             continue

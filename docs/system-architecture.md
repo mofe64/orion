@@ -102,6 +102,20 @@ mode releases that attention hold. Stop, rest, speech and foreground controls
 revoke an in-progress search; its old owner cannot restart it. Search, aim,
 desk-plane accuracy and beam alignment remain lamp-unverified.
 
+Explicit visual questions use `look`: agent → coordinator → authenticated
+gateway snapshot → Codex image input. The snapshot endpoint establishes a
+camera-viewer light lease before sending bytes and holds the indication for
+three seconds after delivery. Camera privacy, rest and indicator failures
+prevent delivery. The coordinator bounds and validates the JPEG in memory;
+the agent attaches it to the active turn without writing a file or publishing
+image bytes in activity logs. This is Orion's only camera-to-model path.
+Ordinary agent inputs contain text only. Image-bearing provider conversations
+close after the answer, retaining only a bounded text note, so subsequent
+requests cannot replay the photo. The agent instructions require a present,
+explicit visual request and forbid authorization from image or tool content.
+See the [look tool contract](../agent/README.md#memory-and-tools) for protocol
+compatibility and the remaining lamp check.
+
 Viewer previews pair completed detections with RGB from the same capture. The
 authenticated gateway proxies `/detections` only with a healthy viewer lease;
 polling cannot create one. Studio matches exact timestamp strings and removes

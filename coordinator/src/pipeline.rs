@@ -675,6 +675,21 @@ async fn response(
         let mut prefix = String::new();
         while let Some(activity) = receive.recv().await {
             match activity {
+                orion_agent::AgentEvent::CameraSnapshot { reply } => {
+                    if *interrupted.borrow() || reply.is_closed() {
+                        let _ = reply.send(Err("The visual request was interrupted".into()));
+                        continue;
+                    }
+                    let result = gateway.camera_snapshot().await;
+                    // A cancellation during HTTP delivery must not attach the
+                    // completed frame to an interrupted agent request.
+                    let result = if *interrupted.borrow() {
+                        Err("The visual request was interrupted".into())
+                    } else {
+                        result
+                    };
+                    let _ = reply.send(result);
+                }
                 orion_agent::AgentEvent::ToolCall {
                     name,
                     arguments,

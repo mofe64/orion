@@ -16,6 +16,7 @@ impl Gateway {
             voice_resources: Arc::new(Mutex::new(())),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|e| e.to_string())?,
             url: url.trim_end_matches('/').into(),
@@ -47,6 +48,48 @@ impl Gateway {
                 .unwrap_or_else(|| format!("HTTP {status}")));
         }
         value.map_err(|e| e.without_url().to_string())
+    }
+    pub async fn camera_snapshot(&self) -> Result<Vec<u8>, String> {
+        // Only the explicit agent event reaches this endpoint. The gateway
+        // requires its camera-viewer light lease before delivering any bytes.
+        let mut response = self
+            .client
+            .get(format!("{}/api/v2/camera/snapshot", self.url))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|e| e.without_url().to_string())?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Camera snapshot unavailable (HTTP {})",
+                response.status()
+            ));
+        }
+        let maximum = orion_agent::tools::look::MAX_SNAPSHOT_BYTES;
+        if response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            != Some("image/jpeg")
+            || response
+                .content_length()
+                .is_some_and(|size| size > maximum as u64)
+        {
+            return Err("Camera returned an invalid or oversized JPEG".into());
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| e.without_url().to_string())?
+        {
+            if bytes.len() + chunk.len() > maximum {
+                return Err("Camera returned an oversized JPEG".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        orion_agent::tools::look::validate_snapshot(&bytes)?;
+        Ok(bytes)
     }
     fn model_error(&self, message: &str) -> String {
         // A proxy error must not echo credentials or an authenticated endpoint.
@@ -191,6 +234,68 @@ fn wav(pcm: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn snapshot_peer(headers: &str, body: Vec<u8>) -> (Gateway, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = Gateway::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "secret",
+        )
+        .unwrap();
+        let headers = headers.to_owned();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![];
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET /api/v2/camera/snapshot HTTP/1.1"));
+            assert!(request.contains("authorization: Bearer secret"));
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            // Oversized/malformed responses may be rejected before the body.
+            let _ = stream.write_all(&body).await;
+        });
+        (gateway, task)
+    }
+
+    #[tokio::test]
+    async fn snapshot_fetch_is_authenticated_bounded_and_jpeg_only() {
+        let jpeg = vec![0xff, 0xd8, 0xff, 0, 0xff, 0xd9];
+        let (gateway, peer) = snapshot_peer("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 6\r\nConnection: close\r\n\r\n", jpeg.clone()).await;
+        assert_eq!(gateway.camera_snapshot().await.unwrap(), jpeg);
+        peer.await.unwrap();
+        for (headers, body) in [
+            (
+                "HTTP/1.1 503 Unavailable\r\nConnection: close\r\n\r\n",
+                jpeg.clone(),
+            ),
+            (
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/private\r\nConnection: close\r\n\r\n",
+                vec![],
+            ),
+            (
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n",
+                jpeg,
+            ),
+            (
+                "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 1048577\r\nConnection: close\r\n\r\n",
+                vec![],
+            ),
+            (
+                "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nConnection: close\r\n\r\n",
+                b"not an image".to_vec(),
+            ),
+            (
+                "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nConnection: close\r\n\r\n",
+                vec![0xff; 1048577],
+            ),
+        ] {
+            let (gateway, peer) = snapshot_peer(headers, body).await;
+            let error = gateway.camera_snapshot().await.unwrap_err();
+            assert!(!error.contains("http://") && !error.contains("secret"));
+            peer.await.unwrap();
+        }
+    }
     async fn exercise_aim_gate(cancel: bool) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let gateway = Gateway::new(

@@ -10,6 +10,84 @@ fn service() -> AgentService {
     })
     .unwrap()
 }
+
+#[tokio::test]
+async fn ordinary_agent_context_is_text_only_and_never_requests_a_camera_frame() {
+    let service = service();
+    let (send, mut receive) = tokio::sync::mpsc::channel(8);
+    let reply = service
+        .handle()
+        .respond_with_events("Tell me a story", Some(send))
+        .await
+        .unwrap();
+    assert!(reply.contains("Tell me a story"));
+    while let Some(event) = receive.recv().await {
+        assert!(!matches!(
+            event,
+            orion_agent::AgentEvent::CameraSnapshot { .. }
+        ));
+    }
+    // The fake server asserts every ordinary turn/start item has type=text.
+}
+
+#[tokio::test]
+async fn explicit_look_attaches_one_memory_image_without_logging_or_replaying_it() {
+    for fixture in [
+        "look-fixture",
+        "look-twice",
+        "look-attachment-rejected",
+        "look-rejected",
+    ] {
+        let service = service();
+        let agent = service.handle();
+        let before = agent.info().await.unwrap().conversation_id;
+        let (send, mut receive) = tokio::sync::mpsc::channel(8);
+        let call = agent.respond_with_events(fixture, Some(send));
+        let handle = async {
+            let mut frames = 0;
+            let mut results = vec![];
+            while let Some(event) = receive.recv().await {
+                match event {
+                    orion_agent::AgentEvent::CameraSnapshot { reply } => {
+                        frames += 1;
+                        let result = if fixture == "look-rejected" {
+                            Err("Camera is disabled".into())
+                        } else {
+                            Ok(vec![0xff, 0xd8, 0xff, 0, 0xff, 0xd9])
+                        };
+                        reply.send(result).unwrap();
+                    }
+                    orion_agent::AgentEvent::ToolCall { result, .. } => {
+                        let log = result.to_string();
+                        assert!(!log.contains("base64") && !log.contains("/9j/"));
+                        results.push(result);
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(frames, 1);
+            results
+        };
+        let (reply, results) = tokio::join!(call, handle);
+        assert!(reply.is_ok(), "{fixture}: {reply:?}");
+        assert_eq!(results.len(), if fixture == "look-twice" { 2 } else { 1 });
+        let after = agent.info().await.unwrap().conversation_id;
+        if fixture == "look-rejected" {
+            assert_eq!(after, before);
+        } else {
+            assert_ne!(
+                after, before,
+                "image-bearing provider must close after its turn"
+            );
+        }
+        let followup = agent.respond("What did you say?").await.unwrap();
+        assert!(!followup.contains("base64"));
+        if fixture != "look-rejected" {
+            assert!(followup.contains("Previous visual exchange (text only"));
+            assert!(followup.contains(fixture));
+        }
+    }
+}
 #[tokio::test]
 async fn streams_only_explicit_final_sentences_from_the_matching_turn() {
     let service = service();

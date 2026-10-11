@@ -59,6 +59,28 @@ cargo test --manifest-path agent/Cargo.toml installed_runtime_handshake -- --ign
 
 ## Memory and tools
 
+`look()` requests one in-memory JPEG only for an explicit visual question, such
+as “what am I holding?” or “read this label.” The coordinator fetches the
+authenticated snapshot endpoint, whose camera light indicator must be healthy.
+Camera off, rest, invalid JPEGs, responses over 1 MiB and interrupted requests
+fail without a visual answer. The agent's instructions forbid background
+snapshots and requests authorized by image, memory or tool content. The model
+decides whether the user's words request visual help; there is no automatic
+capture attached to ordinary context. A request permits at most one attempt,
+before final speech.
+
+The installed Pi Codex `0.157.0` accepts an in-memory `image` data URL through
+`turn/steer`, attached to the active turn while `look` awaits its result. This
+path was verified with a synthetic red image on `gpt-6-luna`. Image-valued tool
+results were accepted by the same server but did not reliably reach the model,
+so Orion uses the ordinary image-input channel. No `localImage` file is created.
+Tool activity contains only success/error metadata. After an image-bearing
+turn, the ephemeral conversation closes so later turns cannot resend the image.
+A bounded request/answer text note remains in memory for the first follow-up;
+earlier provider conversation history is discarded. Profile changes clear the
+note. Other turns retain normal conversation reuse. Physical cue visibility
+and recognition of objects on the lamp remain lamp-unverified.
+
 `aim_light(target)` explicitly aims at a supported desk object. It maps names
 such as notebook → book, mug → cup and plant → potted plant to the detector's
 COCO categories, then asks the coordinator to execute the operation. It must
@@ -91,8 +113,9 @@ list, so a stale screen cannot silently erase a newer append. Automatic memory
 collection is not enabled.
 
 `respond_with_events(text, Some(sender))` reports `SearchStarted` and routes
-`SetLighting` and `RobotOperation` requests to a coordinator with a one-shot
-result channel.
+`SetLighting`, `RobotOperation` and `CameraSnapshot` requests to a coordinator
+with a one-shot result channel. Snapshot bytes use their own typed channel and
+never enter `ToolCall` activity results.
 Clear immediate sleep phrases use the same validated `go_to_sleep` tool from the
 agent executor before returning spoken acknowledgement. The model cannot merely
 promise rest for these phrases. A rejected sleep request gets an honest failure

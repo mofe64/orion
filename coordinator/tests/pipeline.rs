@@ -39,6 +39,7 @@ struct GatewayState {
     )>,
     lighting: Vec<Value>,
     robot_operations: Vec<Value>,
+    snapshots: usize,
     reject_lighting: bool,
     reject_robot: Option<String>,
     reject_upload: Option<String>,
@@ -304,6 +305,11 @@ async fn http_request(mut socket: TcpStream, state: Arc<Mutex<GatewayState>>) {
     let mut body = vec![0; size];
     socket.read_exact(&mut body).await.unwrap();
     let mut state = state.lock().await;
+    if path == "/api/v2/camera/snapshot" {
+        state.snapshots += 1;
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 6\r\nConnection: close\r\n\r\n\xff\xd8\xff\x00\xff\xd9").await.unwrap();
+        return;
+    }
     let mut status = "200 OK";
     let value = if path == "/api/v2/operations" {
         let value: Value = serde_json::from_slice(&body).unwrap();
@@ -881,6 +887,21 @@ async fn search_acknowledgement_does_not_finish_session_or_open_followup() {
     assert_eq!(finish["type"], "session.finish");
     assert_eq!(finish["conversationWindow"], true);
     assert_eq!(h.gateway.lock().await.runs, 2);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn visual_request_reaches_the_camera_and_activity_keeps_only_metadata() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, look-fixture").await;
+    let activity = until(&mut h.observer, "agent.tool").await;
+    assert_eq!(activity["name"], "look");
+    assert_eq!(activity["result"], json!({"snapshot_attached":true}));
+    assert!(!activity.to_string().contains("base64"));
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(h.gateway.lock().await.snapshots, 1);
+    let response = until(&mut h.observer, "agent.response").await;
+    assert!(response["text"].as_str().unwrap().contains("test card"));
     h.stop().await;
 }
 

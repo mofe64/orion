@@ -1,6 +1,7 @@
 mod aim_light;
 mod lighting;
 mod lists;
+pub mod look;
 mod routines;
 use crate::{AgentConfig, memory};
 use serde::Deserialize;
@@ -9,6 +10,9 @@ use tokio::sync::{mpsc, oneshot};
 
 /// Request-scoped events: the coordinator owns speech and physical execution.
 pub enum AgentEvent {
+    CameraSnapshot {
+        reply: oneshot::Sender<Result<Vec<u8>, String>>,
+    },
     SearchStarted,
     FinalSpeech(String),
     ToolCall {
@@ -40,6 +44,7 @@ pub(crate) fn schemas() -> Value {
     schemas.as_array_mut().unwrap().extend(routines::schemas());
     schemas.as_array_mut().unwrap().extend(lists::schemas());
     schemas.as_array_mut().unwrap().push(aim_light::schema());
+    schemas.as_array_mut().unwrap().push(look::schema());
     schemas
 }
 #[derive(Deserialize)]
