@@ -67,7 +67,7 @@ class ConfigurationTests(Fixture):
         unit = plan[self.units / 'orion-vision.service']
         self.assertIn(str(self.release / 'vision/.venv/bin/orion-vision'), unit)
         self.assertIn(str(self.release / 'hardware/profiles/v2.json'), unit)
-        for setting in ('Nice=10', 'CPUQuota=60%', 'SupplementaryGroups=video',
+        for setting in ('Nice=10', 'CPUQuota=150%', 'SupplementaryGroups=video',
                         'Environment=OMP_NUM_THREADS=1', 'Environment=OPENBLAS_NUM_THREADS=1'):
             self.assertIn(setting, unit)
         self.assertNotIn(privacy, plan)

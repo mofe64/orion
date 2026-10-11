@@ -82,12 +82,14 @@ running services. The V2 profile selects camera index 0 on CAM/DISP1 with both
 flips false. Retain the working `camera_auto_detect=1` boot configuration.
 
 The service runs as the Pi user with supplementary group `video`, `Nice=10`,
-`CPUQuota=60%`, and one OpenMP/OpenBLAS thread. The Unix socket is user-only
+`CPUQuota=150%`, and one OpenMP/OpenBLAS thread. The quota is a runaway ceiling
+for the whole service, including camera threads; Nice gives ASR priority under
+contention. The Unix socket is user-only
 (mode 0600). Stop other camera applications before starting it.
 
 | GET endpoint | Response |
 | --- | --- |
-| `/health` | Camera state, latest `capture_boottime_ns`, drops and connected streams |
+| `/health` | Camera state, `camera_restarts`, latest `capture_boottime_ns`, drops and connected streams |
 | `/frame.jpg` | Latest main frame resized to 640×360; timestamp in `X-Capture-Boottime-Ns` |
 | `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
 | `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
@@ -133,6 +135,13 @@ defaults to enabled; malformed or unreadable settings fail closed. Setting
 and makes every GET endpoint return HTTP 503 with `error.code: camera_off`.
 Changing it to true reopens capture. No frames are saved. The setting is not
 replaced by deployment or rollback. See [configuration](../docs/configuration.md).
+
+The capture watchdog waits until startup is more than three seconds old, then
+reopens the source if no capture has been published for two seconds. It logs
+one warning per recovery and increments `camera_restarts`, using the ordinary
+start/retry path. Camera toggles retain the count; process restart resets it.
+Camera-off never triggers recovery. Old source callbacks cannot publish into
+a reopened generation.
 
 Replay tests run on a workstation without Picamera2 or native Pi bindings:
 
@@ -240,7 +249,7 @@ After deployment, check the negotiated lores stride and YuNet's per-frame
 median/p95 time. On the lamp, compare reply latency on comparable spoken
 utterances with tracking running (10 Hz idle, 3 Hz during voice activity) and
 with `sudo systemctl stop orion-vision`. Restart it afterwards with
-`sudo systemctl restart orion-vision`. Run under `CPUQuota=60%`/`Nice=10` and
+`sudo systemctl restart orion-vision`. Use the installed quota and Nice settings above and
 target at most 10% slowdown; record ASR latency separately when available.
 The P0 comparison is manual; no fixed audio fixture or trial script exists.
 If that comparison fails, reduce `SIZE` to `(480, 270)` and repeat the checks.
@@ -254,7 +263,8 @@ camera-off closure/gaze cancellation.
 An in-memory Pi probe on 2026-10-11 negotiated a 640-byte lores stride and a
 540×640 packed YUV buffer for `SIZE = (640, 360)`, with `preserve_ar: False`.
 The candidate detector used the pinned model, a 0.75 score cutoff, one OpenCV
-thread, `CPUQuota=60%` and `Nice=10`. After three warmup inferences, each phase
+thread, the previous 60% CPU quota and `Nice=10`. This historical measurement
+predates the quota change and capture watchdog. After three warmup inferences, each phase
 ran for 12 seconds with capture continuing at 30 fps:
 
 | Requested detection rate | Measured rate | Inferences | Median time | p95 time |
@@ -267,6 +277,11 @@ CPU cap. Each phase reused its initial latest frame once; other inferences
 sampled fresh captures. The 10 Hz phase exceeds the 100 ms frame budget.
 This probe establishes geometry and bounded-workload timing; ASR slowdown,
 distance tracking and false-face acceptance still need the manual lamp checks.
+
+Keep the Studio camera open for ten minutes, toggling camera capture off and
+on once. Check advancing `capture_boottime_ns`, `camera_restarts: 0`, and the
+service cgroup's `cpu.stat` `nr_throttled`; record temperature after ten minutes
+idle with the camera on. Quota and watchdog acceptance remain lamp-unverified.
 
 ### Measurement environment
 

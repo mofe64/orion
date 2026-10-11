@@ -57,6 +57,9 @@ class Vision:
         self.last_encode = 0.
         self.last_capture = 0
         self.last_sensor = 0
+        self.camera_started_at = None
+        self.last_published_at = None
+        self.camera_restarts = 0
         self.generation = 0
         self.dropped = 0
         self.encodes = 0
@@ -85,6 +88,7 @@ class Vision:
             self.generation += 1
             self.latest = self.cached = None
             self.last_capture = self.last_sensor = 0
+            self.camera_started_at = self.last_published_at = None
             self.snapshot_until = 0.
             self.changed.notify_all()
         self.source.close()
@@ -96,25 +100,38 @@ class Vision:
         try:
             while not self.stop.is_set():
                 wanted = camera_enabled(self.preference_file)
+                now = self.clock()
+                with self.changed:
+                    stalled = (self.enabled and self.camera_started_at is not None
+                        and now - self.camera_started_at > 3
+                        and now - (self.last_published_at if self.last_published_at is not None
+                            else self.camera_started_at) >= 2)
                 if not wanted and self.enabled:
                     self._disable()
-                elif wanted and not self.enabled and time.monotonic() >= retry_at:
+                elif wanted and stalled:
+                    LOG.warning("Camera capture stalled; reopening source")
+                    with self.changed:
+                        self.camera_restarts += 1
+                    self._disable()
+                elif wanted and not self.enabled and self.clock() >= retry_at:
                     with self.changed:
                         self.enabled = True
                         self.error = None
                         generation = self.generation
+                        self.camera_started_at = self.clock()
+                        self.last_published_at = None
                     try:
                         if self.pipeline:
                             self.pipeline.reset(True)
-                            self.source.start(lambda capture: self.publish(capture, generation), self.wants_rgb,
+                            self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb,
                                               lambda: self.enabled)
                         else:
-                            self.source.start(lambda capture: self.publish(capture, generation), self.wants_rgb)
+                            self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb)
                     except Exception as error:
                         LOG.exception("Camera start failed")
                         self._disable()
                         self.error = str(error)
-                        retry_at = time.monotonic() + 1
+                        retry_at = self.clock() + 1
                 self.stop.wait(.1)
         finally:
             self._disable()
@@ -132,6 +149,7 @@ class Vision:
                 self.dropped += 1
                 return
             self.last_sensor, self.last_capture = sensor, stamp
+            self.last_published_at = self.clock()
             self.latest = (stamp, capture.rgb) if capture.rgb is not None else None
             if capture.rgb is None:
                 self.cached = None
@@ -185,11 +203,13 @@ class Vision:
 
     def status(self):
         with self.changed:
-            if not camera_enabled(self.preference_file):
-                return 503, {"error": {"code": "camera_off", "message": "Camera is disabled"}}
+            settings = {"camera_enabled": camera_enabled(self.preference_file),
+                        "camera_restarts": self.camera_restarts}
+            if not settings['camera_enabled']:
+                return 503, {**settings, "error": {"code": "camera_off", "message": "Camera is disabled"}}
             if not self.enabled or self.error:
-                return 503, {"error": {"code": "camera_unavailable", "message": self.error or "Camera is starting"}}
-            return 200, {"camera_enabled": True, "capture_boottime_ns": self.last_capture or None,
+                return 503, {**settings, "error": {"code": "camera_unavailable", "message": self.error or "Camera is starting"}}
+            return 200, {**settings, "capture_boottime_ns": self.last_capture or None,
                          "clock": "CLOCK_BOOTTIME", "stream_clients": self.clients, "dropped_frames": self.dropped,
                          "detection": self.pipeline.status() if self.pipeline else {"error": self.detection_error}}
 

@@ -60,15 +60,17 @@ coordinates scenes, speech animation, idle behavior, rest and scheduled alerts. 
 submit named poses, motions, scenes or other supported operations. Every movement
 passes through the runtime's limits and ownership checks.
 
-### Camera service
+### Camera and vision
 
 On V2, `orion-vision` owns the camera independently of movement and speech.
 It retains one latest RGB frame and serves JPEGs over a user-only Unix HTTP
 socket. Encoding is shared across stream viewers and limited to 15 fps. Capture
 metadata and privacy control continue without viewers, while RGB conversion
-follows viewing demand. No captured frame is written to disk. Inference and
-gaze movement are not implemented by this
-service skeleton.
+follows viewing demand. No captured frame is written to disk. One inference
+thread runs YuNet on the latest lores capture, computes camera rays, and asks
+`oriond` for capture-time base bearings. Tracked targets reach motion only
+through runtime `gaze`, preserving calibration, the compiler, motion priority
+and Stop latches.
 
 Viewer previews pair completed detections with RGB from the same capture. The
 authenticated gateway proxies `/detections` only with a healthy viewer lease;
@@ -81,6 +83,15 @@ Disabling it purges frame/JPEG buffers and closes capture within one second;
 existing streams end and every endpoint returns `503 camera_off`. Capture
 stamps use the exposure midpoint in `CLOCK_BOOTTIME`, not host delivery time
 or `CLOCK_MONOTONIC`. See [vision setup and interfaces](../vision/README.md).
+
+The service's CPU quota applies to all its threads, including libcamera request
+completion and camera callbacks. Its ceiling allows capture to proceed while
+Nice gives voice work scheduling priority; quota throttling can suspend camera
+threads and stall capture silently. A watchdog reopens the source after a
+capture-publication gap, invalidating callbacks from the closed source. Health
+retains the restart count across camera toggles. See [vision operating limits](../vision/README.md#service-setup-and-development).
+The quota change and automatic recovery are implemented and lamp-unverified.
+See the [vision acceptance procedure](../vision/README.md#face-tracking).
 
 ### Listener and voice service
 
