@@ -16,11 +16,47 @@ pub(crate) struct BehaviourSettings {
 #[serde(deny_unknown_fields)]
 pub(crate) struct MappedObject {
     pub id: String,
+    #[serde(default)]
+    pub interest_key: Option<String>,
     pub category: String,
     pub azimuth: f64,
     pub elevation: f64,
     pub capture_boottime_ns: String,
     pub point: Option<[f64; 3]>,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NovelObject {
+    pub id: String,
+    pub interest_key: String,
+    pub category: String,
+    pub azimuth: f64,
+    pub elevation: f64,
+    pub point: Option<[f64; 3]>,
+    pub capture_boottime_ns: u64,
+    pub since_boottime_ns: u64,
+}
+impl NovelObject {
+    fn valid(&self, stamp: u64) -> bool {
+        self.id.starts_with("object:")
+            && self.id.len() <= 96
+            && self.interest_key.starts_with("object:")
+            && self.interest_key.len() <= 96
+            && !self.category.is_empty()
+            && self.category.len() <= 32
+            && self.category != "person"
+            && self.azimuth.is_finite()
+            && self.azimuth.abs() <= std::f64::consts::PI
+            && self.elevation.is_finite()
+            && self.elevation.abs() <= std::f64::consts::FRAC_PI_2
+            && self
+                .point
+                .is_none_or(|p| p.into_iter().all(f64::is_finite) && p[2].abs() < 1e-6)
+            && self.capture_boottime_ns <= stamp
+            && stamp - self.capture_boottime_ns <= 1_000_000_000
+            && self.since_boottime_ns <= self.capture_boottime_ns
+            && self.capture_boottime_ns - self.since_boottime_ns <= 12_000_000_000
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,10 +77,13 @@ pub(crate) struct Surroundings {
     pub looking_away: Option<bool>,
     #[serde(default)]
     pub faces: Vec<SeenFace>,
+    #[serde(default)]
+    pub novelty: Option<NovelObject>,
 }
 #[derive(Debug)]
 struct ObjectGlance {
     id: String,
+    interest_key: String,
     stamp: u64,
     anchor: JointPositions,
     definition: MotionDefinition,
@@ -62,6 +101,7 @@ pub(super) struct SurroundingsState {
     pub(super) runtime_allowed: bool,
     pub(super) mutual: super::reactions::MutualPolicy,
     pub(super) arrival: super::reactions::ArrivalPolicy,
+    pub(super) last_novelty: Option<String>,
     pub(super) reaction: Option<super::reactions::Reaction>,
 }
 impl SurroundingsState {
@@ -121,7 +161,11 @@ impl CharacterCoordinator {
         let boot = core
             .camera_boottime_ns()
             .ok_or_else(|| Error::InvalidState("V2 camera clock unavailable".into()))?;
-        if value.objects.len() > 32
+        if value
+            .novelty
+            .as_ref()
+            .is_some_and(|object| !object.valid(value.capture_boottime_ns))
+            || value.objects.len() > 32
             || value.faces.len() > 16
             || value.faces.iter().any(|face| {
                 face.track_id == 0
@@ -153,6 +197,9 @@ impl CharacterCoordinator {
         if let Err(error) = self.observe_arrival(&value.faces, now, core) {
             eprintln!("oriond: arrival notice declined: {error}");
         }
+        if let Err(error) = self.observe_novelty(value.novelty.as_ref(), now, core) {
+            eprintln!("oriond: object peek declined: {error}");
+        }
         if let Err(error) = self.observe_mutual(&value.faces, now, core) {
             eprintln!("oriond: mutual gaze declined: {error}");
         }
@@ -167,6 +214,10 @@ impl CharacterCoordinator {
             object.id.len() <= 96
                 && object.id.starts_with("object:")
                 && self.surroundings.last_object.as_ref() != Some(&object.id)
+                && object
+                    .interest_key
+                    .as_ref()
+                    .is_none_or(|key| key.starts_with("object:") && key.len() <= 96)
                 && object.category != "person"
                 && !object.category.is_empty()
                 && object.azimuth.is_finite()
@@ -232,6 +283,10 @@ impl CharacterCoordinator {
         )?;
         self.surroundings.glance = Some(ObjectGlance {
             id: object.id.clone(),
+            interest_key: object
+                .interest_key
+                .clone()
+                .unwrap_or_else(|| object.id.clone()),
             stamp,
             anchor: anchor.clone(),
             definition,
@@ -274,7 +329,7 @@ impl CharacterCoordinator {
         };
         self.surroundings
             .budget
-            .try_spend(now, &glance.id, CuriosityKind::Glance, context)
+            .try_spend(now, &glance.interest_key, CuriosityKind::Glance, context)
             .ok()?;
         self.surroundings.last_object = Some(glance.id.clone());
         self.surroundings.active_object = true;

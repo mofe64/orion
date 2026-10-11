@@ -535,7 +535,7 @@ These hardware results are required before selecting detector frame rates.
 
 ## Optional object map
 
-`object_glances` in `behaviours.json` beside the camera preference opts into a
+`object_glances` or `new_object_peek` in `behaviours.json` beside the camera preference opts into a
 bounded in-memory object map. Background YOLO shares the face inference worker
 and is admitted no more than once per minute, only with camera and Faces on,
 no voice session, and an idle/awake runtime. An already-running native inference
@@ -549,3 +549,10 @@ and [behaviour settings](../docs/configuration.md#character-behaviours).
 coarse frontal-face flags at most twice per second. These fields contain no
 pixels. Runtime uses them for opt-in [mutual gaze](../docs/motion-architecture.md#mutual-gaze)
 and the shared respect-focus policy; camera or mode changes invalidate them.
+
+Object peeks attach one temporary optical-flow tracker to a later, confidently
+classified object. It verifies persistence without increasing the YOLO rate.
+The worker sends only the object ID, approximate interest key, class, timestamps,
+bearing and optional table point in `novelty`; feature images never leave the
+worker. See [object peeks](../docs/motion-architecture.md#object-peeks-and-pet-notice)
+for admission, expiry and motion ownership.

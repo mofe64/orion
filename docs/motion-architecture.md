@@ -146,10 +146,46 @@ disabled settings and quiet hours close admission. A caller reserves budget
 after checking its candidate and motion; failed execution does not refund it.
 
 The policy has bounded in-memory state and no detector, motion or servo IO.
-Object idle glances, mutual gaze and arrival notice use this policy. New-object
-peek, Hands mode and presence deferral are pending. The runtime closes admission during active lamp routines (including
+Object idle glances, mutual gaze, arrival notice and object peeks use this policy.
+Hands mode and presence deferral are pending. The runtime closes admission during active lamp routines (including
 wind-down and sunrise), alerts and rest; it has no independent clock-based
 quiet-hours schedule.
+
+### Object peeks and pet notice
+
+With `new_object_peek` enabled, background YOLO uses the same once-per-minute
+pass as object glances. The first successful pass seeds a baseline, including
+an empty view; enabling the preference does not make existing objects novel.
+A later unmapped object with confidence at least 0.6 becomes one candidate.
+Forward/backward optical flow follows at most 24 image features on the single
+inference worker for up to twelve seconds, without another detector pass.
+Three seconds of continuous observations are required. Feature loss, a gap over
+one second, face overlap, voice or camera/mode changes discard the evidence.
+All pixels remain in memory. Textureless objects can be missed deliberately.
+
+An ordinary desk object supplies a capture-time table-plane point to lean IK
+with `lean=0.8`. The compiled `peek_new_object` variant pulls back slightly,
+starts the shoulder and elbow, follows with the head, adds a small curious
+neck swivel and returns to the unchanged character anchor. Every drawing and
+the entire curve must fit calibration and the coupled comfort box. Unsafe or
+unreachable candidates are consumed without movement. Geometry and compilation
+run when metadata arrives, outside the control tick.
+
+Cats and dogs instead use the `delight_lift` target in a bounded `pet_notice`
+variant. After compression and lift, fresh bearings can replace its owned
+trajectory for three seconds, with a four-degree deadband and no more than two
+updates per second. The neck leads and the base catches up. Each replacement
+keeps the original anchor tail; the whole episode spends one budget admission.
+Foreground work, speech, privacy, Stop, rest and stale observations retain
+priority. Losing the tracked candidate requests the shared continuous return.
+The complete episode has a twelve-second deadline plus any validated return.
+
+Peeks and object glances share a class-and-quantized-base-bearing interest key;
+local object IDs still distinguish consecutive targets. This is approximate
+object association, not recognition of a particular physical item. Clearing
+the map does not reset habituation. Blocked events are not replayed later.
+The feature tracker and committed reaches are lamp-unverified; check shoulder
+load, contact, return continuity and CPU/ASR performance before leaving them on.
 
 ### Arrival notice
 

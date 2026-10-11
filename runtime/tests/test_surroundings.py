@@ -48,3 +48,25 @@ class SurroundingsTests(DaemonTestCase):
             self.assertFalse(request(path, 'gaze surroundings status')['ready'])
             self.wait_for(path, 'character status', lambda status: not (status['character'].get('active_clip') or '').startswith('mutual_gaze'))
             self.assertEqual(request(path, 'character status')['character']['active_anchor'], anchor)
+
+    def test_novelty_schema_dwell_and_privacy_clear_keep_the_character_anchor(self):
+        with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
+            self.wait_for_rest(path, 'awake')
+            anchor = request(path, 'character status')['character']['active_anchor']
+            def observe(dwell, category='book'):
+                stamp = boottime_ns()
+                return 'gaze surroundings ' + json.dumps({
+                    'capture_boottime_ns': stamp, 'camera_on': True, 'tracking_mode': 'faces',
+                    'settings': {'new_object_peek': True}, 'objects': [], 'looking_away': None,
+                    'novelty': {'id': 'object:1', 'interest_key': 'object:book:0:-2',
+                        'category': category, 'azimuth': .06, 'elevation': -.6,
+                        'point': [0, -.28, 0], 'capture_boottime_ns': stamp,
+                        'since_boottime_ns': stamp - dwell}})
+            self.assertFalse(request(path, observe(3_000_000_000, 'person'))['ok'])
+            self.ok(path, observe(1_000_000_000))
+            self.assertNotEqual(request(path, 'character status')['character'].get('active_clip'), 'peek_new_object')
+            self.ok(path, observe(3_000_000_000))
+            self.assertEqual(request(path, 'character status')['character'].get('active_clip'), 'peek_new_object')
+            self.ok(path, 'gaze surroundings clear')
+            self.wait_for(path, 'character status', lambda status: status['character'].get('active_clip') != 'peek_new_object')
+            self.assertEqual(request(path, 'character status')['character']['active_anchor'], anchor)

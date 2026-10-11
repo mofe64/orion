@@ -90,7 +90,8 @@ poses:
     description: 'V1 delight intent on V2: arm and head-pitch offsets from V1 home, neck swivel
       leading the base turn at half its angle; hardware playback unverified.'
     tags:
-    - simulation_preview
+    - powered
+    - idle_anchor
     default_lighting: warm_idle_breathe
     positions:
       base_yaw_joint: 0.06

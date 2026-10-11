@@ -38,6 +38,7 @@ class ObjectMap:
     def update(self, candidates, stamp):
         self.snapshot(stamp)
         used = set()
+        added = []
         for candidate in candidates[:16]:
             matches = [entry for entry in self.entries if entry['category'] == candidate['category']
                        and entry['id'] not in used and math.hypot(
@@ -47,11 +48,15 @@ class ObjectMap:
             if matches:
                 entry = min(matches, key=lambda entry: abs(entry['azimuth'] - candidate['azimuth']))
             elif len(self.entries) < 32:
-                entry = {'id': f'object:{self.next_id}'}
+                entry = {'id': f'object:{self.next_id}', 'interest_key':
+                         f"object:{candidate['category']}:{round(candidate['azimuth'] / .2)}:{round(candidate['elevation'] / .2)}"}
                 self.next_id += 1
                 self.entries.append(entry)
+                added.append((entry, candidate))
             else:
                 continue
             entry.update({key: candidate[key] for key in (
                 'category', 'azimuth', 'elevation', 'capture_boottime_ns', 'point')})
             used.add(entry['id'])
+        return [{**entry, 'box': candidate.get('box'), 'confidence': candidate.get('confidence', 0.)}
+                for entry, candidate in added]

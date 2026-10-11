@@ -1358,3 +1358,45 @@ returns to the original character anchor. The pose and variant are lamp-unverifi
     measured entry, bounded light and unchanged-anchor return tests. Visual
     MuJoCo and lamp checks remain owed for facing direction, silhouette,
     shoulder load, contact and the warm lift.
+
+### Desk peeks and pet delight
+
+`peek_new_object` and `pet_notice` are normal V2 anchor-relative catalogue
+assets. Runtime substitutes observed geometry at command time and retains the
+final zero-offset anchor drawing. The `delight` pose is a powered catalogue
+anchor; `pet_notice` takes its lift target from `delight_lift`. All are
+lamp-unverified. Nominal catalogue clips use `speaking_calm`; generated variants
+keep its restrained curve with unit tempo/amplitude and no independent joint
+lag, so the stated staging and IK reach survive exactly.
+
+1. Idea and lead: `peek_new_object` examines one real desk object, led by the
+   shoulder and elbow; `pet_notice` lifts toward a real cat or dog. The delight
+   pose supplies that compact, open lift, with the head higher than at home.
+2. Silhouette: the peek extends the head clearly over the desk at `lean=0.8`;
+   the pet lift opens the arm without becoming a reach toward the animal.
+3. Anticipation: peek pulls back by eight percent of its planned arm travel
+   for 0.35 seconds; pet compresses by six percent over 0.3 seconds. Projection
+   shortens either drawing at the comfort boundary.
+4. Followers: peek starts the arm for 0.65 seconds before the head joins the
+   2.5-second reach. Pet enters delight over 0.8 seconds, then leads each gaze
+   update with the neck for 0.25 seconds before a 0.35-second base catch-up.
+5. Settle: every drawing settles. Peek holds its reach for 0.4 seconds and its
+   curious neck turn for 0.45 seconds. Pet reserves three seconds for tracking;
+   repeated observations cannot extend that window.
+6. Arc: synchronous settle curves connect projected drawings inside the
+   shoulder–elbow convex hull. Full trajectories and pet replacements are
+   sampled at 20 ms against the comfort box as well as calibration.
+7. Weight: slow arm travel carries the committed reach; the curious swivel
+   adds only 0.06 radians. Both variants take three seconds to return before
+   compiler timing adjustments and measured settling.
+8. Anchors: any powered character anchor accepted by the comfort preflight;
+   admission never changes that anchor. Delight itself has calibrated five-joint
+   coordinates and is projected when used from a different starting posture.
+9. Interruption: Stop and explicit controls retain priority; privacy, mode,
+   voice and lost evidence request the shared owned return. If shortening the
+   tail would violate comfort, the already validated anchor tail finishes.
+10. Checks: V2 catalogue compilation at seven anchors, synthetic feature loss,
+    baseline and voice cancellation, visible reach, pet retargeting, budget
+    persistence, unreachable targets and anchor-return tests. Visual MuJoCo
+    and lamp checks remain owed for silhouette, own-light exposure, contact,
+    shoulder load, interruptions and CPU/ASR impact.

@@ -101,6 +101,148 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         Ok(definition)
     }
 
+    pub(crate) fn prepare_peek_motion(
+        &self,
+        anchor: &JointPositions,
+        point: [f64; 3],
+    ) -> Result<MotionDefinition> {
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let model = self
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("V2 geometry unavailable".into()))?;
+        let solution = solve_lean(model, comfort, self.poses.pose("home")?, anchor, point, 0.8)?;
+        let target = solution
+            .positions
+            .ok_or_else(|| Error::InvalidState("Object outside desk reach".into()))?;
+        let start = self.measured_positions();
+        let mut pullback = start.clone();
+        let mut lead = start.clone();
+        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+            pullback.insert(
+                joint.into(),
+                start[joint] - 0.08 * (target[joint] - start[joint]),
+            );
+            lead.insert(
+                joint.into(),
+                start[joint] + 0.35 * (target[joint] - start[joint]),
+            );
+        }
+        let pullback = comfort.project(&start, &pullback)?.0;
+        let mut curious = target.clone();
+        *curious.get_mut("head_roll_joint").unwrap() += 0.06;
+        let curious = comfort.project(&target, &curious)?.0;
+        let mut definition = self.motions.motion("peek_new_object")?.clone();
+        for frame in &mut definition.keyframes {
+            let pose = match frame.marker.as_deref() {
+                Some("pullback") => &pullback,
+                Some("arm_lead") => &lead,
+                Some("reach") => &target,
+                Some("curious") => &curious,
+                _ => anchor,
+            };
+            frame.target = pose
+                .iter()
+                .map(|(joint, position)| (joint.clone(), position - anchor[joint]))
+                .collect();
+        }
+        // Explicit drawings stage the arm and head. Synchronous settle curves
+        // keep interpolation inside the convex shoulder/elbow envelope.
+        definition.style.joint_lag = 0.0;
+        definition.style.tempo = 1.0;
+        definition.style.amplitude = 1.0;
+        self.validate_curiosity_motion(&definition, anchor, None)?;
+        Ok(definition)
+    }
+
+    pub(crate) fn prepare_pet_motion(
+        &self,
+        anchor: &JointPositions,
+        centre: Option<&JointPositions>,
+        azimuth: f64,
+        elevation: f64,
+        replacing: Option<(u64, f64)>,
+        tracking_hold: f64,
+    ) -> Result<(MotionDefinition, JointPositions)> {
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let model = self
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("V2 geometry unavailable".into()))?;
+        let start = self.measured_positions();
+        let lift = match centre {
+            Some(centre) => centre.clone(),
+            None => {
+                comfort
+                    .project(
+                        &start,
+                        &self.motions.motion("delight_lift")?.final_target(anchor)?,
+                    )?
+                    .0
+            }
+        };
+        let mut facing = lift.clone();
+        let delta = azimuth - lift["base_yaw_joint"];
+        *facing.get_mut("base_yaw_joint").unwrap() +=
+            delta.sin().atan2(delta.cos()).clamp(-0.10, 0.10);
+        let solved = crate::expression::gaze::solve_aim(
+            model,
+            &facing,
+            azimuth,
+            elevation,
+            &self.driver.joint_limits()?,
+        )?
+        .0;
+        for joint in ["head_roll_joint", "head_pitch_joint"] {
+            facing.insert(
+                joint.into(),
+                lift[joint] + (solved[joint] - lift[joint]).clamp(-0.12, 0.12),
+            );
+        }
+        let facing = comfort.project(&lift, &facing)?.0;
+        let mut head = facing.clone();
+        head.insert("base_yaw_joint".into(), lift["base_yaw_joint"]);
+        let mut compression = start.clone();
+        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+            compression.insert(
+                joint.into(),
+                start[joint] - 0.06 * (lift[joint] - start[joint]),
+            );
+        }
+        let compression = comfort.project(&start, &compression)?.0;
+        let mut definition = self.motions.motion("pet_notice")?.clone();
+        if centre.is_some() {
+            definition.keyframes.drain(..2);
+        }
+        for frame in &mut definition.keyframes {
+            let pose = match frame.marker.as_deref() {
+                Some("compression") => &compression,
+                Some("delight") => &lift,
+                Some("pet_head") => &head,
+                Some("pet_track") => {
+                    frame.hold_seconds = tracking_hold;
+                    &facing
+                }
+                _ => anchor,
+            };
+            frame.target = pose
+                .iter()
+                .map(|(joint, position)| (joint.clone(), position - anchor[joint]))
+                .collect();
+        }
+        definition.style.joint_lag = 0.0;
+        definition.style.tempo = 1.0;
+        definition.style.amplitude = 1.0;
+        self.validate_curiosity_motion(&definition, anchor, replacing)?;
+        Ok((definition, lift))
+    }
+
     pub fn configure_comfort_box(&mut self, config: ComfortBoxConfig) -> Result<()> {
         let comfort = ComfortBox::from_config(&config, &self.poses, &self.driver.joint_limits()?)?;
         self.comfort = Some((config, comfort));

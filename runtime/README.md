@@ -733,9 +733,10 @@ Stop `oriond` before rollback. Keep a separate copy of the extended `routines.js
 ### Autonomous camera metadata
 
 The vision service sends `gaze surroundings JSON` with a fresh capture clock,
-privacy/tracking state, behaviour settings and at most 32 mapped objects.
+privacy/tracking state, behaviour settings, at most 32 mapped objects and one
+optional `novelty` candidate with fresh capture and persistence timestamps.
 `gaze surroundings status` reports whether background inference may start;
 `gaze surroundings clear` invalidates autonomous context and returns an owned
-object glance to its anchor. These private commands never clear the Stop latch.
+object glance or reaction to its anchor. These private commands never clear the Stop latch.
 The runtime owns priority, expiry and shared curiosity admission. See
 [object-directed idles](../docs/motion-architecture.md#object-directed-idle-glances).

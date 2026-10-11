@@ -2,11 +2,13 @@
 from threading import Condition, Event, Lock, Thread
 import time
 import math
+import cv2
 
 from .gaze_client import boottime_ns
 from .tracker import MAX_AGE_NS, Tracker, choose_track
 from .find import FindError, FindJob, locate
 from .behaviours import KEYS, ObjectMap, overlaps
+from .novelty import NoveltyTrack
 
 IDLE_HZ, VOICE_HZ = 10, 3
 GAZE_RETRY_SECONDS = 3.
@@ -49,6 +51,8 @@ class FacePipeline:
         self.object_map = ObjectMap()
         self.next_object_pass = 0.
         self.next_surroundings = 0.
+        self.object_baseline = False
+        self.novelty = self.novelty_observation = None
 
     def start(self):
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
@@ -68,6 +72,8 @@ class FacePipeline:
             self.preview_generation += 1
             self.tracker.clear()
             self.object_map.clear()
+            self.object_baseline = False
+            self.novelty = self.novelty_observation = None
             self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
             self.speaker_track_id = None
             self.speaker_until = 0.
@@ -86,6 +92,8 @@ class FacePipeline:
                 return
             self.behaviours = value.copy()
             self.object_map.clear()
+            self.object_baseline = False
+            self.novelty = self.novelty_observation = None
             # Invalidate detector work in flight without resetting the cooldown.
             self.generation += 1
             self.pending = None
@@ -99,7 +107,7 @@ class FacePipeline:
     def _background_objects(self, stamp, buffer, faces, generation):
         now = self.clock()
         with self.changed:
-            wanted = self.enabled and self.behaviours['object_glances'] and self.objects is not None
+            wanted = self.enabled and (self.behaviours['object_glances'] or self.behaviours['new_object_peek']) and self.objects is not None
         if not wanted or now < self.next_object_pass:
             return
         # This shares the inference worker with YuNet and explicit /find.
@@ -113,9 +121,49 @@ class FacePipeline:
             and not any(overlaps(obj.box, face.box) for face in faces)], self.intrinsics, camera, stamp)
         if not self.client.find_allowed() or not self.client.background_ready():
             return
+        added = []
         with self.changed:
-            if self.enabled and generation == self.generation and self.behaviours['object_glances']:
-                self.object_map.update(candidates, stamp)
+            if self.enabled and generation == self.generation and (self.behaviours['object_glances'] or self.behaviours['new_object_peek']):
+                observed = self.object_map.update(candidates, stamp)
+                had_baseline, self.object_baseline = self.object_baseline, True
+                if had_baseline and self.behaviours['new_object_peek'] and self.novelty is None:
+                    added = observed
+        # Feature extraction must not hold the camera submission lock.
+        for candidate in sorted(added, key=lambda entry: -entry['confidence']):
+            if candidate['confidence'] < .6:
+                continue
+            try:
+                track = NoveltyTrack(candidate, buffer, stamp)
+            except (ValueError, cv2.error):
+                continue
+            with self.changed:
+                if self.enabled and generation == self.generation:
+                    self.novelty = track
+            break
+
+    def _advance_novelty(self, stamp, buffer, faces, generation):
+        with self.changed:
+            track = self.novelty
+        if track is None:
+            return
+        try:
+            if not self.client.find_allowed():
+                raise ValueError('Voice has priority')
+            obj = track.advance(buffer, stamp, faces)
+            if obj is None:
+                raise ValueError('Object persistence is unverified')
+            candidate = locate([obj], self.intrinsics, self.client.camera_pose(stamp), stamp)[0]
+            value = {key: candidate[key] for key in ('category', 'point', 'azimuth', 'elevation')}
+            value.update(id=track.candidate['id'], interest_key=track.candidate['interest_key'],
+                         capture_boottime_ns=stamp, since_boottime_ns=track.since)
+        except (OSError, ValueError, cv2.error):
+            with self.changed:
+                if self.novelty is track:
+                    self.novelty = self.novelty_observation = None
+            return
+        with self.changed:
+            if self.enabled and generation == self.generation and self.novelty is track:
+                self.novelty_observation = value
 
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
@@ -125,6 +173,7 @@ class FacePipeline:
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': 'faces' if self.enabled else 'off',
             'objects': self.object_map.snapshot(self.boot_clock()),
+            'novelty': self.novelty_observation,
             'faces': [{'track_id': track.id, 'azimuth': float(math.atan2(math.sin(track.state[0]), math.cos(track.state[0]))),
                        'elevation': float(track.state[1]), 'frontal': track.face.looking_at_orion}
                       for track in tracks],
@@ -383,6 +432,7 @@ class FacePipeline:
                         self.latest_preview = (stamp, rgb, detections)
                     else:
                         self.latest_preview = None
+                self._advance_novelty(stamp, buffer, faces, generation)
                 with self.commands:
                     with self.changed:
                         if not self.enabled or generation != self.generation:
