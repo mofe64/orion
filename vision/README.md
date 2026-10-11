@@ -266,7 +266,8 @@ utterances with Tracking Faces (10 Hz idle, 3 Hz during voice activity) and
 Tracking Off, keeping capture and viewing conditions matched. Use the installed
 quota and Nice settings above and target at most 10% slowdown; record ASR
 latency separately when available.
-The P0 comparison is manual; no fixed audio fixture or trial script exists.
+Use the [fixed-audio ASR timing trial](#fixed-audio-asr-timing-trial) for the
+matched ASR comparison.
 If that comparison fails, reduce `SIZE` to `(480, 270)` and repeat the checks.
 At 1, 2 and 3 m, confirm non-empty `/observations` and a stable track ID while
 standing still for 30 seconds. Check that the neck follows a slow side-to-side
@@ -282,6 +283,70 @@ off and on once. Check advancing `capture_boottime_ns`, `camera_restarts: 0`,
 and the service cgroup's `cpu.stat` `nr_throttled`; record temperature after
 ten minutes idle with the camera on. These checks and the matched ASR trial
 are lamp-unverified.
+
+### Fixed-audio ASR timing trial
+
+Run `vision/scripts/asr_timing.py` on the Linux Pi with the installed Qwen
+assets. It starts its own `llama-server` through the production speech adapter,
+using the same flags, a random loopback port and a private key. It does not
+connect to, stop or reconfigure the live speech server. Model loading and one
+warm-up transcription are excluded; all timed runs use identical PCM bytes.
+It terminates its own child on completion, inference failure or interruption.
+The native launcher also binds the child's lifetime to the benchmark process.
+
+Create one spoken fixture outside the checkout. For V2's two-channel USB
+capture, select processed channel 0 and convert it to PCM16 mono at 16 kHz
+(`arecord` and `ffmpeg` must be installed). The listener holds the microphone;
+stop it for the recording and restart it before timing. These commands assume
+it was running; leave an intentionally stopped listener stopped.
+
+```bash
+mkdir -p "$HOME/.cache/orion/asr-trial"
+sudo systemctl stop orion-listener
+# Speak a short command during this five-second recording.
+arecord -D plughw:CARD=Array,DEV=0 -f S16_LE -r 16000 -c 2 -d 5 \
+  "$HOME/.cache/orion/asr-trial/source.wav"
+sudo systemctl start orion-listener
+ffmpeg -y -i "$HOME/.cache/orion/asr-trial/source.wav" \
+  -af 'pan=mono|c0=c0' -ar 16000 -c:a pcm_s16le \
+  "$HOME/.cache/orion/asr-trial/fixture.wav"
+```
+
+The tool rejects stereo, non-PCM16, empty, truncated or longer-than-33-second
+audio. It prints no transcript and disables the adapter's optional diagnostic
+audio capture. Keep the same fixture for both conditions; its SHA-256 and
+duration in each result identify the input.
+
+With Tracking Off in Studio, run from the checkout:
+
+```bash
+python3 vision/scripts/asr_timing.py \
+  --wav "$HOME/.cache/orion/asr-trial/fixture.wav" \
+  --model "$HOME/.local/share/orion/voice-stack/models/qwen" \
+  --llama-server "$HOME/.local/share/orion/voice-stack/llama-b10976/llama-server" \
+  --runs 20 --label tracking-off \
+  > "$HOME/.cache/orion/asr-trial/tracking-off.json"
+```
+
+Choose Tracking Faces, then repeat with `--label tracking-faces` and output
+`tracking-faces.json`. Keep camera capture, Studio viewing, cooling, ASR thread
+count and fixture identical. Avoid live voice requests during the trial: the
+separate benchmark process does not mark a runtime voice session active, so
+Faces uses its idle detection rate. This measures ASR contention from idle
+tracking; voice-session 3 Hz behavior still needs a conversation check.
+`ORION_ASR_THREADS` defaults to the production adapter's three threads.
+`ORION_ASR_MODEL_DIR` and `ORION_LLAMA_SERVER` can supply the asset paths when
+the corresponding options are omitted.
+
+Stdout is one JSON result containing `median_ms`, `p95_ms`, `samples_ms`, the
+run count and fixture identity. The p95 uses nearest rank (ceil(0.95 × N));
+use at least 20 timed runs for the comparison. Diagnostics use stderr and
+failure returns `ok: false` with a nonzero exit status. Calculate slowdown as
+`100 × (faces_median_ms / off_median_ms - 1)` and compare p95 separately.
+Repeat the pair in reverse order to check thermal drift. Target at most 10%
+median slowdown. Actual Pi timings remain lamp-unverified.
+
+### Capture timing record
 
 An in-memory Pi probe on 2026-10-11 negotiated a 640-byte lores stride and a
 540×640 packed YUV buffer for `SIZE = (640, 360)`, with `preserve_ar: False`.
@@ -395,8 +460,9 @@ Check image orientation at `home` with a local in-memory viewer on the Pi.
 The headless `rpicam-hello` build checks capture but cannot display orientation.
 Do not infer the fitted transform from CAD or save frames for this check.
 
-Measure Qwen ASR latency on comparable utterances with the benchmark off and
-running. `--label voice` identifies the workload; it does not instrument Qwen.
+Measure Qwen ASR latency with the [fixed-audio trial](#fixed-audio-asr-timing-trial)
+while the camera benchmark is off and running. `measure.py --label voice`
+identifies the workload; it does not instrument Qwen.
 The JSON's `qwen_asr_slowdown` remains `null` until that separate comparison
 is recorded. Include capture rate, inference median/p95, ASR slowdown,
 temperature, cable continuity and orientation in the commissioning results.
