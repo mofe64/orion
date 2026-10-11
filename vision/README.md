@@ -139,9 +139,12 @@ compiles it into a wheel before transfer to the Pi.
 
 ## Face tracking
 
-The native installer downloads YuNet 2023mar from OpenCV Zoo commit
-`47534e27c9851bb1128ccc0102f1145e27f23f98` to
-`/usr/local/share/orion/vision/face_detection_yunet_2023mar.onnx`, verifying
+Release deployment installs YuNet in `vision/models/` and passes its path through
+`--face-model`; rollback selects the previous release's model. The native
+installer also supplies the default model for manual service runs.
+Both use YuNet 2023mar from OpenCV Zoo commit
+`47534e27c9851bb1128ccc0102f1145e27f23f98`. The manual default lives at
+`/usr/local/share/orion/vision/face_detection_yunet_2023mar.onnx`. Installers verify
 SHA-256 `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4`
 before replacement. The service verifies that hash again before model loading.
 OpenCV headless is pinned to 4.11.0.86 in the vision lockfile.

@@ -321,6 +321,10 @@ class System:
                 runtime = json.loads(self.run(*client, '--status', capture_output=True, text=True, timeout=5).stdout)
                 if runtime.get('build_revision') != metadata['revision'] or runtime.get('hardware', 'v1') != metadata.get('hardware', 'v1'):
                     raise RuntimeError('The old runtime is still active')
+                if metadata.get('hardware') == 'v2':
+                    gaze = self.daemon_command(client, 'gaze status').get('gaze') or {}
+                    if not gaze.get('state') or gaze['state'] == 'unavailable':
+                        raise RuntimeError(f'Runtime gaze is unavailable: {gaze.get("error") or "missing gaze status"}')
                 rest = self.daemon_command(client, 'character status').get('rest') or {}
                 if (runtime.get('torque_enabled') is not False or
                         rest.get('state') != 'resting' or rest.get('light_on') is not False):
@@ -343,7 +347,8 @@ class System:
                     print(f'Still waiting for readiness: {error}', flush=True)
                 time.sleep(.5)
         raise RuntimeError(f'Pi release did not become ready: {last_error}. Check runtime, Qwen, TTS, Codex '
-                           f'and gateway logs.{journal_tail("orion-voice-stack")}')
+                           f'and gateway logs, including oriond and orion-vision.'
+                           f'{journal_tail("oriond")}{journal_tail("orion-voice-stack")}')
 
 
 def check_vision_health(socket_path='/tmp/orion-vision.sock'):
@@ -355,11 +360,16 @@ def check_vision_health(socket_path='/tmp/orion-vision.sock'):
         connection.request('GET', '/health')
         response = connection.getresponse()
         body = json.loads(response.read(65536))
+        detection = body.get('detection') or {}
+        if detection.get('error'):
+            raise RuntimeError(f'Vision detection error: {detection["error"]}')
         # Privacy-off is a healthy process, not a failed deployment.
         if response.status != 200 and not (response.status == 503 and body.get('error', {}).get('code') == 'camera_off'):
             raise RuntimeError(f'Vision is not ready: {body}')
         if response.status == 200 and not body.get('capture_boottime_ns'):
             raise RuntimeError('Vision has not captured a frame yet')
+        if response.status == 200 and not detection.get('inferences'):
+            raise RuntimeError('Vision has not completed a successful inference yet')
     finally:
         connection.close()
 

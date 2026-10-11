@@ -27,9 +27,10 @@ encoder/velocity conversions.
 ## Capture-time camera rays (V2)
 
 `camera-rays` is a pure Unix-socket query; it never enables torque or moves
-Orion. Start the daemon from the catalog root (the systemd working directory).
-For `--hardware v2`, including the V2 MuJoCo backend, startup loads
-`description/urdf/orion-v2.urdf` once. A missing or invalid model disables this
+Orion. For `--hardware v2`, including the V2 MuJoCo backend, startup loads
+`--camera-urdf FILE` once (default: `description/urdf/orion-v2.urdf`). Deployed
+services use the URDF inside their release, independently of the catalog working
+directory. A missing or invalid model disables this
 query with its cause in the error response and startup log; other commands
 remain available. V1 does not load camera geometry.
 

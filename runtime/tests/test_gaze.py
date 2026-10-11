@@ -112,6 +112,17 @@ class GazeDaemonTests(DaemonTestCase):
                         self.assertFalse(request(path, command)['ok'], command)
                     self.assertEqual(request(path, 'gaze status')['gaze']['state'], 'unavailable')
 
+    def test_release_geometry_works_with_a_catalog_without_camera_frames(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            catalog = Path(temporary)
+            for name in ('motion', 'scenes', 'audio'):
+                (catalog / name).symlink_to(ROOT / name, target_is_directory=True)
+            with daemon(hardware='v2', following=True, catalog_root=catalog,
+                        camera_urdf=ROOT / 'description/urdf/orion-v2.urdf') as path:
+                status = request(path, 'gaze status')['gaze']
+                self.assertNotEqual(status['state'], 'unavailable')
+                self.assertIsNone(status['error'])
+
     def test_character_start_and_powered_stop_wake_resume_gaze(self):
         for stop in ('stop', 'disable'):
             for resume in (('character start', 'confirmed wake') if stop == 'stop' else ('character start',)):

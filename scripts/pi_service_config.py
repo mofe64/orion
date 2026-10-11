@@ -188,6 +188,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                     start = set_option(start, '--audio-card', selected['audio']['card'])
                     start = set_option(start, '--audio-device', selected['audio']['pcm'])
                     if hardware == 'v2':
+                        start = set_option(start, '--camera-urdf', release / 'description/urdf/orion-v2.urdf')
                         # Commissioned V2 boots into character mode like V1. Earlier
                         # releases wrote 'off' into the unit, so replace it explicitly.
                         start = set_option(start, '--character-on-start', 'on')
@@ -207,6 +208,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         if name == 'orion-vision':
             change_effective_start(contents, lambda start: set_option(start, '--profile',
                 release / 'hardware/profiles' / f'{hardware}.json'))
+            change_effective_start(contents, lambda start: set_option(start, '--face-model',
+                release / 'vision/models/face_detection_yunet_2023mar.onnx'))
 
         # A first onboard installation adds only missing defaults. Existing override values win.
         if name == 'orion-listener':

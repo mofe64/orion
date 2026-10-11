@@ -84,6 +84,7 @@ pub(super) struct Options {
     pub(super) calibration_file: PathBuf,
     pub(super) socket_path: PathBuf,
     pub(super) poses_file: PathBuf,
+    pub(super) camera_urdf: PathBuf,
     pub(super) user_poses_directory: PathBuf,
     pub(super) motions_directory: PathBuf,
     pub(super) audio_cues_directory: PathBuf,
@@ -122,6 +123,7 @@ impl Default for Options {
             calibration_file: PathBuf::new(),
             socket_path: DEFAULT_SOCKET_PATH.into(),
             poses_file: "motion/config/v1/poses.yaml".into(),
+            camera_urdf: "description/urdf/orion-v2.urdf".into(),
             user_poses_directory: "motion/user/poses/v1".into(),
             motions_directory: "motion/motions/v1".into(),
             audio_cues_directory: "audio/cues".into(),
@@ -196,6 +198,7 @@ pub(super) fn usage() -> &'static str {
   --calibration FILE  Orion calibration JSON file.\n\
   --socket PATH       Local API socket (default: /tmp/oriond.sock).\n\
   --poses FILE        Pose library used by --serve.\n\
+  --camera-urdf FILE  V2 camera geometry used by --serve (default: description/urdf/orion-v2.urdf).\n\
   --user-poses DIR    Studio user-pose directory used by --serve.\n\
   --motions DIR       Motion-library directory used by --serve.\n\
   --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
@@ -308,6 +311,9 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
             }
             "--socket" => options.socket_path = require_value(&mut arguments, &argument)?.into(),
             "--poses" => options.poses_file = require_value(&mut arguments, &argument)?.into(),
+            "--camera-urdf" => {
+                options.camera_urdf = require_value(&mut arguments, &argument)?.into()
+            }
             "--user-poses" => {
                 options.user_poses_directory = require_value(&mut arguments, &argument)?.into()
             }
@@ -639,6 +645,26 @@ mod hardware_tests {
         assert_eq!(override_options.poses_file, PathBuf::from("measured.yaml"));
         assert!(override_options.character_on_start);
     }
+    #[test]
+    fn camera_urdf_can_be_resolved_independently_of_the_catalog_root() {
+        let options = parse(&[
+            "--serve",
+            "--hardware",
+            "v2",
+            "--camera-urdf",
+            "/release/description/urdf/orion-v2.urdf",
+        ])
+        .unwrap();
+        assert_eq!(
+            options.camera_urdf,
+            PathBuf::from("/release/description/urdf/orion-v2.urdf")
+        );
+        assert_eq!(
+            options.poses_file,
+            PathBuf::from("motion/config/v2/poses.yaml")
+        );
+    }
+
     #[test]
     fn hardware_and_simulation_read_the_same_repository_pose_file() {
         for backend in ["hardware", "mujoco"] {

@@ -14,7 +14,12 @@ from install_pi_voice_stack import deployment_lock
 from pi_release_bundle import inspect_archive, install_wheels, sha256, verify_payload
 from pi_release_platform import builder_image, check_platform, read_platform
 from pi_service_config import listener_start, services_for_release
-from prepare_pi_voice_stack import prepare_assets
+from prepare_pi_voice_stack import download, prepare_assets
+
+YUNET_SHA256 = '8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4'
+YUNET_URL = ('https://media.githubusercontent.com/media/opencv/opencv_zoo/'
+             '47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_detection_yunet/'
+             'face_detection_yunet_2023mar.onnx')
 
 
 def run(*args, **kwargs):
@@ -45,6 +50,11 @@ def validate_listener(release):
         'RustpotterWakeDetector(args.wake_model, args.threshold).process(bytes(640)); '
         'import numpy as np; from orion_voice.verifier import AcousticVerifier; '
         'AcousticVerifier(args.verifier_dir).feed(np.zeros(1280, dtype=np.int16))', *arguments, cwd=release)
+
+
+def prepare_vision(release):
+    # Release-local data follows activation/rollback without replacing native libraries.
+    download(release, YUNET_URL, 'vision/models/face_detection_yunet_2023mar.onnx', YUNET_SHA256)
 
 
 def validate_voice(release, root):
@@ -85,6 +95,8 @@ def prepare_bundle(bundle, digest, root, hardware):
                 (staging / 'release').rename(release)
                 try:
                     prepare_environments(release, staging / 'wheels')
+                    if 'orion-vision' in services_for_release(release):
+                        prepare_vision(release)
                     # Models/native inference tools are shared runtime assets; this does not build code.
                     prepare_assets(root)
                     validate_voice(release, root)

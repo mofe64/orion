@@ -39,7 +39,8 @@ def request(path, command):
 
 
 @contextlib.contextmanager
-def daemon(automatic_character=False, rest_after_seconds=600, following=False, hardware='v1', gaze=None, catalog_root=None):
+def daemon(automatic_character=False, rest_after_seconds=600, following=False, hardware='v1', gaze=None, catalog_root=None,
+           camera_urdf=None):
     with tempfile.TemporaryDirectory(prefix='orion-daemon-test-', dir='/tmp') as temporary:
         path = Path(temporary) / 'daemon.sock'
         arguments = [str(BINARY), '--serve', '--backend', 'mujoco', '--socket', str(path),
@@ -52,6 +53,8 @@ def daemon(automatic_character=False, rest_after_seconds=600, following=False, h
             arguments += ['--character-on-start', 'on']
         if gaze is False:
             arguments += ['--gaze', 'off']
+        if camera_urdf is not None:
+            arguments += ['--camera-urdf', str(camera_urdf)]
         environment = os.environ.copy()
         if following:
             environment['ORION_TEST_DRIVER_CONTROL'] = str(Path(temporary) / 'driver-control.json')

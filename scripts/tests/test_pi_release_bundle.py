@@ -1,5 +1,6 @@
 """The Pi may install wheels but must never build code or retain installation caches."""
 import io
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -29,6 +30,7 @@ class BundleTests(unittest.TestCase):
         self.platform.start(); self.addCleanup(self.platform.stop)
         self.assets = patch.object(receiver, 'prepare_assets').start()
         self.voice = patch.object(receiver, 'validate_voice').start()
+        self.vision = patch.object(receiver, 'prepare_vision', create=True).start()
         self.run = patch.object(receiver, 'run').start()
         self.addCleanup(patch.stopall)
 
@@ -80,6 +82,23 @@ class BundleTests(unittest.TestCase):
             receiver.prepare_bundle(bundle, '0' * 64, self.root, 'v2')
         self.run.assert_not_called()
         self.assertFalse(self.root.exists())
+
+    def test_vision_asset_is_prepared_only_for_camera_releases(self):
+        for hardware in ('v1', 'v2'):
+            bundle, _ = self.bundle(suffix='12345678' if hardware == 'v1' else '87654321', hardware=hardware)
+            release = self.prepare(bundle, hardware)
+            if hardware == 'v2':
+                self.vision.assert_called_once_with(release)
+            else:
+                self.vision.assert_not_called()
+
+    def test_detector_preparation_failure_removes_new_release_before_activation(self):
+        bundle, _ = self.bundle()
+        self.vision.side_effect = RuntimeError('YuNet checksum mismatch')
+        with self.assertRaisesRegex(RuntimeError, 'checksum mismatch'):
+            self.prepare(bundle)
+        self.assertEqual(list((self.root / 'releases').iterdir()), [])
+        self.voice.assert_not_called()
 
     def test_platform_change_is_rejected_before_installing_or_creating_a_release(self):
         bundle, _ = self.bundle()
@@ -174,6 +193,38 @@ class BundleTests(unittest.TestCase):
         for key, value in [('id', 'debian'), ('machine', 'x86_64'), ('system_python', '3.13'), ('libc', 'glibc-2.40')]:
             with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, 'targets Ubuntu'):
                 builder_image({**TARGET_PLATFORM, key: value})
+
+
+class VisionAssetTests(unittest.TestCase):
+    def test_deployment_uses_the_detectors_pinned_checksum(self):
+        import ast
+        source = ast.parse((SCRIPTS.parent / 'vision/orion_vision/detect_faces.py').read_text())
+        checksum = next(ast.literal_eval(node.value) for node in source.body if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == 'MODEL_SHA256' for target in node.targets))
+        self.assertEqual(receiver.YUNET_SHA256, checksum)
+
+    def test_model_download_is_pinned_verified_and_reused(self):
+        import prepare_pi_voice_stack as assets
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory)
+            payload = b'synthetic model fixture'
+            with patch.object(receiver, 'YUNET_SHA256', hashlib.sha256(payload).hexdigest()), \
+                 patch.object(assets.urllib.request, 'urlopen', return_value=io.BytesIO(payload)) as fetch:
+                receiver.prepare_vision(release)
+                receiver.prepare_vision(release)
+            self.assertEqual((release / 'vision/models/face_detection_yunet_2023mar.onnx').read_bytes(), payload)
+            fetch.assert_called_once_with(receiver.YUNET_URL, timeout=120)
+            self.assertIn('47534e27c9851bb1128ccc0102f1145e27f23f98', receiver.YUNET_URL)
+
+    def test_corrupt_model_is_never_installed_and_temporary_download_is_removed(self):
+        import prepare_pi_voice_stack as assets
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory)
+            with patch.object(assets.urllib.request, 'urlopen', return_value=io.BytesIO(b'corrupt model')):
+                with self.assertRaisesRegex(RuntimeError, 'Checksum mismatch'):
+                    receiver.prepare_vision(release)
+            self.assertFalse(list(release.rglob('*.onnx')))
+            self.assertFalse(list(release.rglob('*.download')))
 
 
 if __name__ == '__main__':

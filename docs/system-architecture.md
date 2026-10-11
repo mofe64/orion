@@ -134,6 +134,11 @@ The Pi verifies a checksummed bundle, checks installation space and installs
 only its prebuilt wheels with source builds, package registry access and caching
 disabled. Python environments are created at their final release paths. Camera
 environments see the provisioned system `libcamera` and `pykms` bindings.
+For camera releases, preparation downloads the pinned YuNet model into
+`vision/models/` and verifies its SHA-256 before activation. The vision unit uses
+that release-local model. Readiness rejects unavailable V2 gaze and vision
+detection errors and requires an inference when the camera is enabled; a saved
+camera-off preference remains valid.
 Transfer files and wheels are temporary; active and rollback releases keep their
 installed dependencies. Shared model files and native inference tools live under
 `~/.local/share/orion/voice-stack/`.
@@ -144,6 +149,8 @@ scenes, audio cues and user assets. Activation updates built-in pose, motion and
 scene YAML from the same Git commit as the executables. Calibration remains in
 the Pi user's configuration directory, and user-authored assets remain in their
 separate catalog directories.
+V2 camera geometry uses an explicit `--camera-urdf` path inside the deployed
+release, so an older catalog checkout cannot supply obsolete camera frames.
 
 The installer records managed built-in paths in
 `~/.local/share/orion/voice-stack/catalog-assets.json`. The first update derives

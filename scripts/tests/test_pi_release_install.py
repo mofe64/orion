@@ -44,6 +44,20 @@ class Fixture(unittest.TestCase):
 
 
 class ConfigurationTests(Fixture):
+    def test_v2_camera_geometry_and_detector_are_loaded_from_release_including_overrides(self):
+        (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        self.installed_units()
+        override = self.units / 'oriond.service.d/99-local.conf'
+        self.write(override, '[Service]\nExecStart=\nExecStart=/old/release/runtime/target/release/oriond '
+                   '--serve --camera-urdf /old/geometry.urdf --socket /tmp/custom.sock\n')
+        plan = self.plan()
+        start = effective_start([(override, plan[override])])
+        self.assertIn('--camera-urdf ' + str(self.release / 'description/urdf/orion-v2.urdf'), start)
+        self.assertEqual(start.count('--camera-urdf'), 1)
+        self.assertIn('--socket /tmp/custom.sock', start)
+        self.assertIn('--face-model ' + str(self.release / 'vision/models/face_detection_yunet_2023mar.onnx'),
+                      plan[self.units / 'orion-vision.service'])
+
     def test_camera_unit_is_profile_gated_and_does_not_change_privacy_preference(self):
         privacy = self.env.parent / 'camera.json'
         privacy.write_text('{"camera_enabled":false}')
@@ -67,8 +81,11 @@ class ConfigurationTests(Fixture):
     def test_vision_readiness_accepts_privacy_off_but_requires_capture_when_enabled(self):
         from unittest.mock import MagicMock
         for status, body, accepted in ((503, {"error": {"code": "camera_off"}}, True),
-                                      (200, {"capture_boottime_ns": 123}, True),
+                                      (200, {"capture_boottime_ns": 123, "detection": {"error": None, "inferences": 1}}, True),
+                                      (200, {"capture_boottime_ns": 123, "detection": {"error": None, "inferences": 0}}, False),
+                                      (200, {"capture_boottime_ns": 123}, False),
                                       (200, {"capture_boottime_ns": None}, False),
+                                      (200, {"capture_boottime_ns": 123, "detection": {"error": "Model missing"}}, False),
                                       (503, {"error": {"code": "camera_unavailable"}}, False)):
             with self.subTest(status=status, body=body):
                 response = MagicMock(status=status)
@@ -852,8 +869,11 @@ class ReadinessTests(Fixture):
                       'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
                       'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting', 'lights-on', 'torque-on')]
         cases += [(None, '0.35'), (None, '0.8'), (None, '0.6'), ('wrong-wake-threshold', '0.6')]
-        for fault, listener_threshold in cases:
+        cases = [(fault, threshold, 'v1') for fault, threshold in cases]
+        cases += [(None, None, 'v2'), ('gaze-unavailable', None, 'v2'), ('vision-detection', None, 'v2')]
+        for fault, listener_threshold, hardware in cases:
             with self.subTest(fault=fault, listener_threshold=listener_threshold):
+                (self.release / 'release.json').write_text(json.dumps({'revision': 'new', 'hardware': hardware}))
                 status = dict(coordinator_running=True, error=None, project_root=str(self.release), revision='new', pid=42)
                 event = dict(type='ready', asr=dict(provider='qwen3-asr'),
                              tts=dict(provider='piper-tts', model='piper-alba-medium'),
@@ -884,11 +904,14 @@ class ReadinessTests(Fixture):
                     if args[0] == 'systemctl': return subprocess.CompletedProcess(args, 0, '100\n')
                     self.assertIn('/tmp/custom.sock', args)
                     return subprocess.CompletedProcess(args, 0, json.dumps(dict(build_revision=revision,
-                        torque_enabled=fault == 'torque-on')))
+                        hardware=hardware, torque_enabled=fault == 'torque-on')))
                 def command(client, value):
-                    self.assertEqual(value, 'character status')
                     self.assertEqual(str(client[0]), str(self.release / 'runtime/target/release/oriond'))
                     self.assertEqual(client[1:], ['--socket', '/tmp/custom.sock'])
+                    if value == 'gaze status':
+                        return dict(ok=True, gaze=dict(state='unavailable' if fault == 'gaze-unavailable' else 'stopped',
+                                                       error='Missing camera frames' if fault == 'gaze-unavailable' else None))
+                    self.assertEqual(value, 'character status')
                     return dict(ok=True, rest=dict(state='going_to_rest' if fault == 'not-resting' else 'resting',
                                                   light_on=fault == 'lights-on'))
                 def request(req, **kwargs):
@@ -902,6 +925,8 @@ class ReadinessTests(Fixture):
                      patch.object(installer, 'control', side_effect=[status, dict(events=[event])]), \
                      patch.object(installer.time, 'monotonic', side_effect=[0, 0, 2]), \
                      patch.object(installer.time, 'sleep'), \
+                     patch.object(installer, 'check_vision_health', side_effect=RuntimeError('Vision detection error: model missing')
+                                  if fault == 'vision-detection' else None), \
                      patch.object(installer.urllib.request, 'urlopen', side_effect=request):
                     if fault:
                         with self.assertRaisesRegex(RuntimeError, 'did not become ready'):
