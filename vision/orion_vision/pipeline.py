@@ -3,9 +3,10 @@ from threading import Condition, Event, Lock, Thread
 import time
 
 from .gaze_client import boottime_ns
-from .tracker import Tracker, choose_track
+from .tracker import MAX_AGE_NS, Tracker, choose_track
 
 IDLE_HZ, VOICE_HZ = 10, 3
+GAZE_RETRY_SECONDS = 3.
 
 
 class FacePipeline:
@@ -23,6 +24,11 @@ class FacePipeline:
         self.rate_hz = IDLE_HZ
         self.next_voice_poll = 0.
         self.thread = None
+        self.gaze_available = True
+        self.next_gaze_poll = 0.
+        self.gaze_error = None
+        self.target_selected = False
+        self.last_gaze_capture = 0
 
     def start(self):
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
@@ -37,10 +43,7 @@ class FacePipeline:
             self.changed.notify_all()
         if not enabled:
             with self.commands:
-                try:
-                    self.client.clear()
-                except (OSError, ValueError):
-                    pass
+                self._clear_target()
 
     def close(self):
         self.reset(False)
@@ -50,9 +53,16 @@ class FacePipeline:
         if self.thread:
             self.thread.join(timeout=2)
 
-    def submit(self, stamp, buffer):
+    def submit(self, stamp, buffer, metadata=None, geometry=None):
         with self.changed:
             if self.enabled and buffer is not None:
+                if self.intrinsics.geometry is not None:
+                    try:
+                        self.intrinsics.validate_capture(buffer, metadata, geometry)
+                    except ValueError as error:
+                        self.dropped += 1
+                        self.error = str(error)
+                        return
                 self.dropped += self.pending is not None
                 self.pending = (stamp, buffer, self.generation)
                 self.changed.notify()
@@ -64,7 +74,44 @@ class FacePipeline:
     def status(self):
         with self.changed:
             return {"rate_hz": self.rate_hz, "inferences": self.inferences,
-                "dropped_frames": self.dropped, "error": self.error}
+                "dropped_frames": self.dropped, "error": self.error,
+                "gaze_available": self.gaze_available, "gaze_error": self.gaze_error}
+
+    def _clear_target(self):
+        if self.target_selected:
+            self.target_selected = False
+            try:
+                self.client.clear()
+            except (OSError, ValueError):
+                pass
+
+    def _send_gaze(self, chosen):
+        now = self.clock()
+        try:
+            if chosen is None:
+                self._clear_target()
+                return
+            if not self.gaze_available and now >= self.next_gaze_poll:
+                self.next_gaze_poll = now + GAZE_RETRY_SECONDS
+                self.gaze_available = self.client.gaze_available()
+            if not self.gaze_available:
+                return
+            if chosen:
+                if chosen.capture_ns <= self.last_gaze_capture:
+                    return  # A retained track is not a fresh camera measurement.
+                if self.client.target(chosen) is False:
+                    self.gaze_available = False
+                    self.next_gaze_poll = now + GAZE_RETRY_SECONDS
+                    self.gaze_error = "Runtime gaze is unavailable"
+                else:
+                    self.target_selected = True
+                    self.last_gaze_capture = chosen.capture_ns
+                    self.gaze_error = None
+        except (OSError, ValueError, KeyError) as error:
+            # Motion availability does not invalidate detector/ray evidence.
+            self.gaze_available = False
+            self.next_gaze_poll = now + GAZE_RETRY_SECONDS
+            self.gaze_error = str(error)
 
     def speaker(self, since_ns):
         with self.changed:
@@ -111,16 +158,15 @@ class FacePipeline:
                     if not 0 <= self.boot_clock() - stamp <= 1_000_000_000:
                         self.error = "Detection result is stale"
                         continue
-                    tracks = self.tracker.update(stamp, faces, bearings)
+                    self.tracker.update(stamp, faces, bearings)
+                    tracks = [track for track in self.tracker.tracks
+                        if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
                     chosen = choose_track(tracks)
                 with self.commands:
                     with self.changed:
                         if not self.enabled or generation != self.generation:
                             continue
-                    if chosen:
-                        self.client.target(chosen)
-                    else:
-                        self.client.clear()
+                    self._send_gaze(chosen)
                 with self.changed:
                     self.error = None
             except Exception as error:
@@ -128,7 +174,4 @@ class FacePipeline:
                     self.error = str(error)
                     self.tracker.clear()
                 with self.commands:
-                    try:
-                        self.client.clear()
-                    except (OSError, ValueError):
-                        pass
+                    self._clear_target()

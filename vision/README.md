@@ -156,11 +156,17 @@ systemctl --user start orion-vision.service
 
 Use the inner corner counts and measured square size of your board. Move and
 tilt it across the view, including the edges; at least 12 distinct views are
-required. The CLI fits OpenCV's fisheye model for the exact 320×240 lores stream.
-It saves only numerical intrinsics to `~/.config/orion/camera-v2.json` and
+required. Corner detection and the fisheye fit both run at 320×240 lores.
+The CLI saves numerical intrinsics plus `ScalerCrop`, negotiated sensor output
+size/bit depth, lores stride and flips to `~/.config/orion/camera-v2.json` and
 refuses RMS reprojection error above 0.5 pixels, preserving any previous fit.
 Camera-off settings are respected. A low fitting error does not validate the
 camera mount or timestamp alignment; check those on the lamp too.
+Both profile flips must be false; reflected-ray handling is unsupported.
+Refit calibration files that lack geometry. Runtime configures the saved sensor
+mode and crop, refuses negotiated sensor/stride mismatches, and drops frames
+with a different crop, mode, flips or buffer shape before inference. Changing
+the optical stream geometry requires a fresh fit.
 
 One worker runs YuNet at up to 10 Hz idle and 3 Hz from confirmed wake through
 reply playback. It polls `voice status`; unavailable voice state uses 3 Hz.
@@ -176,7 +182,13 @@ expire after one second. IDs increase for the service lifetime, including after
 privacy off/on. `looking_at_orion` is a landmark symmetry heuristic for a
 frontal face. Selection uses the largest frontal face, otherwise the largest.
 Targets and clears go only through runtime `gaze`; enable runtime `--gaze on`
-to allow movement. Calibration and motion limits stay owned by the runtime.
+to allow movement. Rejected gaze commands preserve tracks and observations;
+the worker polls gaze availability every three seconds before sending targets
+again. Only detector or camera-ray failures invalidate tracking. A missed
+detection retains the chosen live track until its one-second expiry without
+replaying its capture timestamp. Clear is sent once when the target disappears,
+or on privacy off. Health reports gaze availability separately from detection
+errors. Calibration and motion limits stay owned by the runtime.
 
 `/observations` includes `id`, `class`, `track_id`, base `azimuth`/`elevation`
 in radians, `capture_boottime_ns`, observation `age_ms`, `track_age_ms`,

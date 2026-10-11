@@ -60,6 +60,9 @@ class CalibrationTests(unittest.TestCase):
                 calibration.matrix, calibration.distortion)
             corners.append(pixels)
         fitted = fit(corners, 9, 6, .025)
+        fitted.geometry = {'scaler_crop': [0, 0, 4608, 2592],
+            'sensor_mode': {'output_size': [1536, 864], 'bit_depth': 10},
+            'flips': {'hflip': False, 'vflip': False}, 'lores_stride': 384}
         self.assertLess(fitted.rms, .01)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "camera-v2.json"
@@ -80,6 +83,9 @@ class CalibrationTests(unittest.TestCase):
         camera = MagicMock()
         module = MagicMock()
         module.Picamera2.return_value = camera
+        camera.camera_configuration.return_value = {
+            'sensor': {'output_size': (1536, 864), 'bit_depth': 10},
+            'lores': {'size': (320, 240), 'format': 'YUV420', 'stride': 384}}
         with patch.dict('sys.modules', picamera2=module, libcamera=MagicMock()):
             source = Picamera2Source()
             self.addCleanup(source.close)
@@ -106,7 +112,8 @@ class CalibrationTests(unittest.TestCase):
 
 
 class FakeRuntime(socketserver.UnixStreamServer):
-    def __init__(self, path):
+    def __init__(self, path, reject_gaze=False):
+        self.reject_gaze = reject_gaze
         self.head_at_capture = {}
         self.commands = []
         class Handler(socketserver.StreamRequestHandler):
@@ -116,9 +123,17 @@ class FakeRuntime(socketserver.UnixStreamServer):
                 if command.startswith('camera-rays '):
                     value = json.loads(command.removeprefix('camera-rays '))
                     yaw = self.head_at_capture[value['capture_boottime_ns']]
-                    bearings = [{'azimuth': math.atan2(ray[0], ray[2]) + yaw,
+                    # Optical +X maps to base +X at yaw zero; Bearing uses
+                    # atan2(-base_x, -base_y), so image-right is negative azimuth.
+                    bearings = [{'azimuth': (yaw - math.atan2(ray[0], ray[2]) + math.pi) % (2*math.pi) - math.pi,
                         'elevation': math.atan2(-ray[1], math.hypot(ray[0], ray[2]))} for ray in value['rays']]
                     result = {'ok': True, 'bearings': bearings, 'pose_age_ms': 0}
+                elif command.startswith('gaze target'):
+                    result = {'ok': not self.reject_gaze, 'error': 'Gaze requires --gaze on'}
+                elif command == 'gaze status':
+                    result = {'ok': True, 'gaze': {'enabled': not self.reject_gaze}}
+                elif command == 'voice status':
+                    result = {'ok': True, 'voice': {'session': None}}
                 else:
                     result = {'ok': True}
                 handler.wfile.write(json.dumps(result).encode() + b'\n')
@@ -174,7 +189,7 @@ class TrackerTests(unittest.TestCase):
                     world = [-.15, .35]
                     if index % 2:
                         world.reverse()  # Detector ordering may change.
-                    points = np.array([[math.tan(az - yaw), 0, 1] for az in world])
+                    points = np.array([[math.tan(yaw - az), 0, 1] for az in world])
                     pixels, _ = cv2.fisheye.projectPoints(points.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), calibration.matrix, calibration.distortion)
                     faces = [face(pixel) for pixel in pixels.reshape(-1, 2)]
                     tracks = tracker.update(stamp, faces, client.bearings(stamp, calibration.rays([f.centre for f in faces])))

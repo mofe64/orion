@@ -137,7 +137,7 @@ class Vision:
                 self.cached = None
             self.changed.notify_all()
             if self.pipeline:
-                self.pipeline.submit(stamp, capture.lores)
+                self.pipeline.submit(stamp, capture.lores, capture.metadata, capture.geometry)
 
     def wants_rgb(self):
         # This callback does no I/O or encoding. Stream admission happens
@@ -324,6 +324,8 @@ def main():
     camera = json.loads(args.profile.read_text()).get("camera", {})
     if camera.get("enabled") is not True:
         parser.error("The hardware profile has no enabled camera")
+    if camera.get('hflip') or camera.get('vflip'):
+        parser.error("Fisheye rays require a profile with both flips false")
     source = ReplaySource(args.replay) if args.replay else Picamera2Source(
         camera["index"], camera["hflip"], camera["vflip"])
     logging.basicConfig(level=logging.INFO)
@@ -342,6 +344,8 @@ def main():
     try:
         pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.load(args.intrinsics),
                                 GazeClient(args.runtime_socket))
+        if isinstance(source, Picamera2Source):
+            source.expected_geometry = pipeline.intrinsics.geometry
     except (OSError, ValueError, KeyError) as error:
         detection_error = str(error)
         LOG.warning("Face tracking unavailable: %s", error)

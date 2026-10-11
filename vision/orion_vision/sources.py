@@ -14,6 +14,7 @@ class Capture:
     rgb: np.ndarray | None
     metadata: dict
     lores: np.ndarray | None = None
+    geometry: dict | None = None
 
 
 class FrameSource(Protocol):
@@ -24,8 +25,11 @@ class FrameSource(Protocol):
 
 class Picamera2Source:
     def __init__(self, index=0, hflip=False, vflip=False):
+        if hflip or vflip:
+            raise ValueError("Camera flips are unsupported by fisheye rays; both must be false")
         self.index, self.hflip, self.vflip = index, hflip, vflip
         self.camera = None
+        self.expected_geometry = None
 
     def start(self, publish, wants_rgb, wants_lores=None):
         from picamera2 import Picamera2
@@ -35,12 +39,30 @@ class Picamera2Source:
         try:
             # libcamera BGR888 is [R,G,B] in a Python array, despite its name.
             streams = {"lores": {"size": (320, 240), "format": "YUV420"}} if wants_lores else {}
+            sensor = {'sensor': self.expected_geometry['sensor_mode']} if self.expected_geometry else {}
+            controls = {"FrameRate": 30}
+            if self.expected_geometry:
+                controls['ScalerCrop'] = tuple(self.expected_geometry['scaler_crop'])
             config = self.camera.create_video_configuration(
                 main={"size": (1280, 720), "format": "BGR888"},
-                **streams,
+                **streams, **sensor,
                 transform=Transform(hflip=self.hflip, vflip=self.vflip),
-                controls={"FrameRate": 30}, buffer_count=4, queue=False)
+                controls=controls, buffer_count=4, queue=False)
             self.camera.configure(config)
+            geometry = None
+            if wants_lores:
+                from .calibration import SIZE, stream_geometry
+                actual = self.camera.camera_configuration()
+                lores = actual['lores']
+                if tuple(lores['size']) != SIZE or lores['format'] != 'YUV420':
+                    raise ValueError("Configured lores geometry differs from 320x240 YUV420")
+                geometry = stream_geometry({'ScalerCrop': [0, 0, 1, 1]}, {
+                    'sensor_mode': actual['sensor'], 'lores_stride': lores['stride'],
+                    'flips': {'hflip': self.hflip, 'vflip': self.vflip}})
+                del geometry['scaler_crop']
+                if self.expected_geometry and geometry != {key: value for key, value
+                        in self.expected_geometry.items() if key != 'scaler_crop'}:
+                    raise ValueError("Configured sensor geometry differs from calibration")
 
             def completed(request):
                 metadata = request.get_metadata()
@@ -48,7 +70,7 @@ class Picamera2Source:
                 # capture publishes metadata without converting the main frame.
                 rgb = request.make_array("main") if wants_rgb() else None
                 lores = request.make_array("lores") if wants_lores and wants_lores() else None
-                publish(Capture(rgb, metadata, lores))
+                publish(Capture(rgb, metadata, lores, geometry))
 
             self.camera.post_callback = completed
             self.camera.start(show_preview=False)

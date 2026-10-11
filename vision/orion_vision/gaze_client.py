@@ -18,6 +18,10 @@ def boottime_ns():
     return library.mach_continuous_time() * scale.numer // scale.denom
 
 
+class RuntimeRejected(ValueError):
+    """A valid runtime reply explicitly refused this command."""
+
+
 class GazeClient:
     def __init__(self, path="/tmp/oriond.sock", timeout=.2):
         self.path, self.timeout = str(path), timeout
@@ -40,7 +44,7 @@ class GazeClient:
                 data.extend(chunk)
         value = json.loads(data.split(b"\n", 1)[0])
         if value.get("ok") is not True:
-            raise ValueError(value.get("error", "Runtime rejected request"))
+            raise RuntimeRejected(value.get("error", "Runtime rejected request"))
         return value
 
     def bearings(self, stamp, rays):
@@ -51,9 +55,16 @@ class GazeClient:
 
     def target(self, track):
         from .tracker import angle_delta
-        self.command("gaze target " + json.dumps({"track_id": track.id,
-            "capture_boottime_ns": track.capture_ns, "azimuth": float(angle_delta(track.state[0])),
-            "elevation": float(track.state[1]), "confidence": track.face.confidence, "class": "face"}))
+        try:
+            self.command("gaze target " + json.dumps({"track_id": track.id,
+                "capture_boottime_ns": track.capture_ns, "azimuth": float(angle_delta(track.state[0])),
+                "elevation": float(track.state[1]), "confidence": track.face.confidence, "class": "face"}))
+        except RuntimeRejected:
+            return False
+        return True
+
+    def gaze_available(self):
+        return self.command("gaze status")["gaze"]["enabled"] is True
 
     def clear(self):
         self.command("gaze clear")

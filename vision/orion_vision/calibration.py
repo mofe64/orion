@@ -14,12 +14,47 @@ DEFAULT_PATH = Path.home() / ".config/orion/camera-v2.json"
 MAX_RMS = .5
 
 
+def stream_geometry(metadata, geometry):
+    """Numerical sensor/ISP geometry, copied from the configured camera."""
+    try:
+        value = dict(geometry)
+        value['scaler_crop'] = list(metadata['ScalerCrop'])
+        crop, sensor, flips, stride = (value[key] for key in
+            ('scaler_crop', 'sensor_mode', 'flips', 'lores_stride'))
+        size = list(sensor['output_size'])
+        if (len(crop) != 4 or any(type(v) is not int for v in crop)
+                or min(crop[:2]) < 0 or min(crop[2:]) <= 0 or len(size) != 2
+                or any(type(v) is not int or v <= 0 for v in size)
+                or type(sensor['bit_depth']) is not int or not 8 <= sensor['bit_depth'] <= 16
+                or flips != {'hflip': False, 'vflip': False}
+                or any(type(v) is not bool for v in flips.values())
+                or type(stride) is not int or stride < SIZE[0] or stride % 2):
+            raise ValueError()
+        return {'scaler_crop': crop, 'sensor_mode': {'output_size': size,
+            'bit_depth': sensor['bit_depth']}, 'flips': dict(flips), 'lores_stride': stride}
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Missing or unsupported calibration stream geometry (flips must be false)") from None
+
+
+def validate_lores(buffer, stride=None):
+    if not isinstance(buffer, np.ndarray) or buffer.dtype != np.uint8:
+        raise ValueError("Lores buffer must contain uint8 pixels")
+    if buffer.ndim == 3:
+        if buffer.shape != (SIZE[1], SIZE[0], 3):
+            raise ValueError("Replay lores must be exactly 320x240 RGB")
+    elif (buffer.ndim != 2 or buffer.shape[0] != SIZE[1] * 3 // 2
+          or buffer.shape[1] < SIZE[0] or buffer.shape[1] % 2
+          or (stride is not None and buffer.shape[1] != stride)):
+        raise ValueError("Lores YUV geometry must be 320x240 with its configured stride")
+
+
 @dataclass
 class Intrinsics:
     matrix: np.ndarray
     distortion: np.ndarray
     rms: float
     size: tuple = SIZE
+    geometry: dict | None = None
 
     def __post_init__(self):
         self.matrix = np.asarray(self.matrix, dtype=np.float64).reshape(3, 3)
@@ -29,23 +64,37 @@ class Intrinsics:
                 or not 0 <= self.rms <= MAX_RMS or min(self.matrix[0, 0], self.matrix[1, 1]) <= 0
                 or not np.allclose(self.matrix[2], [0, 0, 1])):
             raise ValueError("Invalid 320x240 fisheye calibration or RMS above 0.5 px")
+        if self.geometry is not None:
+            self.geometry = stream_geometry({'ScalerCrop': self.geometry.get('scaler_crop')
+                if isinstance(self.geometry, dict) else None}, self.geometry)
 
     @classmethod
     def load(cls, path):
         value = json.loads(Path(path).read_text())
         if value.get("model") != "opencv_fisheye" or value.get("schema_version") != 1:
             raise ValueError("Expected camera-v2 OpenCV fisheye calibration")
-        return cls(value["K"], value["D"], value["rms_px"], tuple(value["image_size"]))
+        if 'geometry' not in value:
+            raise ValueError("Calibration has no stream geometry; refit camera-v2.json")
+        geometry = stream_geometry({'ScalerCrop': value['geometry'].get('scaler_crop')
+            if isinstance(value['geometry'], dict) else None}, value['geometry'])
+        return cls(value["K"], value["D"], value["rms_px"], tuple(value["image_size"]), geometry)
 
     def save(self, path):
         # Only numerical calibration is saved, never checkerboard images.
+        geometry = stream_geometry({'ScalerCrop': (self.geometry or {}).get('scaler_crop')}, self.geometry)
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(path.name + ".tmp")
         temporary.write_text(json.dumps({"schema_version": 1, "model": "opencv_fisheye",
             "image_size": list(self.size), "K": self.matrix.tolist(),
-            "D": self.distortion.ravel().tolist(), "rms_px": float(self.rms)}, indent=2) + "\n")
+            "D": self.distortion.ravel().tolist(), "rms_px": float(self.rms),
+            "geometry": geometry}, indent=2) + "\n")
         temporary.replace(path)
+
+    def validate_capture(self, buffer, metadata, geometry):
+        if stream_geometry(metadata, geometry) != self.geometry:
+            raise ValueError("Capture geometry differs from camera-v2 calibration")
+        validate_lores(buffer, self.geometry['lores_stride'])
 
     def rays(self, pixels):
         points = np.asarray(pixels, dtype=np.float64).reshape(-1, 1, 2)
@@ -57,6 +106,7 @@ class Intrinsics:
 
 
 def lores_bgr(buffer):
+    validate_lores(buffer)
     # PiSP pads the width to a stride (384 on the commissioned lamp).
     # Keep the packed I420 planes intact until conversion; crop afterwards.
     if buffer.ndim == 3:
@@ -70,7 +120,7 @@ def checkerboard_points(columns, rows, square_m):
     return points
 
 
-def fit(corners, columns, rows, square_m):
+def fit(corners, columns, rows, square_m, geometry=None):
     if len(corners) < 12:
         raise ValueError("At least 12 distinct checkerboard views are required")
     objects = [checkerboard_points(columns, rows, square_m) for _ in corners]
@@ -79,7 +129,7 @@ def fit(corners, columns, rows, square_m):
         np.eye(3), np.zeros((4, 1)), flags=cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC
         | cv2.fisheye.CALIB_CHECK_COND | cv2.fisheye.CALIB_FIX_SKEW,
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-7))
-    return Intrinsics(matrix, distortion, rms)
+    return Intrinsics(matrix, distortion, rms, geometry=geometry)
 
 
 def main():
@@ -97,6 +147,8 @@ def main():
     camera = json.loads(args.profile.read_text()).get("camera", {})
     if camera.get("enabled") is not True:
         parser.error("Profile has no enabled camera")
+    if camera.get('hflip') or camera.get('vflip'):
+        parser.error("Fisheye rays require a profile with both flips false")
     from .sources import Picamera2Source
     from .service import camera_enabled
     if not camera_enabled(Path.home() / ".config/orion/camera.json"):
@@ -106,9 +158,9 @@ def main():
     changed, latest = Condition(), [None]
     def publish(capture):
         with changed:
-            latest[0] = capture.lores
+            latest[0] = capture
             changed.notify()
-    corners = []
+    corners, geometry = [], None
     deadline = time.monotonic() + args.seconds
     print("Move and tilt the board across the view, including the edges. Images remain in memory.", flush=True)
     try:
@@ -118,9 +170,16 @@ def main():
                 raise RuntimeError("Camera was disabled during calibration")
             with changed:
                 changed.wait_for(lambda: latest[0] is not None, timeout=.5)
-                buffer, latest[0] = latest[0], None
-            if buffer is None:
+                capture, latest[0] = latest[0], None
+            if capture is None or capture.lores is None:
                 continue
+            measured = stream_geometry(capture.metadata, capture.geometry)
+            if geometry is None:
+                geometry = measured
+            elif measured != geometry:
+                raise ValueError("Camera geometry changed during calibration; retry with a fixed stream")
+            buffer = capture.lores
+            validate_lores(buffer, geometry['lores_stride'])
             gray = cv2.cvtColor(lores_bgr(buffer), cv2.COLOR_BGR2GRAY)
             found, points = cv2.findChessboardCorners(gray, (args.columns, args.rows))
             if found:
@@ -132,6 +191,6 @@ def main():
             time.sleep(.2)
     finally:
         source.close()
-    intrinsics = fit(corners, args.columns, args.rows, args.square_mm / 1000)
+    intrinsics = fit(corners, args.columns, args.rows, args.square_mm / 1000, geometry)
     intrinsics.save(args.output)
     print(f"Saved {args.output}; RMS {intrinsics.rms:.3f} px")
