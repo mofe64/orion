@@ -184,6 +184,23 @@ class ObjectTests(unittest.TestCase):
         self.assertEqual(result[0].code, 'voice_active')
         self.assertEqual(pipeline.objects.detect.call_count, 1)
 
+    def test_behaviour_changes_do_not_invalidate_explicit_find(self):
+        entered, release = Event(), Event()
+        def detect(buffer):
+            entered.set(); release.wait(2)
+            return [Object('book', [300, 50, 40, 40], .9)]
+        pipeline, _, _ = self.pipeline(detect)
+        self.addCleanup(release.set)
+        result, thread = self.start_find(pipeline)
+        pipeline.submit(pipeline.boot_clock(), np.zeros((SIZE[1], SIZE[0], 3), np.uint8))
+        self.assertTrue(entered.wait(1))
+        generation = pipeline.capture_generation
+        pipeline.configure_behaviours({**pipeline.behaviours, 'mutual_gaze': True})
+        self.assertEqual(pipeline.capture_generation, generation)
+        self.assertNotEqual(pipeline.generation, generation)
+        release.set(); thread.join(1)
+        self.assertEqual(result[0]['status'], 'found')
+
     def test_expired_lookup_holds_cpu_ownership_until_native_inference_finishes(self):
         entered, release = Event(), Event()
         def detect(buffer):

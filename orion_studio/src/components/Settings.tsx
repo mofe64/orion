@@ -23,6 +23,7 @@ interface Props {
   connectionScope?: unknown;
   connection?: GatewayConnection | null;
   desktop?: boolean;
+  active?: boolean;
   onSound: (kind: "alarm" | "timer", sound: string) => Promise<void>;
 }
 export function canSaveVoiceSettings(voice: StudioVoice, draft: VoiceSettings, provider: string, connected: boolean): boolean {
@@ -30,7 +31,7 @@ export function canSaveVoiceSettings(voice: StudioVoice, draft: VoiceSettings, p
   const validAgent = voice.models.length ? !!model && model.efforts.includes(draft.effort) : !!draft.model.trim() && !!draft.effort.trim();
   return connected && voice.loaded && !voice.saving && JSON.stringify(draft) !== JSON.stringify(voice.settings) && provider === "codex" && validAgent;
 }
-export function Settings({ voice, preferences, onPreferences, theme, onTheme, status, connected, onConnect, onHome, onSound, notice, connection = null, connectionScope = connected, desktop = isTauri() }: Props) {
+export function Settings({ active = true, voice, preferences, onPreferences, theme, onTheme, status, connected, onConnect, onHome, onSound, notice, connection = null, connectionScope = connected, desktop = isTauri() }: Props) {
   const [draft,setDraft] = useState(voice.settings);
   const [saved,setSaved] = useScopedFeedback<boolean>("settings", connectionScope);
   const [localSaved,setLocalSaved] = useState("");
@@ -51,7 +52,7 @@ export function Settings({ voice, preferences, onPreferences, theme, onTheme, st
         <SoundSettings embedded connected={connected} connectionScope={connectionScope} routines={status?.routines} onSound={onSound} />
       </section>
       <section className="settings-card"><header><Sparkles size={20} /><div><h2>Personality and memory</h2><p>Changes save automatically and start a fresh conversation on Orion’s next request.</p></div></header><AgentProfileSettings onboard desktop={desktop} connected={connected} connectionScope={connectionScope} /></section>
-      <BehaviourSettings connection={connection} supported={status?.runtime.hardware === "v2"} />
+      <BehaviourSettings active={active} connection={connection} supported={status?.runtime.hardware === "v2"} />
       <LocationSettings desktop={desktop} connected={connected} connectionScope={connectionScope} />
       <section className="settings-card"><header><AudioLines size={20} /><div><h2>Voice</h2><p>Speech recognition and voices run on Orion.</p></div></header>
         {!desktop ? <p className="settings-help">Open Orion Studio’s desktop app and connect Orion to view or change voice settings.</p> : !connected ? <p className="settings-help">Connect Orion to view or change voice settings.</p> : !voice.loaded ? voice.loadError ? <FailureNotice value={voice.loadError} /> : <p role="status">Loading Orion’s voice settings…</p> : <form onSubmit={event => {

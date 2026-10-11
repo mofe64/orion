@@ -95,7 +95,7 @@ class Vision:
         if self.pipeline:
             self.pipeline.close()
 
-    def _disable(self):
+    def _disable(self, preserve_hands=False):
         with self.changed:
             self.enabled = False
             self.generation += 1
@@ -106,15 +106,18 @@ class Vision:
             self.changed.notify_all()
         self.source.close()
         if self.pipeline:
-            self.pipeline.reset(False)
+            self.pipeline.reset(False, mode="hands" if preserve_hands else None,
+                                preserve_hands=preserve_hands)
 
     def _watch(self):
         retry_at = 0.
         hands_release_at = 0.
+        recovering_hands = False
         try:
             while not self.stop.is_set():
                 wanted = camera_enabled(self.preference_file)
                 mode = tracking_mode(self.tracking_file)
+                recovering_hands = recovering_hands and wanted and mode == 'hands'
                 if self.pipeline and hasattr(self.pipeline, "configure_behaviours"):
                     self.pipeline.configure_behaviours(behaviour_settings(self.preference_file.with_name("behaviours.json")))
                 now = self.clock()
@@ -134,7 +137,8 @@ class Vision:
                     LOG.warning("Camera capture stalled; reopening source")
                     with self.changed:
                         self.camera_restarts += 1
-                    self._disable()
+                    recovering_hands = mode == 'hands'
+                    self._disable(preserve_hands=recovering_hands)
                 elif wanted and not self.enabled and self.clock() >= retry_at:
                     with self.changed:
                         self.enabled = True
@@ -144,17 +148,21 @@ class Vision:
                         self.last_published_at = None
                     try:
                         if self.pipeline:
-                            self.pipeline.reset(mode != 'off', camera_enabled=True, mode=mode)
+                            self.pipeline.reset(mode != 'off', camera_enabled=True, mode=mode,
+                                                preserve_hands=recovering_hands)
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb,
                                               self.wants_lores)
                         else:
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb)
+                        recovering_hands = False
                     except Exception as error:
                         LOG.exception("Camera start failed")
                         self._disable()
+                        recovering_hands = False
                         self.error = str(error)
                         retry_at = self.clock() + 1
                 if (self.pipeline and hasattr(self.pipeline, 'release_hands') and now >= hands_release_at
+                        and not recovering_hands
                         and (not self.enabled or mode != 'hands')):
                     self.pipeline.release_hands()
                     hands_release_at = now + .5

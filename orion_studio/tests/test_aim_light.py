@@ -83,6 +83,11 @@ class AimGatewayTests(unittest.TestCase):
             self.assertEqual((result['status'], result['moved']), (status, False))
             self.assertFalse(any('"action": "target"' in command for command in commands))
 
+    def test_vision_metadata_cannot_override_operation_success(self):
+        gateway, _ = self.gateway([{'status': 'ambiguous', 'candidates': [{}, {}], 'ok': False, 'moved': True}])
+        self.assertEqual(gateway.aim_light({'operation': 'aim_light', 'category': 'book'}),
+                         {'ok': True, 'moved': False, 'status': 'ambiguous', 'candidates': [{}, {}]})
+
     def test_failed_lookup_returns_through_owned_end_and_releases_interval(self):
         gateway, commands = self.gateway([GatewayError(503, 'find_timeout', 'Timed out')])
         with self.assertRaises(GatewayError):

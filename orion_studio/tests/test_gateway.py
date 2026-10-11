@@ -345,6 +345,13 @@ class HttpAuthenticationTests(unittest.TestCase):
             self.assertEqual(result.exception.code, HTTPStatus.UNAUTHORIZED)
             result.exception.close()
 
+    def test_behaviours_read_and_write_require_authentication(self):
+        for document in (None, {'object_glances': True}):
+            with self.assertRaises(urllib.error.HTTPError) as result:
+                urllib.request.urlopen(self.request('/api/v2/behaviours', document=document, authorized=False))
+            self.assertEqual(result.exception.code, HTTPStatus.UNAUTHORIZED)
+            result.exception.close()
+
     def test_debug_logs_require_authentication(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:
             urllib.request.urlopen(self.request("/api/v2/debug/logs", authorized=False))
@@ -461,6 +468,20 @@ class CameraProxyTests(unittest.TestCase):
             self.gateway.find_object('book', deadline=time.monotonic() - 1)
         self.assertEqual(caught.exception.code, 'find_unavailable')
         self.assertEqual(self.vision_requests, ['/find'])
+
+    def test_find_accepts_only_protocol_fields_and_handles_non_object_errors(self):
+        self.find_reply = (200, {'status': 'ambiguous', 'candidates': [{}, {}], 'ok': False, 'moved': True})
+        self.assertEqual(self.gateway.find_object('book'), {'status': 'ambiguous', 'candidates': [{}, {}]})
+        for value in ([], 'failure', None, {'error': []}, {'error': {'message': 4}}):
+            with self.subTest(value=value):
+                self.find_reply = (503, value)
+                with self.assertRaises(GatewayError) as caught:
+                    self.gateway.find_object('book')
+                self.assertEqual(caught.exception.code, 'find_unavailable')
+        self.find_reply = (200, {'status': 'found', 'candidates': [None]})
+        with self.assertRaises(GatewayError) as caught:
+            self.gateway.find_object('book')
+        self.assertEqual(caught.exception.code, 'find_unavailable')
 
     def test_detections_require_an_existing_healthy_viewer_and_are_not_logged_or_saved(self):
         with self.assertRaises(urllib.error.HTTPError) as error:

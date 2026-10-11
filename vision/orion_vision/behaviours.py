@@ -31,12 +31,12 @@ class ObjectMap:
         self.entries.clear()  # Never reuse IDs within this service lifetime.
 
     def snapshot(self, stamp):
-        self.entries = [entry for entry in self.entries
-                        if 0 <= stamp - int(entry['capture_boottime_ns']) < 600_000_000_000]
-        return [dict(entry) for entry in self.entries]
+        # Readers may race a privacy clear; never write their old view back.
+        return [dict(entry) for entry in self.entries
+                if 0 <= stamp - int(entry['capture_boottime_ns']) < 600_000_000_000]
 
     def update(self, candidates, stamp):
-        self.snapshot(stamp)
+        self.entries = self.snapshot(stamp)  # Called under FacePipeline.changed.
         used = set()
         added = []
         for candidate in candidates[:16]:

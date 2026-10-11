@@ -32,3 +32,26 @@ it("does not replace an acknowledged save with an older poll or a disconnected r
   await vi.advanceTimersByTimeAsync(2000); model.stop(); oldRead(off); await flush();
   expect(model.snapshot().values).toEqual(on.behaviours);
 });
+
+it("stops hidden Settings reads and refreshes a cancelled save when visible again", async () => {
+  vi.useFakeTimers();
+  let finishSave!: (value: BehaviourResponse) => void;
+  const read = vi.fn().mockResolvedValue(off);
+  const save = vi.fn((_connection: unknown, _values: unknown, _signal?: AbortSignal) => new Promise<BehaviourResponse>(resolve => { finishSave = resolve; }));
+  const model = new BehaviourPreference(connection, { read, save });
+  model.start(); await flush();
+  const saving = model.choose("object_glances", true);
+  expect(model.snapshot().pending).toBe(true);
+  model.stop();
+  expect(read.mock.calls[0][1].aborted).toBe(true);
+  expect(save.mock.calls[0][2]!.aborted).toBe(true);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(model.snapshot()).toMatchObject({ pending: false, values: null });
+  model.start(); await flush();
+  finishSave({ behaviours: { ...off.behaviours, object_glances: true } });
+  await saving;
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(model.snapshot()).toMatchObject({ pending: false, values: off.behaviours });
+  model.stop();
+});

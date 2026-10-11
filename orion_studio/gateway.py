@@ -492,12 +492,15 @@ class OrionGateway:
                 raise ValueError('Oversized object response')
             value = json.loads(encoded)
             if response.status != 200:
+                error = value.get('error') if isinstance(value, dict) else None
+                message = error.get('message') if isinstance(error, dict) else None
                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'find_unavailable',
-                    value.get('error', {}).get('message', 'Object lookup was refused.'))
+                    message if isinstance(message, str) else 'Object lookup was refused.')
             if (not isinstance(value, dict) or value.get('status') not in ('found', 'ambiguous', 'not_found')
-                    or not isinstance(value.get('candidates'), list) or len(value['candidates']) > 16):
+                    or not isinstance(value.get('candidates'), list) or len(value['candidates']) > 16
+                    or any(not isinstance(candidate, dict) for candidate in value['candidates'])):
                 raise ValueError('Invalid object response')
-            return value
+            return {'status': value['status'], 'candidates': value['candidates']}
         except (OSError, http.client.HTTPException, ValueError) as error:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'find_unavailable', 'Object lookup failed.') from error
         finally:
@@ -577,7 +580,7 @@ class OrionGateway:
                 found = find()
             guard()
             if found['status'] != 'found':
-                return {'ok': True, **found, 'moved': False}
+                return {'status': found['status'], 'candidates': found['candidates'], 'ok': True, 'moved': False}
             if len(found['candidates']) != 1:
                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'invalid_find', 'Expected one object candidate.')
             point = found['candidates'][0].get('point')

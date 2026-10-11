@@ -29,6 +29,7 @@ class FacePipeline:
         self.preview_generation = 0
         self.enabled = False
         self.generation = 0
+        self.capture_generation = 0
         self.dropped = self.inferences = 0
         self.tracker = Tracker()
         self.error = None
@@ -62,32 +63,36 @@ class FacePipeline:
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
         self.thread.start()
 
-    def reset(self, enabled, camera_enabled=None, mode=None):
-        with self.changed:
-            self.enabled = enabled
-            self.mode = mode if mode is not None else ("faces" if enabled else "off")
-            self.hand_window.clear()
-            self.hand_count, self.hand_point = 0, None
-            self.camera_enabled = enabled if camera_enabled is None else camera_enabled
-            self.generation += 1
-            if self.find_job is not None:
-                self.find_job.error = FindError('camera_changed', 'Capture or tracking changed during lookup')
-                if not self.find_job.running:
-                    self.find_job.done.set()
-            self.pending = None
-            self.latest_preview = None
-            self.preview_generation += 1
-            self.tracker.clear()
-            self.object_map.clear()
-            self.object_baseline = False
-            self.novelty = self.novelty_observation = None
-            self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
-            self.speaker_track_id = None
-            self.speaker_until = 0.
-            self.changed.notify_all()
+    def reset(self, enabled, camera_enabled=None, mode=None, preserve_hands=False):
+        # Match inference's commands -> changed lock order: a reset cannot
+        # turn an already-approved Hands publication into an off-mode message.
         with self.commands:
+            with self.changed:
+                self.enabled = enabled
+                self.mode = mode if mode is not None else ("faces" if enabled else "off")
+                self.hand_window.clear()
+                self.hand_count, self.hand_point = 0, None
+                self.camera_enabled = enabled if camera_enabled is None else camera_enabled
+                self.generation += 1
+                self.capture_generation += 1
+                if self.find_job is not None:
+                    self.find_job.error = FindError('camera_changed', 'Capture or tracking changed during lookup')
+                    if not self.find_job.running:
+                        self.find_job.done.set()
+                self.pending = None
+                self.latest_preview = None
+                self.preview_generation += 1
+                self.tracker.clear()
+                self.object_map.clear()
+                self.object_baseline = False
+                self.novelty = self.novelty_observation = None
+                self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
+                self.speaker_track_id = None
+                self.speaker_until = 0.
+                self.changed.notify_all()
             try:
-                self.client.clear_surroundings()
+                if not preserve_hands:
+                    self.client.clear_surroundings()
             except (OSError, ValueError, AttributeError):
                 pass
             if not enabled or self.mode != "faces":
@@ -254,7 +259,7 @@ class FacePipeline:
                 raise FindError('objects_unavailable', 'Object detector is unavailable')
             if self.find_job is not None:
                 raise FindError('find_busy', 'An object lookup is already running')
-            job = FindJob(category, session, self.generation, self.clock() + timeout)
+            job = FindJob(category, session, self.capture_generation, self.clock() + timeout)
             self.find_job = job
             self.pending = self.latest_preview = None
             self.changed.notify_all()
@@ -285,7 +290,7 @@ class FacePipeline:
             if not self.client.find_allowed(job.session):
                 raise FindError('voice_active', 'Voice ownership changed during lookup')
             with self.changed:
-                if not self.camera_enabled or job.generation != self.generation:
+                if not self.camera_enabled or job.generation != self.capture_generation:
                     raise FindError('camera_changed', 'Capture or tracking changed during lookup')
                 if not job.done.is_set():
                     job.result = {'status': 'not_found' if not candidates else

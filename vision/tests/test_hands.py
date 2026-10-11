@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread, Lock
 from unittest.mock import Mock
 import cv2
 import numpy as np
@@ -13,6 +13,31 @@ from test_tracking import eventually
 
 
 class PalmTests(unittest.TestCase):
+    def test_reset_waits_for_an_approved_hands_publication(self):
+        # Pause exactly where reset acquires the command lock. It must not
+        # change the mode underneath the worker already publishing metadata.
+        attempting = Event()
+        class ObservedLock:
+            def __init__(self): self.lock = Lock()
+            def __enter__(self):
+                attempting.set()
+                self.lock.acquire()
+            def __exit__(self, *args): self.lock.release()
+        client = Mock()
+        pipeline = FacePipeline(Mock(), intrinsics(), client)
+        pipeline.reset(True, mode='hands')
+        pipeline.commands = ObservedLock()
+        with pipeline.commands:
+            attempting.clear()
+            thread = Thread(target=lambda: pipeline.reset(False, mode='hands', preserve_hands=True))
+            thread.start()
+            self.assertTrue(attempting.wait(1))
+            pipeline._surroundings(pipeline.boot_clock(), [])
+            self.assertEqual(client.surroundings.call_args.args[0]['tracking_mode'], 'hands')
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(pipeline.enabled)
+
     def test_letterbox_preserves_rgb_and_model_decoder_uses_xywh_nms(self):
         blob, geometry = preprocess(np.full((360,640,3), [240,30,10], np.uint8))
         self.assertEqual(blob.shape,(1,192,192,3))

@@ -14,6 +14,16 @@ from test_objects import CAMERA, intrinsics
 
 
 class BehaviourTests(unittest.TestCase):
+    def test_snapshot_racing_clear_cannot_restore_entries(self):
+        mapping = ObjectMap()
+        class ClearDuringRead:
+            def __int__(self):
+                mapping.clear()
+                return 1
+        mapping.entries = [{'capture_boottime_ns': ClearDuringRead(), 'id': 'old'}]
+        mapping.snapshot(2)
+        self.assertEqual(mapping.entries, [])
+
     def test_preferences_are_opt_in_and_any_corruption_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'behaviours.json'

@@ -413,3 +413,7 @@ the authenticated gateway. A failed save reverts the switch and retains an
 explanatory notice; older polling responses cannot overwrite a save. Camera
 privacy and Tracking Off suppress the behaviour without changing its saved
 preference. See [configuration](../docs/configuration.md#character-behaviours).
+
+Character behaviour preferences refresh while Settings is visible. Leaving
+Settings cancels its polling and pending reads; returning refreshes the saved
+values. Settings form drafts remain mounted across navigation.

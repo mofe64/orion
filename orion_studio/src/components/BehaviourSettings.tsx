@@ -13,10 +13,10 @@ const controls: Array<[BehaviourKey, string, string]> = [
 ];
 const noSubscription = () => () => {};
 const emptySnapshot = () => emptyBehaviours;
-export function BehaviourSettings({ connection, supported }: { connection: GatewayConnection | null; supported: boolean }) {
+export function BehaviourSettings({ connection, supported, active = true }: { active?: boolean; connection: GatewayConnection | null; supported: boolean }) {
   const preference = useMemo(() => connection && supported ? new BehaviourPreference(connection) : null, [connection, supported]);
   const state = useSyncExternalStore(preference?.subscribe ?? noSubscription, preference?.snapshot ?? emptySnapshot, preference?.snapshot ?? emptySnapshot);
-  useEffect(() => { preference?.start(); return () => preference?.stop(); }, [preference]);
+  useEffect(() => { if (active) preference?.start(); return () => preference?.stop(); }, [preference, active]);
   return <section className="settings-card"><header><div><h2>Character behaviours</h2><p>Optional reactions to Orion’s surroundings. Camera and tracking must be on.</p></div></header>
     {!connection ? <p className="settings-help">Connect Orion to change its behaviours.</p> : !supported ? <p className="settings-help">These behaviours need Orion’s V2 camera.</p> : <>
       {controls.map(([key, label, help]) => <SettingToggle key={key} label={label} help={help} checked={state.values?.[key] ?? false}

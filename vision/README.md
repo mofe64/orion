@@ -100,7 +100,8 @@ contention. The Unix socket is user-only
 `POST /find` accepts `{"category":"book"}` and returns `found`, `not_found`
 or `ambiguous`, with at most sixteen candidates. Each candidate contains a
 lores pixel box, confidence, capture timestamp, base bearing and desk `point`
-(null when the ray misses the desk). An optional `session` is accepted only
+(null when the ray misses the desk). Changing behaviour preferences does not cancel an explicit lookup; camera or
+tracking changes do. An optional `session` is accepted only
 inside the runtime's coordinator-owned voice interval. Unknown categories,
 overlapping requests, camera changes and expired requests are rejected.
 The HTTP body is limited to 1 KiB. No snapshot is created or transmitted.
@@ -213,7 +214,11 @@ reopens the source if no capture has been published for two seconds. It logs
 one warning per recovery and increments `camera_restarts`, using the ordinary
 start/retry path. Camera toggles retain the count; process restart resets it.
 Camera-off never triggers recovery. Old source callbacks cannot publish into
-a reopened generation.
+a reopened generation. A watchdog reopen in Hands does not send an explicit
+Hands-off command or clear runtime surroundings. It discards stale detector
+evidence and requires fresh frames again; runtime stale-observation expiry
+remains active. Camera-off, a mode change or a failed reopen still releases
+Hands normally.
 
 Replay tests run on a workstation without Picamera2 or native Pi bindings:
 

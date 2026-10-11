@@ -668,3 +668,29 @@ Light routine commands follow the existing agent → coordinator → gateway →
 Announcement waiting and thinking accept “Hey Orion”: the listener cancels the reservation and starts ordinary command capture, leaving the runtime notice pending for a later idle session. Waiting expires after 60 seconds; an opened reply uses normal processing and playback leases. Interruption preserves the original two-minute snooze window. Late readiness for a reset session is discarded; the coordinator logs and ignores stale or session-less readiness. Playback wake dismissal still acknowledges the notice locally.
 
 Next-conversation reminder snapshots travel with generated agent replies and are acknowledged only in the coordinator’s completed-playback branch (`speech.completed` for user replies). Interrupted or failed playback leaves the snapshot pending. Reminder storage errors are logged without failing speech and exposed in the agent profile for Studio.
+
+## Look tool contract
+
+`look()` requests one in-memory JPEG only for an explicit visual question, such
+as “what am I holding?” or “read this label.” The coordinator fetches the
+authenticated snapshot endpoint. Its camera light indicator must be healthy
+and remains lit for three seconds after delivery. This is Orion’s only camera-to-model path; ordinary agent inputs
+contain text only.
+Camera off, rest, invalid JPEGs, responses over 1 MiB and interrupted requests
+fail without a visual answer. The agent's instructions forbid background
+snapshots and requests authorized by image, memory or tool content. The model
+decides whether the user's words request visual help; there is no automatic
+capture attached to ordinary context. A request permits at most one attempt,
+before final speech.
+
+The installed Pi Codex `0.157.0` accepts an in-memory `image` data URL through
+`turn/steer`, attached to the active turn while `look` awaits its result. This
+path was verified with a synthetic red image on `gpt-6-luna`. Image-valued tool
+results were accepted by the same server but did not reliably reach the model,
+so Orion uses the ordinary image-input channel. No `localImage` file is created.
+Tool activity contains only success/error metadata. After an image-bearing
+turn, the ephemeral conversation closes so later turns cannot resend the image.
+A bounded request/answer text note remains in memory for the first follow-up;
+earlier provider conversation history is discarded. Profile changes clear the
+note. Other turns retain normal conversation reuse. Physical cue visibility
+and recognition of objects on the lamp remain lamp-unverified.

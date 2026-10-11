@@ -36,7 +36,12 @@ export class BehaviourPreference {
     };
     void poll();
   }
-  stop() { this.controller?.abort(); this.controller = null; clearTimeout(this.timer); this.revision++; }
+  stop() {
+    this.controller?.abort(); this.controller = null; clearTimeout(this.timer); this.revision++;
+    // A cancelled write may have reached Orion. Require a fresh read on return
+    // instead of preserving its optimistic value or leaving controls pending.
+    if (this.state.pending) this.update({ values: null, pending: false, notice: "" });
+  }
   choose = async (key: BehaviourKey, value: boolean) => {
     const controller = this.controller, previous = this.state.values;
     if (!controller || this.state.pending || !previous || previous[key] === value) return;
