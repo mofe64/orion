@@ -1,5 +1,6 @@
 """Constant-velocity Kalman tracks in base bearings, never camera pixels."""
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 import math
 
 import numpy as np
@@ -20,6 +21,26 @@ class Track:
     born_ns: int
     capture_ns: int
     face: object
+    mouth_history: deque = field(default_factory=lambda: deque(maxlen=32))
+
+    def record_mouth(self):
+        landmarks = np.asarray(self.face.landmarks, dtype=float)
+        axis = landmarks[1] - landmarks[0]
+        span = np.linalg.norm(axis)
+        if span < 1:
+            return
+        axis /= span
+        perpendicular = np.array([-axis[1], axis[0]])
+        relative = (landmarks[3:] - landmarks[:2].mean(axis=0)) / span
+        signature = np.column_stack((relative @ axis, relative @ perpendicular)).ravel()
+        self.mouth_history.append((self.capture_ns, signature))
+
+    def mouth_motion(self, since_ns, now_ns):
+        signatures = [value for stamp, value in self.mouth_history if since_ns <= stamp <= now_ns]
+        if len(signatures) < 2:
+            return 0.
+        # Spread is independent of sample count (3 Hz during voice, 10 Hz idle).
+        return float(np.linalg.norm(np.ptp(np.asarray(signatures), axis=0)))
 
     def observation(self, now_ns):
         x, y, width, height = self.face.box
@@ -85,16 +106,34 @@ class Tracker:
             correction[:, :2] -= gain
             track.covariance = correction @ covariance @ correction.T + gain @ noise @ gain.T
             track.capture_ns, track.face = stamp, faces[j]
+            track.record_mouth()
         for j, value in enumerate(measurements):
             if j not in used_faces and len(self.tracks) < 16:
                 self.tracks.append(Track(self.next_id, np.r_[value, 0., 0.],
                     np.diag([.01, .01, .5, .5]), stamp, stamp, faces[j]))
+                self.tracks[-1].record_mouth()
                 self.next_id += 1
         return [track for track in self.tracks if track.capture_ns == stamp]
 
     def observations(self, now_ns):
         return [track.observation(now_ns) for track in self.tracks
             if 0 <= now_ns - track.capture_ns <= MAX_AGE_NS]
+
+    def speaker(self, since_ns, now_ns):
+        if type(since_ns) is not int or since_ns < 0 or since_ns > now_ns + 50_000_000:
+            raise ValueError("Invalid speaker window timestamp")
+        since_ns = max(since_ns, now_ns - 3_000_000_000)
+        recent = [track for track in self.tracks if 0 <= now_ns - track.capture_ns <= MAX_AGE_NS]
+        moving = max(recent, key=lambda track: track.mouth_motion(since_ns, now_ns), default=None)
+        if moving and moving.mouth_motion(since_ns, now_ns) >= .025:
+            chosen, strategy = moving, "mouth_motion"
+        else:
+            frontal = [track for track in recent if track.face.looking_at_orion]
+            chosen = choose_track(frontal or recent)
+            strategy = "looking_at_orion" if frontal else "nearest" if chosen else "none"
+        return {"speaker": chosen.observation(now_ns) if chosen else None,
+            "strategy": strategy, "since_boottime_ns": since_ns,
+            "observed_boottime_ns": self.last_ns or None}
 
 
 def choose_track(tracks):

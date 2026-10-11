@@ -40,8 +40,14 @@ pub struct RestStatus {
 
 struct PendingAttention {
     session: String,
-    side: String,
+    target: AttentionTarget,
     expires_at: f64,
+}
+
+enum AttentionTarget {
+    Side(String),
+    Bearing(f64, f64),
+    Scan,
 }
 
 pub struct RestCoordinator {
@@ -143,7 +149,24 @@ impl RestCoordinator {
         if !matches!(self.state, RestState::Disabled | RestState::Fault) {
             self.attention = Some(PendingAttention {
                 session: session.into(),
-                side: side.into(),
+                target: AttentionTarget::Side(side.into()),
+                expires_at,
+            });
+        }
+    }
+
+    pub fn queue_bearing_attention(
+        &mut self,
+        session: &str,
+        bearing: Option<(f64, f64)>,
+        expires_at: f64,
+    ) {
+        if !matches!(self.state, RestState::Disabled | RestState::Fault) {
+            self.attention = Some(PendingAttention {
+                session: session.into(),
+                target: bearing.map_or(AttentionTarget::Scan, |(az, el)| {
+                    AttentionTarget::Bearing(az, el)
+                }),
                 expires_at,
             });
         }
@@ -305,7 +328,17 @@ impl RestCoordinator {
                     && now < attention.expires_at
                 {
                     // Direction is optional: refusal never prevents a valid voice turn.
-                    let _ = character.attend(&attention.side, 0.75, now, core);
+                    match attention.target {
+                        AttentionTarget::Side(side) => {
+                            let _ = character.attend(&side, 0.75, now, core);
+                        }
+                        AttentionTarget::Bearing(az, el) => {
+                            let _ = character.attend_bearing(Some((az, el)), now, core);
+                        }
+                        AttentionTarget::Scan => {
+                            let _ = character.attend_bearing(None, now, core);
+                        }
+                    }
                     let _ = character.set_reaction(feedback.reaction(), now, core);
                 }
             }

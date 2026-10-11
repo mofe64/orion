@@ -200,11 +200,25 @@ class SocketTests(unittest.TestCase):
         self.assertAlmostEqual(observations[0]['azimuth'], .2, places=12)
         np.testing.assert_allclose(observations[0]['box'], [100/320, 80/240, 40/320, 40/240])
         self.assertIsNone(self.vision.latest)  # Inference does not demand main RGB.
+        connection, response = self.request('/speaker?since_ns=0')
+        speaker = json.loads(response.read())
+        connection.close()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(speaker['speaker']['track_id'], observations[0]['track_id'])
+        self.assertEqual(speaker['strategy'], 'looking_at_orion')
+        for path in ('/speaker', '/speaker?since_ns=-1', '/speaker?since_ns=bad', '/speaker?since_ns=0&since_ns=1'):
+            connection, response = self.request(path)
+            self.assertEqual(response.status, 400)
+            response.read(); connection.close()
         self.preference.write_text('{"camera_enabled":false}')
         eventually(lambda: not self.vision.enabled and self.source.thread is None)
         eventually(lambda: not pipeline.enabled)
         self.assertEqual(pipeline.observations(), [])
         self.assertTrue(client.clear.called)
+        connection, response = self.request('/speaker?since_ns=0')
+        self.assertEqual(response.status, 503)
+        self.assertEqual(json.loads(response.read())['error']['code'], 'camera_off')
+        connection.close()
 
 
 class MetadataTests(unittest.TestCase):

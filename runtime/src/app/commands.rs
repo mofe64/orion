@@ -371,7 +371,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
     }
     if let Some(document) = command.strip_prefix("scene preview ") {
         if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.preempt_idle_or_thinking(now_seconds, core)?;
+            coordinator.preempt_for_foreground(now_seconds, core)?;
         }
         let context = asset_reload
             .ok_or_else(|| crate::Error::InvalidState("Scene preview is not configured.".into()))?;
@@ -411,7 +411,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
     }
     if let Some(name) = command.strip_prefix("scene start ") {
         if let Some(coordinator) = character.as_deref_mut() {
-            coordinator.preempt_idle_or_thinking(now_seconds, core)?;
+            coordinator.preempt_for_foreground(now_seconds, core)?;
         }
         let name = name.trim();
         if name.is_empty() || name.split_whitespace().count() != 1 {
@@ -472,7 +472,7 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
         if speech.is_active() {
             speech.cancel(audio)?;
         }
-        coordinator.preempt_idle_or_thinking(now_seconds, core)?;
+        coordinator.preempt_for_foreground(now_seconds, core)?;
         let response = core.handle_command(command, now_seconds);
         let accepted = serde_json::from_str::<serde_json::Value>(&response)
             .ok()
@@ -638,11 +638,55 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             return serde_json::json!({"ok": true, "voice": feedback}).to_string();
         }
         let parts: Vec<_> = fields.split_whitespace().collect();
-        if parts.len() < 2 || parts.len() > 3 {
+        if parts.len() < 2 || parts.len() > 5 {
             return serde_json::json!({"ok": false, "error": "Expected voice SESSION EVENT"})
                 .to_string();
         }
+        if matches!(parts[1], "attend_bearing" | "attend_scan") {
+            if !character.gaze_status().enabled {
+                return serde_json::json!({"ok":false,"error":"Visual attention requires --gaze on"}).to_string();
+            }
+            let parsed = (|| -> Result<(Option<(f64, f64)>, f64), &'static str> {
+                let (bearing, age) = match parts[1] {
+                    "attend_bearing" if parts.len() == 5 => {
+                        let az = parts[2].parse::<f64>().map_err(|_| "Invalid bearing")?;
+                        let el = parts[3].parse::<f64>().map_err(|_| "Invalid bearing")?;
+                        if !az.is_finite()
+                            || !el.is_finite()
+                            || az.abs() > std::f64::consts::PI
+                            || el.abs() > std::f64::consts::FRAC_PI_2
+                        {
+                            return Err("Invalid bearing");
+                        }
+                        (Some((az, el)), parts[4])
+                    }
+                    "attend_scan" if parts.len() == 3 => (None, parts[2]),
+                    _ => return Err("Expected attend_bearing AZ EL AGE_MS or attend_scan AGE_MS"),
+                };
+                let age = age.parse::<f64>().map_err(|_| "Invalid direction age")?;
+                if !age.is_finite() || age < 0.0 {
+                    return Err("Invalid direction age");
+                }
+                Ok((bearing, age))
+            })();
+            let (bearing, age) = match parsed {
+                Ok(value) => value,
+                Err(error) => return serde_json::json!({"ok":false,"error":error}).to_string(),
+            };
+            if feedback.owns(parts[0]) && feedback.confirmed_activity() && age < 3000.0 {
+                rest.queue_bearing_attention(
+                    parts[0],
+                    bearing,
+                    now_seconds + (3000.0 - age) / 1000.0,
+                );
+            }
+            return serde_json::json!({"ok":true}).to_string();
+        }
         if matches!(parts[1], "attend_left" | "attend_right") {
+            if parts.len() > 3 {
+                return serde_json::json!({"ok":false,"error":"Unexpected voice arguments"})
+                    .to_string();
+            }
             let age = parts.get(2).map_or(Ok(0.0), |value| value.parse::<f64>());
             let Ok(age) = age else {
                 return serde_json::json!({"ok": false, "error": "Invalid direction age"})

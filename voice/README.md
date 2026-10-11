@@ -68,8 +68,12 @@ baseline and opens the teal follow-up invitation.
 `--hardware v1` uses HAT capture routing. `--hardware v2` uses USB capture
 without HAT mixer commands; `--capture-channels 2|6` and `--processed-channel N`
 select the verified XVF3800 stream. The processed channel feeds the listener
-without averaging raw microphone channels. V2 attention uses calibrated USB beam
-observations when explicitly enabled; it defaults off. See [USB profile setup](../docs/hardware-versions.md#usb-capture-and-playback).
+without averaging raw microphone channels. V2 attention asks the local vision
+service after confirmed wake and requires runtime `--gaze on` plus fitted camera
+intrinsics. Camera-off or unavailable vision suppresses attention. `--vision-socket`
+defaults to `/tmp/orion-vision.sock`. See
+[visual speaker selection](../docs/voice-architecture.md#direction-evidence) and
+[USB profile setup](../docs/hardware-versions.md#usb-capture-and-playback).
 
 Microphone mute persists in `~/.config/orion/microphone.json`. The listener applies
 capture routing before opening ALSA, discards startup frames, reapplies gain after
@@ -79,8 +83,9 @@ startup interval before capture is ready.
 Set microphone overrides in `~/.config/orion/voice.env` and restart the listener.
 The [configuration reference](../docs/configuration.md#pi-runtime-and-listener)
 lists wake sensitivity, gain, VAD and direction settings. Direction estimation
-on V1 requires measured microphone spacing and channel orientation. V2 requires
-the measured mounting offset and sign; both default to unset.
+on V1 requires measured microphone spacing and channel orientation. Optional V2
+USB direction diagnostics require a measured mounting offset and sign; both
+default to unset. They do not steer V2 wake attention.
 
 ## Troubleshooting
 
@@ -244,6 +249,10 @@ explains why the new command can wait for the old agent turn to finish.
 
 ## Calibrate V2 attention
 
+V2 wake attention uses [camera calibration](../vision/README.md#face-calibration-and-tracking).
+The USB procedure below remains a diagnostic for the microphone beam; it does
+not enable speaker-facing movement.
+
 Keep processed channel 0. Fit the mounting with the base cover in its normal
 position: from about 1.5 m, record `dir-front`, `dir-left` and `dir-right` trials
 with `--expected-azimuth 0`, `90` and `270`, saying “Hey Orion” three times at
@@ -251,7 +260,7 @@ each position. Run `analyze` as above and copy its mounting `sign` and
 `offset_deg` into the [XVF listener settings](../docs/configuration.md#pi-runtime-and-listener).
 Set `ORION_XVF_DIRECTION=1` only after the positions separate clearly. If the
 cover collapses the positions into two beams, report that acoustic obstruction
-before enabling facing.
+before trusting the diagnostic direction.
 
 The poller reads auto-select beam 3 at 20 Hz without blocking capture. It converts
 board radians to lamp degrees with `wrap180(sign * (board_deg - offset_deg))`:

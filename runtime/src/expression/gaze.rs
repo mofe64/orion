@@ -145,6 +145,138 @@ impl GazeCoordinator {
         self.explicit_clear = true;
     }
 
+    /// One confirmed-wake turn. Its zero-offset settle is relative to an
+    /// immutable facing anchor; CharacterCoordinator installs the measured
+    /// anchor only after completion and owns the later conversational return.
+    pub(crate) fn attention_motion<D: RuntimeDriver>(
+        &self,
+        bearing: Option<(f64, f64)>,
+        previous: &JointPositions,
+        core: &RuntimeCore<D>,
+    ) -> Result<(MotionDefinition, JointPositions)> {
+        if !self.status.enabled {
+            return Err(Error::InvalidState(
+                "Visual attention requires --gaze on".into(),
+            ));
+        }
+        let limits = core.driver().joint_limits()?;
+        let start = core.driver().clamp_positions_to_safe_range(
+            &core
+                .snapshot()
+                .joints
+                .iter()
+                .map(|joint| (joint.name.clone(), joint.position))
+                .collect(),
+        )?;
+        let velocity: JointPositions = core
+            .snapshot()
+            .joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.velocity))
+            .collect();
+        let mut end = previous.clone();
+        let mut stages = Vec::with_capacity(3);
+        let name;
+        if let Some((azimuth, elevation)) = bearing {
+            if !azimuth.is_finite()
+                || !elevation.is_finite()
+                || azimuth.abs() > std::f64::consts::PI
+                || elevation.abs() > std::f64::consts::FRAC_PI_2
+            {
+                return Err(Error::InvalidArgument("Invalid attention bearing".into()));
+            }
+            let model = core
+                .camera_kinematics()
+                .ok_or_else(|| Error::InvalidState("Gaze kinematics unavailable".into()))?;
+            let (lower, upper) = bounds(&limits, "base_yaw_joint")?;
+            *end.get_mut("base_yaw_joint").unwrap() = azimuth.clamp(lower, upper);
+            // Preserve the existing voice-attention broad-turn refusal.
+            if (end["base_yaw_joint"] - start["base_yaw_joint"]).abs() > 0.65 {
+                return Err(Error::InvalidState(
+                    "Attention would require a broad turn from this pose.".into(),
+                ));
+            }
+            end = solve_aim(model, &end, azimuth, elevation, &limits)?.0;
+            let mut neck_first = start.clone();
+            for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+                *neck_first.get_mut(joint).unwrap() = previous[joint];
+            }
+            neck_first = solve_aim(model, &neck_first, azimuth, elevation, &limits)?.0;
+            stages.push(neck_first);
+            name = "gaze_attention";
+        } else {
+            let (lower, upper) = bounds(&limits, "head_roll_joint")?;
+            for direction in [-1.0, 1.0] {
+                let mut look = previous.clone();
+                *look.get_mut("head_roll_joint").unwrap() =
+                    (previous["head_roll_joint"] + direction * 0.18).clamp(lower, upper);
+                stages.push(look);
+            }
+            name = "gaze_look_around";
+        }
+        stages.push(end.clone());
+        let mut last = start.clone();
+        let keyframes = stages
+            .into_iter()
+            .map(|pose| {
+                let seconds = pose
+                    .iter()
+                    .map(|(joint, q)| 1.875 * (q - last[joint]).abs() / GAZE_BASE_SPEED_RAD_S)
+                    .fold(0.3_f64, f64::max);
+                last = pose.clone();
+                MotionKeyframe {
+                    pose_name: None,
+                    target: pose
+                        .iter()
+                        .map(|(joint, q)| (joint.clone(), q - end[joint]))
+                        .collect(),
+                    duration_seconds: seconds,
+                    arrival: KeyframeArrival::Settle,
+                    hold_seconds: 0.05,
+                    marker: None,
+                }
+            })
+            .collect();
+        let mut definition = MotionDefinition {
+            name: name.into(),
+            description: "One visual wake-attention decision; simulation_preview".into(),
+            space: MotionSpace::AnchorRelative,
+            return_to_anchor: true,
+            style: MotionStyle {
+                name: "return_home",
+                tempo: 1.0,
+                tangent_tension: 0.0,
+                joint_lag: 0.0,
+                amplitude: 1.0,
+                overshoot_scale: 0.0,
+                settle_character: 1.0,
+            },
+            keyframes,
+        };
+        for _ in 0..4 {
+            let scale = definition.uniform_amplitude_scale(&end, &limits)?;
+            let compiled = MotionSequence::compile_scaled_calibrated(
+                &definition,
+                start.clone(),
+                velocity.clone(),
+                None,
+                end.clone(),
+                scale,
+                &limits,
+            )?;
+            let peak = compiled.peak_velocity_rad_s();
+            if peak <= GAZE_BASE_SPEED_RAD_S * (1.0 + 1e-9) {
+                return Ok((definition, end));
+            }
+            for frame in &mut definition.keyframes {
+                frame.duration_seconds *= peak / GAZE_BASE_SPEED_RAD_S * 1.02;
+            }
+        }
+        Err(Error::InvalidState(
+            "Attention cannot meet the gaze speed cap".into(),
+        ))
+    }
+
     pub(crate) fn forget(&mut self) {
         self.target = None;
         self.status.track_id = None;
@@ -623,6 +755,123 @@ mod tests {
             category: Some("face".into()),
             range: None,
         }
+    }
+
+    #[test]
+    fn visual_attention_compiles_neck_first_and_preserves_measured_anchor_lifecycle() {
+        let (mut core, original, _) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0.0, &mut core).unwrap();
+        for tick in 1..=150 {
+            let now = tick as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        let previous = character.status().active_anchor.clone().unwrap();
+        let gaze = {
+            let mut gaze = GazeCoordinator::default();
+            gaze.set_enabled(true);
+            gaze
+        };
+        let (definition, facing) = gaze
+            .attention_motion(Some((0.4, 0.1)), &previous, &core)
+            .unwrap();
+        assert!(
+            definition
+                .keyframes
+                .last()
+                .unwrap()
+                .target
+                .values()
+                .all(|offset| *offset == 0.0)
+        );
+        let compiled = MotionSequence::compile_scaled_calibrated(
+            &definition,
+            original.clone(),
+            original.keys().map(|name| (name.clone(), 0.0)).collect(),
+            None,
+            facing,
+            1.0,
+            &physical_limits(),
+        )
+        .unwrap();
+        let early = compiled.sample(0.2).unwrap();
+        assert!(early["head_roll_joint"].abs() > early["base_yaw_joint"].abs() + 0.01);
+        assert!(compiled.peak_velocity_rad_s() <= GAZE_BASE_SPEED_RAD_S * (1.0 + 1e-9));
+        character
+            .attend_bearing(Some((0.4, 0.1)), 3.0, &mut core)
+            .unwrap();
+        assert_eq!(character.status().active_anchor.as_ref(), Some(&previous));
+        for tick in 151..=500 {
+            let now = tick as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        let facing = character.status().active_anchor.clone().unwrap();
+        let bearing = Bearing::from_direction(
+            core.camera_kinematics()
+                .unwrap()
+                .fk(&facing)
+                .unwrap()
+                .camera
+                .rotate_vector([0., 0., 1.]),
+        );
+        assert!((bearing.azimuth - 0.4).abs() < 0.01);
+        assert!((bearing.elevation - 0.1).abs() < 0.01);
+        character.set_reaction("neutral", 10.0, &mut core).unwrap();
+        for tick in 501..=1500 {
+            let now = tick as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        assert_eq!(character.status().active_anchor.as_ref(), Some(&previous));
+        assert!(
+            gaze.attention_motion(Some((1.0, 0.0)), &previous, &core)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn no_face_scan_is_one_bounded_calibrated_run_returning_to_its_anchor() {
+        let (mut core, anchor, _) = following();
+        let mut gaze = GazeCoordinator::default();
+        assert!(gaze.attention_motion(None, &anchor, &core).is_err());
+        gaze.set_enabled(true);
+        let (definition, end) = gaze.attention_motion(None, &anchor, &core).unwrap();
+        assert_eq!(end, anchor);
+        assert_eq!(definition.keyframes.len(), 3);
+        assert_eq!(definition.name, "gaze_look_around");
+        core.play_generated_anchored_relative(definition, end, 0.0)
+            .unwrap();
+        for tick in 1..=200 {
+            core.tick(tick as f64 * 0.02).unwrap();
+        }
+        assert_eq!(
+            core.snapshot().last_motion.as_ref().unwrap().state,
+            crate::MovementPhase::Completed
+        );
+        for joint in &core.snapshot().joints {
+            assert!((joint.position - anchor[&joint.name]).abs() < 1e-8);
+        }
+        assert!(
+            core.driver()
+                .writes
+                .iter()
+                .any(|q| q["head_roll_joint"] < -0.1)
+        );
+        assert!(
+            core.driver()
+                .writes
+                .iter()
+                .any(|q| q["head_roll_joint"] > 0.1)
+        );
     }
     fn advance<D: RuntimeDriver>(
         gaze: &mut GazeCoordinator,

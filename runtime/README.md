@@ -533,10 +533,20 @@ movement leaves character off; the terminal movement remains visible in status.
 The Pi listener sends `voice SESSION verify` before the short wake prefix ASR
 pass; recording continues while verification runs. It sends
 `voice SESSION confirmed` after ASR accepts the wake and
-waits for its acknowledgement. If direction is known with confidence at least
+waits for its acknowledgement. On V1, if direction is known with confidence at least
 0.75, it may then send `voice SESSION attend_left AGE_MS` or `attend_right AGE_MS`.
 The rest coordinator waits for home and checks that the observation is still
 younger than three seconds before requesting attention.
+
+On V2 the listener asks local vision for a speaker, then sends
+`voice SESSION attend_bearing AZ EL AGE_MS`. This requires `--gaze on`, finite
+base-frame radians, and the current confirmed session. The same three-second
+age rule includes command-queue and homing delay. Gaze compiles a neck-first
+turn, and successful measured completion captures the temporary facing anchor.
+The existing broad-base-turn guard and scene/speech/Stop priority apply.
+`voice SESSION attend_scan AGE_MS` makes one short calibrated neck sweep when
+the camera reports no face. Camera-off or unavailable vision sends no attention.
+See [speaker selection and freshness](../docs/voice-architecture.md#direction-evidence).
 
 The lower-level `character attend left CONFIDENCE` and `character attend right
 CONFIDENCE` commands remain available for explicit attention requests. They

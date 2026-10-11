@@ -90,6 +90,7 @@ The service runs as the Pi user with supplementary group `video`, `Nice=10`,
 | `/frame.jpg` | Latest main frame resized to 640×360; timestamp in `X-Capture-Boottime-Ns` |
 | `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
 | `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
+| `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window |
 
 JPEGs are encoded on demand and cached across viewers at at most 15 fps.
 Disconnected viewers cause encoding to stop. Capture converts RGB only while
@@ -183,6 +184,19 @@ confidence, frontality, normalized `box`, `box_pixels`, five pixel landmarks,
 and `image_size`. Health includes detection rate, drops and error. Missing or
 invalid intrinsics/model leave streaming available with detection unavailable.
 Override paths with `--intrinsics`, `--face-model`, and `--runtime-socket`.
+
+`/speaker` accepts one nonnegative `since_ns` in `CLOCK_BOOTTIME`, rejects
+timestamps more than 50 ms ahead, and bounds history to three seconds/32 samples
+per track. It returns `speaker` (an observation or null), `strategy`
+(`mouth_motion`, `looking_at_orion`, `nearest`, or `none`), the bounded
+`since_boottime_ns`, and `observed_boottime_ns`. Only observations younger than
+one second participate. Mouth movement is normalized to the eyes; insufficient
+movement falls back to frontality and face area. Area is a distance proxy.
+Missing detection resources return 503 `detection_unavailable`; privacy off
+returns 503 `camera_off` and purges the mouth history too. See
+[wake attention](../docs/voice-architecture.md#direction-evidence) for ownership,
+freshness and movement behavior. Multi-person speaker selection needs lamp
+validation; mouth-corner jitter and head turns can confuse the heuristic.
 
 Hardware acceptance remains unverified: walk slowly across the room and record
 neck-first tracking for review. Repeat identical-audio P0 ASR trials with the

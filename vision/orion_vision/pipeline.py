@@ -66,6 +66,10 @@ class FacePipeline:
             return {"rate_hz": self.rate_hz, "inferences": self.inferences,
                 "dropped_frames": self.dropped, "error": self.error}
 
+    def speaker(self, since_ns):
+        with self.changed:
+            return self.tracker.speaker(since_ns, self.boot_clock())
+
     def _run(self):
         next_inference = 0.
         last_inference = None

@@ -37,12 +37,10 @@ control connections can read or change mute.
 
 Capture arrives as 20 ms stereo frames at 16 kHz. The listener estimates direction
 before downmixing to mono and retains three seconds of audio in memory. On V2,
-processed channel 0 supplies mono capture; optional calibrated XVF3800 direction
-reads run in a separate 20 Hz daemon thread. Only beam-3 samples above the energy
-threshold vote. At least five votes in three seconds and 75% agreement are needed;
-the first supporting vote supplies the evidence age. Missing calibration or a
-USB failure suppresses attention without affecting capture. See
-[V2 calibration](../voice/README.md#calibrate-v2-attention). When
+processed channel 0 supplies mono capture, and confirmed wakes request visual
+speaker evidence from the local vision service. The optional XVF3800 direction
+poller remains available for diagnostics; V2 wake attention uses vision. V1
+retains stereo left/right evidence. When
 Rustpotter detects a candidate, the listener assigns a random session ID and
 notifies the coordinator. With acoustic verification, runtime wake feedback
 starts only after acceptance.
@@ -365,18 +363,52 @@ software measurement; acoustic timing requires a recording at the speaker.
 
 ## Direction evidence
 
-On V1 the listener keeps at most 30 accepted stereo observations; on V2 the
-optional USB poller keeps at most 64 beam samples from the preceding three
-seconds. A known side requires at least five votes and 75% agreement.
-Confidence describes agreement between those observations. Microphone spacing
-and channel orientation default to zero on V1. V2 direction defaults off and
-requires a measured mounting offset and sign. Barge-in sessions never turn.
+On V1 the listener keeps at most 30 accepted stereo observations. A known side
+requires at least five votes and 75% agreement. Confidence describes agreement
+between those observations; microphone spacing and channel orientation default
+to zero. `attend_left` and `attend_right` retain their existing behavior.
+
+On V2, after the runtime acknowledges `voice SESSION confirmed`, the listener
+asks the user-only vision Unix socket `GET /speaker?since_ns=…`. The window
+begins two seconds before the wake candidate and uses `CLOCK_BOOTTIME`, matching
+camera captures. The request times out after 300 ms and transfers metadata only.
+Capture continues in its own task. A conversation requests visual attention
+once; duplicate confirmations cannot repeat it. Barge-in sessions never turn.
+
+Vision keeps at most 32 mouth signatures per track and examines up to three
+seconds. Each signature expresses the mouth corners relative to the eye centre,
+eye separation and eye axis, reducing image translation, scale and rotation.
+It selects the face with the largest signature change, above a 0.025 normalized
+spread threshold. With insufficient motion it selects the largest frontal face,
+then the largest face as a nearest-face proxy. YuNet mouth corners provide a
+heuristic, not a speech or lip-opening measurement. Speaker selection on the
+lamp remains unverified. See [vision setup and calibration](../vision/README.md#face-calibration-and-tracking).
+
+The listener sends `voice SESSION attend_bearing AZ EL AGE_MS`, with base
+azimuth/elevation in radians and age computed from the selected capture. Queue
+delay is added before delivery. `--gaze on` is required; the runtime ignores
+unconfirmed, retired or non-owning sessions. The rest coordinator checks the
+same three-second expiry again after measured home completion. The gaze FK
+solver creates a neck-first calibrated trajectory and a zero-offset settle at
+an immutable facing anchor. The existing 0.65-radian broad-base-turn refusal
+still applies. Only successful measured completion installs that temporary
+anchor; the existing conversation hold and return restore the saved anchor.
+Scenes, speech, Stop and unavailable character states retain priority.
+
+A working camera with no recent face sends `voice SESSION attend_scan AGE_MS`.
+Gaze compiles one small neck sweep and settles to the original anchor, then
+gives up for that conversation. Camera-off, missing intrinsics/model, unavailable
+vision and stale responses produce no attention command. V2 does not use
+acoustic direction as a fallback. `--vision-socket` defaults to
+`/tmp/orion-vision.sock`. No wake/verifier thresholds, XVF processing or existing
+motion assets change.
 
 The age of the oldest supporting vote travels with the side after confirmation.
 Time spent waiting in the command queue and homing also counts. The runtime checks
 that the evidence remains younger than three seconds before starting attention.
 Stale evidence leaves Orion facing home and lets the voice turn continue. Physical
-calibration is required before enabling direction estimates.
+calibration is required before enabling V1 direction estimates; V2 requires
+fitted camera intrinsics and lamp validation of speaker selection.
 
 ## Streaming replies and timing
 

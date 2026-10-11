@@ -8,6 +8,7 @@ from collections import deque
 import hmac
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -32,6 +33,76 @@ ECHO_GUARD_LIMIT_SECONDS = 2.0
 FOLLOWUP_ONSET_MS = 180
 WAKE_PREFIX_BYTES = 2 * 32000
 WAKE_PREFIX_TAIL_MS = 200
+
+
+def boottime_ns():
+    """Same suspend-aware clock as camera captures and runtime pose history."""
+    if hasattr(time, "CLOCK_BOOTTIME"):
+        return time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    import ctypes
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+    library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    library.mach_continuous_time.restype = ctypes.c_uint64
+    scale = Timebase()
+    library.mach_timebase_info(ctypes.byref(scale))
+    return library.mach_continuous_time() * scale.numer // scale.denom
+
+
+def age_attention_command(command, elapsed_seconds):
+    fields = command.split()
+    if ((len(fields) == 4 and fields[2] in {"attend_left", "attend_right", "attend_scan"})
+            or (len(fields) == 6 and fields[2] == "attend_bearing")):
+        fields[-1] = str(float(fields[-1]) + elapsed_seconds * 1000)
+        return " ".join(fields)
+    return command
+
+
+async def visual_attention(path, since_ns, clock=boottime_ns):
+    """Optional bounded local metadata query; never requests or transfers frames."""
+    writer = None
+    try:
+        async with asyncio.timeout(.3):
+            reader, writer = await asyncio.open_unix_connection(str(path), limit=4096)
+            writer.write(f"GET /speaker?since_ns={since_ns} HTTP/1.0\r\nHost: localhost\r\n\r\n".encode())
+            await writer.drain()
+            status = (await reader.readline()).split()
+            if len(status) < 2 or status[1] != b"200":
+                return None
+            headers = {}
+            total = 0
+            while (line := await reader.readline()) != b"\r\n":
+                total += len(line)
+                if not line or total > 4096:
+                    raise ValueError("Invalid vision headers")
+                key, value = line.decode().split(":", 1)
+                headers[key.lower()] = value.strip()
+            length = int(headers.get("content-length", "0"))
+            if not 0 < length <= 65536:
+                raise ValueError("Invalid vision response length")
+            value = json.loads(await reader.readexactly(length))
+            speaker = value["speaker"]
+            stamp = speaker["capture_boottime_ns"] if speaker else value.get("observed_boottime_ns")
+            if type(stamp) is not int:
+                return None
+            age_ms = (clock() - stamp) / 1e6
+            if not -50 <= age_ms < 3000:
+                return None
+            age_ms = max(0., age_ms)
+            if speaker is None:
+                return f"attend_scan {age_ms:.3f}"
+            azimuth, elevation = speaker["azimuth"], speaker["elevation"]
+            if (not math.isfinite(azimuth) or not math.isfinite(elevation)
+                    or abs(azimuth) > math.pi or abs(elevation) > math.pi/2):
+                return None
+            return f"attend_bearing {azimuth:.9f} {elevation:.9f} {age_ms:.3f}"
+    except (OSError, ValueError, KeyError, TypeError, asyncio.TimeoutError, asyncio.IncompleteReadError):
+        return None
+    finally:
+        if writer is not None:
+            writer.close()
+            with suppress(OSError, asyncio.TimeoutError):
+                await asyncio.wait_for(writer.wait_closed(), .05)
 
 
 class SatelliteSession:
@@ -77,6 +148,8 @@ class SatelliteSession:
         self.expires_at = float("inf")
         self.observation = {"side": "unknown", "confidence": 0.0}
         self.observed_at = float("-inf")
+        self.wake_since_ns = 0
+        self.visual_attention_requested = False
         self.quiet_ms = 0
         self.onset_ms = 0
         self.guard_started = 0.0
@@ -187,6 +260,8 @@ class SatelliteSession:
         candidate_phase = self.phase
         self.session_id = uuid.uuid4().hex
         self.phase = "wake"
+        self.wake_since_ns = max(0, boottime_ns() - 2_000_000_000)
+        self.visual_attention_requested = False
         config = EndpointConfig(speech_rms=self.noise.threshold())
         self.endpoint = self.endpoint_factory(config)
         self.followup_endpoint = self.endpoint_factory(config)
@@ -517,10 +592,7 @@ async def serve(args):
         while True:
             command, receipt, queued_at = await feedback.get()
             if receipt is not None and receipt.cancelled(): continue
-            fields = command.split()
-            if len(fields) == 4 and fields[2] in {'attend_left', 'attend_right'}:
-                fields[3] = str(float(fields[3]) + (time.monotonic() - queued_at) * 1000)
-                command = ' '.join(fields)
+            command = age_attention_command(command, time.monotonic() - queued_at)
             try:
                 result = await daemon_command(command, args.daemon_socket)
                 if receipt is not None and not receipt.done(): receipt.set_result(result)
@@ -541,7 +613,12 @@ async def serve(args):
         await confirm_activity(identity)
         side, confidence = observation["side"], observation["confidence"]
         direction_age = session.clock() - observed_at
-        if not skip_attention and 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
+        if not skip_attention and hardware == "v2" and session.session_id == identity and not session.visual_attention_requested:
+            session.visual_attention_requested = True
+            attention = await visual_attention(getattr(args, "vision_socket", "/tmp/orion-vision.sock"), session.wake_since_ns)
+            if attention is not None and session.session_id == identity:
+                expression(attention, identity)
+        elif not skip_attention and hardware == "v1" and 0 <= direction_age < 3.0 and side in {"left", "right"} and confidence >= 0.75:
             expression(f"attend_{side} {direction_age * 1000:.3f}", identity)
         if followup: expression("followup", identity)
 
@@ -882,6 +959,7 @@ def main():
     parser.add_argument("--xvf-front-half-width-deg", type=float, default=os.environ.get("ORION_XVF_FRONT_HALF_WIDTH_DEG", "30"))
     parser.add_argument("--xvf-min-energy", type=float, default=os.environ.get("ORION_XVF_MIN_ENERGY", "0"))
     parser.add_argument("--daemon-socket", default="/tmp/oriond.sock")
+    parser.add_argument("--vision-socket", default="/tmp/orion-vision.sock")
     args = parser.parse_args()
     if not 0 < args.threshold <= 1:
         parser.error("--threshold must be in (0, 1]")

@@ -126,6 +126,40 @@ class FakeRuntime(socketserver.UnixStreamServer):
 
 
 class TrackerTests(unittest.TestCase):
+    def test_speaker_uses_relative_mouth_motion_then_frontality_then_nearest(self):
+        tracker = Tracker()
+        bearings = [{'azimuth': -.2, 'elevation': 0}, {'azimuth': .2, 'elevation': 0}]
+        tracks = tracker.update(1_000_000_000, [face(size=30), face(size=80, frontal=False)], bearings)
+        first_id, second_id = [track.id for track in tracks]
+        moved = face(size=80, frontal=False)
+        moved.landmarks[3][1] += 4
+        moved.landmarks[4][1] += 4
+        tracker.update(1_100_000_000, [face(size=30), moved], bearings)
+        result = tracker.speaker(900_000_000, 1_150_000_000)
+        self.assertEqual((result['strategy'], result['speaker']['track_id']), ('mouth_motion', second_id))
+        # A window after the movement has no mouth evidence.
+        result = tracker.speaker(1_100_000_000, 1_150_000_000)
+        self.assertEqual((result['strategy'], result['speaker']['track_id']), ('looking_at_orion', first_id))
+        tracks[0].face = face(size=30, frontal=False)
+        result = tracker.speaker(1_100_000_000, 1_150_000_000)
+        self.assertEqual((result['strategy'], result['speaker']['track_id']), ('nearest', second_id))
+        self.assertIsNone(tracker.speaker(0, 3_000_000_000)['speaker'])
+        with self.assertRaises(ValueError):
+            tracker.speaker(4_000_000_000, 3_000_000_000)
+
+    def test_speaker_ignores_translation_scale_and_image_rotation_and_clears_privately(self):
+        tracker = Tracker()
+        original = face()
+        tracker.update(1_000_000_000, [original], [{'azimuth': .1, 'elevation': 0}])
+        rotated = face()
+        matrix = np.array([[math.cos(.3), -math.sin(.3)], [math.sin(.3), math.cos(.3)]])
+        rotated.landmarks = (np.asarray(original.landmarks) @ matrix.T * 1.4 + [10, 20]).tolist()
+        tracker.update(1_100_000_000, [rotated], [{'azimuth': .1, 'elevation': 0}])
+        self.assertLess(tracker.tracks[0].mouth_motion(0, 1_100_000_000), 1e-12)
+        self.assertNotEqual(tracker.speaker(0, 1_100_000_000)['strategy'], 'mouth_motion')
+        tracker.clear()
+        self.assertIsNone(tracker.speaker(0, 1_100_000_000)['speaker'])
+
     def test_ids_survive_head_turn_using_capture_time_socket_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             server = FakeRuntime(Path(directory) / 'runtime.sock')

@@ -242,6 +242,8 @@ pub struct CharacterStatus {
 /// Attention tracks a temporary decision to face a speaker.
 #[derive(Debug)]
 struct Attention {
+    /// Visual attention is lower priority than explicit foreground movement.
+    visual: bool,
     /// The anchor to restore after the attention period ends.
     previous: JointPositions,
     /// The currently tracked attention movement, either the outward turn or the return.
@@ -591,6 +593,7 @@ impl CharacterCoordinator {
         // we track the previous anchor, the run id, and the deadline for 2 minutes
         // returning is false, as we are starting a new attention run
         self.attention = Some(Attention {
+            visual: false,
             previous,
             run_id: Some(run_id),
             returning: false,
@@ -604,6 +607,71 @@ impl CharacterCoordinator {
         self.status.active_clip = Some(format!("attention_{side}"));
         self.reset_timers(now);
         // return copy of the updated status
+        Ok(self.status.clone())
+    }
+
+    /// Apply one V2 visual attention decision through the gaze compiler. The
+    /// existing attention lifecycle owns settle, conversation hold and return.
+    pub fn attend_bearing<D: RuntimeDriver>(
+        &mut self,
+        bearing: Option<(f64, f64)>,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<CharacterStatus> {
+        if !self.gaze.status().enabled {
+            return Err(Error::InvalidState(
+                "Visual attention requires --gaze on".into(),
+            ));
+        }
+        let owns_gaze = self.gaze.status().run_id.is_some_and(|id| {
+            core.snapshot()
+                .motion
+                .as_ref()
+                .is_some_and(|motion| motion.run_id == id)
+        });
+        if !self.status.enabled
+            || self.starting_run_id.is_some()
+            || self.foreground_pending
+            || self.foreground_scene_run_id.is_some()
+            || self.speech_motion_run_id.is_some()
+            || !matches!(
+                self.status.state,
+                CharacterState::HomeIdle
+                    | CharacterState::PoseIdle
+                    | CharacterState::Listening
+                    | CharacterState::Thinking
+            )
+            || (core.mode() == RuntimeMode::Moving
+                && self.active_idle_run_id.is_none()
+                && self.thinking_run.is_none()
+                && !owns_gaze)
+        {
+            return Err(Error::InvalidState(
+                "Attention requires an available powered character.".into(),
+            ));
+        }
+        if self.attention.is_some() {
+            return Ok(self.status.clone());
+        }
+        let previous = self
+            .status
+            .active_anchor
+            .clone()
+            .ok_or_else(|| Error::InvalidState("Attention needs an anchor.".into()))?;
+        let (definition, facing) = self.gaze.attention_motion(bearing, &previous, core)?;
+        let name = definition.name.clone();
+        self.preempt_idle_or_thinking(now, core)?;
+        let run_id = core.play_generated_anchored_relative(definition, facing, now)?;
+        self.attention = Some(Attention {
+            visual: true,
+            previous,
+            run_id: Some(run_id),
+            returning: false,
+            expires_at: now + 120.0,
+        });
+        self.status.state = CharacterState::Listening;
+        self.status.active_clip = Some(name);
+        self.reset_timers(now);
         Ok(self.status.clone())
     }
 
@@ -904,6 +972,37 @@ impl CharacterCoordinator {
         // Forget which idle schedule this run belonged to.
         self.active_idle_category = None;
         Ok(())
+    }
+
+    /// Foreground commands cancel only their lower-priority owned visual turn.
+    /// Legacy authored attention keeps its existing behavior.
+    pub fn preempt_for_foreground<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<()> {
+        if self
+            .attention
+            .as_ref()
+            .is_some_and(|attention| attention.visual)
+        {
+            if self
+                .attention
+                .as_ref()
+                .and_then(|attention| attention.run_id)
+                .is_some_and(|id| {
+                    core.snapshot()
+                        .motion
+                        .as_ref()
+                        .is_some_and(|motion| motion.run_id == id)
+                })
+            {
+                checked(core.handle_command("stop", now))?;
+            }
+            self.attention = None;
+            self.status.active_clip = None;
+        }
+        self.preempt_idle_or_thinking(now, core)
     }
 
     /// Records that the caller has started a direct foreground movement.

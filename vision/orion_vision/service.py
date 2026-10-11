@@ -12,6 +12,7 @@ import stat
 from http.server import BaseHTTPRequestHandler
 from threading import Condition, Event, Lock, Semaphore, Thread
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 import simplejpeg
@@ -254,6 +255,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, body)
             if self.path == "/observations":
                 return self.respond(200, vision.pipeline.observations() if vision.pipeline else [])
+            if urlsplit(self.path).path == "/speaker":
+                if not vision.pipeline:
+                    return self.respond(503, {"error": {"code": "detection_unavailable"}})
+                try:
+                    query = parse_qs(urlsplit(self.path).query, strict_parsing=True)
+                    if set(query) != {"since_ns"} or len(query["since_ns"]) != 1:
+                        raise ValueError("Expected one since_ns timestamp")
+                    since_ns = int(query["since_ns"][0])
+                    result = vision.pipeline.speaker(since_ns)
+                except (ValueError, KeyError) as error:
+                    return self.respond(400, {"error": {"code": "invalid_window", "message": str(error)}})
+                return self.respond(200, result)
             if self.path not in ("/frame.jpg", "/stream"):
                 return self.respond(404, {"error": {"code": "not_found"}})
             with vision.viewing(snapshot=self.path == "/frame.jpg"):
