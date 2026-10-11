@@ -236,6 +236,9 @@ pub struct CameraGeometry {
 }
 
 impl CameraGeometry {
+    pub fn now_ns(&self) -> Option<u64> {
+        self.clock.now_ns()
+    }
     /// Load once at startup. Neither recording nor querying reads the URDF.
     pub fn load(path: impl AsRef<Path>, clock: Box<dyn BoottimeClock>) -> Result<Self> {
         Ok(Self {

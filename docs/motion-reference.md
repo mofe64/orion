@@ -54,6 +54,29 @@ Every complete position map uses exactly these five names, in radians:
 The order is the canonical `ORION_JOINT_NAMES` order used by calibration,
 drivers, state snapshots, Studio, and MuJoCo.
 
+## Bearing gaze tuning
+
+V2 gaze defaults off. `runtime/src/expression/gaze.rs` defines these tuning
+values; they change gaze character, never calibration or the motor ceiling:
+
+| Value | Setting |
+| --- | --- |
+| Centre/target deadband | 4° |
+| Maximum extension frequency | 10 Hz |
+| Neck lead before base catch-up | 200 ms |
+| Base yaw cap | 1.5 rad/s |
+| Neck swivel cap | 2.5 rad/s |
+| Base catch-up planning speed | 0.6 rad/s |
+| Target freshness | 1 second in CLOCK_BOOTTIME |
+
+The existing compiler previews each plan with a conservative shared peak
+ceiling of 1.5 rad/s, including anchor return. A fixed-budget FK solve chooses
+the nearer calibrated limit for unreachable bearings. Each generated
+`simulation_preview` performance contains an aim/hold and a zero-offset
+settle; shoulder and elbow retain their anchor-relative zero offsets.
+The neck counter-rotation is a starting guess for FK, not a bearing-to-angle
+conversion. Lamp tuning and physical acceptance remain unverified.
+
 ## Pose schema
 
 ```yaml

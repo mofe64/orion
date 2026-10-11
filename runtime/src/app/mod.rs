@@ -194,6 +194,23 @@ mod tests {
     }
 
     #[test]
+    fn gaze_is_default_off_and_opt_in_requires_a_v2_server() {
+        assert!(!parse(&["--serve", "--hardware", "v2"]).unwrap().gaze_on);
+        assert!(
+            parse(&["--serve", "--hardware", "v2", "--gaze", "on"])
+                .unwrap()
+                .gaze_on
+        );
+        for args in [
+            vec!["--serve", "--gaze", "on"],
+            vec!["--status", "--hardware", "v2", "--gaze", "on"],
+            vec!["--serve", "--hardware", "v2", "--gaze", "sometimes"],
+        ] {
+            assert!(parse(&args).is_err());
+        }
+    }
+
+    #[test]
     fn experimental_gains_are_opt_in_and_isolate_one_arm() {
         let defaults = make_orion_servo_profiles();
         let ordinary = parse(&["--serve"]).unwrap();

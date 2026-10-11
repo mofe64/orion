@@ -154,6 +154,34 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
         })?;
         return Ok(serde_json::to_string(&core.camera_rays(request)?)?);
     }
+    if command == "gaze status" || command == "gaze clear" {
+        let coordinator = character
+            .as_deref_mut()
+            .ok_or_else(|| crate::Error::InvalidState("Character is unavailable".into()))?;
+        if command == "gaze clear" {
+            coordinator.clear_gaze();
+        }
+        return Ok(serde_json::json!({"ok":true,"gaze":coordinator.gaze_status()}).to_string());
+    }
+    if let Some(arguments) = command.strip_prefix("gaze target ") {
+        let target = serde_json::from_str(arguments).map_err(|error| {
+            crate::Error::InvalidArgument(format!("Invalid gaze target JSON: {error}"))
+        })?;
+        let coordinator = character
+            .as_deref_mut()
+            .ok_or_else(|| crate::Error::InvalidState("Character is unavailable".into()))?;
+        if (scenes.is_active() || speech.is_active()) && coordinator.gaze_status().enabled {
+            return Ok(
+                serde_json::json!({"ok":true,"accepted":false,"gaze":coordinator.gaze_status()})
+                    .to_string(),
+            );
+        }
+        let accepted = coordinator.queue_gaze_target(target, now_seconds, core)?;
+        return Ok(
+            serde_json::json!({"ok":true,"accepted":accepted,"gaze":coordinator.gaze_status()})
+                .to_string(),
+        );
+    }
     if command == "character status" {
         let status = character.as_deref().map(CharacterCoordinator::status);
         return Ok(serde_json::json!({"ok": true, "character": status}).to_string());
@@ -692,6 +720,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
         feedback.clear();
         if matches!(command, "stop" | "disable") {
+            // The core command owns cancellation. Neutral must not cancel the
+            // gaze run first and turn a successful Stop into "no movement".
+            character.forget_gaze_for_external_stop();
             let _ = character.set_reaction("neutral", now_seconds, core);
         }
         if !speech.is_active() && !scenes.is_active() {

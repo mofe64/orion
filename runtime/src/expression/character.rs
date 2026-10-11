@@ -258,6 +258,7 @@ struct Attention {
 /// and it persists info into its fields between ticks so we can track the character's state over time.
 #[derive(Debug)]
 pub struct CharacterCoordinator {
+    gaze: super::gaze::GazeCoordinator,
     /// Character state we expose to other parts of the application.
     status: CharacterStatus,
 
@@ -379,6 +380,7 @@ impl CharacterCoordinator {
     /// Fields are initialized to their default values, ready for the first tick.
     pub fn new(seed: u64) -> Self {
         Self {
+            gaze: super::gaze::GazeCoordinator::default(),
             status: CharacterStatus {
                 enabled: false,
                 state: CharacterState::Off,
@@ -423,6 +425,59 @@ impl CharacterCoordinator {
     /// Resets the character's attention state, clearing any active attention movement.
     pub fn clear_attention(&mut self) {
         self.attention = None;
+        self.gaze.clear();
+    }
+
+    pub fn set_gaze_enabled(&mut self, enabled: bool) {
+        self.gaze.set_enabled(enabled);
+    }
+    pub fn gaze_status(&self) -> super::gaze::GazeStatus {
+        self.gaze.status()
+    }
+    pub fn clear_gaze(&mut self) {
+        self.gaze.clear();
+    }
+    pub(crate) fn forget_gaze_for_external_stop(&mut self) {
+        self.gaze.forget();
+    }
+    pub fn queue_gaze_target<D: RuntimeDriver>(
+        &mut self,
+        target: super::gaze::GazeTarget,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<bool> {
+        if !self.gaze.status().enabled {
+            return Err(Error::InvalidState("Gaze requires --gaze on".into()));
+        }
+        if !self.status.enabled
+            || self.starting_run_id.is_some()
+            || self.foreground_pending
+            || self.foreground_scene_run_id.is_some()
+            || self.speech_motion_run_id.is_some()
+            || self.attention.is_some()
+            || !matches!(
+                self.status.state,
+                CharacterState::HomeIdle
+                    | CharacterState::PoseIdle
+                    | CharacterState::Listening
+                    | CharacterState::Thinking
+            )
+        {
+            return Ok(false);
+        }
+        // Validate before preempting lower-priority work. Replacing the one
+        // queued target must not cancel an existing gaze spline.
+        self.gaze.queue(target, now, core)?;
+        if self.active_idle_run_id.is_some() || self.thinking_run.is_some() {
+            if core.mode() == RuntimeMode::Moving {
+                checked(core.handle_command("stop", now))?;
+            }
+            self.active_idle_run_id = None;
+            self.active_idle_category = None;
+            self.thinking_run = None;
+            self.status.active_clip = None;
+        }
+        Ok(true)
     }
 
     /// Starts an authored turn toward a supplied left/right speaker direction.
@@ -831,6 +886,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
+        self.gaze.yield_to_priority(now, core);
         // if we have an active idle or thinking run, and the runtime is still moving,
         // send a stop command to cancel the movement
         if (self.active_idle_run_id.is_some() || self.thinking_run.is_some())
@@ -949,6 +1005,7 @@ impl CharacterCoordinator {
     ) -> Result<()> {
         // no character processing if character mode is not enabled
         if !self.status.enabled {
+            self.gaze.yield_to_priority(now, core);
             return Ok(());
         }
 
@@ -987,6 +1044,7 @@ impl CharacterCoordinator {
         // if a scene is active, we set the state to foreground scene and return
         // A scene is running. Report that activity and leave character movement decisions alone for this tick.
         if scene_active {
+            self.gaze.yield_to_priority(now, core);
             self.status.state = CharacterState::ForegroundScene;
             return Ok(());
         }
@@ -1095,6 +1153,7 @@ impl CharacterCoordinator {
 
         // if speech is currently playing
         if speech_active {
+            self.gaze.yield_to_priority(now, core);
             // if we aren't already in speaking state, we capture our current anchor if we don't have one,
             // update the state to speaking, and clear our speech motion flag, this flag prevents speech animation start attempt
             if self.status.state != CharacterState::Speaking {
@@ -1221,6 +1280,18 @@ impl CharacterCoordinator {
             self.status.active_clip = None;
             self.status.state = self.idle_state();
             self.reset_timers(now);
+        }
+
+        if !self.foreground_pending
+            && self.attention.is_none()
+            && let Some(anchor) = self.status.active_anchor.clone()
+            && self.gaze.tick(now, &anchor, core)
+        {
+            self.status.active_clip = Some("gaze_performance".into());
+            return Ok(());
+        }
+        if self.status.active_clip.as_deref() == Some("gaze_performance") {
+            self.status.active_clip = None;
         }
 
         // if we have a tracked thinking run, we check to see if we have a terminal result

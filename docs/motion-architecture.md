@@ -118,7 +118,7 @@ the [automatic rest coordinator](system-architecture.md#automatic-rest-and-wakin
 1. Shutdown, cancellation and torque release.
 2. An explicit foreground scene or motion.
 3. Speech.
-4. Listening or thinking reactions.
+4. Voice attention, bearing gaze, and listening or thinking reactions.
 5. Autonomous idle.
 6. Background idle lighting.
 
@@ -174,6 +174,26 @@ still plays. If audio fails, the motion settles back to the anchor. The exact
 values are in the [speech performance policy](motion-reference.md#speech-performance-policy).
 
 ### Voice attention
+
+V2 bearing gaze is opt-in with `--gaze on`. The vision service sends a latest
+base-frame target, calculated with the measured pose at exposure time.
+`GazeCoordinator` solves neck swivel and wrist pitch through URDF FK, then
+generates anchor-relative keyframes. The neck leads; the base follows after
+200 ms and the neck counter-rotates through the same geometric solve.
+
+At most ten times per second, gaze extends the existing character spline from
+its commanded position, velocity and acceleration. The final keyframe always
+has zero offsets and settles at the anchor. A lost target stops extensions
+after one second; the last plan holds briefly and returns. Calibration and
+settle checks remain in the trajectory compiler and runtime.
+
+Foreground work, speech, rest and Stop preempt gaze. Gaze can replace lower
+priority idle or thinking motion and suppresses idle while its run settles.
+It never wakes a resting lamp, enables torque or moves the anchor. The
+[runtime command contract](../runtime/README.md#bearing-gaze-v2-opt-in) and
+[tuning values](motion-reference.md#bearing-gaze-tuning) define the interface.
+Physical gaze behaviour remains unverified; native MuJoCo validates software
+tracking and calibrated samples.
 
 Confirmed voice sessions can request small absolute turns toward the speaker
 (`attention_left` and `attention_right`). The

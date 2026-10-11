@@ -232,6 +232,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
+    character.set_gaze_enabled(options.gaze_on);
     let mut feedback = crate::voice_feedback::VoiceFeedback::default();
     let mut playing_run = None;
     let mut voice_speech_run: Option<(u64, String)> = None;

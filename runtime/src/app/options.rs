@@ -73,6 +73,7 @@ pub(super) struct Options {
     pub(super) hardware: crate::HardwareVersion,
     pub(super) help: bool,
     pub(super) character_on_start: bool,
+    pub(super) gaze_on: bool,
     pub(super) rest_after_seconds: f64,
     pub(super) routines_file: Option<PathBuf>,
     pub(super) tracking_log: Option<PathBuf>,
@@ -110,6 +111,7 @@ impl Default for Options {
             hardware: crate::HardwareVersion::V1,
             help: false,
             character_on_start: true,
+            gaze_on: false,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
             routines_file: None,
             tracking_log: None,
@@ -164,6 +166,7 @@ pub(super) fn usage() -> &'static str {
   --check             Print one direct hardware state snapshot and exit.\n\
   --serve             Sample the selected backend at 50 Hz and serve status JSON.\n\
   --hardware v1|v2    Select hardware profile (default: v1).\n\
+  --gaze off|on       Enable V2 bearing gaze (default: off).\n\
   --backend NAME      Use hardware (default) or the native MuJoCo bridge.\n\
   --status            Request the latest JSON snapshot from the daemon.\n\
   --configure         Apply and verify Orion's servo profile, torque off.\n\
@@ -277,6 +280,17 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                 }
             }
             "--hardware" => options.hardware = require_value(&mut arguments, &argument)?.parse()?,
+            "--gaze" => {
+                options.gaze_on = match require_value(&mut arguments, &argument)?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => {
+                        return Err(crate::Error::InvalidArgument(
+                            "--gaze must be off or on".into(),
+                        ));
+                    }
+                };
+            }
             "--port" => options.port = require_value(&mut arguments, &argument)?,
             "--baud-rate" => {
                 options.baud_rate =
@@ -368,6 +382,13 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
         }
     }
     let profile = options.hardware.profile();
+    if options.gaze_on
+        && (options.hardware != crate::HardwareVersion::V2 || options.operation != Operation::Serve)
+    {
+        return Err(crate::Error::InvalidArgument(
+            "--gaze on requires --serve --hardware v2".into(),
+        ));
+    }
     if options.hardware == crate::HardwareVersion::V2 {
         if !supplied.contains("--poses") {
             options.poses_file = profile.poses.clone().into();

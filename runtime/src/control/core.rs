@@ -154,6 +154,31 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             .query(request)
     }
 
+    pub fn camera_kinematics(&self) -> Option<&crate::motion::kinematics::Kinematics> {
+        self.camera_geometry
+            .as_ref()
+            .map(|camera| &camera.kinematics)
+    }
+
+    pub fn camera_boottime_ns(&self) -> Option<u64> {
+        self.camera_geometry.as_ref()?.now_ns()
+    }
+
+    pub(crate) fn character_commanded_state(
+        &self,
+        run_id: u64,
+        now: f64,
+    ) -> Option<crate::TrajectorySample> {
+        let movement = self.active_movement.as_ref()?;
+        if movement.status.run_id != run_id || movement.status.state != MovementPhase::Executing {
+            return None;
+        }
+        self.motion_sequence
+            .as_ref()?
+            .sample_state((now - self.movement_started_at).max(0.0))
+            .ok()
+    }
+
     /// Attach capture before starting any movement. Off by default for every core.
     pub fn enable_tracking(&mut self, tracking: TrackingTelemetry) -> Result<()> {
         if self.active_movement.is_some() {

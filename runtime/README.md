@@ -64,6 +64,49 @@ Software tests validate interpolation and stationary-target stability during
 a yaw/swivel sweep. Physical timestamp-to-joint alignment and fitted camera
 mount accuracy remain unverified on the lamp.
 
+## Bearing gaze (V2, opt-in)
+
+`--gaze off|on` defaults to **off** and `on` requires a V2 server. Enable
+character mode explicitly for a preview:
+
+```bash
+runtime/target/debug/oriond --serve --backend mujoco --hardware v2 \
+  --start-pose home --character-on-start on --gaze on
+```
+
+The socket accepts these commands; `capture_boottime_ns` uses the same clock
+as `camera-rays`, and each target's timestamp must increase:
+
+```text
+gaze target {"track_id":1,"capture_boottime_ns":123456789000,"azimuth":0.4,"elevation":0.0,"confidence":0.95,"class":"face"}
+gaze status
+gaze clear
+```
+
+Targets contain bearings, never joints. Optional `range` is positive metres;
+orientation gaze does not use it to move the arm. `gaze status` reports opt-in,
+track and run IDs, tracking/settling state, clamping, extension count and error.
+An unavailable powered character, foreground work or speech drops the target
+with `ok:true, accepted:false`; an invalid, stale or disabled request is rejected.
+
+Gaze replaces one queued target and extends an anchor-relative character
+performance at most 10 Hz. The neck leads for 200 ms, the base catches up when
+the swivel leaves a 4° centre deadband, and wrist pitch handles elevation.
+URDF FK solves the tilted swivel geometry. Both models use calibrated angles
+directly. Every extension uses the existing spline compiler, calibration and
+settle checks, and ends at the immutable anchor.
+
+Yaw and neck tuning caps are 1.5 and 2.5 rad/s. Base catch-up uses 0.6 rad/s;
+the compiler preview conservatively limits the shared peak to 1.5 rad/s,
+including the return. A moving handover above that speed waits rather than
+discarding measured velocity. Targets older than one second stop extensions;
+the last plan holds briefly and settles. `gaze clear` shortens that hold.
+Scenes, direct foreground movement, speech, rest and Stop preempt gaze.
+
+Native MuJoCo checks tracking and software ownership. These are
+`simulation_preview` performances: physical tracking, safe cable motion,
+speed/deadband tuning and camera alignment remain unverified on the lamp.
+
 ## Build and test
 
 Use a toolchain that supports the crate's Rust 2024 syntax. Run from the repository root:
