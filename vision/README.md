@@ -202,8 +202,10 @@ timestamps more than 50 ms ahead, and bounds history to three seconds/32 samples
 per track. It returns `speaker` (an observation or null), `strategy`
 (`mouth_motion`, `looking_at_orion`, `nearest`, or `none`), the bounded
 `since_boottime_ns`, and `observed_boottime_ns`. Only observations younger than
-one second participate. Mouth movement is normalized to the eyes; insufficient
-movement falls back to frontality and face area. Area is a distance proxy.
+one second participate. Mouth movement is normalized to the eyes and measured
+with robust adjacent-frame differences above each track's pre-window jitter
+baseline. A clear margin over the second face is required; noisy or ambiguous
+evidence falls back to frontality and face area. Area is a distance proxy.
 Missing detection resources return 503 `detection_unavailable`; privacy off
 returns 503 `camera_off` and purges the mouth history too. See
 [wake attention](../docs/voice-architecture.md#direction-evidence) for ownership,

@@ -91,6 +91,8 @@ orientation gaze does not use it to move the arm. `gaze status` reports opt-in,
 track and run IDs, tracking/settling state, clamping, extension count, error, and the compiled peak
 and base/neck planning-step speeds. Clamping compares the bounded aim pose
 with the requested bearing, including steps that have yet to reach the target.
+It also reports a base yaw restricted by calibration, even when the neck
+compensates and the beam reaches the bearing.
 An unavailable powered character, foreground work or speech drops the target
 with `ok:true, accepted:false`; an invalid, stale or disabled request is rejected.
 
@@ -552,7 +554,11 @@ On V2 the listener asks local vision for a speaker, then sends
 base-frame radians, and the current confirmed session. The same three-second
 age rule includes command-queue and homing delay. Gaze compiles a neck-first
 turn, and successful measured completion captures the temporary facing anchor.
-The existing broad-base-turn guard and scene/speech/Stop priority apply.
+Visual attention bounds base travel to 0.65 radians from measured start and
+solves the remaining bearing with the neck. It rejects a final pose outside
+calibrated reach. Owned background motion is stopped and feedback refreshed
+before compiling the attention trajectory and checking its speed. Scene,
+speech and Stop retain priority; Stop's gaze latch also blocks visual attention.
 `voice SESSION attend_scan AGE_MS` makes one short calibrated neck sweep when
 the camera reports no face. Camera-off or unavailable vision sends no attention.
 See [speaker selection and freshness](../docs/voice-architecture.md#direction-evidence).

@@ -7,6 +7,8 @@ import numpy as np
 
 MAX_AGE_NS = 1_000_000_000
 ASSOCIATION_RADIANS = math.radians(20)
+MOUTH_MOTION_MIN = .05
+MOUTH_WINNER_MARGIN = .05
 
 
 def angle_delta(value):
@@ -36,11 +38,18 @@ class Track:
         self.mouth_history.append((self.capture_ns, signature))
 
     def mouth_motion(self, since_ns, now_ns):
-        signatures = [value for stamp, value in self.mouth_history if since_ns <= stamp <= now_ns]
-        if len(signatures) < 2:
+        history = [(stamp, value) for stamp, value in self.mouth_history if stamp <= now_ns]
+        window = [value for stamp, value in history if stamp >= since_ns]
+        if len(window) < 2:
             return 0.
-        # Spread is independent of sample count (3 Hz during voice, 10 Hz idle).
-        return float(np.linalg.norm(np.ptp(np.asarray(signatures), axis=0)))
+        baseline = [value for stamp, value in history if stamp < since_ns]
+        # Median adjacent movement resists isolated landmark outliers. Estimate
+        # each face's own jitter before the requested window; short histories
+        # use a conservative floor. Evidence still depends on sample count/rate.
+        noise = max(.05, float(np.percentile(np.linalg.norm(
+            np.diff(baseline, axis=0), axis=1), 75))) if len(baseline) >= 4 else .2
+        movement = float(np.median(np.linalg.norm(np.diff(window, axis=0), axis=1)))
+        return max(0., movement - noise)
 
     def observation(self, now_ns):
         x, y, width, height = self.face.box
@@ -124,8 +133,12 @@ class Tracker:
             raise ValueError("Invalid speaker window timestamp")
         since_ns = max(since_ns, now_ns - 3_000_000_000)
         recent = [track for track in self.tracks if 0 <= now_ns - track.capture_ns <= MAX_AGE_NS]
-        moving = max(recent, key=lambda track: track.mouth_motion(since_ns, now_ns), default=None)
-        if moving and moving.mouth_motion(since_ns, now_ns) >= .025:
+        ranked = sorted(((track.mouth_motion(since_ns, now_ns), track) for track in recent),
+            key=lambda item: item[0], reverse=True)
+        score, moving = ranked[0] if ranked else (0., None)
+        runner_up = ranked[1][0] if len(ranked) > 1 else 0.
+        if (moving and score >= MOUTH_MOTION_MIN and score >= runner_up + MOUTH_WINNER_MARGIN
+                and score >= 1.5 * runner_up):
             chosen, strategy = moving, "mouth_motion"
         else:
             frontal = [track for track in recent if track.face.looking_at_orion]

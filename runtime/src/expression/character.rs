@@ -661,9 +661,9 @@ impl CharacterCoordinator {
             .active_anchor
             .clone()
             .ok_or_else(|| Error::InvalidState("Attention needs an anchor.".into()))?;
+        self.preempt_idle_or_thinking(now, core)?;
         let (definition, facing) = self.gaze.attention_motion(bearing, &previous, core)?;
         let name = definition.name.clone();
-        self.preempt_idle_or_thinking(now, core)?;
         let run_id = core.play_generated_anchored_relative(definition, facing, now)?;
         self.attention = Some(Attention {
             visual: true,

@@ -210,14 +210,18 @@ impl GazeCoordinator {
                 .camera_kinematics()
                 .ok_or_else(|| Error::InvalidState("Gaze kinematics unavailable".into()))?;
             let (lower, upper) = bounds(&limits, "base_yaw_joint")?;
-            *end.get_mut("base_yaw_joint").unwrap() = azimuth.clamp(lower, upper);
-            // Preserve the existing voice-attention broad-turn refusal.
-            if (end["base_yaw_joint"] - start["base_yaw_joint"]).abs() > 0.65 {
+            let base = start["base_yaw_joint"];
+            *end.get_mut("base_yaw_joint").unwrap() =
+                azimuth.clamp((base - 0.65).max(lower), (base + 0.65).min(upper));
+            // Bound body travel, then use calibrated neck/pitch reach. Refuse
+            // only a solved pose that cannot face the requested bearing.
+            let (solved, clamped) = solve_aim(model, &end, azimuth, elevation, &limits)?;
+            if clamped {
                 return Err(Error::InvalidState(
-                    "Attention would require a broad turn from this pose.".into(),
+                    "Attention bearing is outside calibrated neck reach after the bounded base turn.".into(),
                 ));
             }
-            end = solve_aim(model, &end, azimuth, elevation, &limits)?.0;
+            end = solved;
             let mut neck_first = start.clone();
             for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
                 *neck_first.get_mut(joint).unwrap() = previous[joint];
@@ -483,8 +487,9 @@ impl GazeCoordinator {
             }
             let achieved =
                 Bearing::from_direction(model.fk(&aim)?.camera.rotate_vector([0., 0., 1.]));
-            self.status.clamped = angle_difference(achieved.azimuth, target.azimuth).abs()
-                > GAZE_DEADBAND_RAD
+            let (lower, upper) = bounds(&limits, "base_yaw_joint")?;
+            self.status.clamped = target.azimuth != target.azimuth.clamp(lower, upper)
+                || angle_difference(achieved.azimuth, target.azimuth).abs() > GAZE_DEADBAND_RAD
                 || (achieved.elevation - target.elevation).abs() > GAZE_DEADBAND_RAD;
         }
         let return_seconds = start
@@ -690,6 +695,7 @@ mod tests {
     struct FollowingDriver {
         positions: JointPositions,
         writes: Vec<JointPositions>,
+        next_velocity: Arc<AtomicU64>,
     }
     impl RuntimeDriver for FollowingDriver {
         fn apply_servo_profile(&mut self) -> Result<()> {
@@ -702,13 +708,14 @@ mod tests {
             Ok(())
         }
         fn read(&mut self) -> Result<Vec<JointState>> {
+            let velocity = f64::from_bits(self.next_velocity.swap(0, Ordering::Relaxed));
             Ok(self
                 .positions
                 .iter()
                 .map(|(name, q)| JointState {
                     name: name.clone(),
                     position: *q,
-                    velocity: 0.0,
+                    velocity,
                     current_ma: 0.0,
                     voltage_v: 12.0,
                     temperature_c: 25.0,
@@ -769,6 +776,7 @@ mod tests {
         let driver = FollowingDriver {
             positions: anchor.clone(),
             writes: Vec::new(),
+            next_velocity: Arc::new(AtomicU64::new(0)),
         };
         let (core, boot) = prepare(driver, poses, motions);
         (core, anchor, boot)
@@ -783,6 +791,95 @@ mod tests {
             category: Some("face".into()),
             range: None,
         }
+    }
+
+    #[test]
+    fn visual_speakers_at_sixty_and_one_hundred_degrees_use_bounded_base_and_neck() {
+        for degrees in [60.0_f64, 100.0, -60.0, -100.0] {
+            let (mut core, anchor, _) = following();
+            let mut gaze = GazeCoordinator::default();
+            gaze.set_enabled(true);
+            let azimuth = degrees.to_radians();
+            let (definition, facing) = gaze
+                .attention_motion(Some((azimuth, 0.)), &anchor, &core)
+                .unwrap();
+            assert!((facing["base_yaw_joint"] - anchor["base_yaw_joint"]).abs() <= 0.65 + 1e-9);
+            let aimed = Bearing::from_direction(
+                core.camera_kinematics()
+                    .unwrap()
+                    .fk(&facing)
+                    .unwrap()
+                    .camera
+                    .rotate_vector([0., 0., 1.]),
+            );
+            assert!(angle_difference(aimed.azimuth, azimuth).abs() < GAZE_DEADBAND_RAD);
+            assert!(aimed.elevation.abs() < GAZE_DEADBAND_RAD);
+            core.play_generated_anchored_relative(definition, facing.clone(), 0.)
+                .unwrap();
+            for tick in 1..=400 {
+                core.tick(tick as f64 * 0.02).unwrap();
+            }
+            assert_eq!(
+                core.snapshot().last_motion.as_ref().unwrap().state,
+                crate::MovementPhase::Completed
+            );
+            for pose in &core.driver().writes {
+                core.driver().validate_positions(pose).unwrap();
+            }
+            for (joint, value) in facing {
+                assert!((core.driver().positions[&joint] - value).abs() < 1e-8);
+            }
+        }
+    }
+
+    #[test]
+    fn visual_attention_preempts_gaze_before_using_refreshed_handover_velocity() {
+        let (mut core, _, boot) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        for tick in 1..=150 {
+            let now = tick as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        character
+            .queue_gaze_target(target(boot.load(Ordering::Relaxed), 0.4), 3., &mut core)
+            .unwrap();
+        character
+            .tick(3., &mut core, false, None, false, None, None)
+            .unwrap();
+        let previous = character.gaze_status().run_id.unwrap();
+        // One feedback read reports motion. Stop's refresh reads the stationary
+        // handover; compiling before Stop incorrectly sees the old 2 rad/s.
+        core.driver()
+            .next_velocity
+            .store(2.0_f64.to_bits(), Ordering::Relaxed);
+        core.tick(3.02).unwrap();
+        assert!(core.snapshot().joints[0].velocity > GAZE_COMPILED_PEAK_RAD_S);
+        character
+            .attend_bearing(Some((0.3, 0.1)), 3.02, &mut core)
+            .unwrap();
+        assert_eq!(
+            core.snapshot().last_motion.as_ref().unwrap().run_id,
+            previous
+        );
+        assert_eq!(
+            core.snapshot().last_motion.as_ref().unwrap().state,
+            crate::MovementPhase::Cancelled
+        );
+        assert_eq!(
+            core.snapshot().motion.as_ref().unwrap().name,
+            "gaze_attention"
+        );
+        assert!(
+            core.snapshot()
+                .joints
+                .iter()
+                .all(|joint| joint.velocity == 0.)
+        );
     }
 
     #[test]
@@ -862,6 +959,10 @@ mod tests {
         assert_eq!(character.status().active_anchor.as_ref(), Some(&previous));
         assert!(
             gaze.attention_motion(Some((1.0, 0.0)), &previous, &core)
+                .is_ok()
+        );
+        assert!(
+            gaze.attention_motion(Some((std::f64::consts::PI, 1.4)), &previous, &core)
                 .is_err()
         );
     }
@@ -961,6 +1062,10 @@ mod tests {
             for pose in &core.driver().writes {
                 core.driver().validate_positions(pose).unwrap();
             }
+            assert!(
+                gaze.status.clamped,
+                "base-limited target {azimuth} must remain reported as clamped"
+            );
         }
     }
 

@@ -378,8 +378,12 @@ once; duplicate confirmations cannot repeat it. Barge-in sessions never turn.
 Vision keeps at most 32 mouth signatures per track and examines up to three
 seconds. Each signature expresses the mouth corners relative to the eye centre,
 eye separation and eye axis, reducing image translation, scale and rotation.
-It selects the face with the largest signature change, above a 0.025 normalized
-spread threshold. With insufficient motion it selects the largest frontal face,
+It compares median frame-to-frame signature movement with that track's
+pre-window jitter baseline (the 75th percentile, with a 0.05 floor). Fewer than
+four baseline samples use a conservative 0.2 noise floor. At least two samples
+in the window are needed; evidence depends on sampling rate and history length.
+The winning excess must reach 0.05, exceed the runner-up by 0.05 and be at least
+1.5 times its score. Ambiguous or insufficient motion selects the largest frontal face,
 then the largest face as a nearest-face proxy. YuNet mouth corners provide a
 heuristic, not a speech or lip-opening measurement. Speaker selection on the
 lamp remains unverified. See [vision setup and calibration](../vision/README.md#face-calibration-and-tracking).
@@ -390,8 +394,11 @@ delay is added before delivery. `--gaze on` is required; the runtime ignores
 unconfirmed, retired or non-owning sessions. The rest coordinator checks the
 same three-second expiry again after measured home completion. The gaze FK
 solver creates a neck-first calibrated trajectory and a zero-offset settle at
-an immutable facing anchor. The existing 0.65-radian broad-base-turn refusal
-still applies. Only successful measured completion installs that temporary
+an immutable facing anchor. Base yaw travels at most 0.65 radians from the
+measured start, while the neck covers the remaining bearing. A final FK check
+refuses bearings outside calibrated reach. The runtime preempts owned background
+motion and refreshes feedback before compilation and the speed check.
+Only successful measured completion installs that temporary
 anchor; the existing conversation hold and return restore the saved anchor.
 Scenes, speech, Stop and unavailable character states retain priority.
 
