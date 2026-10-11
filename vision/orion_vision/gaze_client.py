@@ -68,13 +68,10 @@ class GazeClient:
 
     def target(self, track):
         from .tracker import angle_delta
-        try:
-            self.command("gaze target " + json.dumps({"track_id": track.id,
-                "capture_boottime_ns": track.capture_ns, "azimuth": float(angle_delta(track.state[0])),
-                "elevation": float(track.state[1]), "confidence": track.face.confidence, "class": "face"}))
-        except RuntimeRejected:
-            return False
-        return True
+        value = self.command("gaze target " + json.dumps({"track_id": track.id,
+            "capture_boottime_ns": track.capture_ns, "azimuth": float(angle_delta(track.state[0])),
+            "elevation": float(track.state[1]), "confidence": track.face.confidence, "class": "face"}))
+        return value.get('accepted', True) is True
 
     def gaze_available(self):
         return self.command("gaze status")["gaze"]["enabled"] is True

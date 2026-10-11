@@ -74,6 +74,24 @@ impl MovementPhase {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct CompletionJoint {
+    pub name: String,
+    pub commanded_position_rad: f64,
+    pub measured_position_rad: f64,
+    /// Commanded minus measured, preserving the direction of the error.
+    pub position_error_rad: f64,
+    pub measured_velocity_rad_s: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CompletionDiagnostic {
+    pub position_tolerance_rad: f64,
+    pub velocity_tolerance_rad_s: f64,
+    pub settling_seconds: f64,
+    pub joints: Vec<CompletionJoint>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct MotionState {
     pub run_id: u64,
     pub name: String,
@@ -91,6 +109,9 @@ pub struct MotionState {
     pub max_position_error_rad: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_velocity_rad_s: Option<f64>,
+    /// Exact final goal and feedback retained when measured settling times out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_diagnostic: Option<CompletionDiagnostic>,
     /// Why the runtime ended this movement itself, such as a servo bus fault.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -178,6 +199,29 @@ impl StateSnapshot {
                     if value.is_some_and(|value| !value.is_finite()) {
                         return Err(Error::Runtime(format!(
                             "Cannot serialize non-finite Orion state field: {field}.{measurement}"
+                        )));
+                    }
+                }
+                if let Some(diagnostic) = &motion.completion_diagnostic {
+                    let values = [
+                        diagnostic.position_tolerance_rad,
+                        diagnostic.velocity_tolerance_rad_s,
+                        diagnostic.settling_seconds,
+                    ];
+                    if values.into_iter().any(|v| !v.is_finite())
+                        || diagnostic.joints.iter().any(|joint| {
+                            [
+                                joint.commanded_position_rad,
+                                joint.measured_position_rad,
+                                joint.position_error_rad,
+                                joint.measured_velocity_rad_s,
+                            ]
+                            .into_iter()
+                            .any(|v| !v.is_finite())
+                        })
+                    {
+                        return Err(Error::Runtime(format!(
+                            "Cannot serialize non-finite Orion state field: {field}.completion_diagnostic"
                         )));
                     }
                 }

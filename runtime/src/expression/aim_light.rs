@@ -242,29 +242,62 @@ mod tests {
     #[test]
     fn end_recovers_a_failed_scan_promptly_and_bounds_the_return_lease() {
         let (mut core, _, _) = following();
-        core.configure_comfort_box(crate::HardwareVersion::V2.profile().comfort_box.clone().unwrap()).unwrap();
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
         let mut character = CharacterCoordinator::new(1);
         character.set_gaze_enabled(true);
         character.start(0., &mut core).unwrap();
         for i in 1..=250 {
             let t = i as f64 * 0.02;
             core.tick(t).unwrap();
-            character.tick(t, &mut core, false, None, false, None, None).unwrap();
+            character
+                .tick(t, &mut core, false, None, false, None, None)
+                .unwrap();
         }
         let token = "a".repeat(32);
-        character.work_request(WorkRequest::Begin { token: token.clone() }, 5., &mut core).unwrap();
-        character.work_request(WorkRequest::Scan { token: token.clone(), index: 0 }, 5., &mut core).unwrap();
+        character
+            .work_request(
+                WorkRequest::Begin {
+                    token: token.clone(),
+                },
+                5.,
+                &mut core,
+            )
+            .unwrap();
+        character
+            .work_request(
+                WorkRequest::Scan {
+                    token: token.clone(),
+                    index: 0,
+                },
+                5.,
+                &mut core,
+            )
+            .unwrap();
         core.tick(5.5).unwrap();
         checked(core.handle_command("stop", 5.5)).unwrap();
         character.tick_work(5.5, &mut core).unwrap();
         assert!(character.work.as_ref().unwrap().failed);
-        let ended = character.work_request(WorkRequest::End { token }, 5.5, &mut core).unwrap();
+        let ended = character
+            .work_request(WorkRequest::End { token }, 5.5, &mut core)
+            .unwrap();
         assert!(ended["run_id"].is_u64());
         assert!(!character.work.as_ref().unwrap().failed);
-        assert_eq!(character.work.as_ref().unwrap().deadline, 5.5 + END_RECOVERY_LEASE_SECONDS);
+        assert_eq!(
+            character.work.as_ref().unwrap().deadline,
+            5.5 + END_RECOVERY_LEASE_SECONDS
+        );
         // Even if measured completion never arrives, End's recovery cannot
         // retain motion until the original sixty-second search lease.
-        character.tick_work(5.5 + END_RECOVERY_LEASE_SECONDS, &mut core).unwrap();
+        character
+            .tick_work(5.5 + END_RECOVERY_LEASE_SECONDS, &mut core)
+            .unwrap();
         assert!(character.work.is_none());
         assert!(core.snapshot().motion.is_none());
     }

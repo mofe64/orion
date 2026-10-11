@@ -1,6 +1,15 @@
 //! Exclusive Hands-mode ownership. Observations plan; ticks only track ownership.
 use super::*;
 
+/// A latched tracking failure, independent of camera/detector health.
+#[derive(Clone, Debug, Serialize)]
+pub struct HandsFailure {
+    pub stage: &'static str,
+    pub message: String,
+    pub recovery_required: bool,
+    pub movement: Option<crate::MotionState>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MoveKind {
     Enter,
@@ -60,6 +69,7 @@ impl CharacterCoordinator {
             && self.foreground_scene_run_id.is_none()
             && self.speech_motion_run_id.is_none()
             && !self.hands.blocked
+            && (self.status.hands_failure.is_none() || !self.hands.wanted)
             && self.surroundings.reaction.is_none()
             && matches!(
                 self.status.state,
@@ -92,6 +102,9 @@ impl CharacterCoordinator {
             self.hands.last_seen = Some(now);
         }
         self.finish_hands(now, core);
+        if let Some(failure) = &self.status.hands_failure {
+            return Err(Error::InvalidState(failure.message.clone()));
+        }
         if !self.hands_available(core) {
             return Ok(());
         }
@@ -129,7 +142,11 @@ impl CharacterCoordinator {
         let Some(point) = point.filter(|_| count > 0) else {
             return Ok(());
         };
-        let pursued = self.hands.run.as_ref().map_or(self.hands.point, |run| run.point);
+        let pursued = self
+            .hands
+            .run
+            .as_ref()
+            .map_or(self.hands.point, |run| run.point);
         if pursued.is_some_and(|last| distance(last, point) <= HANDS_DEADBAND_M) {
             return Ok(());
         }
@@ -176,6 +193,11 @@ impl CharacterCoordinator {
     ) -> Result<()> {
         self.hands.wanted = false;
         self.finish_hands(now, core);
+        if let Some(failure) = &self.status.hands_failure
+            && failure.stage == "return"
+        {
+            return Err(Error::InvalidState(failure.message.clone()));
+        }
         let Some(previous) = self.hands.previous.clone() else {
             return Ok(());
         };
@@ -210,13 +232,31 @@ impl CharacterCoordinator {
             return Ok(());
         }
         self.hands.return_attempt_at = Some(now);
-        let definition =
-            core.prepare_hands_motion("hands_return", &previous, owned.map(|id| (id, now)))?;
-        let id = if let Some(id) = owned {
-            core.extend_character_performance(id, definition, previous.clone(), now)?
-        } else {
-            self.preempt_idle_or_thinking(now, core)?;
-            core.play_generated_anchored_relative(definition, previous.clone(), now)?
+        let recovery = (|| {
+            let definition =
+                core.prepare_hands_motion("hands_return", &previous, owned.map(|id| (id, now)))?;
+            if let Some(id) = owned {
+                core.extend_character_performance(id, definition, previous.clone(), now)
+            } else {
+                self.preempt_idle_or_thinking(now, core)?;
+                core.play_generated_anchored_relative(definition, previous.clone(), now)
+            }
+        })();
+        let id = match recovery {
+            Ok(id) => id,
+            Err(error) => {
+                let movement = self
+                    .status
+                    .hands_failure
+                    .as_ref()
+                    .and_then(|failure| failure.movement.clone());
+                self.fail_hands(
+                    "return",
+                    format!("Hands return was rejected: {error}. Go to rest, then resume Orion."),
+                    movement,
+                );
+                return Err(error);
+            }
         };
         self.hands.run = Some(HandsRun {
             id,
@@ -251,6 +291,7 @@ impl CharacterCoordinator {
         {
             let run = self.hands.run.take().unwrap();
             if phase == MovementPhase::Completed {
+                self.status.hands_failure = None;
                 self.status.active_anchor = Some(run.target);
                 self.status.state = self.idle_state();
                 self.hands.entered = run.kind != MoveKind::Return;
@@ -259,14 +300,65 @@ impl CharacterCoordinator {
                     self.hands.previous = None;
                 }
                 core.set_character_comfort(self.hands.entered);
+            } else {
+                let movement = [
+                    core.snapshot().motion.as_ref(),
+                    core.snapshot().last_motion.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .find(|motion| motion.run_id == run.id)
+                .cloned();
+                let detail = movement
+                    .as_ref()
+                    .and_then(|motion| motion.error.as_deref())
+                    .unwrap_or(phase.as_str());
+                let stage = match run.kind {
+                    MoveKind::Enter => "entry",
+                    MoveKind::Follow => "follow",
+                    MoveKind::Return => "return",
+                };
+                let recovery = if run.kind == MoveKind::Return {
+                    "Go to rest, then resume Orion."
+                } else {
+                    "Choose Faces or Off to request a return; if recovery fails, go to rest."
+                };
+                self.fail_hands(
+                    stage,
+                    format!("Hand tracking paused: {detail}. {recovery}"),
+                    movement,
+                );
             }
             self.status.active_clip = None;
             self.reset_timers(now);
         }
         if !self.status.enabled || !core.mode().torque_is_enabled() {
             self.hands = HandsState::default();
+            self.status.hands_failure = None;
             core.set_character_comfort(false);
         }
+    }
+    fn fail_hands(
+        &mut self,
+        stage: &'static str,
+        message: String,
+        movement: Option<crate::MotionState>,
+    ) {
+        if self
+            .status
+            .hands_failure
+            .as_ref()
+            .is_none_or(|failure| failure.message != message)
+        {
+            eprintln!("oriond: {message}");
+        }
+        self.status.last_rejection = Some(message.clone());
+        self.status.hands_failure = Some(HandsFailure {
+            stage,
+            message,
+            recovery_required: true,
+            movement,
+        });
     }
     pub(super) fn hands_foreground_override<D: RuntimeDriver>(
         &mut self,
@@ -277,6 +369,7 @@ impl CharacterCoordinator {
         self.hands.blocked = self.hands.wanted;
         self.hands.previous = None;
         self.hands.entered = false;
+        self.status.hands_failure = None;
         core.set_character_comfort(false);
     }
     pub(super) fn expire_hands<D: RuntimeDriver>(
@@ -284,7 +377,14 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
-        if self.hands.owns_anchor() && !self.hands.fresh(now) {
+        if self.hands.owns_anchor()
+            && !self.hands.fresh(now)
+            && self
+                .status
+                .hands_failure
+                .as_ref()
+                .is_none_or(|failure| failure.stage != "return")
+        {
             self.leave_hands(now, core)?;
         }
         Ok(())
@@ -514,5 +614,214 @@ mod tests {
         for joint in &core.snapshot().joints {
             assert!((joint.position - anchor[&joint.name]).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn hands_reach_does_not_compound_after_completed_targets() {
+        let (core, _, _) = fixture();
+        let reference = core.poses().pose("desk_work").unwrap();
+        let first = core
+            .hands_light_target(reference, [0.08, -0.32, 0.])
+            .unwrap();
+        let other = core.hands_light_target(&first, [-0.08, -0.32, 0.]).unwrap();
+        let repeated = core.hands_light_target(&other, [0.08, -0.32, 0.]).unwrap();
+        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+            assert!(
+                (first[joint] - repeated[joint]).abs() < 1e-8,
+                "same work point compounded {joint}: {} -> {}",
+                first[joint],
+                repeated[joint]
+            );
+        }
+    }
+
+    #[test]
+    fn completed_hands_steps_keep_command_continuity_despite_bounded_feedback_bias() {
+        let (mut core, mut character, boot) = fixture();
+        character.observe_hands(1, None, 5., &mut core).unwrap();
+        advance(&mut core, &mut character, &boot, 5., 12., true);
+        character
+            .observe_hands(1, Some([0.08, -0.32, 0.]), 13., &mut core)
+            .unwrap();
+        advance(&mut core, &mut character, &boot, 13., 18., true);
+        let previous = character.status.active_anchor.clone().unwrap();
+        // Hardware completed with a small positive shoulder/elbow offset.
+        // Starting the next command at that feedback would briefly command
+        // the offset itself, even though the servo still holds `previous`.
+        core.driver().offset_feedback(0.04, 0.03);
+        core.tick(18.02).unwrap();
+        character
+            .observe_hands(1, Some([-0.08, -0.32, 0.]), 18.02, &mut core)
+            .unwrap();
+        let run = character.hands.run.as_ref().unwrap().id;
+        let start = core.character_commanded_state(run, 18.02).unwrap();
+        for (joint, q) in &previous {
+            assert!(
+                (start.positions[joint] - q).abs() < 1e-9,
+                "completed Hands command jumped at {joint}: {} -> {}",
+                q,
+                start.positions[joint]
+            );
+        }
+        advance(&mut core, &mut character, &boot, 18.02, 23., true);
+        let previous = character.status.active_anchor.clone().unwrap();
+        character
+            .observe_hands(1, Some([0.08, -0.32, 0.]), 23., &mut core)
+            .unwrap();
+        let run = character.hands.run.as_ref().unwrap().id;
+        let start = core.character_commanded_state(run, 23.).unwrap();
+        for (joint, q) in &previous {
+            assert!((start.positions[joint] - q).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn completed_hands_command_does_not_hide_subsequent_feedback_drift() {
+        let (mut core, mut character, boot) = fixture();
+        character.observe_hands(1, None, 5., &mut core).unwrap();
+        advance(&mut core, &mut character, &boot, 5., 12., true);
+        // A completed command can be reused only while the measured arm is
+        // still within the original completion limits, even inside comfort.
+        core.driver().offset_feedback(-0.06, 0.);
+        core.tick(12.02).unwrap();
+        let result = character.observe_hands(1, Some([0.08, -0.32, 0.]), 12.02, &mut core);
+        assert!(result.is_err());
+        assert!(core.snapshot().motion.is_none());
+    }
+
+    #[test]
+    fn timed_out_follow_latches_diagnostics_and_recovers_only_after_a_valid_return() {
+        let (mut core, mut character, boot) = fixture();
+        character.observe_hands(1, None, 5., &mut core).unwrap();
+        advance(&mut core, &mut character, &boot, 5., 12., true);
+        let committed = character.status.active_anchor.clone();
+        character
+            .observe_hands(1, Some([0.08, -0.32, 0.]), 13., &mut core)
+            .unwrap();
+        let run = character.hands.run.as_ref().unwrap().id;
+        // Unlike the perfect following fixture, emulate a servo that stops
+        // 0.07 rad away from every commanded shoulder goal.
+        core.driver().offset_feedback(0.07, 0.);
+        for step in 651..=1000 {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            if step % 25 == 0 {
+                let result = character.observe_hands(1, None, now, &mut core);
+                if result.is_err() {
+                    assert!(character.status.hands_failure.is_some());
+                }
+            }
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        let failure = character.status.hands_failure.as_ref().unwrap();
+        assert_eq!(failure.stage, "follow");
+        let failed = failure.movement.as_ref().unwrap();
+        assert_eq!(failed.run_id, run);
+        assert_eq!(failed.state, MovementPhase::TimedOut);
+        let shoulder = failed
+            .completion_diagnostic
+            .as_ref()
+            .unwrap()
+            .joints
+            .iter()
+            .find(|j| j.name == "shoulder_pitch_joint")
+            .unwrap();
+        assert!((shoulder.position_error_rad + 0.07).abs() < 1e-9);
+        assert_eq!(character.status.active_anchor, committed);
+        assert!(character.hands.run.is_none());
+        assert!(core.snapshot().motion.is_none());
+        assert!(
+            character
+                .observe_hands(1, Some([0.14, -0.32, 0.]), 20., &mut core)
+                .is_err()
+        );
+        // A later healthy measurement permits the ordinary validated return;
+        // the timeout itself never commits a new anchor or resets Stop.
+        core.driver().offset_feedback(0., 0.);
+        core.tick(20.02).unwrap();
+        character.leave_hands(20.02, &mut core).unwrap();
+        advance(&mut core, &mut character, &boot, 20.02, 28., false);
+        assert!(character.status.hands_failure.is_none());
+        assert!(!character.hands.blocks_gaze());
+        assert!(
+            character
+                .queue_gaze_target(
+                    crate::expression::gaze::GazeTarget {
+                        track_id: 1,
+                        capture_boottime_ns: boot.load(Ordering::Relaxed),
+                        azimuth: 0.,
+                        elevation: 0.,
+                        confidence: 0.95,
+                        category: Some("face".into()),
+                        range: None,
+                    },
+                    28.,
+                    &mut core
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn captured_frozen_pose_reports_failed_return_and_refuses_face_targets() {
+        let (mut core, mut character, boot) = fixture();
+        character.observe_hands(1, None, 5., &mut core).unwrap();
+        advance(&mut core, &mut character, &boot, 5., 12., true);
+        let held = core.driver().positions.clone();
+        // Exact Ariadne shoulder/elbow feedback from the frozen session.
+        core.driver().offset_feedback(
+            1.2118448224296563 - held["shoulder_pitch_joint"],
+            -0.35588354278946877 - held["elbow_pitch_joint"],
+        );
+        core.tick(12.02).unwrap();
+        let error = character.leave_hands(12.02, &mut core).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Measured pose exceeds comfort recovery tolerance")
+        );
+        let failure = character.status.hands_failure.as_ref().unwrap();
+        assert_eq!(failure.stage, "return");
+        assert!(failure.recovery_required);
+        assert!(failure.message.contains("Go to rest"));
+        assert!(character.hands.owns_anchor());
+        assert!(core.snapshot().motion.is_none());
+        // Faces must receive an explicit rejection, never a false success.
+        let error = character
+            .queue_gaze_target(
+                crate::expression::gaze::GazeTarget {
+                    track_id: 1,
+                    capture_boottime_ns: boot.load(Ordering::Relaxed),
+                    azimuth: 0.,
+                    elevation: 0.,
+                    confidence: 0.95,
+                    category: Some("face".into()),
+                    range: None,
+                },
+                12.02,
+                &mut core,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("Hands return was rejected"));
+        assert!(character.gaze_status().track_id.is_none());
+        assert!(character.can_auto_rest(&core));
+        // A failed return is latched. Off-mode heartbeats must not schedule
+        // repeated recovery moves even if feedback later becomes admissible.
+        core.driver().offset_feedback(0., 0.);
+        core.tick(13.02).unwrap();
+        character.expire_hands(13.02, &mut core).unwrap();
+        assert!(character.leave_hands(13.02, &mut core).is_err());
+        assert!(core.snapshot().motion.is_none());
+        assert_eq!(
+            character.status.hands_failure.as_ref().unwrap().stage,
+            "return"
+        );
+        checked(core.handle_command("disable", 13.1)).unwrap();
+        character.finish_hands(13.1, &mut core);
+        assert!(character.status.hands_failure.is_none());
+        assert!(!character.hands.blocks_gaze());
     }
 }

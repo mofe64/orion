@@ -222,9 +222,18 @@ export interface RunStatus {
   state: string;
   error?: string | null;
   reached_markers?: string[];
+  completion_diagnostic?: {
+    position_tolerance_rad: number;
+    velocity_tolerance_rad_s: number;
+    settling_seconds: number;
+    joints: Array<{ name: string; commanded_position_rad: number; measured_position_rad: number;
+      position_error_rad: number; measured_velocity_rad_s: number }>;
+  };
 }
 
 export interface CharacterStatus {
+  hands_failure?: { stage: "entry" | "follow" | "return"; message: string;
+    recovery_required: boolean; movement: RunStatus | null } | null;
   enabled: boolean;
   state: "off" | "starting" | "home_idle" | "pose_idle" | "listening" | "thinking" | "speaking" | "foreground_scene" | "settling" | "shutting_down";
   active_anchor: JointPositions | null;

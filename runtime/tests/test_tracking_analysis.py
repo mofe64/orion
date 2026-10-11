@@ -53,11 +53,19 @@ class TrackingAnalysisTests(unittest.TestCase):
             self.assertAlmostEqual(joint['amplitude_ratio'], .5)
             self.assertTrue(joint['loses_over_one_third'])
             self.assertAlmostEqual(joint['steady_state_error_rad'], .04)
+            self.assertAlmostEqual(joint['terminal_settling_error_rad'], .04)
             rows[-2]['state'] = 'timed_out'
             path.write_text('\n'.join(json.dumps(r) for r in rows))
             result = analysis.analyze(path)
             self.assertIsNone(result['runs'][0]['joints']['shoulder']['steady_state_error_rad'])
+            self.assertAlmostEqual(result['runs'][0]['joints']['shoulder']['terminal_settling_error_rad'], .04)
+            self.assertAlmostEqual(result['runs'][0]['joints']['shoulder']['settle_position_std_rad'], 0)
             self.assertEqual(result['diagnostics']['settle_timeouts'], [1])
+            self.assertIn('Settling error', analysis.markdown(result))
+            rows[-2]['state'] = 'cancelled'
+            path.write_text('\n'.join(json.dumps(r) for r in rows))
+            result = analysis.analyze(path)
+            self.assertIsNone(result['runs'][0]['joints']['shoulder']['terminal_settling_error_rad'])
 
     def test_corrupted_json_is_fatal(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -8,11 +8,40 @@ import numpy as np
 from orion_vision.detect_hands import Palm, PalmDetector, anchors, preprocess, decode
 from orion_vision.hands import HandWindow
 from orion_vision.pipeline import FacePipeline
+from orion_vision.gaze_client import RuntimeRejected
 from test_objects import CAMERA, intrinsics
 from test_tracking import eventually
 
 
 class PalmTests(unittest.TestCase):
+    def test_motion_rejection_preserves_fresh_palm_previews_and_reports_gaze_error(self):
+        client, palms = Mock(), Mock()
+        palms.detect.return_value = [Palm([320,180,64,36],.9)]
+        client.camera_pose.return_value = CAMERA
+        client.surroundings.side_effect = RuntimeRejected('Hands return needs rest')
+        now = [10.]
+        pipeline = FacePipeline(Mock(), intrinsics(), client, clock=lambda: now[0],
+            boot_clock=lambda: int(now[0] * 1e9), palms=palms)
+        pipeline.reset(True, mode='hands')
+        frame = np.zeros((360,640,3),np.uint8)
+        for _ in range(4):
+            stamp = int(now[0] * 1e9)
+            pipeline._hand_frame(stamp, frame, pipeline.generation, frame, pipeline.preview_generation)
+            self.assertEqual(pipeline.preview()[0], stamp)
+            self.assertEqual(len(pipeline.preview()[2]), 1)
+            self.assertEqual(pipeline.status()['hand_count'], 1)
+            self.assertEqual(pipeline.status()['gaze_error'], 'Hands return needs rest')
+            self.assertIsNone(pipeline.status()['error'])
+            # A frame inside the heartbeat interval sends no command, so it
+            # cannot clear the preceding rejection as if recovery succeeded.
+            now[0] += .01
+            stamp = int(now[0] * 1e9)
+            calls = client.surroundings.call_count
+            pipeline._hand_frame(stamp, frame, pipeline.generation, frame, pipeline.preview_generation)
+            self.assertEqual(client.surroundings.call_count, calls)
+            self.assertEqual(pipeline.status()['gaze_error'], 'Hands return needs rest')
+            now[0] += .21
+
     def test_reset_waits_for_an_approved_hands_publication(self):
         # Pause exactly where reset acquires the command lock. It must not
         # change the mode underneath the worker already publishing metadata.

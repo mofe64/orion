@@ -212,13 +212,41 @@ points over 0.6 seconds, publishing once 0.4 seconds of continuous hands exist.
 Transforming before averaging prevents lamp movement from masquerading as work
 movement. Vision sends each 5 Hz point to the runtime. After entry, Hands
 follows continuously, like face gaze: a point more than 3 cm from the one being
-pursued plans a P8 IK destination (`lean=0.35`) and a generated `hands_track`
+pursued plans a P8 IK destination (`lean=0.35` from the fixed `desk_work`
+reference) and a generated `hands_track`
 step, one settle at that pose at a 0.8 rad/s compiled peak (0.45 s minimum).
 A later point redirects the running step from its commanded position,
 velocity and acceleration, so the light glides without stops or jumps; no raw
 joint stream reaches the controller. Entry and return keep their authored
 anticipation and arm lead. Only successful measured completion commits the
 work point and anchor.
+
+Each target uses that same desk reference rather than the last completed reach.
+Returning a hand to the same point therefore requests the same arm pose;
+successive changes do not compound lean toward the maximum reach. The committed
+anchor remains the origin for drawings and the compiler's transition checks.
+
+After a successfully completed Hands entry or follow step, the next follow
+starts from the final stationary command that the servos still hold. Starting
+from biased feedback would briefly command that load error before returning
+to the requested pose, allowing repeated small steps to push the arm outward.
+Feedback must still satisfy the same position and velocity completion limits
+and comfort recovery checks before the retained command can be reused.
+Failed runs, other motion owners, entry and return use their existing measured
+starts. Running follow steps retain their commanded spline continuity.
+
+A timed-out or cancelled Hands run latches `character.hands_failure`, retaining
+the failed movement and its measured completion diagnostics. Following and
+ordinary idles pause; the previous committed anchor remains unchanged. Fresh
+palm detections continue, and face targets receive an explicit recovery
+rejection instead of being acknowledged as installed. Selecting Faces or Off
+requests the validated return. Completion clears the failure and releases
+Hands ownership. If the measured pose exceeds the recovery tolerance, Studio
+reports that Rest is required; the runtime keeps holding rather than clearing
+ownership and scheduling movement from an invalid anchor. Rest clears the
+failure. Off-mode heartbeats retry returns deferred by another owner, but stop
+retrying once the return itself fails. Stop and foreground commands retain
+their existing priority rules.
 
 Hands is a mode the user selects, so its moves do not spend the shared
 curiosity budget. The 3 cm deadband ignores palm jitter. Ten

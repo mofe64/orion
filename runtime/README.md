@@ -355,6 +355,12 @@ Status JSON keeps only the active `motion` and the most recent terminal
 `last_motion`. Clients retain the returned `run_id` and follow that ID through
 these fields. IDs reset when the daemon restarts.
 
+A settling timeout retains `completion_diagnostic` in `last_motion`: each
+joint's final commanded position, measured position, signed commanded-minus-measured
+error and measured velocity, plus the completion thresholds and elapsed settling
+time. `error` names the largest position error and reports maximum velocity.
+These measurements describe the timeout; they do not change completion criteria.
+
 `--wait` is a thin client over the same status contract. It exits `0` for
 `completed`, `4` for `timed_out`, and `5` for `cancelled`. Daemon command
 rejection exits `3`, invalid CLI usage exits `2`, and transport/runtime errors

@@ -182,7 +182,7 @@ class FacePipeline:
 
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
-            return
+            return False
         # Hands streams every 5 Hz inference so the runtime can follow
         # continuously; other modes need only a slower heartbeat.
         self.next_surroundings = self.clock() + (.15 if self.mode == 'hands' else .5)
@@ -196,6 +196,7 @@ class FacePipeline:
                        'elevation': float(track.state[1]), 'frontal': track.face.looking_at_orion}
                       for track in tracks],
             'looking_away': not any(track.face.looking_at_orion for track in tracks) if tracks else None})
+        return True
 
     def close(self):
         self.reset(False)
@@ -389,8 +390,8 @@ class FacePipeline:
         try:
             with self.commands:
                 self.client.command('gaze hands off')
-        except (OSError, ValueError, AttributeError):
-            pass
+        except (OSError, ValueError, AttributeError) as error:
+            self.gaze_error = str(error)
 
     def _hand_frame(self, stamp, buffer, generation, rgb=None, preview_generation=None):
         if self.palms is None:
@@ -419,7 +420,13 @@ class FacePipeline:
                     self.latest_preview = (stamp, rgb, detections)
                 else:
                     self.latest_preview = None
-            self._surroundings(stamp, [])
+            try:
+                if self._surroundings(stamp, []):
+                    self.gaze_error = None
+            except (OSError, ValueError, AttributeError) as error:
+                # Motion refusal does not invalidate palms, points or the
+                # completed preview from this capture.
+                self.gaze_error = str(error)
 
     def _run(self):
         next_inference = 0.
@@ -506,8 +513,8 @@ class FacePipeline:
                     self._send_gaze(chosen)
                     try:
                         self._surroundings(stamp, fresh)
-                    except (OSError, ValueError, AttributeError):
-                        pass
+                    except (OSError, ValueError, AttributeError) as error:
+                        self.gaze_error = str(error)
                 try:
                     self._background_objects(stamp, buffer, faces, generation)
                 except (OSError, ValueError, AttributeError):

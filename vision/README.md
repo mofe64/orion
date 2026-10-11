@@ -604,6 +604,11 @@ in-flight results. The watcher sends an off-mode recovery heartbeat while
 camera capture is disabled or another mode is selected. See [Hands movement
 and interruption rules](../docs/motion-architecture.md#hands-following).
 
+A runtime movement refusal leaves fresh palm boxes, counts and previews intact
+and reports its reason in `gaze_error`. Camera/detector failure still clears
+stale results. Studio reads `character.hands_failure` to distinguish recovery
+from healthy tracking, even after switching modes.
+
 Before commissioning Hands, check that auto-exposure maintains usable palms
 under Orion's own light, that a stationary work area remains steady during head
 movement, and that CPU/ASR timing stays acceptable at five palm inferences per
