@@ -47,7 +47,9 @@ After each successful feedback read, the 50 Hz tick reads
 `clock_gettime(CLOCK_BOOTTIME)` and copies five measured angles into a
 64-slot array retaining at most one second. This write allocates nothing.
 Queries linearly interpolate neighbouring samples; they reject captures older
-than the retained buffer or more than 50 ms ahead of the boot clock. A capture
+than the retained buffer or more than 50 ms ahead of the boot clock. Interpolation
+requires bracketing feedback samples at most 50 ms apart; exact recorded samples
+remain usable at the edges of an outage. A capture
 slightly ahead of the last measured sample uses that sample, which must be
 no more than 50 ms old at query time.
 `pose_age_ms` is the age of the pose used (the interpolated capture time, or

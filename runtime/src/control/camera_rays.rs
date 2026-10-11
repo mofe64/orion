@@ -178,13 +178,22 @@ impl PoseHistory {
                 "Measured camera pose history is unavailable at this timestamp",
             ));
         }
+        if capture == first.boottime_ns {
+            return Ok(first);
+        }
         if capture >= last.boottime_ns {
             return Ok(last);
         }
         for index in 1..self.len {
             let next = self.sample(index);
             if next.boottime_ns >= capture {
+                if capture == next.boottime_ns {
+                    return Ok(next);
+                }
                 let previous = self.sample(index - 1);
+                if next.boottime_ns - previous.boottime_ns > FUTURE_TOLERANCE_NS {
+                    return Err(invalid("Measured camera feedback gap exceeds 50 ms"));
+                }
                 let fraction = (capture - previous.boottime_ns) as f64
                     / (next.boottime_ns - previous.boottime_ns) as f64;
                 return Ok(PoseSample {
@@ -397,9 +406,38 @@ mod tests {
     }
 
     #[test]
+    fn feedback_gaps_reject_invented_poses_but_keep_exact_samples() {
+        let (mut camera, clock) = geometry();
+        camera.record_measured(&states(&home()));
+        clock.store(1_300_000_000, Ordering::Relaxed);
+        camera.record_measured(&states(&home()));
+        assert!(
+            camera
+                .query(request(1_150_000_000, vec![[0., 0., 1.]]))
+                .is_err()
+        );
+        for stamp in [1_000_000_000, 1_300_000_000] {
+            assert!(camera.query(request(stamp, vec![[0., 0., 1.]])).is_ok());
+        }
+        clock.store(1_350_000_000, Ordering::Relaxed);
+        camera.record_measured(&states(&home()));
+        assert!(
+            camera
+                .query(request(1_325_000_000, vec![[0., 0., 1.]]))
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn history_interpolates_measured_angles_and_rejects_old_or_future_captures() {
         let (mut camera, clock) = geometry();
         let mut positions = home();
+        camera.record_measured(&states(&positions));
+        positions.insert(
+            "base_yaw_joint".into(),
+            (home()["base_yaw_joint"] + 0.5) / 2.0,
+        );
+        clock.store(1_050_000_000, Ordering::Relaxed);
         camera.record_measured(&states(&positions));
         positions.insert("base_yaw_joint".into(), 0.5);
         clock.store(1_100_000_000, Ordering::Relaxed);
