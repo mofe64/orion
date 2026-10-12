@@ -9,6 +9,7 @@ from datetime import datetime
 
 thread_id = uuid.uuid4().hex
 turn = 0
+structured = None
 
 def emit(value):
     print(json.dumps(value), flush=True)
@@ -28,6 +29,12 @@ for line in sys.stdin:
         assert params['approvalPolicy'] == 'never'
         assert params['sandbox'] == 'read-only'
         assert params['ephemeral'] is True
+        structured = params['baseInstructions'].splitlines()[0] if params['baseInstructions'].startswith('ORION_') else None
+        if structured:
+            assert params['dynamicTools'] == []
+            assert params['config']['web_search'] == 'disabled'
+            emit({'id':request['id'],'result':{'thread':{'id':thread_id}}})
+            continue
         assert 'set_lighting' in params['baseInstructions']
         assert {tool['name'] for tool in params['dynamicTools']} == {'look', 'aim_light', 'start_light_routine', 'stop_light_routine', 'get_weather', 'append_memory', 'search_memories', 'forget_memory', 'set_alert_sound', 'set_reminder', 'snooze_alert', 'add_list_item', 'list_items', 'remove_list_item', 'clear_list', 'get_lighting', 'set_lighting', 'set_mode', 'go_to_sleep', 'set_timer', 'set_alarm', 'list_alerts', 'cancel_alert', 'stop_alert'}
         assert params['config']['web_search'] == 'live'
@@ -49,9 +56,39 @@ for line in sys.stdin:
         turn += 1
         turn_id = str(turn)
         text = params['input'][0]['text']
+        current = text.rsplit('Current user request: ',1)[-1]
+        if not structured and current in {'crash','look-fixture','look-twice','look-rejected','look-attachment-rejected'}:
+            text = current
         if text == 'crash':
             sys.exit(1)
         emit({'id': request['id'], 'result': {'turn': {'id': turn_id}}})
+        if structured:
+            data = json.loads(text)
+            if data.get('structured_tool_attempt'):
+                emit({'id':'forbidden','method':'item/tool/call','params':{'threadId':thread_id,'turnId':turn_id,'callId':'forbidden','tool':'append_memory','arguments':{'text':'forbidden'}}})
+                continue
+            if structured == 'ORION_MEMORY_PROPOSE':
+                if any('EXTRACTION_HANG' in exchange['user'] for exchange in data['conversation']):
+                    continue
+                candidates = []
+                for exchange in data['conversation']:
+                    for phrase, category in [('I am designing Orion as a long-term engineering learning project.', 'enduring_goal'), ('I ate toast for breakfast today.', 'critical_personal_fact')]:
+                        if phrase in exchange['user']:
+                            candidates.append({'text':phrase,'category':category,'evidence':[{'turn_id':exchange['turn_id'],'quote':phrase}], 'lasting_reason':'Maintain continuity of an enduring engineering project.', 'importance_reason':'This may influence assistance in later conversations.'})
+                result = {'candidates':candidates}
+            elif structured == 'ORION_MEMORY_REVIEW':
+                decisions = []
+                for index, candidate in enumerate(data['candidates']):
+                    approved = candidate['proposal']['category'] == 'enduring_goal' and not any('no longer building Orion' in t['user'] for t in data['conversation'])
+                    decisions.append({'index':index, 'supported':True, 'own_statement':True, 'durable':approved, 'important':approved,'not_trivial':approved,'not_duplicate':not any(m['text'] == candidate['proposal']['text'] for m in data['existing_memories']), 'no_conflict':approved,'approved':approved,'reason':'Enduring project.' if approved else 'Trivial or contradicted.'})
+                result = {'decisions':decisions}
+            elif structured == 'ORION_CONTEXT_SUMMARY':
+                result = {'summary':'Temporary Orion engineering project context, with incomplete delivery treated as interrupted.'}
+            else:
+                raise AssertionError(structured)
+            emit({'method':'item/completed','params':{'threadId':thread_id,'turnId':turn_id,'item':{'type':'agentMessage','phase':'final_answer','text':json.dumps(result)}}})
+            emit({'method':'turn/completed','params':{'threadId':thread_id,'turn':{'id':turn_id,'status':'completed','items':[]}}})
+            continue
         if text.startswith('Give the user a short morning briefing:'):
             time.sleep(0.5)  # Keep the thinking interruption test deterministic.
         if text == 'hang':

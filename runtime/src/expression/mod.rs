@@ -1,4 +1,5 @@
 pub mod alert_sound;
+pub(crate) mod behaviour;
 pub mod character;
 pub mod curiosity;
 pub mod gaze;

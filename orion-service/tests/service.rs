@@ -46,6 +46,7 @@ impl Process {
                 repository.join("agent/tests/fixtures/codex.py"),
             )
             .env("ORION_MEMORY_PATH", root.path().join("MEMORY.md"))
+            .env("ORION_VOICE_HISTORY_DIR", root.path().join("history"))
             .env("ORION_SOUL_PATH", root.path().join("SOUL.md"))
             .stdout(Stdio::null())
             .spawn()
@@ -93,6 +94,64 @@ impl Drop for Process {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[tokio::test]
+async fn service_reads_grouped_conversations_and_filtered_behaviour_files() {
+    let mut process = Process::start().await;
+    let store = orion_history::Store::new(process.root.path().join("history"));
+    let now = "2026-10-12T11:00:00Z".parse().unwrap();
+    store.accept_turn("first", "Hello", now).unwrap();
+    store.accept_turn("second", "Follow-up", now).unwrap();
+    let groups = process
+        .call(Request::History {
+            conversation_id: None,
+            before: None,
+        })
+        .await;
+    assert_eq!(groups["items"].as_array().unwrap().len(), 1);
+    assert_eq!(groups["items"][0]["turnCount"], 2);
+    let detail = process
+        .call(Request::History {
+            conversation_id: Some("first".into()),
+            before: None,
+        })
+        .await;
+    assert_eq!(detail["turns"].as_array().unwrap().len(), 2);
+    let writer = orion_history::BehaviourWriter::start(store.root().into()).unwrap();
+    writer
+        .sender()
+        .try_send(orion_history::BehaviourEvent {
+            id: "rest-event".into(),
+            at: now.to_rfc3339(),
+            runtime_time_seconds: 1.,
+            category: "rest".into(),
+            behaviour: "sleep".into(),
+            phase: "started".into(),
+            target: None,
+            target_category: None,
+            reason: Some("requested".into()),
+            action_id: Some("rest-event".into()),
+            duration_seconds: None,
+            session_id: None,
+        })
+        .unwrap();
+    drop(writer);
+    let events = process
+        .call(Request::Behaviours {
+            before: None,
+            category: Some("rest".into()),
+        })
+        .await;
+    assert_eq!(events["items"][0]["behaviour"], "sleep");
+    let filtered = process
+        .call(Request::Behaviours {
+            before: None,
+            category: Some("attention".into()),
+        })
+        .await;
+    assert_eq!(filtered["items"], json!([]));
+    process.terminate().await;
 }
 
 #[tokio::test]

@@ -75,7 +75,7 @@ impl Coordinator {
         let (control, mut controls) = mpsc::channel::<Control>(8);
         let token = connection.token.clone();
         let owned_speech = Arc::new(SpeechRuntime::new(config.speech.clone()));
-        let hub = Hub::new();
+        let hub = Hub::new(agent.history_path());
         let owned_hub = hub.clone();
         let thread = std::thread::Builder::new().name("orion-coordinator".into()).spawn(move || runtime.block_on(async move {
             let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };

@@ -13,10 +13,25 @@ pub async fn load_voice_settings(
 #[tauri::command]
 pub async fn load_voice_history(
     backend: tauri::State<'_, Backend>,
-    session_id: Option<String>,
+    conversation_id: Option<String>,
     before: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    backend.request(Request::History { session_id, before }).await
+    backend
+        .request(Request::History {
+            conversation_id,
+            before,
+        })
+        .await
+}
+#[tauri::command]
+pub async fn load_behaviour_history(
+    backend: tauri::State<'_, Backend>,
+    before: Option<String>,
+    category: Option<String>,
+) -> Result<serde_json::Value, String> {
+    backend
+        .request(Request::Behaviours { before, category })
+        .await
 }
 #[tauri::command]
 pub async fn save_voice_settings(

@@ -129,6 +129,7 @@ pub fn request(
                     id: uuid::Uuid::new_v4().simple().to_string(),
                     text: text.into(),
                     created: chrono::Utc::now().to_rfc3339(),
+                    source: None,
                 });
             }
         }

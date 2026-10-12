@@ -221,7 +221,7 @@ inference jobs and cancels playback.
 voice command can be captured and transcribed immediately, but its agent request
 waits for the interrupted turn's terminal result. Keeping that result receiver
 open preserves the ephemeral Codex conversation; dropping it would cancel the
-turn and retire the conversation. The next command carries “The previous reply
+turn and replace the provider thread. The next command carries “The previous reply
 was interrupted before it finished.” once, using the agent's pending delivery
 notice. Direct sleep detection still uses the user's original command.
 
@@ -272,8 +272,9 @@ agent executor can survive that restart when its configuration matches and no
 active request is cancelled.
 
 SIGTERM stops the coordinator, cancels its speech run and shuts down the agent
-and workers. A service restart creates a fresh conversation and retains saved
-memory, personality and settings. Studio's desktop backend stores pairing and
+and workers. A service restart replaces the provider thread and recovers text
+from the active logical conversation. Saved memory, personality and settings
+remain on disk. Studio's desktop backend stores pairing and
 forwards requests to the Pi; an unavailable Pi produces a connection error.
 
 ## Agent and physical boundary
@@ -303,41 +304,65 @@ The provider's protocol checks live in
 
 ## Agent conversation and memory
 
-The agent owns one ephemeral Codex conversation across wake requests and
-follow-ups. Voice session IDs identify individual capture/playback turns; they
-do not identify the agent conversation. Pi transport reconnects and idle
-coordinator reloads can retain that conversation.
+An accepted, nonempty user command starts a logical conversation: a saved group
+of turns with an ID independent of the Codex provider thread. Its window ends
+exactly 24 hours after the first accepted turn. Follow-ups do not extend that
+deadline. The first accepted turn at or after expiry starts another group.
+Rejected wakes, wake-only utterances and empty commands create no history entry.
+Accepted requests that fail retain their error and delivery outcome.
 
-Changing the agent model, effort or executable, stopping the host, or cancelling
-an active request retires the conversation. Wake-phrase barge-in stops delivery
-while letting the agent request finish, preserving the conversation. Protocol
-uncertainty also retires it: process exit, unreadable events, mid-turn timeout, stale/invalid calls, multiple
-final answers, changed streamed speech or unsupported server requests. The next
-request starts a fresh thread. Matching terminal turns retain the conversation,
-including failed turns and empty final answers without streamed speech; explicit
-turn-start rejections also retain it. There is no persisted thread-resume policy
-or idle-time rotation. Closing the five-second follow-up window preserves context.
+The agent reuses an ephemeral Codex thread while it is healthy. Transport
+reconnects and idle coordinator reloads can retain it. Model changes, service
+restarts, image-bearing turns, cancellation and protocol uncertainty can replace
+the provider thread without splitting the logical conversation. A replacement
+receives previous user/assistant text, tool outcomes and delivery status from
+the active group; recorded actions are context and are never replayed. Large
+recovery contexts use a cached, temporary text summary plus recent exchanges.
+That summary is separate from long-term memory. Camera images and audio never
+enter persisted history or recovery. Scheduled briefings use separate provider
+threads and do not create user conversations.
 
-The agent saves memories only when requested. Entries use IDs and UTC creation
-dates in a local `MEMORY.md`; writes are locked and replace the file atomically.
-Retrieval uses bounded keyword matching. Selected memories are sent to Codex as
-context. Studio supports memory edits and curated personality choices saved in
-`SOUL.md`. Profile writes wait behind active agent requests and retire the current
-conversation so later turns use the changed profile. See
-[agent storage and tools](../agent/README.md#memory-and-tools) for limits and file
-formats.
+Retirement occurs on a ten-second maintenance interval or admission of a later
+turn. Extraction waits until every old turn has settled generation and a terminal
+delivery outcome. Interrupted replies remain interrupted even if generation
+finishes later. Startup recovery closes unfinished work as interrupted. Retirement
+does not require another user request, and background extraction yields to
+foreground requests, including Settings edits.
 
-The coordinator saves each voice turn on the Pi under
-`~/.local/share/orion/voice-stack/history/YYYY-MM-DD/`. Each private turn file
-contains dated events for the recognized command, agent reply, tool calls and
-results, errors, speech generation and playback timings. Conversation history
-does not save audio. Opt-in [wake diagnostics](../voice/README.md#troubleshooting)
-save a short verifier-input recording locally on the Pi, outside this history.
-Studio reads this history through the paired gateway from **Debug → Voice → View
-conversation history**. Turns are shown newest first, with older turns available
-through **Load older**. A coordinator restart does not erase saved turns. The
-history begins when this version is installed; earlier event snapshots cannot be
-reconstructed from Studio.
+Memory extraction uses separate, tool-free Codex sessions. One proposes at most
+eight important, enduring facts; another independently reviews them. Candidates
+must cite exact user words in identified turns. Durable constraints, enduring
+goals, important relationships and critical personal facts qualify only when they
+will materially help future interactions. Routine chatter, one-off requests,
+inference, assistant claims, observations and trivial preferences are rejected.
+Every transcript slice is checked for corrections and conflicts. All review
+checks must pass; saving zero memories is normal. This is a conservative model
+review policy, not a guarantee that a model always judges importance correctly.
+
+Candidates, review results and retry state are private files. Stable candidate
+IDs and a receipt ledger prevent repeated saves after interruption or restart.
+Saving compares the reviewed memory snapshot and rejects duplicates. Explicit
+memory edits, deletion or clearing prevent extraction from older conversations
+from restoring stale facts. Studio memory changes also exclude earlier active
+conversation text from subsequent provider recovery, while keeping the history
+available to the user. Failed extraction retries with backoff independently of
+live conversation handling. `MEMORY.md` remains the editable memory store; manual
+memory tools and bounded keyword retrieval remain available. See
+[agent storage and tools](../agent/README.md#memory-and-tools).
+
+The shared [history store](../history/README.md) uses JSON per conversation/turn
+and daily JSONL behaviour journals under
+`~/.local/share/orion/voice-stack/history/`. It requires no database or migration
+framework. On first use of this format, old dated per-turn history directories
+are deleted rather than imported. Personality, memories and settings are kept.
+History saves text and metadata. Opt-in
+[wake diagnostics](../voice/README.md#troubleshooting) save a short verifier-input
+recording outside this history.
+
+Studio reads through the paired gateway from **Debug → Voice → View conversation
+history**. **Conversations** shows one entry per 24-hour group and its accepted
+turns. **Behaviours** shows the runtime journal, with category filters and older
+pages. Extracted memories in Settings show their source conversation and date.
 
 A search can produce one short acknowledgement while Codex continues working.
 The coordinator synthesizes and plays it in the same voice session, then sends
@@ -345,6 +370,54 @@ The coordinator synthesizes and plays it in the same voice session, then sends
 intermediate playback. Only final playback completion opens the follow-up window.
 Memory tools are silent. Listeners without `toolFeedback` receive the final answer
 without the intermediate acknowledgement.
+
+### Behaviour journal
+
+The runtime records attention observations, new-object peeks, object glances,
+idle clips, reactions, tracking and held-gaze intervals, and sleep/wake
+transitions. Entries include UTC time, runtime time, target category/track ID,
+reason, action ID and duration where available. Known voice transitions include
+their session ID. Starts and measured outcomes are separate events: interrupted
+or failed motion never masquerades as completed motion. An initial rest-state
+observation does not invent a wake event.
+
+Person arrival means an increased observed person count, not recognition of an
+individual. Object novelty comes from short-lived vision track/novelty state;
+the journal records what the runtime did and does not become its focus policy or
+a persistent object-identity database. See
+[autonomous camera metadata](../runtime/README.md#autonomous-camera-metadata).
+Logging queues metadata to a bounded background writer outside the motor tick.
+Queue or disk failures are reported; a later successful write records a gap.
+There is no automatic history retention limit, so operators must monitor disk
+usage during long-running Pi testing.
+
+### Pi acceptance for history and retirement
+
+Local tests cover exact 24-hour expiry with an injected store clock, false-wake
+admission, provider recovery, extraction review/backoff/preemption, receipt
+idempotency, Studio/RPC contracts, and daemon sleep/wake journalling. Fake Codex
+peers verify application rules without testing a real model's judgement.
+Physical Pi acceptance remains separate:
+
+- Verify first startup removes legacy history while preserving memory,
+  personality and settings. Speak multiple turns, restart the voice service,
+  and confirm one history group and recovered context within its window.
+  Reject a false wake and finish a wake-only utterance; neither adds a turn.
+- Exercise object peeks, person arrival, held gaze, automatic and requested sleep,
+  confirmed wake, Stop and interrupted motion. Compare journal starts/outcomes
+  with what the lamp actually does, including target category, duration and
+  voice-session linkage. Monitor control timing and disk usage over a soak.
+- With the installed signed-in Codex runtime, retire controlled conversations
+  containing ordinary chatter, an important enduring fact and a later correction.
+  Expect zero, one and zero automatic memories respectively. Inspect exact user
+  evidence and source metadata; test provider unavailability, interruption,
+  restart retry and an explicit deletion before retry. A live request must take
+  priority over background extraction. Use isolated test storage for an expiry
+  fixture rather than changing the Pi's system clock.
+- Through paired Studio, verify grouped details, behaviour filters/older pages
+  and memory provenance. Switch connections and confirm the previous lamp's
+  history disappears. ARM64 release building and on-device storage/control
+  performance require the normal Pi deployment acceptance procedure.
 
 ## Response latency
 
@@ -469,11 +542,11 @@ The Codex adapter streams speech text only from a matching thread, turn and item
 explicitly marked `final_answer`. Complete sentences can reach the selected TTS
 model while Codex finishes. Phase-less messages wait for final completion. They do not participate in
 multiple-final or streamed-item checks. If the turn has no explicit final, the
-last phase-less message is the answer. Two distinct explicit final items retire
-the conversation. Model
+last phase-less message is the answer. Two distinct explicit final items replace
+the provider thread. Model
 commentary, citation markers and web addresses are removed from spoken output. The final text
 must preserve any prefix
-already emitted; a mismatch cancels the turn and retires the agent conversation.
+already emitted; a mismatch cancels the turn and replaces the provider thread.
 The base prompt requests a short opening sentence and prose for listening, without
 markdown, bullet symbols, tables or headings. There is no output truncation or
 word/sentence quota. The personality's “Keep it brief” habit controls brevity, and
@@ -692,8 +765,8 @@ path was verified with a synthetic red image on `gpt-6-luna`. Image-valued tool
 results were accepted by the same server but did not reliably reach the model,
 so Orion uses the ordinary image-input channel. No `localImage` file is created.
 Tool activity contains only success/error metadata. After an image-bearing
-turn, the ephemeral conversation closes so later turns cannot resend the image.
-A bounded request/answer text note remains in memory for the first follow-up;
-earlier provider conversation history is discarded. Profile changes clear the
-note. Other turns retain normal conversation reuse. Physical cue visibility
+turn, the ephemeral provider thread closes so later turns cannot resend the image.
+The active logical conversation retains text and tool metadata for recovery;
+an in-memory request/answer note also supports operation without persisted
+history. Profile changes clear that note. Other turns retain provider reuse. Physical cue visibility
 and recognition of objects on the lamp remain lamp-unverified.

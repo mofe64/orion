@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 fn service() -> AgentService {
     AgentService::start(AgentConfig {
         soul_path: None,
+        history_path: None,
         memory_path: None,
         model: "test-model".into(),
         effort: "high".into(),
@@ -201,6 +202,7 @@ async fn direct_sleep_without_a_robot_coordinator_fails_closed() {
 async fn incompatible_model_is_not_substituted() {
     let service = AgentService::start(AgentConfig {
         soul_path: None,
+        history_path: None,
         memory_path: None,
         model: "missing-model".into(),
         effort: "high".into(),
@@ -226,6 +228,7 @@ async fn memory_tools_persist_and_invalid_tools_cannot_write() {
         effort: "high".into(),
         codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
         soul_path: None,
+        history_path: None,
         memory_path: Some(path.clone()),
     })
     .unwrap();
@@ -308,6 +311,7 @@ async fn installed_runtime_memory_tool_roundtrip() {
     let path = dir.path().join("MEMORY.md");
     let service = AgentService::start(AgentConfig {
         soul_path: None,
+        history_path: None,
         memory_path: Some(path.clone()),
         ..AgentConfig::default()
     })
@@ -323,6 +327,7 @@ async fn installed_runtime_memory_tool_roundtrip() {
 async fn installed_runtime_search_and_lighting_tools() {
     let service = AgentService::start(AgentConfig {
         soul_path: None,
+        history_path: None,
         memory_path: None,
         ..AgentConfig::default()
     })
@@ -374,6 +379,7 @@ async fn profile_edits_reset_context_but_reads_and_conflicts_preserve_it() {
         model: "test-model".into(),
         effort: "high".into(),
         codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+        history_path: None,
         memory_path: Some(memory.clone()),
         soul_path: Some(soul.clone()),
     })
@@ -467,6 +473,7 @@ async fn rejected_duplicate_and_excessive_tools_complete_the_turn_without_reset_
     let path = dir.path().join("MEMORY.md");
     let service = AgentService::start(AgentConfig {
         soul_path: None,
+        history_path: None,
         memory_path: Some(path.clone()),
         model: "test-model".into(),
         effort: "high".into(),
@@ -658,6 +665,7 @@ async fn successful_direct_sleep_is_known_to_the_next_model_turn_once() {
 async fn next_conversation_reminder_is_kept_on_failure_and_delivered_once() {
     let dir = tempfile::tempdir().unwrap();
     let service = AgentService::start(AgentConfig {
+        history_path: None,
         memory_path: Some(dir.path().join("MEMORY.md")),
         soul_path: None,
         model: "test-model".into(),
@@ -700,6 +708,7 @@ async fn next_conversation_reminder_is_kept_on_failure_and_delivered_once() {
 async fn list_tools_persist_and_require_explicit_clear_confirmation() {
     let dir = tempfile::tempdir().unwrap();
     let service = AgentService::start(AgentConfig {
+        history_path: None,
         memory_path: Some(dir.path().join("MEMORY.md")),
         soul_path: None,
         model: "test-model".into(),
@@ -753,6 +762,7 @@ async fn list_tools_persist_and_require_explicit_clear_confirmation() {
 async fn corrupt_and_oversized_reminders_do_not_break_turns_and_are_reported_in_profile() {
     let dir = tempfile::tempdir().unwrap();
     let service = AgentService::start(AgentConfig {
+        history_path: None,
         memory_path: Some(dir.path().join("MEMORY.md")),
         soul_path: None,
         model: "test-model".into(),
@@ -780,6 +790,7 @@ async fn corrupt_and_oversized_reminders_do_not_break_turns_and_are_reported_in_
 async fn failed_delivery_bookkeeping_keeps_the_successful_reply_and_reminder() {
     let dir = tempfile::tempdir().unwrap();
     let service = AgentService::start(AgentConfig {
+        history_path: None,
         memory_path: Some(dir.path().join("MEMORY.md")),
         soul_path: None,
         model: "test-model".into(),
@@ -810,5 +821,219 @@ async fn failed_delivery_bookkeeping_keeps_the_successful_reply_and_reminder() {
             .await
             .unwrap()
             .contains("Pending reminder")
+    );
+}
+
+#[tokio::test]
+async fn durable_conversation_reuses_provider_and_restores_text_after_service_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("history");
+    let config = AgentConfig {
+        history_path: Some(root.clone()),
+        soul_path: None,
+        memory_path: None,
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    };
+    let service = AgentService::start(config.clone()).unwrap();
+    let handle = service.handle();
+    let first = handle
+        .respond_for_session("first", "I named the project Orion", None)
+        .await
+        .unwrap();
+    handle.confirm_playback(&first);
+    let provider = handle.info().await.unwrap().conversation_id;
+    let second = handle
+        .respond_for_session("second", "Continue this project", None)
+        .await
+        .unwrap();
+    handle.confirm_playback(&second);
+    assert_eq!(handle.info().await.unwrap().conversation_id, provider);
+    // Scheduled text uses an independent provider and cannot alter the user's provider.
+    let system = handle
+        .respond_system_for_playback("A scheduled briefing", None)
+        .await
+        .unwrap();
+    assert!(system.text.contains("scheduled briefing"));
+    assert_eq!(handle.info().await.unwrap().conversation_id, provider);
+    drop(handle);
+    drop(service);
+    let reopened = AgentService::start(config).unwrap();
+    // A status call can create the replacement provider before the next command.
+    reopened.handle().info().await.unwrap();
+    let third = reopened
+        .handle()
+        .respond_for_session("third", "What was its name?", None)
+        .await
+        .unwrap();
+    assert!(third.text.contains("I named the project Orion"));
+    reopened.handle().confirm_playback(&third);
+    let store = orion_history::Store::new(root);
+    let list = store.read(None, None).unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["turnCount"], 3);
+    assert_eq!(
+        store.read(Some("first"), None).unwrap()["turns"][2]["delivery"],
+        "completed"
+    );
+}
+
+#[tokio::test]
+async fn provider_failure_keeps_logical_conversation_and_recovers_prior_exchanges() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = AgentConfig {
+        history_path: Some(directory.path().into()),
+        soul_path: None,
+        memory_path: None,
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    };
+    let service = AgentService::start(config).unwrap();
+    let handle = service.handle();
+    let first = handle
+        .respond_for_session("first", "The project is named Orion", None)
+        .await
+        .unwrap();
+    handle.confirm_playback(&first);
+    let before = handle.info().await.unwrap().conversation_id;
+    assert!(
+        handle
+            .respond_for_session("failed", "crash", None)
+            .await
+            .is_err()
+    );
+    let after = handle.info().await.unwrap().conversation_id;
+    assert_ne!(before, after);
+    let next = handle
+        .respond_for_session("next", "Remind me of its name", None)
+        .await
+        .unwrap();
+    assert!(next.text.contains("The project is named Orion"));
+    handle.confirm_playback(&next);
+    let store = orion_history::Store::new(directory.path().into());
+    assert_eq!(store.read(None, None).unwrap()["items"][0]["turnCount"], 3);
+    assert_eq!(
+        store.read(Some("first"), None).unwrap()["turns"][1]["delivery"],
+        "failed"
+    );
+}
+
+fn history_config(directory: &std::path::Path) -> AgentConfig {
+    AgentConfig {
+        history_path: Some(directory.join("history")),
+        soul_path: None,
+        memory_path: Some(directory.join("MEMORY.md")),
+        model: "test-model".into(),
+        effort: "high".into(),
+        codex_bin: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex.py")),
+    }
+}
+
+fn seed_expired_conversation(config: &AgentConfig, command: &str) -> orion_history::Store {
+    let store = orion_history::Store::new(config.history_path.clone().unwrap());
+    let started = chrono::Utc::now() - chrono::Duration::hours(25);
+    store.accept_turn("old", command, started).unwrap();
+    store
+        .record_at(
+            &serde_json::json!({"type":"agent.generated","sessionId":"old","text":"Acknowledged"}),
+            started,
+        )
+        .unwrap();
+    store
+        .record_at(
+            &serde_json::json!({"type":"reply.returned","sessionId":"old"}),
+            started,
+        )
+        .unwrap();
+    store
+}
+
+#[tokio::test]
+async fn actor_automatically_retires_and_extracts_without_a_new_user_turn() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = history_config(directory.path());
+    let store = seed_expired_conversation(
+        &config,
+        "I am designing Orion as a long-term engineering learning project.",
+    );
+    let service = AgentService::start(config.clone()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if store.read(Some("old"), None).unwrap()["conversation"]["extraction"] == "complete" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let memories = service.handle().profile(None).await.unwrap().memories;
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].source.as_ref().unwrap().conversation_id, "old");
+}
+
+#[tokio::test]
+async fn foreground_turn_preempts_background_extraction() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = history_config(directory.path());
+    let store = seed_expired_conversation(&config, "EXTRACTION_HANG");
+    let service = AgentService::start(config).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if store.read(Some("old"), None).unwrap()["conversation"]["extraction"] == "running" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let reply = tokio::time::timeout(
+        Duration::from_secs(2),
+        service.handle().respond("Hello now"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(reply.contains("Hello now"));
+    assert_eq!(
+        store.read(None, None).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_ne!(
+        store.read(Some("old"), None).unwrap()["conversation"]["extraction"],
+        "complete"
+    );
+}
+
+#[tokio::test]
+async fn expired_logical_conversation_starts_a_provider_without_old_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = history_config(directory.path());
+    config.memory_path = None;
+    let store = seed_expired_conversation(&config, "Old private discussion");
+    let service = AgentService::start(config).unwrap();
+    let reply = service
+        .handle()
+        .respond_for_session("new", "A fresh day", None)
+        .await
+        .unwrap();
+    assert!(!reply.text.contains("Old private discussion"));
+    assert_eq!(
+        store.read(None, None).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        store.read(Some("new"), None).unwrap()["conversation"]["conversationId"],
+        "new"
     );
 }

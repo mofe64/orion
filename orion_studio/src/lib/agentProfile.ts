@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { forOwner } from "./feedback";
 export interface Personality { traits: string[]; behaviors: string[] }
 export interface PersonalityChoice { id: string; label: string; description: string }
-export interface MemoryEntry { id: string; created: string; text: string }
+export interface MemoryEntry { id: string; created: string; text: string; source?: { conversationId: string; conversationStartedAt: string; turnIds: string[]; candidateId: string } }
 export interface WeatherLocation { name: string; latitude: number; longitude: number; timezone: string }
 export interface WeatherSettings { location: WeatherLocation | null; temperature_unit: "celsius" | "fahrenheit" | null }
 export interface AgentProfile {

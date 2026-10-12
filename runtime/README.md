@@ -163,6 +163,14 @@ vision eligible during a conversation.
 
 ## Build and test
 
+Behaviour logging uses the shared [history store](../history/README.md).
+`ORION_ONBOARD=1` enables its Pi default; `ORION_VOICE_HISTORY_DIR` selects an
+explicit directory. Match the voice service's directory for Studio access.
+The motor tick queues metadata to a bounded background writer; it does no
+journal disk I/O. Action IDs connect starts with measured completion, failure
+or interruption, and gaze intervals retain duration. See the
+[behaviour journal contract](../docs/voice-architecture.md#behaviour-journal).
+
 Use a toolchain that supports the crate's Rust 2024 syntax. Run from the repository root:
 
 ```bash
@@ -732,14 +740,6 @@ Alarms accept optional `briefing: true`. Dismissal creates a persisted announcem
 Alarms accept `sunrise_minutes` (5–60). The earliest eligible alarm fades from 3% amber `[255,100,0,80]` to full warm white `[40,20,4,210]`. Sunrise bypasses only the rest light mask, without motion or user activity. Dismissal leaves full warm white on until a lamp command or character start changes it; cancellation restores the previous manual lamp. A manual change stops an active sunrise without restarting it on the next tick.
 
 `routines {"action":"start_light_routine","routine":"wind_down","minutes":20}` fades to 8% warm white then requests the ordinary deferred sleep lifecycle: speech, scenes and confirmed voice activity finish before rest. Focus (5–120 minutes) selects full cool white `[150,190,255,110]` and creates a persisted timer labelled `Focus session`; ringing changes the lamp to warm white. The temporary lamp-mode override ends after ringing, restoring the saved mode. Starting another routine, a manual lamp command or explicit character start cancels the routine and its focus timer. `stop_light_routine` restores the previous manual lamp. Fades/routine ownership are ephemeral: restarting cancels wind-down without requesting delayed rest and drops focus light ownership while the persisted focus timer retains its deadline and sound; the saved mode is never overwritten by a routine. `start_light_routine` discloses restart cancellation in its tool description.
-
-
-
-### Roll back to a runtime without reminders
-
-Before the first save that adds reminder/recurrence fields, Orion preserves the exact legacy file at `~/.config/orion/routines.json.pre-reminders`. The backup is created once and never replaced; if it cannot be secured, the alert-state save fails and the legacy file stays intact. A fresh installation, or a file already written in the extended format, has no legacy snapshot to preserve.
-
-Stop `oriond` before rollback. Keep a separate copy of the extended `routines.json`, restore `routines.json.pre-reminders` over `routines.json`, deploy the older runtime, and restart it. Alerts and changes made after the backup are absent from the restored snapshot. The sound companion file may remain; its ringing-window key prevents stale sound state from changing restored alerts. An older runtime rejects the extended file's unknown fields, so changing only the executable is insufficient.
 
 ### Autonomous camera metadata
 

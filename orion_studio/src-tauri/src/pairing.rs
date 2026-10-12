@@ -18,7 +18,9 @@ pub async fn forget_pairing(
     backend.request(Request::ForgetPairing).await
 }
 #[tauri::command]
-pub async fn list_pairings(backend: tauri::State<'_, Backend>) -> Result<serde_json::Value, String> {
+pub async fn list_pairings(
+    backend: tauri::State<'_, Backend>,
+) -> Result<serde_json::Value, String> {
     backend.request(Request::ListPairings).await
 }
 #[tauri::command]

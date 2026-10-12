@@ -1928,7 +1928,7 @@ def voice_service_directory() -> Path:
 def voice_service_request(request: dict[str, Any]) -> Any:
     """Bridge allowlisted controls to the private headless owner, never to Codex directly."""
     if not isinstance(request, dict) or request.get("method") not in {
-        "status", "observe", "history", "start_saved", "load_settings", "save_settings", "model_locations", "profile", "lists", "geocode", "microphone",
+        "status", "observe", "history", "behaviours", "start_saved", "load_settings", "save_settings", "model_locations", "profile", "lists", "geocode", "microphone",
     }:
         raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_voice_request", "Unsupported voice control.")
     try:

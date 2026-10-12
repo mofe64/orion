@@ -183,8 +183,10 @@ listener continues recording the command. Silero decides when speech has ended.
 coordinator sends inference jobs to separate ASR and TTS workers, calls the agent
 through Rust channels, uploads reply audio, and waits for playback completion.
 Keeping the agent alive across an idle coordinator restart preserves the
-conversation. Restarting the service starts a fresh conversation and retains
-saved memory and personality.
+provider thread. Restarting the service replaces that thread and recovers text
+from the saved 24-hour logical conversation. The
+[history and retirement policy](voice-architecture.md#agent-conversation-and-memory)
+defines grouping, false-wake filtering and memory extraction.
 
 A confirmed command reaches Codex as text. The available agent tools support web
 search, explicit memory operations, validated lamp and mode changes, sleep, timers

@@ -27,6 +27,7 @@ pub(crate) struct Codex {
     config: AgentConfig,
     pub reset_required: bool,
     supports_images: bool,
+    structured: bool,
 }
 
 fn candidates(config: &AgentConfig) -> Vec<PathBuf> {
@@ -52,9 +53,28 @@ impl Codex {
     }
 
     pub async fn connect(config: &AgentConfig) -> Result<Self, String> {
+        Self::connect_with_instructions(config, None).await
+    }
+
+    pub(crate) async fn connect_structured(
+        config: &AgentConfig,
+        instructions: &str,
+    ) -> Result<Self, String> {
+        Self::connect_with_instructions(config, Some(instructions)).await
+    }
+
+    async fn connect_with_instructions(
+        config: &AgentConfig,
+        instructions: Option<&str>,
+    ) -> Result<Self, String> {
         let mut failures = Vec::new();
         for path in candidates(config) {
-            match timeout(Duration::from_secs(30), Self::start(&path, config)).await {
+            match timeout(
+                Duration::from_secs(30),
+                Self::start(&path, config, instructions),
+            )
+            .await
+            {
                 Ok(Ok(client)) => return Ok(client),
                 Ok(Err(error)) => failures.push(format!("{}: {error}", path.display())),
                 Err(_) => failures.push(format!("{}: initialization timed out", path.display())),
@@ -66,7 +86,11 @@ impl Codex {
         ))
     }
 
-    async fn start(path: &Path, config: &AgentConfig) -> Result<Self, String> {
+    async fn start(
+        path: &Path,
+        config: &AgentConfig,
+        instructions: Option<&str>,
+    ) -> Result<Self, String> {
         let workspace = tempfile::Builder::new()
             .prefix("orion-agent-")
             .tempdir()
@@ -86,6 +110,7 @@ impl Codex {
             config: config.clone(),
             reset_required: false,
             supports_images: true,
+            structured: instructions.is_some(),
             _child: child,
             input,
             output,
@@ -170,7 +195,8 @@ impl Codex {
         let inherited = client
             .rpc("config/read", json!({"includeLayers":false}))
             .await?;
-        let mut tool_config = json!({"web_search":"live"});
+        let mut tool_config =
+            json!({"web_search":if instructions.is_some() { "disabled" } else { "live" }});
         for feature in [
             "shell_tool",
             "unified_exec",
@@ -199,10 +225,10 @@ impl Codex {
             .rpc(
                 "thread/start",
                 json!({
-                    "model":config.model, "baseInstructions":crate::profile::instructions(config)?,
+                    "model":config.model, "baseInstructions":match instructions { Some(value) => value.to_owned(), None => crate::profile::instructions(config)? },
                     "approvalPolicy":"never", "sandbox":"read-only", "ephemeral":true,
                     "cwd":client._workspace.path(), "environments":[],
-                    "dynamicTools":crate::tools::schemas(),
+                    "dynamicTools":if instructions.is_some() { json!([]) } else { crate::tools::schemas() },
                     "config":tool_config, "selectedCapabilityRoots":[],
                 }),
             )
@@ -315,6 +341,9 @@ impl Codex {
             };
             let params = &message["params"];
             if message["method"] == "item/tool/call" {
+                if self.structured {
+                    return Err("Structured extraction cannot execute tools".into());
+                }
                 if params["threadId"] != self.info.conversation_id
                     || params["turnId"] != turn_id
                     || !params["namespace"].is_null()
@@ -494,6 +523,12 @@ impl Codex {
                         .next_back()
                         .unwrap_or(&legacy_text)
                         .into();
+                }
+                if self.structured {
+                    if final_text.len() > 65536 {
+                        return Err("Structured result is too large".into());
+                    }
+                    return Ok(final_text.trim().into());
                 }
                 let response = spoken_response(&final_text).map_err(|error| {
                     if !sentences.emitted.is_empty() {

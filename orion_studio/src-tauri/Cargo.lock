@@ -2747,6 +2747,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
+ "orion-history",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2762,6 +2763,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "orion-agent",
+ "orion-history",
  "regex",
  "reqwest 0.12.28",
  "serde",
@@ -2773,12 +2775,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "orion-history"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "orion-service"
 version = "0.1.0"
 dependencies = [
  "keyring",
  "orion-agent",
  "orion-coordinator",
+ "orion-history",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

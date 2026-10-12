@@ -6,6 +6,7 @@ license = "GPL-3.0-only"
 description = "Orion voice orchestration independent of Studio and speech inference"
 
 [dependencies]
+orion-history = { path = "../history" }
 orion-agent = { path = "../agent" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

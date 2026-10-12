@@ -1,34 +1,34 @@
 # Orion configuration
 
-Voice settings, microphone mute, calibration, personality and memories are saved
-on the Pi. Studio stores its pairing credentials and UI preferences on the
-desktop. Use the [quickstart](quickstart.md) for installation, updates and service
-recovery.
+This doc highlight the various configuration options for Orion.  Essentially answers where indiviudal settings are stored, what those settings mean and how to change them
 
-## Saved files
+Note: The configuration files are stored on orion's onboard computer in the home directory of the user account running Orion.
+
+## Config
 
 Paths below are relative to the Pi user's home unless stated otherwise.
 
-| Path | Contents |
-| --- | --- |
-| `.config/orion/voice-settings.json` | Agent model and effort, speech models, optional model/cache paths and voice preset |
-| `.config/orion/voice-stack.env` | Environment for the onboard voice and agent service |
-| `.config/orion/voice.env` | Listener overrides, including microphone spacing, channel orientation and capture gain |
-| `.config/orion/routines.json.pre-reminders` | One-time legacy alert snapshot for [runtime rollback](../runtime/README.md#roll-back-to-a-runtime-without-reminders) |
-| `.config/orion/routines.json` | Idle/lamp mode, timers, reminders, recurring alarms, recent results and announcement/ringing deadlines |
-| `.local/share/orion/weather.json` | Saved weather location and optional temperature units; beside the configured `MEMORY.md` |
-| `.local/share/orion/lists.json` | Shopping and to-do lists; stored beside the configured `MEMORY.md` |
-| `.local/share/orion/reminders.json` | Next-conversation reminders; stored beside the configured `MEMORY.md` |
-| `.config/orion/routines.sounds.json` | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window |
-| `.config/orion/microphone.json` | Persistent microphone mute preference |
-| `.config/orion/camera.json` | `{"camera_enabled": true}` or `false`; vision watches this privacy preference |
-| `.config/orion/behaviours.json` | Opt-in camera behaviours; missing or corrupt settings disable them |
-| `.config/orion/tracking.json` | `{"tracking_mode": "off"}`, `"idle"`, `"faces"` or `"hands"`; saved independently of camera privacy |
-| `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
-| `.config/orion/studio-token` | Gateway and listener authentication token |
-| `.local/share/orion/SOUL.md` | Saved personality choices and generated instructions |
-| `.local/share/orion/MEMORY.md` | Explicitly saved memories |
-| `.local/share/orion/voice-stack/` | Releases, shared models, native tools and deployment inventories |
+
+| Path                                        | Contents                                                                                                             |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `.config/orion/voice-settings.json`         | Agent model and effort, speech models, optional model/cache paths and voice preset                                   |
+| `.config/orion/voice-stack.env`             | Environment for the onboard voice and agent service                                                                  |
+| `.config/orion/voice.env`                   | Listener overrides, including microphone spacing, channel orientation and capture gain                               |
+| `.config/orion/routines.json`               | Idle/lamp mode, timers, reminders, recurring alarms, recent results and announcement/ringing deadlines               |
+| `.local/share/orion/weather.json`           | Saved weather location and optional temperature units; beside the configured `MEMORY.md`                             |
+| `.local/share/orion/lists.json`             | Shopping and to-do lists; stored beside the configured `MEMORY.md`                                                   |
+| `.local/share/orion/reminders.json`         | Next-conversation reminders; stored beside the configured `MEMORY.md`                                                |
+| `.config/orion/routines.sounds.json`        | Alarm and timer sound preferences, plus the sound selected for the most recent ringing window                        |
+| `.config/orion/microphone.json`             | Persistent microphone mute preference                                                                                |
+| `.config/orion/camera.json`                 | `{"camera_enabled": true}` or `false`; vision watches this privacy preference                                        |
+| `.config/orion/behaviours.json`             | Opt-in camera behaviours; missing or corrupt settings disable them                                                   |
+| `.config/orion/tracking.json`               | `{"tracking_mode": "off"}`, `"idle"`, `"faces"` or `"hands"`; saved independently of camera privacy                  |
+| `.config/orion/servo_calibration.json`      | Joint zeros, directions and calibrated ranges                                                                        |
+| `.config/orion/studio-token`                | Gateway and listener authentication token                                                                            |
+| `.local/share/orion/SOUL.md`                | Saved personality choices and generated instructions                                                                 |
+| `.local/share/orion/MEMORY.md`              | Explicitly saved memories                                                                                            |
+| `.local/share/orion/voice-stack/`           | Releases, shared models, native tools and deployment inventories                                                     |
+
 
 The runtime and gateway read assets from the existing catalog root, normally
 the checkout passed as `--root` (for example `/home/mofe/orion`). This is separate from the code release selected by systemd.
@@ -117,23 +117,25 @@ restart `orion-listener`. Systemd units and their `.service.d/*.conf` files can
 also supply environment values or command arguments. Inspect the effective
 configuration with `systemctl cat SERVICE` before editing it.
 
-| Variable | Meaning |
-| --- | --- |
-| `ORION_ONBOARD=1` | Use the Pi's local listener, gateway and token file |
-| `ORION_SPEECH_BACKEND=pi` | Select Qwen GGUF and Pi CPU speech adapters |
-| `ORION_PROJECT_ROOT` | Source directory for the voice service; managed installs select the active release |
-| `ORION_STUDIO_VOICE_PYTHON` | Speech Python executable; managed installs select the release's own environment |
-| `ORION_STUDIO_CODEX_BIN` | Explicit Codex executable; the installer selects its pinned native package |
-| `ORION_ASR_MODEL_DIR` | Folder containing Qwen `model.gguf` and `mmproj.gguf` |
-| `ORION_LLAMA_SERVER` | Native Qwen server executable |
-| `ORION_ASR_CONTEXT` | Vocabulary hint supplied to Qwen; default `Orion` |
-| `ORION_ASR_THREADS`, `ORION_TTS_THREADS` | CPU inference threads, 1–4; managed default 3 |
-| `ORION_PIPER_MODEL_DIR` | Prepared Piper Alba Medium folder; managed default is `~/.local/share/orion/voice-stack/models/piper-alba-medium` |
-| `HF_HOME` | Speech model cache and initial saved-cache default |
-| `HF_HUB_OFFLINE=1` | Use prepared speech assets from the local cache |
-| `ORION_RELEASE_REVISION` | Release identifier reported by the voice host |
-| `ORION_PI_VOICE_URL` | Override the listener WebSocket URL; onboard default `ws://127.0.0.1:7448/` |
-| `ORION_SOUL_PATH`, `ORION_MEMORY_PATH` | Override the agent's personality and memory files |
+
+| Variable                                 | Meaning                                                                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ORION_ONBOARD=1`                        | Use the Pi's local listener, gateway and token file                                                               |
+| `ORION_SPEECH_BACKEND=pi`                | Select Qwen GGUF and Pi CPU speech adapters                                                                       |
+| `ORION_PROJECT_ROOT`                     | Source directory for the voice service; managed installs select the active release                                |
+| `ORION_STUDIO_VOICE_PYTHON`              | Speech Python executable; managed installs select the release's own environment                                   |
+| `ORION_STUDIO_CODEX_BIN`                 | Explicit Codex executable; the installer selects its pinned native package                                        |
+| `ORION_ASR_MODEL_DIR`                    | Folder containing Qwen `model.gguf` and `mmproj.gguf`                                                             |
+| `ORION_LLAMA_SERVER`                     | Native Qwen server executable                                                                                     |
+| `ORION_ASR_CONTEXT`                      | Vocabulary hint supplied to Qwen; default `Orion`                                                                 |
+| `ORION_ASR_THREADS`, `ORION_TTS_THREADS` | CPU inference threads, 1–4; managed default 3                                                                     |
+| `ORION_PIPER_MODEL_DIR`                  | Prepared Piper Alba Medium folder; managed default is `~/.local/share/orion/voice-stack/models/piper-alba-medium` |
+| `HF_HOME`                                | Speech model cache and initial saved-cache default                                                                |
+| `HF_HUB_OFFLINE=1`                       | Use prepared speech assets from the local cache                                                                   |
+| `ORION_RELEASE_REVISION`                 | Release identifier reported by the voice host                                                                     |
+| `ORION_PI_VOICE_URL`                     | Override the listener WebSocket URL; onboard default `ws://127.0.0.1:7448/`                                       |
+| `ORION_SOUL_PATH`, `ORION_MEMORY_PATH`   | Override the agent's personality and memory files                                                                 |
+
 
 An explicit Codex executable disables discovery fallback. Without one, the agent
 checks supported installed app runtimes and then the CLI on `PATH`. It verifies
@@ -213,12 +215,14 @@ Voice processing and saved microphone mute continue on the Pi.
 
 Command-line flags override the deployment environment:
 
-| Variable | Default | Flag |
-| --- | --- | --- |
-| `ORION_PI_HOST` | `mofe@ariadne-robot.local` | `--host USER@HOST` |
-| `ORION_PI_ROOT` | `/home/mofe/orion` | `--root PATH` |
-| `ORION_PI_BRANCH` | `main` | `--branch BRANCH` |
-| `ORION_PI_HARDWARE` | Required; no deployment default | `--hardware v1\|v2` |
+
+| Variable            | Default                         | Flag               |
+| ------------------- | ------------------------------- | ------------------ |
+| `ORION_PI_HOST`     | `mofe@ariadne-robot.local`      | `--host USER@HOST` |
+| `ORION_PI_ROOT`     | `/home/mofe/orion`              | `--root PATH`      |
+| `ORION_PI_BRANCH`   | `main`                          | `--branch BRANCH`  |
+| `ORION_PI_HARDWARE` | Required; no deployment default | `--hardware v1|v2` |
+
 
 The script validates these values before SSH and requires a trusted host key.
 It probes the robot's OS before building the selected remote commit on the
@@ -281,13 +285,15 @@ metres, and `ORION_CHANNEL_SIGN`, as `1` or `-1`, configure direction estimation
 Their zero defaults disable direction estimates until the microphone geometry
 is checked. V2 uses read-only XVF3800 beam observations instead:
 
-| Environment / listener flag | Default | Meaning |
-| --- | --- | --- |
-| `ORION_XVF_DIRECTION` / `--xvf-direction` | `0` | `1` enables direction only with `--hardware v2` |
-| `ORION_XVF_AZIMUTH_OFFSET_DEG` / `--xvf-azimuth-offset-deg` | unset | Measured mounting offset in degrees |
-| `ORION_XVF_AZIMUTH_SIGN` / `--xvf-azimuth-sign` | unset | Measured rotation sense, `1` or `-1` |
-| `ORION_XVF_FRONT_HALF_WIDTH_DEG` / `--xvf-front-half-width-deg` | `30` | Front sector half-width, 0–150 degrees |
-| `ORION_XVF_MIN_ENERGY` / `--xvf-min-energy` | `0` | Minimum beam-3 speech energy; votes require energy above it |
+
+| Environment / listener flag                                     | Default | Meaning                                                     |
+| --------------------------------------------------------------- | ------- | ----------------------------------------------------------- |
+| `ORION_XVF_DIRECTION` / `--xvf-direction`                       | `0`     | `1` enables direction only with `--hardware v2`             |
+| `ORION_XVF_AZIMUTH_OFFSET_DEG` / `--xvf-azimuth-offset-deg`     | unset   | Measured mounting offset in degrees                         |
+| `ORION_XVF_AZIMUTH_SIGN` / `--xvf-azimuth-sign`                 | unset   | Measured rotation sense, `1` or `-1`                        |
+| `ORION_XVF_FRONT_HALF_WIDTH_DEG` / `--xvf-front-half-width-deg` | `30`    | Front sector half-width, 0–150 degrees                      |
+| `ORION_XVF_MIN_ENERGY` / `--xvf-min-energy`                     | `0`     | Minimum beam-3 speech energy; votes require energy above it |
+
 
 Set these in `~/.config/orion/voice.env`. Missing offset/sign or a failed board
 read disables attention for that listener run; speech capture continues. Use the

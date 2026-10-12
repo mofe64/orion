@@ -1,6 +1,8 @@
 mod reaction;
 pub use reaction::ReactionCue;
 mod config;
+mod context;
+mod extraction;
 mod prompt;
 mod providers;
 mod runtime;

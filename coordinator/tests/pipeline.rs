@@ -145,6 +145,9 @@ impl Harness {
         Self::with_memory(None).await
     }
     async fn with_memory(memory_path: Option<PathBuf>) -> Self {
+        Self::with_storage(memory_path, None).await
+    }
+    async fn with_storage(memory_path: Option<PathBuf>, history_path: Option<PathBuf>) -> Self {
         let mut tasks = JoinSet::new();
         let gateway = Arc::new(Mutex::new(GatewayState {
             allow_complete: true,
@@ -195,6 +198,7 @@ impl Harness {
         let agent = AgentService::start(AgentConfig {
             soul_path: None,
             memory_path,
+            history_path,
             model: "test-model".into(),
             effort: "high".into(),
             codex_bin: Some(root.join("../agent/tests/fixtures/codex.py")),
@@ -799,12 +803,17 @@ async fn expiry_cancels_native_inference_and_next_turn_uses_fresh_worker() {
 
 #[tokio::test]
 async fn app_shutdown_cancels_owned_pi_playback() {
-    let mut h = Harness::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let mut h = Harness::with_storage(None, Some(directory.path().into())).await;
     h.gateway.lock().await.allow_complete = false;
     h.wake("Hey Orion, hello").await;
     until(&mut h.pi, "session.playing").await;
     h.stop().await;
     assert_eq!(h.gateway.lock().await.cancellations, vec![1]);
+    let history = orion_history::Store::new(directory.path().into());
+    let detail = history.read(Some(SID), None).unwrap();
+    assert_eq!(detail["turns"][0]["delivery"], "interrupted");
+    assert_eq!(detail["turns"][0]["generationSettled"], true);
 }
 
 #[tokio::test]
@@ -1529,9 +1538,14 @@ async fn briefing_waits_for_reply_and_starts_agent_once_per_dismissal() {
     );
     let answer = h.agent.handle().respond("after briefing").await.unwrap();
     assert!(
-        answer.starts_with("Reply 3:"),
-        "briefing must start exactly one agent turn: {}",
+        answer.starts_with("Reply 2:"),
+        "briefing must use a separate provider from the user conversation: {}",
         answer
+    );
+    assert_eq!(
+        h.gateway.lock().await.runs,
+        3,
+        "User reply, alarm announcement and one briefing"
     );
     h.stop().await;
 }
@@ -1645,8 +1659,13 @@ async fn completed_briefing_retries_acknowledgement_without_failure_or_replay() 
             .await
             .unwrap();
         assert!(
-            answer.starts_with("Reply 3:"),
-            "one briefing and one user reply were expected: {answer}"
+            answer.starts_with("Reply 2:"),
+            "only the user reply belongs in the user provider: {answer}"
+        );
+        assert_eq!(
+            h.gateway.lock().await.runs,
+            2,
+            "One briefing and one user reply"
         );
         h.stop().await;
     }
@@ -1708,8 +1727,13 @@ async fn wake_during_completed_briefing_acknowledgement_does_not_report_failure_
         .await
         .unwrap();
     assert!(
-        answer.starts_with("Reply 3:"),
-        "completed briefing must not replay: {answer}"
+        answer.starts_with("Reply 2:"),
+        "briefing must preserve the user provider: {answer}"
+    );
+    assert_eq!(
+        h.gateway.lock().await.runs,
+        2,
+        "Completed briefing must not replay"
     );
     h.stop().await;
 }
@@ -1974,4 +1998,50 @@ async fn permanently_failing_ownership_tts_or_playback_makes_only_three_attempts
         );
         h.stop().await;
     }
+}
+
+#[tokio::test]
+async fn persisted_history_admits_only_commands_and_groups_followups() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("history");
+    let store = orion_history::Store::new(root.clone());
+    let mut h = Harness::with_storage(None, Some(root)).await;
+    h.wake("This wasn't a wake command").await;
+    until(&mut h.observer, "wake.rejected").await;
+    assert!(
+        store.read(None, None).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    h.wake("Hey Orion").await;
+    until(&mut h.pi, "wake.confirmed").await;
+    until(&mut h.observer, "command.started").await;
+    assert!(
+        store.read(None, None).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    h.utterance(SID, "command", "Name the project Orion").await;
+    until(&mut h.observer, "speech.completed").await;
+    send(
+        &mut h.pi,
+        json!({"type":"conversation.ready","sessionId":SID}),
+    )
+    .await;
+    send(
+        &mut h.pi,
+        json!({"type":"command.candidate","sessionId":NEXT,"previousSessionId":SID}),
+    )
+    .await;
+    h.utterance(NEXT, "command", "Continue that project").await;
+    until(&mut h.observer, "speech.completed").await;
+    let list = store.read(None, None).unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["turnCount"], 2);
+    let detail = store.read(Some(SID), None).unwrap();
+    assert_eq!(detail["turns"][1]["command"], "Continue that project");
+    assert_eq!(detail["turns"][1]["delivery"], "completed");
+    h.stop().await;
 }

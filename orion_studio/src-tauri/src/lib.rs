@@ -14,6 +14,7 @@ pub fn run() {
             agent::change_agent_profile,
             settings::load_voice_settings,
             settings::load_voice_history,
+            settings::load_behaviour_history,
             settings::save_voice_settings,
             settings::voice_model_locations,
             settings::choose_voice_folder,

@@ -39,6 +39,7 @@ Read these in order when you are new to Orion:
 - [Orion service](../orion-service/README.md)
 - [Voice coordinator](../coordinator/README.md)
 - [Agent runtime, memory and tools](../agent/README.md)
+- [Conversation and behaviour files](../history/README.md)
 - [Pi speech workers and models](../speech/README.md#setup-on-the-pi)
 - [Pi voice capture](../voice/README.md#setup)
 

@@ -9,11 +9,13 @@ pub struct AgentConfig {
     pub codex_bin: Option<PathBuf>,
     pub soul_path: Option<PathBuf>,
     pub memory_path: Option<PathBuf>,
+    pub history_path: Option<PathBuf>,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            history_path: orion_history::directory().ok(),
             soul_path: std::env::var_os("ORION_SOUL_PATH")
                 .map(PathBuf::from)
                 .or_else(|| {

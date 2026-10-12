@@ -6,6 +6,7 @@ __pycache__/
 docs/milestones/
 runtime/target/
 agent/target/
+history/target/
 coordinator/target/
 voice/models/*
 vision/models/

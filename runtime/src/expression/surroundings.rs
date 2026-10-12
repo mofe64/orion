@@ -85,8 +85,9 @@ pub(crate) struct Surroundings {
     pub hand_point: Option<[f64; 3]>,
 }
 #[derive(Debug)]
-struct ObjectGlance {
-    id: String,
+pub(super) struct ObjectGlance {
+    pub(super) id: String,
+    pub(super) category: String,
     interest_key: String,
     stamp: u64,
     anchor: JointPositions,
@@ -99,7 +100,7 @@ pub(super) struct SurroundingsState {
     present: bool,
     stamp: u64,
     pub(super) settings: BehaviourSettings,
-    glance: Option<ObjectGlance>,
+    pub(super) glance: Option<ObjectGlance>,
     last_object: Option<String>,
     glance_count: u8,
     active_object: bool,
@@ -238,6 +239,13 @@ impl CharacterCoordinator {
             return self.observe_hands(value.hand_count, value.hand_point, now, core);
         }
         self.leave_hands(now, core)?;
+        if let Some(log) = &self.behaviour_log {
+            log.presence(
+                value.faces.len(),
+                value.faces.last().map(|f| f.track_id),
+                now,
+            );
+        }
         if let Err(error) = self.observe_arrival(&value.faces, now, core) {
             eprintln!("oriond: arrival notice declined: {error}");
         }
@@ -327,6 +335,7 @@ impl CharacterCoordinator {
         )?;
         self.surroundings.glance = Some(ObjectGlance {
             id: object.id.clone(),
+            category: object.category.clone(),
             interest_key: object
                 .interest_key
                 .clone()

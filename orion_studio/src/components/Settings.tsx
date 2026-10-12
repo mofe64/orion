@@ -51,7 +51,7 @@ export function Settings({ active = true, voice, preferences, onPreferences, the
         {voice.notice && <p role="status">{voice.listeningError ? voice.notice : `Saved. ${voice.notice}`}</p>}<FailureNotice value={voice.listeningError} />
         <SoundSettings embedded connected={connected} connectionScope={connectionScope} routines={status?.routines} onSound={onSound} />
       </section>
-      <section className="settings-card"><header><Sparkles size={20} /><div><h2>Personality and memory</h2><p>Changes save automatically and start a fresh conversation on Orion’s next request.</p></div></header><AgentProfileSettings onboard desktop={desktop} connected={connected} connectionScope={connectionScope} /></section>
+      <section className="settings-card"><header><Sparkles size={20} /><div><h2>Personality and memory</h2><p>Changes save automatically and refresh Orion’s agent context on its next request.</p></div></header><AgentProfileSettings onboard desktop={desktop} connected={connected} connectionScope={connectionScope} /></section>
       <BehaviourSettings active={active} connection={connection} supported={status?.runtime.hardware === "v2"} />
       <LocationSettings desktop={desktop} connected={connected} connectionScope={connectionScope} />
       <section className="settings-card"><header><AudioLines size={20} /><div><h2>Voice</h2><p>Speech recognition and voices run on Orion.</p></div></header>

@@ -278,6 +278,7 @@ struct Attention {
 /// and it persists info into its fields between ticks so we can track the character's state over time.
 #[derive(Debug)]
 pub struct CharacterCoordinator {
+    pub(crate) behaviour_log: Option<super::behaviour::BehaviourLog>,
     surroundings: surroundings::SurroundingsState,
     hands: hands::HandsState,
     gaze: super::gaze::GazeCoordinator,
@@ -404,6 +405,7 @@ impl CharacterCoordinator {
     /// Fields are initialized to their default values, ready for the first tick.
     pub fn new(seed: u64) -> Self {
         Self {
+            behaviour_log: None,
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
             hands: hands::HandsState::default(),
@@ -1787,6 +1789,16 @@ impl CharacterCoordinator {
         };
         let run_id = core.play_generated_anchored_relative(definition, anchor, now)?;
         // update our idle run state
+        if let Some(log) = &self.behaviour_log {
+            let object = self.surroundings.glance.as_ref().filter(|_| is_object);
+            log.motion(
+                if is_object { "object_glance" } else { &clip },
+                run_id,
+                object.map(|o| o.id.clone()),
+                object.map(|o| o.category.clone()),
+                now,
+            );
+        }
         self.active_idle_run_id = Some(run_id);
         self.active_idle_category = Some(category);
         self.status.active_clip = Some(clip.clone());

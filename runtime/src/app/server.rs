@@ -233,7 +233,16 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     lighting.clear()?;
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
+    let behaviour_writer = orion_history::directory().ok().and_then(|root| {
+        orion_history::BehaviourWriter::start(root)
+            .map_err(|error| eprintln!("oriond: behaviour log unavailable: {error}"))
+            .ok()
+    });
+    let behaviour_log = behaviour_writer
+        .as_ref()
+        .map(crate::expression::behaviour::BehaviourLog::new);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
+    character.behaviour_log = behaviour_log.clone();
     character.set_gaze_enabled(options.gaze_on);
     if options.gaze_on
         && let Some(error) = camera_error
@@ -273,6 +282,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
+        if let Some(log) = &behaviour_log {
+            log.observe_motion(&core.snapshot(), now_seconds);
+        }
         match routines.due(wall_time(), now_seconds, audio.as_mut()) {
             Ok(true) => {
                 if scenes.is_active() {
@@ -396,6 +408,14 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             &feedback,
             routines.ringing() || scenes.is_active() || speech.is_active(),
         );
+        if let Some(log) = &behaviour_log {
+            log.observe_state(
+                &character.gaze_status(),
+                &rest.status(now_seconds),
+                character.held_gaze_track(),
+                now_seconds,
+            );
+        }
         // Rest can change on this tick. Sunrise may bypass darkness, but must
         // never expose a stale viewer lease during rest or waking.
         lighting.set_camera_viewer(camera_viewer.active(now_seconds) && rest.reactions_ready());

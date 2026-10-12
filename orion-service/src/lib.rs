@@ -47,8 +47,12 @@ pub enum Request {
     Status,
     Observe,
     History {
-        session_id: Option<String>,
+        conversation_id: Option<String>,
         before: Option<String>,
+    },
+    Behaviours {
+        before: Option<String>,
+        category: Option<String>,
     },
     StartSaved,
     Start(StartOptions),
@@ -162,11 +166,18 @@ impl Host {
             Request::Start(options) => self.start(options),
             Request::StartSaved => self.start_saved().await,
             Request::Observe => Ok(self.coordinator.events()),
-            Request::History { session_id, before } => orion_coordinator::history::read(
+            Request::History {
+                conversation_id,
+                before,
+            } => orion_coordinator::history::read(
                 &orion_coordinator::history::directory()?,
-                session_id.as_deref(),
+                conversation_id.as_deref(),
                 before.as_deref(),
             ),
+            Request::Behaviours { before, category } => {
+                orion_history::Store::new(orion_history::directory()?)
+                    .behaviours(before.as_deref(), category.as_deref())
+            }
             Request::Microphone { muted } => {
                 coordinator::set_voice_microphone(&self.coordinator, muted)
             }

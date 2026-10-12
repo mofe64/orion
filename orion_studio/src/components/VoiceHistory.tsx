@@ -5,100 +5,141 @@ import { failure, forOwner, type Failure } from "../lib/feedback";
 import { FailureNotice } from "./FailureNotice";
 
 interface Summary {
-  sessionId: string;
-  startedAt: string;
-  updatedAt: string;
-  command: string | null;
-  reply: string | null;
-  error: string | null;
+  conversationId: string; startedAt: string; updatedAt: string; expiresAt: string;
+  preview: string; turnCount: number; retired: boolean; extraction: string;
 }
-interface Page { items: Summary[]; nextCursor: string | null }
+interface Page<T> { items: T[]; nextCursor: string | null }
 interface Entry { at: string; event: Record<string, unknown> }
-interface Turn { sessionId: string; startedAt: string; updatedAt: string; events: Entry[] }
-
-export function loadHistory(sessionId: string | null, before: string | null) {
-  const message = sessionId ? "Studio couldn't open this conversation. Please try again." : before ? "Studio couldn't load older conversations. Please try again." : "Studio couldn't load Orion's conversation history. Please try again.";
-  return forOwner(() => invoke<Page | Turn>("load_voice_history", { sessionId, before }), message);
+export interface HistoryTurn {
+  sessionId: string; startedAt: string; updatedAt: string; command: string;
+  reply: string | null; error: string | null; delivery: string; events: Entry[];
 }
-
+interface Conversation {
+  conversation: { conversationId: string; startedAt: string; expiresAt: string; retiredAt: string | null; extraction: string };
+  turns: HistoryTurn[];
+}
+export interface BehaviourEvent {
+  id: string; at: string; category: string; behaviour: string; phase: string;
+  target: string | null; targetCategory: string | null; reason: string | null;
+  durationSeconds: number | null; actionId: string | null;
+}
+export function loadHistory(conversationId: string | null, before: string | null) {
+  const message = conversationId ? "Studio couldn't open this conversation. Please try again." : before ? "Studio couldn't load older conversations. Please try again." : "Studio couldn't load Orion's conversation history. Please try again.";
+  return forOwner(() => invoke<Page<Summary> | Conversation>("load_voice_history", { conversationId, before }), message);
+}
+export function loadBehaviours(before: string | null, category: string | null) {
+  return forOwner(() => invoke<Page<BehaviourEvent>>("load_behaviour_history", { before, category }), "Studio couldn't load Orion's behaviour history. Please try again.");
+}
 const time = (date: string) => new Date(date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
 const day = (date: string) => new Date(date).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const ms = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms` : "—";
 const str = (value: unknown) => typeof value === "string" ? value : "";
 const readable = (value: unknown) => JSON.stringify(value, null, 2) ?? "—";
 const toolName = (name: string) => ({ set_timer: "Set timer", set_alarm: "Set alarm", list_alerts: "Check alarms and timers", cancel_alert: "Cancel alert", stop_alert: "Stop alert", set_lighting: "Change light", set_mode: "Change mode", go_to_sleep: "Go to sleep", search_memories: "Search memories", append_memory: "Save memory" } as Record<string,string>)[name] ?? name.replaceAll("_", " ");
-
 function title(event: Record<string, unknown>): string | null {
   switch (event.type) {
-    case "transcription.started": return "Listening ended; turning speech into text";
-    case "transcript.final": return "You said";
     case "agent.started": return "Sent to the agent";
     case "agent.progress": return str(event.message) || "Agent is working";
     case "agent.tool": return toolName(str(event.name));
-    case "agent.response": return "Orion replied";
     case "synthesis.started": return "Creating Orion’s voice";
     case "speech.started": return "Playback started";
     case "speech.completed": return "Playback finished";
-    case "worker.error": return "Something went wrong";
-    case "stage.timing": return ({ transcription_wake_prefix: "Wake check", transcription_wake_and_command: "Speech to text", transcription_command: "Speech to text", synthesisTotalMs: "Audio generation", firstChunkMs: "First audio ready", firstPlaybackMs: "Audio to playback" } as Record<string,string>)[str(event.stage)] ?? null;
+    case "session.interrupted": return "Playback interrupted";
+    case "agent.failed": case "worker.error": return "Something went wrong";
+    case "stage.timing": return str(event.stage).replaceAll("_", " ");
     default: return null;
   }
 }
+export function ConversationTimeline({ turns }: { turns: HistoryTurn[] }) {
+  return <ol className="conversation-exchanges">{turns.map(turn => <li key={turn.sessionId}>
+    <time dateTime={turn.startedAt}>{time(turn.startedAt)}</time>
+    <div className="conversation-message"><strong>You</strong><p>{turn.command}</p></div>
+    {turn.reply && <div className="conversation-message orion-message"><strong>Orion</strong><p>{turn.reply}</p></div>}
+    {turn.delivery === "interrupted" && <p className="settings-help">Reply interrupted; it may not have been heard in full.</p>}
+    {turn.delivery === "pending" && <p role="status" className="settings-help">Request in progress</p>}
+    {turn.error && <p className="settings-error">{turn.error}</p>}
+    <details className="conversation-processing"><summary>Actions and processing details</summary><ol className="voice-history-timeline">{turn.events.map((entry,index) => {
+      const label = title(entry.event); if (!label) return null;
+      const event = entry.event;
+      return <li key={index}><div className="voice-history-step"><time dateTime={entry.at}>{time(entry.at)}</time><h3>{label}</h3>
+        {event.type === "worker.error" && <p>{str(event.message)}</p>}
+        {event.type === "agent.tool" && <><p>{event.success ? "Completed" : "Failed"} · {ms(event.durationMs)}</p><details><summary>Request and result</summary><pre>{readable({ request:event.arguments, result:event.result })}</pre></details></>}
+        {event.type === "stage.timing" && <p>{ms(event.durationMs)}</p>}
+      </div></li>;
+    })}</ol></details>
+  </li>)}</ol>;
+}
+const behaviourNames: Record<string,string> = {
+  new_object: "Noticed an object newly present in the recent scene", person_presence: "Noticed a person",
+  object_glance: "Object glance", object_peek: "Object peek", mutual_gaze: "Mutual gaze", gaze: "Gaze",
+  gaze_hold: "Held gaze", rest_state: "Rest state", arrival_notice: "Arrival notice", pet_notice: "Pet notice", sleep: "Sleep", wake: "Wake",
+  rest_transition: "Rest transition", rest_policy: "Rest policy", log_gap: "Behaviour log gap",
+};
+export function BehaviourTimeline({ events }: { events: BehaviourEvent[] }) {
+  return <ol className="voice-history-timeline behaviour-timeline">{events.map(event => <li key={event.id}><div className="voice-history-step">
+    <time dateTime={event.at}>{day(event.at)} · {time(event.at)}</time>
+    <h3>{behaviourNames[event.behaviour] ?? event.behaviour.replaceAll("_", " ")}</h3>
+    <p>{event.phase}{event.targetCategory ? ` · ${event.targetCategory}` : ""}{event.durationSeconds != null ? ` · ${event.durationSeconds.toFixed(1)} s` : ""}</p>
+    {event.reason && <p>{event.reason}</p>}
+  </div></li>)}</ol>;
+}
 
-export function VoiceHistory({ connected, desktop = isTauri() }: { connected: boolean; desktop?: boolean }) {
+export function VoiceHistory({ connected, desktop = isTauri(), connectionScope = connected }: { connected: boolean; desktop?: boolean; connectionScope?: unknown }) {
   const available = connected && desktop;
-  const [turns, setTurns] = useState<Summary[]>([]);
+  const [view, setView] = useState<"conversations" | "behaviours">("conversations");
+  const [category, setCategory] = useState("");
+  const [items, setItems] = useState<Summary[]>([]);
+  const [behaviours, setBehaviours] = useState<BehaviourEvent[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [turn, setTurn] = useState<Turn | null>(null);
+  const [conversation, setConversation] = useState<Conversation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Failure | null>(null);
-  const detailRequest = useRef(0);
-  const connectionEpoch = useRef(0);
-  const loadTurn = async (sessionId: string) => {
-    const request = ++detailRequest.current;
-    setSelected(sessionId); setTurn(null); setError(null);
-    try { const result = await loadHistory(sessionId, null) as Turn; if (request === detailRequest.current) setTurn(result); }
-    catch (reason) { if (request === detailRequest.current) setError(failure("Studio couldn't open this conversation. Please try again.", reason)); }
+  const epoch = useRef(0), detailRequest = useRef(0);
+  const open = async (id: string, generation = epoch.current) => {
+    const request = ++detailRequest.current; setSelected(id); setConversation(null);
+    try { const result = await loadHistory(id,null) as Conversation;
+      if (generation === epoch.current && request === detailRequest.current) setConversation(result);
+    } catch (reason) { if (generation === epoch.current && request === detailRequest.current) setError(failure("Studio couldn't open this conversation. Please try again.",reason)); }
   };
-  const refresh = async () => {
-    const epoch = connectionEpoch.current;
-    setLoading(true); setError(null);
+  const refresh = async (older = false) => {
+    const generation = epoch.current; setLoading(true); setError(null);
     try {
-      const result = await loadHistory(null, null) as Page;
-      if (epoch !== connectionEpoch.current) return;
-      setTurns(result.items); setNextCursor(result.nextCursor);
-      if (result.items.length) await loadTurn(selected && result.items.some(item => item.sessionId === selected) ? selected : result.items[0].sessionId);
-      if (!result.items.length) { setSelected(null); setTurn(null); }
-    } catch (reason) { if (epoch === connectionEpoch.current) setError(failure("Studio couldn't load Orion's conversation history. Please try again.", reason)); }
-    finally { if (epoch === connectionEpoch.current) setLoading(false); }
-  };
-  const older = async () => {
-    if (!nextCursor) return;
-    const epoch = connectionEpoch.current;
-    setLoading(true); setError(null);
-    try { const page = await loadHistory(null, nextCursor) as Page; if (epoch === connectionEpoch.current) { setTurns(previous => [...previous, ...page.items]); setNextCursor(page.nextCursor); } }
-    catch (reason) { if (epoch === connectionEpoch.current) setError(failure("Studio couldn't load older conversations. Please try again.", reason)); }
-    finally { if (epoch === connectionEpoch.current) setLoading(false); }
+      if (view === "behaviours") {
+        const page = await loadBehaviours(older ? nextCursor : null, category || null);
+        if (generation !== epoch.current) return;
+        setBehaviours(previous => older ? [...previous,...page.items] : page.items); setNextCursor(page.nextCursor);
+      } else {
+        const page = await loadHistory(null,older ? nextCursor : null) as Page<Summary>;
+        if (generation !== epoch.current) return;
+        setItems(previous => older ? [...previous,...page.items] : page.items); setNextCursor(page.nextCursor);
+        if (!older) {
+          const id = selected && page.items.some(item => item.conversationId === selected) ? selected : page.items[0]?.conversationId;
+          if (id) await open(id,generation); else { setSelected(null); setConversation(null); }
+        }
+      }
+    } catch (reason) { if (generation === epoch.current) setError(failure("Studio couldn't load Orion's history. Please try again.",reason)); }
+    finally { if (generation === epoch.current) setLoading(false); }
   };
   useEffect(() => {
-    connectionEpoch.current++; detailRequest.current++; setError(null);
-    if (available) void refresh(); else { setLoading(false); setTurns([]); setNextCursor(null); setSelected(null); setTurn(null); }
-    return () => { connectionEpoch.current++; detailRequest.current++; };
-  }, [available]);
-  const visible = turn?.events.map((entry, index) => ({ entry, index, label: title(entry.event) })).filter(item => item.label) ?? [];
+    epoch.current++; detailRequest.current++; setError(null); setNextCursor(null);
+    setItems([]); setBehaviours([]); setConversation(null); setSelected(null);
+    if (available) void refresh(); else setLoading(false);
+    return () => { epoch.current++; detailRequest.current++; };
+  },[available,view,category,connectionScope]);
   let previousDay = "";
-  const elapsed = turn ? new Date(turn.updatedAt).getTime() - new Date(turn.startedAt).getTime() : 0;
   return <section className="settings-page voice-history" aria-labelledby="voice-history-title">
-    <header className="voice-history-heading"><div><h1 id="voice-history-title">History</h1><p>Saved on Orion. Times show what happened during each voice request.</p></div><button className="quiet-button" type="button" disabled={!available || loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
-    {!desktop ? <p role="status" className="settings-help">Open Orion Studio’s desktop app and connect Orion to read conversation history.</p> : !connected && <p role="status" className="settings-help">Connect Orion to read its conversation history.</p>}
-    <FailureNotice value={error} />
-    <div className="voice-history-layout"><aside className="voice-history-list" aria-label="Conversations">
-      {!turns.length && <p className="voice-history-empty">{!available ? "Saved conversations are available after connecting in the desktop app." : loading ? "Reading Orion’s history…" : "No saved conversations yet. New voice requests will appear here."}</p>}
-      {turns.map(item => { const heading = day(item.startedAt); const showDay = heading !== previousDay; previousDay = heading; return <div key={item.sessionId}>{showDay && <h2>{heading}</h2>}<button type="button" className={item.sessionId === selected ? "voice-history-item selected" : "voice-history-item"} aria-current={item.sessionId === selected ? "true" : undefined} onClick={() => void loadTurn(item.sessionId)}><time dateTime={item.startedAt}>{time(item.startedAt)}</time><strong>{item.command || "Voice request"}</strong><span>{item.error ? `Needs attention · ${item.error}` : item.reply ? item.reply : "No reply recorded"}</span></button></div>; })}
-      {nextCursor && <button className="quiet-button voice-history-older" type="button" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Load older"}</button>}
-    </aside><article className="voice-history-detail">
-      {turn ? <><header><p className="eyebrow">{day(turn.startedAt)} · {time(turn.startedAt)}</p><h2>{turn.events.find(entry => entry.event.type === "transcript.final")?.event.text as string || "Voice request"}</h2><p>Elapsed {ms(elapsed)} · {visible.length} steps</p></header><ol className="voice-history-timeline">{visible.map(({entry,index,label}) => { const event = entry.event; return <li key={index}><div className="voice-history-step"><time dateTime={entry.at}>{time(entry.at)} <span>+{ms(new Date(entry.at).getTime() - new Date(turn.startedAt).getTime())}</span></time><h3>{label}</h3>{event.type === "transcript.final" && <p>{str(event.text)}</p>}{event.type === "agent.response" && <p>{str(event.text)}</p>}{event.type === "worker.error" && <p className="settings-error">{str(event.message)}</p>}{event.type === "agent.tool" && <><p>{event.success ? "Completed" : "Failed"} · {ms(event.durationMs)}</p><details><summary>Request and result</summary><div><strong>Request</strong><pre>{readable(event.arguments)}</pre><strong>Result</strong><pre>{readable(event.result)}</pre></div></details></>}{event.type === "stage.timing" && <p>{ms(event.durationMs)}</p>}{event.type === "agent.response" && <small>Agent time {ms(event.durationMs)}</small>}</div></li>; })}</ol></> : <div className="voice-history-empty">{!available ? "Connect in the desktop app to view the steps." : selected ? "Opening conversation…" : "Choose a conversation to see its steps and times."}</div>}
-    </article></div>
+    <header className="voice-history-heading"><div><h1 id="voice-history-title">History</h1><p>Conversations last 24 hours from the first turn. Behaviour events are saved on Orion.</p></div><button className="quiet-button" disabled={!available || loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
+    <div className="history-controls"><div role="group" aria-label="History view">{(["conversations","behaviours"] as const).map(value => <button className="quiet-button" key={value} aria-pressed={view === value} onClick={() => setView(value)}>{value === "conversations" ? "Conversations" : "Behaviours"}</button>)}</div>
+      {view === "behaviours" && <label>Show <select value={category} onChange={event => setCategory(event.target.value)}><option value="">All behaviours</option><option value="attention">Attention</option><option value="idle">Idle movements</option><option value="rest">Sleep and wake</option><option value="system">Log diagnostics</option></select></label>}
+    </div>
+    {!desktop ? <p className="settings-help">Open Orion Studio’s desktop app and connect Orion to read history.</p> : !connected && <p className="settings-help">Connect Orion to read its history.</p>}
+    <FailureNotice value={error}/>
+    {view === "behaviours" ? <div className="voice-history-layout behaviour-history"><BehaviourTimeline events={behaviours}/>{!behaviours.length && <p className="voice-history-empty">{loading ? "Reading Orion’s behaviours…" : available ? "No behaviour events recorded yet." : "Connect in the desktop app to read saved behaviours."}</p>}{nextCursor && <button className="quiet-button" disabled={loading} onClick={() => void refresh(true)}>Load older behaviours</button>}</div> :
+      <div className="voice-history-layout"><aside className="voice-history-list" aria-label="Conversations">
+        {!items.length && <p className="voice-history-empty">{loading ? "Reading Orion’s history…" : available ? "No saved conversations yet." : "Connect in the desktop app to read saved conversations."}</p>}
+        {items.map(item => {const heading=day(item.startedAt), showDay=heading!==previousDay;previousDay=heading;return <div key={item.conversationId}>{showDay && <h2>{heading}</h2>}<button className={`voice-history-item${item.conversationId === selected ? " selected" : ""}`} aria-current={item.conversationId === selected ? "true" : undefined} onClick={() => void open(item.conversationId)}><time dateTime={item.startedAt}>{time(item.startedAt)} · {item.turnCount} {item.turnCount===1 ? "turn" : "turns"}</time><strong>{item.preview}</strong><span>{item.retired ? "Archived" : "Active"} · {time(item.updatedAt)}</span></button></div>;})}
+        {nextCursor && <button className="quiet-button voice-history-older" disabled={loading} onClick={() => void refresh(true)}>Load older conversations</button>}
+      </aside><article className="voice-history-detail">{conversation ? <><header><p className="eyebrow">{day(conversation.conversation.startedAt)}</p><h2>{conversation.turns[0]?.command}</h2><p>{time(conversation.conversation.startedAt)} – {day(conversation.conversation.expiresAt)} · {time(conversation.conversation.expiresAt)}</p>{conversation.conversation.retiredAt && <p>Memory extraction: {conversation.conversation.extraction}</p>}</header><ConversationTimeline turns={conversation.turns}/></> : <p className="voice-history-empty">{selected ? error ? "Use Refresh to try opening this conversation again." : "Opening conversation…" : "Choose a conversation to read its exchanges."}</p>}</article></div>}
   </section>;
 }

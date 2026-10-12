@@ -99,6 +99,13 @@ pub(super) struct Reaction {
 }
 
 impl CharacterCoordinator {
+    pub(crate) fn held_gaze_track(&self) -> Option<u64> {
+        self.surroundings
+            .reaction
+            .as_ref()
+            .filter(|r| r.kind == ReactionKind::Mutual && r.run.is_none())
+            .map(|r| r.track)
+    }
     fn reaction_ready<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
         self.curiosity_available()
             && (core.mode() == RuntimeMode::Holding
@@ -249,6 +256,15 @@ impl CharacterCoordinator {
             centre,
             object: None,
         });
+        if let Some(log) = &self.behaviour_log {
+            log.motion(
+                "mutual_gaze",
+                run,
+                Some(format!("face:{track}")),
+                Some("person".into()),
+                now,
+            );
+        }
         self.status.active_clip = Some("mutual_gaze_notice".into());
         self.reset_timers(now);
         Ok(())
@@ -308,6 +324,15 @@ impl CharacterCoordinator {
             centre: anchor,
             object: None,
         });
+        if let Some(log) = &self.behaviour_log {
+            log.motion(
+                "arrival_notice",
+                run,
+                Some(format!("face:{}", face.track_id)),
+                Some("person".into()),
+                now,
+            );
+        }
         self.status.active_clip = Some("arrival_notice".into());
         self.reset_timers(now);
         Ok(())
@@ -383,6 +408,14 @@ impl CharacterCoordinator {
         // Consume the observed event even when another owner or focus prevents
         // admission. It must not become a delayed surprise after conversation.
         self.surroundings.last_novelty = Some(object.id.clone());
+        if let Some(log) = &self.behaviour_log {
+            log.observation(
+                "new_object",
+                Some(object.id.clone()),
+                Some(object.category.clone()),
+                now,
+            );
+        }
         if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
             return Ok(());
         }
@@ -432,6 +465,15 @@ impl CharacterCoordinator {
             centre,
             object: Some((object.id.clone(), now, object.azimuth, object.elevation)),
         });
+        if let Some(log) = &self.behaviour_log {
+            log.motion(
+                if pet { "pet_notice" } else { "object_peek" },
+                run,
+                Some(object.id.clone()),
+                Some(object.category.clone()),
+                now,
+            );
+        }
         self.status.active_clip = Some(if pet { "pet_notice" } else { "peek_new_object" }.into());
         self.reset_timers(now);
         Ok(())

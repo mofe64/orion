@@ -312,7 +312,7 @@ async fn connected(
                                 pi.send(json!({"type":"session.processing","sessionId":sid})).await?;
                             }
                             let (_keep, interrupted) = watch::channel(false);
-                            let (_, reply) = response(&agent,&speech,&gateway,&pi,&hub,&sid,request,MORNING_BRIEFING,active,tool_feedback,interrupted).await?;
+                            let (_, reply) = response(&agent,&speech,&gateway,&pi,&hub,&sid,request,MORNING_BRIEFING,active,tool_feedback,interrupted,true).await?;
                             delivered_reply = Some(reply);
                         } else {
                             speak(&speech,&gateway,&pi,&hub,&sid,request,text,active,false,true).await?;
@@ -395,7 +395,7 @@ async fn connected(
                             let hub = hub.clone(); let pi = pi.clone(); let active = active.clone(); let request = *next_request;
                             let (interrupt, interrupted) = watch::channel(false);
                             response_stop = Some(interrupt);
-                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback, interrupted).await.map(|(sleep,reply)| Completed::Response {sleep,reply}) });
+                            jobs.spawn(async move { response(&agent, &speech, &gateway, &pi, &hub, &sid, request, &command, active, tool_feedback, interrupted, false).await.map(|(sleep,reply)| Completed::Response {sleep,reply}) });
                         },
                         Ok(Completed::AnnouncementPlayed {id, attempt, reply}) => {
                             // Playback is irreversible. Record it before any fallible
@@ -592,6 +592,11 @@ async fn connected(
     while retiring.join_next().await.is_some() {}
     gateway.cancel(&active).await;
     if let Some(session) = session {
+        event(
+            hub,
+            &session.id,
+            json!({"type":"session.cancelled","reason":"coordinator stopped or disconnected"}),
+        );
         let _ = pi
             .send(json!({"type":"session.cancel", "sessionId":session.id}))
             .await;
@@ -653,6 +658,7 @@ async fn response(
     active: ActiveRun,
     tool_feedback: bool,
     interrupted: watch::Receiver<bool>,
+    system: bool,
 ) -> Result<(bool, orion_agent::AgentReply), String> {
     event(
         hub,
@@ -788,8 +794,14 @@ async fn response(
         Ok::<String, String>(prefix)
     };
     let agent_turn = async {
-        let (reply, prefix) =
-            tokio::try_join!(agent.respond_for_playback(command, Some(send)), activity)?;
+        let generation = async {
+            if system {
+                agent.respond_system_for_playback(command, Some(send)).await
+            } else {
+                agent.respond_for_session(sid, command, Some(send)).await
+            }
+        };
+        let (reply, prefix) = tokio::try_join!(generation, activity)?;
         let text = &reply.text;
         let remaining = text
             .strip_prefix(&prefix)

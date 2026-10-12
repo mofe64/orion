@@ -127,6 +127,10 @@ class ReleaseBuildTests(unittest.TestCase):
                 self.assertFalse((staged / name).exists(), name)
             self.assertEqual((staged / 'runtime/target/release/oriond').read_text(), 'production binary')
         commands = [tuple(map(str, call.args)) for call in run.call_args_list]
+        history = next(args for args in commands if args[:2] == ('cargo', 'test')
+                       and str(release / 'history/Cargo.toml') in args)
+        self.assertIn('--locked', history)
+        self.assertIn('--all-targets', history)
         runtime = next(args for args in commands if args[:2] == ('cargo', 'test')
                        and str(release / 'runtime/Cargo.toml') in args)
         skips = [runtime[i + 1] for i, arg in enumerate(runtime) if arg == '--skip']

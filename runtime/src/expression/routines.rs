@@ -311,8 +311,8 @@ impl Routines {
             _ => SavedSounds::default(),
         };
         saved.sounds = sounds.settings;
-        // A stale sound record can follow a rollback or an interrupted pair of writes.
-        // Only reuse it for the same ringing window; older alerts used two-tone.
+        // A stale sound record can follow an interrupted pair of writes.
+        // Only reuse it for the same ringing window; otherwise use two-tone.
         saved.ring_sound = ring_deadline.map(|_| {
             if sounds.ring_until_unix == saved.ring_until_unix {
                 sounds.ring_sound.unwrap_or_default()
@@ -583,11 +583,10 @@ impl Routines {
                     },
                 )?;
             }
-            // A preference-only write must not rewrite the legacy alert file.
+            // Sound-only changes leave the alert file untouched.
             if serde_json::to_value(&saved).map_err(|e| e.to_string())?
                 != serde_json::to_value(&self.saved).map_err(|e| e.to_string())?
             {
-                backup_legacy(path)?;
                 write_saved(path, &saved)?;
             }
         }
@@ -1200,63 +1199,6 @@ fn timezone() -> Option<String> {
         })
 }
 
-// Preserve only a file the pre-reminders runtime can read, before replacing it.
-fn backup_legacy(path: &std::path::Path) -> Result<(), String> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("Cannot read rollback source: {e}")),
-    };
-    let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    let legacy = value.as_object().is_some_and(|o| {
-        o.keys()
-            .all(|key| ["mode", "next_id", "alerts", "ring_until_unix"].contains(&key.as_str()))
-    }) && value["alerts"].as_array().is_some_and(|alerts| {
-        alerts.iter().all(|a| {
-            a.as_object().is_some_and(|o| {
-                o.keys()
-                    .all(|key| ["id", "kind", "label", "due_unix", "state"].contains(&key.as_str()))
-            })
-        })
-    });
-    if !legacy {
-        return Ok(());
-    }
-    let mut name = path.as_os_str().to_owned();
-    name.push(".pre-reminders");
-    let backup = PathBuf::from(name);
-    if backup.is_file() {
-        return Ok(());
-    }
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
-    let mut name = backup.as_os_str().to_owned();
-    name.push(format!(".{}.{nonce}.tmp", std::process::id()));
-    let temporary = PathBuf::from(name);
-    let result = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
-        // Linking the completed copy is atomic and cannot replace an existing backup.
-        match fs::hard_link(&temporary, &backup) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && backup.is_file() => Ok(()),
-            Err(e) => Err(format!("Cannot preserve routines rollback backup: {e}")),
-        }
-    })();
-    let _ = fs::remove_file(temporary);
-    result
-}
 fn write_saved(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
     let parent = path.parent().ok_or("Routines path needs a parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1790,56 +1732,39 @@ mod tests {
         assert!(r.ringing());
     }
     #[test]
-    fn legacy_backup_is_exact_never_replaced_and_failure_preserves_the_original() {
-        let original =
-            b"{\"mode\":\"idle\",\"next_id\":0,\"alerts\":[],\"ring_until_unix\":null}\n";
-        for fail in [false, true] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("routines.json");
-            let backup = dir.path().join("routines.json.pre-reminders");
-            fs::write(&path, original).unwrap();
-            if fail {
-                fs::create_dir(&backup).unwrap();
-            }
-            let mut r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
-            let mut audio = RecordingAudioDevice::default();
-            let result = r.request(
-                Request::SetMode {
-                    mode: UserMode::Lamp,
-                },
-                100.,
-                0.,
-                &mut audio,
-            );
-            if fail {
-                assert!(result.unwrap_err().contains("rollback backup"));
-                assert_eq!(fs::read(&path).unwrap(), original);
-                assert_eq!(r.saved.mode, UserMode::Idle);
-            } else {
-                result.unwrap();
-                assert_eq!(fs::read(&backup).unwrap(), original);
-                assert!(
-                    serde_json::from_slice::<Value>(&fs::read(&path).unwrap())
-                        .unwrap()
-                        .get("last_dismissed")
-                        .is_some()
-                );
-                r.request(
-                    Request::SetMode {
-                        mode: UserMode::Idle,
-                    },
-                    101.,
-                    1.,
-                    &mut audio,
-                )
-                .unwrap();
-                assert_eq!(fs::read(&backup).unwrap(), original);
-                // Even restoring the old file for a second upgrade cannot replace the backup.
-                fs::write(&path, original).unwrap();
-                backup_legacy(&path).unwrap();
-                assert_eq!(fs::read(&backup).unwrap(), original);
-            }
-        }
+    fn existing_routines_save_without_creating_backup_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routines.json");
+        fs::write(
+            &path,
+            json!({"mode":"idle","next_id":2,"ring_until_unix":null,"alerts":[
+                {"id":1,"kind":"timer","label":"tea","due_unix":160.,"state":"pending"},
+                {"id":2,"kind":"alarm","label":"meeting","due_unix":300.,"state":"pending"}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let mut r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
+        let mut audio = RecordingAudioDevice::default();
+        let alerts = serde_json::to_value(&r.saved.alerts).unwrap();
+        r.request(
+            Request::SetMode {
+                mode: UserMode::Lamp,
+            },
+            100.,
+            0.,
+            &mut audio,
+        )
+        .unwrap();
+
+        let restored = Routines::load(Some(path.clone()), 101., 1.).unwrap();
+        assert_eq!(restored.mode(), UserMode::Lamp);
+        assert_eq!(
+            serde_json::to_value(&restored.saved.alerts).unwrap(),
+            alerts
+        );
+        assert_eq!(restored.timer_deadlines[&1], 60.);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
     #[test]
     fn restart_cancels_light_routines_but_preserves_focus_timer_and_saved_mode() {

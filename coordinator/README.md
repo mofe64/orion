@@ -33,6 +33,7 @@ client disconnects while capture continues.
 | `session.rs` | Wake phrase and utterance-state validation |
 | `gateway.rs` | Authenticated HTTP operations and WAV construction |
 | `hub.rs` | Bounded event replay and independent observers |
+| `history.rs` | Accepted-turn events in the shared file-based history store |
 
 The listener owns capture, endpointing, the echo guard and follow-up window.
 `oriond` owns hardware execution. See the [voice architecture](../docs/voice-architecture.md)
@@ -117,7 +118,7 @@ for retries and duplicate handling. Wake dismissal cancels announcement playback
 Shopping and to-do tools execute in the agent store. They need no robot event or
 hardware access; successful tool results remain visible in voice history.
 
-Announcements with purpose `briefing` enter the same idle-only queue as reminder announcements. After listener readiness, they start one agent turn with the morning briefing instruction, then acknowledge the alert after playback. They create no user transcript or conversation window.
+Announcements with purpose `briefing` enter the same idle-only queue as reminder announcements. After listener readiness, they use an independent agent provider with the morning briefing instruction, then acknowledge the alert after playback. They create no user transcript, history entry or conversation window.
 
 Light routine tools use the ordinary request-scoped robot operation path. The coordinator forwards validated requests and confirms only after runtime success; it owns no light scheduler.
 

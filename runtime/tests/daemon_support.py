@@ -40,7 +40,7 @@ def request(path, command):
 
 @contextlib.contextmanager
 def daemon(automatic_character=False, rest_after_seconds=600, following=False, hardware='v1', gaze=None, catalog_root=None,
-           camera_urdf=None):
+           camera_urdf=None, history_root=None):
     with tempfile.TemporaryDirectory(prefix='orion-daemon-test-', dir='/tmp') as temporary:
         path = Path(temporary) / 'daemon.sock'
         arguments = [str(BINARY), '--serve', '--backend', 'mujoco', '--socket', str(path),
@@ -56,6 +56,7 @@ def daemon(automatic_character=False, rest_after_seconds=600, following=False, h
         if camera_urdf is not None:
             arguments += ['--camera-urdf', str(camera_urdf)]
         environment = os.environ.copy()
+        environment['ORION_VOICE_HISTORY_DIR'] = str(history_root or Path(temporary) / 'history')
         if following:
             environment['ORION_TEST_DRIVER_CONTROL'] = str(Path(temporary) / 'driver-control.json')
             environment['ORION_TEST_DRIVER_EVENTS'] = str(Path(temporary) / 'driver-events.jsonl')

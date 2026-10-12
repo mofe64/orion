@@ -37,6 +37,8 @@ pub struct RestStatus {
     pub movement_run_id: Option<u64>,
     pub light_on: bool,
     pub error: Option<String>,
+    pub transition_reason: Option<String>,
+    pub transition_session_id: Option<String>,
 }
 
 struct PendingAttention {
@@ -63,6 +65,8 @@ pub struct RestCoordinator {
     wake_session: Option<String>,
     attention: Option<PendingAttention>,
     error: Option<String>,
+    transition_reason: Option<String>,
+    transition_session_id: Option<String>,
     pub light_on: bool,
 }
 
@@ -80,6 +84,8 @@ impl RestCoordinator {
             wake_session: None,
             attention: None,
             error: None,
+            transition_reason: None,
+            transition_session_id: None,
             light_on: false,
         }
     }
@@ -100,6 +106,8 @@ impl RestCoordinator {
             movement_run_id: self.rest_run,
             light_on: self.light_on,
             error: self.error.clone(),
+            transition_reason: self.transition_reason.clone(),
+            transition_session_id: self.transition_session_id.clone(),
         }
     }
 
@@ -107,6 +115,7 @@ impl RestCoordinator {
     pub fn started(&mut self) {
         self.disable();
         self.state = RestState::Waking;
+        self.transition_reason = Some("explicit start".into());
         self.last_confirmed_at = None;
     }
 
@@ -131,6 +140,8 @@ impl RestCoordinator {
         self.wake_session = None;
         self.attention = None;
         self.error = None;
+        self.transition_reason = None;
+        self.transition_session_id = None;
     }
 
     /// Caller must first accept this session's ASR confirmation exactly once.
@@ -185,7 +196,15 @@ impl RestCoordinator {
         let run = response["run_id"]
             .as_u64()
             .ok_or_else(|| Error::Runtime("Rest movement has no run ID.".into()))?;
-        self.sleep_session = None;
+        self.transition_session_id = self.sleep_session.take();
+        self.transition_reason = Some(
+            if self.transition_session_id.is_some() {
+                "requested"
+            } else {
+                "rest movement"
+            }
+            .into(),
+        );
         self.state = RestState::GoingToRest;
         self.presence_deferred = false;
         self.rest_run = Some(run);
@@ -289,6 +308,8 @@ impl RestCoordinator {
                     // Finish the descent, then go home without cycling holding torque.
                     character.start(now, core)?;
                     self.state = RestState::Waking;
+                    self.transition_reason = Some("confirmed wake".into());
+                    self.transition_session_id = self.wake_session.clone();
                 } else {
                     checked(core.handle_command("disable", now))?;
                     self.state = RestState::Resting;
@@ -297,6 +318,8 @@ impl RestCoordinator {
             RestState::Resting if self.wake_session.is_some() => {
                 character.start(now, core)?;
                 self.state = RestState::Waking;
+                self.transition_reason = Some("confirmed wake".into());
+                self.transition_session_id = self.wake_session.clone();
             }
             RestState::Waking => {
                 if !character.status().enabled {
@@ -333,6 +356,9 @@ impl RestCoordinator {
                 {
                     let response = character.rest(now, core)?;
                     self.track_rest(&response)?;
+                    if self.transition_session_id.is_none() {
+                        self.transition_reason = Some("inactivity".into());
+                    }
                     return Ok(());
                 }
             }
@@ -720,6 +746,43 @@ mod tests {
         rest.tick(7., &mut f.core, &mut f.character, &feedback, false);
         assert_eq!(rest.state, RestState::GoingToRest);
         assert!(f.core.snapshot().torque_enabled);
+    }
+    #[test]
+    fn behaviour_log_never_claims_sleep_when_torque_release_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let writer = orion_history::BehaviourWriter::start(directory.path().into()).unwrap();
+        let log = super::super::behaviour::BehaviourLog::new(&writer);
+        let mut fixture = Fixture::home();
+        let mut rest = fixture.armed(1800.);
+        log.observe_state(&fixture.character.gaze_status(), &rest.status(3.), None, 3.);
+        rest.request_sleep("user-turn");
+        fixture.release_fails.set(true);
+        fixture.policy_tick(&mut rest, 4., false);
+        log.observe_state(&fixture.character.gaze_status(), &rest.status(4.), None, 4.);
+        fixture.advance_motion(4., 20.);
+        fixture.policy_tick(&mut rest, 20., false);
+        log.observe_state(
+            &fixture.character.gaze_status(),
+            &rest.status(20.),
+            None,
+            20.,
+        );
+        assert_eq!(rest.state, RestState::Fault);
+        drop(writer);
+        let page = orion_history::Store::new(directory.path().into())
+            .behaviours(None, None)
+            .unwrap();
+        let events = page["items"].as_array().unwrap();
+        assert!(events.iter().any(|e| e["behaviour"] == "sleep"
+            && e["phase"] == "started"
+            && e["reason"] == "requested"
+            && e["sessionId"] == "user-turn"));
+        assert!(events.iter().any(|e| e["phase"] == "failed"));
+        assert!(
+            !events
+                .iter()
+                .any(|e| e["behaviour"] == "sleep" && e["phase"] == "completed")
+        );
     }
 
     #[test]

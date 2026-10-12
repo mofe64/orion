@@ -36,7 +36,7 @@ class VoiceBridgeTests(unittest.TestCase):
             self.assertEqual(received[0]['token'], 'private-owner-token')
             self.assertEqual(received[0]['request'], {'method': 'start_saved'})
 
-    def test_history_is_read_from_the_pi_service(self):
+    def test_behaviour_history_and_filters_are_read_from_the_pi_service(self):
         with tempfile.TemporaryDirectory() as folder, socket.socket() as server:
             server.bind(('127.0.0.1', 0)); server.listen()
             connection = {'protocol': 1, 'address': '127.0.0.1:' + str(server.getsockname()[1]), 'token': 'private-owner-token'}
@@ -48,10 +48,10 @@ class VoiceBridgeTests(unittest.TestCase):
                     client.sendall(json.dumps({'ok': True, 'result': {'items': [], 'nextCursor': None}}).encode() + b'\n')
             thread = threading.Thread(target=serve); thread.start()
             with patch.dict(os.environ, ORION_STUDIO_SERVICE_HOME=folder):
-                result = voice_service_request({'method': 'history', 'params': {'session_id': None, 'before': None}})
+                result = voice_service_request({'method': 'behaviours', 'params': {'category': 'rest', 'before': 'cursor'}})
             thread.join(timeout=2)
             self.assertEqual(result, {'items': [], 'nextCursor': None})
-            self.assertEqual(received[0]['request']['method'], 'history')
+            self.assertEqual(received[0]['request'], {'method': 'behaviours', 'params': {'category': 'rest', 'before': 'cursor'}})
 
     def test_non_loopback_owner_address_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:

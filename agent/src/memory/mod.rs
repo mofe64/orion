@@ -12,6 +12,17 @@ pub struct Entry {
     pub id: String,
     pub created: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<MemorySource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemorySource {
+    pub conversation_id: String,
+    pub conversation_started_at: String,
+    pub turn_ids: Vec<String>,
+    pub candidate_id: String,
 }
 
 pub(crate) fn read(path: &Path) -> Result<Vec<Entry>, String> {
@@ -51,6 +62,13 @@ pub(crate) fn read(path: &Path) -> Result<Vec<Entry>, String> {
             id,
             created,
             text: text.trim().into(),
+            source: value
+                .get("source")
+                .filter(|v| !v.is_null())
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|_| "Invalid memory source")?,
         });
         rest = tail.trim();
     }
@@ -67,6 +85,97 @@ fn validate(text: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[derive(Default, Serialize, Deserialize)]
+struct AutomaticLedger {
+    blocked_before: Option<String>,
+    receipts: std::collections::BTreeMap<String, String>,
+}
+fn ledger_path(path: &Path) -> std::path::PathBuf {
+    path.with_extension("automatic.json")
+}
+fn ledger(path: &Path) -> Result<AutomaticLedger, String> {
+    match std::fs::read(ledger_path(path)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AutomaticLedger::default()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+/// Caller holds the memory lock. Explicit editing/forgetting prevents retired
+/// transcripts predating the edit from putting old facts back into memory.
+fn block_automatic(path: &Path) -> Result<(), String> {
+    let mut ledger = ledger(path)?;
+    ledger.blocked_before = Some(chrono::Utc::now().to_rfc3339());
+    orion_history::atomic_write(&ledger_path(path), &ledger)
+}
+
+pub(crate) fn append_extracted(
+    path: &Path,
+    text: &str,
+    source: MemorySource,
+    expected: &[Entry],
+) -> Result<Option<Entry>, String> {
+    validate(text)?;
+    let _lock = edit_lock(path)?;
+    let mut entries = read(path)?;
+    let mut ledger = ledger(path)?;
+    // A receipt is authoritative even if its memory was subsequently deleted.
+    if ledger.receipts.contains_key(&source.candidate_id) {
+        return Ok(None);
+    }
+    if let Some(entry) = entries.iter().find(|e| e.id == source.candidate_id) {
+        let result = entry.clone();
+        ledger.receipts.insert(source.candidate_id, "saved".into());
+        orion_history::atomic_write(&ledger_path(path), &ledger)?;
+        return Ok(Some(result));
+    }
+    if entries != expected {
+        return Err("Memories changed during extraction; review again".into());
+    }
+    let blocked = match ledger.blocked_before.as_ref() {
+        Some(at) => {
+            chrono::DateTime::parse_from_rfc3339(&source.conversation_started_at)
+                .map_err(|e| e.to_string())?
+                <= chrono::DateTime::parse_from_rfc3339(at).map_err(|e| e.to_string())?
+        }
+        None => false,
+    };
+    if blocked {
+        ledger
+            .receipts
+            .insert(source.candidate_id, "suppressed".into());
+        orion_history::atomic_write(&ledger_path(path), &ledger)?;
+        return Ok(None);
+    }
+    let canonical = |value: &str| {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    if entries
+        .iter()
+        .any(|e| canonical(&e.text) == canonical(text))
+    {
+        ledger
+            .receipts
+            .insert(source.candidate_id, "duplicate".into());
+        orion_history::atomic_write(&ledger_path(path), &ledger)?;
+        return Ok(None);
+    }
+    let entry = Entry {
+        id: source.candidate_id.clone(),
+        created: chrono::Utc::now().to_rfc3339(),
+        text: text.trim().into(),
+        source: Some(source.clone()),
+    };
+    entries.push(entry.clone());
+    write(path, &entries)?;
+    ledger.receipts.insert(source.candidate_id, "saved".into());
+    orion_history::atomic_write(&ledger_path(path), &ledger)?;
+    Ok(Some(entry))
+}
 pub(crate) fn append(path: &Path, text: &str) -> Result<Entry, String> {
     validate(text)?;
     let _lock = edit_lock(path)?;
@@ -78,6 +187,7 @@ pub(crate) fn append(path: &Path, text: &str) -> Result<Entry, String> {
         id: uuid::Uuid::new_v4().simple().to_string(),
         created: chrono::Utc::now().to_rfc3339(),
         text: text.trim().into(),
+        source: None,
     };
     entries.push(entry.clone());
     write(path, &entries)?;
@@ -88,7 +198,7 @@ fn write(path: &Path, entries: &[Entry]) -> Result<(), String> {
     for value in entries {
         content.push_str(&format!(
             "<!-- memoryEntry {} -->\n{}\n{END}\n\n",
-            serde_json::json!({"id":value.id,"created":value.created}),
+            serde_json::json!({"id":value.id,"created":value.created,"source":value.source}),
             value.text
         ));
     }
@@ -120,6 +230,7 @@ pub(crate) fn edit(path: &Path, expected: &Entry, replacement: Option<&str>) -> 
     if entries[index] != *expected {
         return Err("This memory changed. Refresh before editing it.".into());
     }
+    block_automatic(path)?;
     if let Some(text) = replacement {
         entries[index].text = text.trim().into();
     } else {
@@ -132,6 +243,7 @@ pub(crate) fn clear(path: &Path, expected: &[Entry]) -> Result<(), String> {
     if read(path)? != expected {
         return Err("Memories changed. Refresh before clearing them.".into());
     }
+    block_automatic(path)?;
     write(path, &[])
 }
 pub(crate) struct EditLock(std::fs::File);
@@ -214,6 +326,7 @@ mod tests {
                 id: i.to_string(),
                 created: format!("2026-01-{:02}T00:00:00Z", i + 1),
                 text: "I do enjoy dominoes and films".into(),
+                source: None,
             })
             .collect::<Vec<_>>();
         entries[8].text = "You live in Woking with two cats".into();
@@ -275,6 +388,58 @@ mod editing_tests {
         assert!(edit(&path, &first, None).is_err());
         assert_eq!(read(&path).unwrap()[1], second);
         edit(&path, &second, None).unwrap();
+        assert_eq!(read(&path).unwrap().len(), 1);
+    }
+    fn source(id: &str) -> MemorySource {
+        MemorySource {
+            conversation_id: "conversation-1".into(),
+            conversation_started_at: "2020-01-01T00:00:00Z".into(),
+            turn_ids: vec!["turn-1".into()],
+            candidate_id: id.into(),
+        }
+    }
+    #[test]
+    fn extraction_receipts_survive_retry_and_explicit_forgetting() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("MEMORY.md");
+        let entry = append_extracted(
+            &path,
+            "An important enduring project",
+            source("candidate-1"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            append_extracted(&path, &entry.text, source("candidate-1"), &[])
+                .unwrap()
+                .is_none()
+        );
+        // Simulate a crash after MEMORY.md was saved and before its receipt was written.
+        std::fs::remove_file(ledger_path(&path)).unwrap();
+        assert_eq!(
+            append_extracted(&path, &entry.text, source("candidate-1"), &[]).unwrap(),
+            Some(entry.clone())
+        );
+        edit(&path, &entry, None).unwrap();
+        assert!(
+            append_extracted(&path, &entry.text, source("candidate-1"), &[])
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            append_extracted(&path, "Rephrased old project", source("candidate-2"), &[])
+                .unwrap()
+                .is_none()
+        );
+        assert!(read(&path).unwrap().is_empty());
+    }
+    #[test]
+    fn extraction_checks_the_exact_reviewed_snapshot_before_saving() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("MEMORY.md");
+        append(&path, "A newer explicit fact").unwrap();
+        assert!(append_extracted(&path, "Old extracted fact", source("candidate"), &[]).is_err());
         assert_eq!(read(&path).unwrap().len(), 1);
     }
 }

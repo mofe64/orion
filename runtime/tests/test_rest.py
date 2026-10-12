@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import tempfile
 import time
 import unittest
 import uuid
@@ -8,6 +10,24 @@ from daemon_support import DaemonTestCase, daemon, request
 
 
 class RestDaemonTests(DaemonTestCase):
+    def test_real_daemon_persists_sleep_and_confirmed_wake_behaviours(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with daemon(automatic_character=True, following=True, history_root=root) as path:
+                self.wait_for_rest(path, 'awake')
+                self.ok(path, 'character rest')
+                self.wait_for_rest(path, 'resting')
+                session = 'b' * 32
+                self.voice(path, session, 'wake', 'endpoint', 'confirmed')
+                self.wait_for_rest(path, 'awake')
+            events = [json.loads(line) for journal in (root / 'behaviours').glob('*.jsonl')
+                      for line in journal.read_text().splitlines() if line.strip()]
+            for behaviour in ('sleep', 'wake'):
+                self.assertTrue(any(e['behaviour'] == behaviour and e['phase'] == 'started' for e in events))
+                self.assertTrue(any(e['behaviour'] == behaviour and e['phase'] == 'completed' for e in events))
+            self.assertTrue(any(e['behaviour'] == 'wake' and e.get('sessionId') == session for e in events))
+            self.assertFalse(any('image' in e or 'audio' in e for e in events))
+
     def test_candidate_acknowledges_once_at_rest_then_confirmation_wakes_before_endpoint(self):
         with daemon(automatic_character=True, following=True) as path:
             self.wait_for_rest(path, 'awake')

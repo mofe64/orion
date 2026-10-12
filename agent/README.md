@@ -25,6 +25,8 @@ The crate groups code by responsibility:
 
 - `src/providers/`: Codex process lifecycle and App Server protocol.
 - `src/runtime/`: serialized requests, cancellation, and service ownership.
+- `src/context.rs`: text recovery and temporary summaries for replacement providers.
+- `src/extraction.rs`: tool-free retirement proposal, independent review and retries.
 - `src/prompt/`: base instructions, final-sentence streaming and spoken-output normalization.
 - `src/tools/`: tool schemas, validation, lighting catalog, and activity events.
 - `src/memory/`: delimited Markdown storage, user edits, and keyword retrieval.
@@ -92,8 +94,13 @@ the same original-entry conflict check as Studio edits; clarify multiple matches
 and confirm only after success. Personal memories stay outside
 the repository. Retrieved memories are sent to Codex when used. Studio Settings supports viewing, adding, editing, deleting, and clearing memories.
 Edits compare the original entry before writing; clearing compares the complete
-list, so a stale screen cannot silently erase a newer append. Automatic memory
-collection is not enabled.
+list, so a stale screen cannot silently erase a newer append. Retired conversations
+can supply memories through the conservative
+[extraction policy](../docs/voice-architecture.md#agent-conversation-and-memory).
+Extracted entries add a `source` object to their header with `conversationId`,
+`conversationStartedAt`, `turnIds` and `candidateId`. `MEMORY.automatic.json`
+beside `MEMORY.md` stores save receipts and the explicit-edit cutoff; preserve it
+with the memory file to retain duplicate and forgetting protection.
 
 `respond_with_events(text, Some(sender))` reports `SearchStarted` and routes
 `SetLighting`, `RobotOperation` and `CameraSnapshot` requests to a coordinator
@@ -192,9 +199,10 @@ prompt; editing the prose does not add instructions or alter tool permissions.
 
 `AgentHandle::profile(None)` reads the profile without starting Codex.
 `profile(Some(change))` serializes user edits with agent requests. Successful
-writes retire the active Codex conversation; the next request loads the saved
-personality into fresh context. This also prevents deleted memories persisting
-in the current thread. The coordinator keeps its handle and speech models.
+writes replace the active Codex provider thread; the logical history group stays
+the same. The next request loads the saved personality into fresh context.
+Editing, deleting or clearing memories also sets a recovery cutoff so older
+active conversation text cannot reintroduce changed facts. The coordinator keeps its handle and speech models.
 Failed validation or revision conflicts preserve the existing conversation.
 Deleting local memories does not erase information already sent to Codex.
 

@@ -35,6 +35,7 @@ lamp.
 | Path | Responsibility |
 | --- | --- |
 | `agent/` | Rust conversation runtime, memory/tools, and Codex integration |
+| `history/` | Shared JSON conversation storage and JSONL behaviour journal |
 | `orion-service/` | Pi voice/agent host and Studio remote client |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
@@ -58,6 +59,7 @@ cargo test --manifest-path orion-service/Cargo.toml
 python3 -m unittest discover -s scripts/tests -v
 cargo test --manifest-path coordinator/Cargo.toml
 cargo test --manifest-path agent/Cargo.toml
+cargo test --manifest-path history/Cargo.toml
 cargo test --manifest-path runtime/Cargo.toml --all-targets
 PYTHONPATH=motion .venv/bin/python -m pytest -q motion/test
 python3 -m unittest discover -s orion_studio/tests -v

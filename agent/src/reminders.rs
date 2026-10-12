@@ -70,6 +70,7 @@ pub(crate) fn add(config: &AgentConfig, text: &str) -> Result<Entry, String> {
         return Err("At most 200 next-conversation reminders".into());
     }
     let entry = Entry {
+        source: None,
         id: uuid::Uuid::new_v4().simple().to_string(),
         created: chrono::Utc::now().to_rfc3339(),
         text: text.trim().into(),

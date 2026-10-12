@@ -325,8 +325,17 @@ voice status, transcripts, models and timing.
 
 A voice preset change applies to the next reply without restarting the agent or
 ASR. Other model changes restart the coordinator and speech workers. An idle
-restart can preserve the conversation; restarting the whole service starts fresh
-context. See [voice settings](../docs/configuration.md#voice-settings).
+restart can preserve the provider thread; restarting the whole service recovers
+the active logical conversation in a replacement provider.
+See [voice settings](../docs/configuration.md#voice-settings).
+
+**Debug → Voice → View conversation history** offers **Conversations** and
+**Behaviours**. Conversations groups accepted turns into one entry for 24 hours
+from the first turn, with reply/delivery outcomes and expandable activity.
+Rejected or empty wakes produce no entries. Behaviours shows dated runtime
+attention, idle and rest events with category filters and pagination. Settings
+shows conversation provenance on extracted memories. See the
+[history policy](../docs/voice-architecture.md#agent-conversation-and-memory).
 
 The [voice architecture](../docs/voice-architecture.md) explains wake verification,
 continued command capture, response buffering and the follow-up window. A generated
@@ -348,7 +357,8 @@ choices made during a save. Pending saves finish when you leave Settings;
 a connection change clears the old profile and cancels deferred changes. Valid
 memory text saves when leaving its field; **Cancel**
 discards an unsaved memory draft. Deletion still requires confirmation. Changes
-start a fresh conversation on Orion’s next request, and failures preserve the draft.
+refresh provider context on Orion’s next request while preserving the history
+group, and failures preserve the draft.
 Relevant memories are sent to Codex when used; editing or deleting does not erase
 information already sent to Codex.
 

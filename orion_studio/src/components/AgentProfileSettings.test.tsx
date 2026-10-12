@@ -53,7 +53,7 @@ describe("profile readiness", () => {
     const html = markup(profile, { message: "Studio couldn't save these changes.", detail: "save error" });
     expect(html).toContain("<h3>Personality</h3>");
     expect(html).toContain("<h3>Memories</h3>");
-    expect(html).toContain("Stored on Orion. Relevant memories are sent to Codex when Orion uses them. Editing or deleting starts a fresh conversation; it does not erase information already sent to Codex.");
+    expect(html).toContain("Stored on Orion. Relevant memories are sent to Codex when Orion uses them. Retired conversations are reviewed by Codex for important lasting facts. Editing or deleting refreshes agent context; it does not erase information already sent to Codex.");
     expect(html).not.toContain("Stored on this computer.");
     expect(html).toContain("Choices save automatically.");
     expect(html).not.toContain("Save personality");

@@ -115,7 +115,7 @@ def build_in_container(release, output, target):
     revision = json.loads((release / 'release.json').read_text())['revision']
     environment = {**os.environ, 'ORION_BUILD_REVISION': revision}
     run('python3', '-m', 'unittest', 'discover', '-s', release / 'scripts/tests', '-q', cwd=release, env=environment)
-    for component in ('agent', 'coordinator', *BINARY_COMPONENTS):
+    for component in ('history', 'agent', 'coordinator', *BINARY_COMPONENTS):
         tests = ['cargo', 'test', '--locked', '--manifest-path', release / component / 'Cargo.toml', '--all-targets', '-j', '2']
         if component == 'runtime':
             tests += ['--', '--skip', 'native_mujoco']

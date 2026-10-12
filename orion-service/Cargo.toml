@@ -9,6 +9,7 @@ name = "orion-service"
 path = "src/main.rs"
 
 [dependencies]
+orion-history = { path = "../history" }
 orion-agent = { path = "../agent" }
 orion-coordinator = { path = "../coordinator" }
 serde = { version = "1", features = ["derive"] }

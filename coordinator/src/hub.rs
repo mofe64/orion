@@ -1,8 +1,4 @@
-use crate::{
-    CoordinatorConfig,
-    history::{self, History},
-    pipeline::microphone,
-};
+use crate::{CoordinatorConfig, history::History, pipeline::microphone};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::{
@@ -29,11 +25,11 @@ struct State {
     replay: VecDeque<String>,
 }
 impl Hub {
-    pub fn new() -> Self {
+    pub fn new(history_path: Option<std::path::PathBuf>) -> Self {
         Self {
             state: Arc::new(Mutex::new(State::default())),
             events: broadcast::channel(64).0,
-            history: Arc::new(Mutex::new(history::directory().ok().map(History::new))),
+            history: Arc::new(Mutex::new(history_path.map(History::new))),
         }
     }
     pub fn publish(&self, mut value: Value) {
