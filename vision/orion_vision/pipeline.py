@@ -122,7 +122,7 @@ class FacePipeline:
     def _background_objects(self, stamp, buffer, faces, generation):
         now = self.clock()
         with self.changed:
-            wanted = self.enabled and self.mode == "faces" and (self.behaviours['object_glances'] or self.behaviours['new_object_peek']) and self.objects is not None
+            wanted = self.enabled and self.mode in ("idle", "faces") and (self.behaviours['object_glances'] or self.behaviours['new_object_peek']) and self.objects is not None
         if not wanted or now < self.next_object_pass:
             return
         # This shares the inference worker with YuNet and explicit /find.
@@ -238,7 +238,7 @@ class FacePipeline:
 
     def observations(self):
         with self.changed:
-            return self.tracker.observations(self.boot_clock()) if self.enabled and self.mode == "faces" else []
+            return self.tracker.observations(self.boot_clock()) if self.enabled and self.mode in ("idle", "faces") else []
 
     def status(self):
         with self.changed:
@@ -326,6 +326,12 @@ class FacePipeline:
             if chosen is None:
                 self._clear_target()
                 return
+            # Idle observes faces for autonomous reactions, but follows only
+            # the speaker selected by a wake during a confirmed conversation.
+            if self.mode == 'idle' and (chosen.id != self.speaker_track_id
+                                       or self.client.conversation_active() is not True):
+                self._clear_target()
+                return
             if not self.gaze_available and now >= self.next_gaze_poll:
                 self.next_gaze_poll = now + GAZE_RETRY_SECONDS
                 self.gaze_available = self.client.gaze_available()
@@ -344,6 +350,8 @@ class FacePipeline:
                     self.gaze_error = None
         except (OSError, ValueError, KeyError) as error:
             # Motion availability does not invalidate detector/ray evidence.
+            if self.mode == 'idle':
+                self._clear_target()
             self.gaze_available = False
             self.next_gaze_poll = now + GAZE_RETRY_SECONDS
             self.gaze_error = str(error)
@@ -364,6 +372,9 @@ class FacePipeline:
             # A disappearing speaker never causes a turn to a bystander.
             return next((track for track in tracks if track.id == self.speaker_track_id), None)
         self.speaker_track_id = None
+        if self.mode == 'idle':
+            self.target_track_id = self.challenger_track_id = self.challenger_since_ns = None
+            return None
         current = next((track for track in tracks if track.id == self.target_track_id), None)
         if current is None:
             chosen = choose_track(tracks)

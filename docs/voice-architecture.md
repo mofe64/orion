@@ -415,8 +415,8 @@ Only successful measured completion installs that temporary
 anchor; the existing conversation hold and return restore the saved anchor.
 Scenes, speech, Stop and unavailable character states retain priority.
 
-Vision pins the selected track while the confirmed conversation remains active,
-including its echo guard and follow-up window. A larger bystander cannot replace
+In Tracking Idle and Faces, Vision pins the selected track while the confirmed
+conversation remains active, including its echo guard and follow-up window. A larger bystander cannot replace
 it. The pin expires within three seconds when voice status is absent or cannot
 be verified. While the speaker remains visible, fresh `gaze target` updates for
 that track can adjust the held conversation anchor between replies. Movement
@@ -426,6 +426,9 @@ ignored. Each spoken reply freezes its starting anchor. Tracking clear revokes
 the speaker track and smoothly shortens an owned adjustment back to its last
 committed anchor; a later confirmed turn may select the speaker again. This
 continuous conversation behavior is on by default and remains lamp-unverified.
+Idle clears following when the conversation ends or cannot be verified, while
+its autonomous surroundings observations continue. Faces can resume ambient
+following after the speaker pin expires.
 
 A working camera with no recent face sends `voice SESSION attend_scan AGE_MS`.
 Gaze compiles one small neck sweep and settles to the original anchor, then

@@ -6,6 +6,7 @@ from test_gaze import boottime_ns
 
 
 class SurroundingsTests(DaemonTestCase):
+    tracking_mode = 'faces'
     def test_presence_holds_expired_rest_until_privacy_clear(self):
         with daemon(hardware='v2', automatic_character=True, following=True,
                     gaze=False, rest_after_seconds=1) as path:
@@ -15,7 +16,7 @@ class SurroundingsTests(DaemonTestCase):
             while time.monotonic() < deadline:
                 self.ok(path, 'gaze surroundings ' + json.dumps({
                     'capture_boottime_ns': boottime_ns(), 'camera_on': True,
-                    'tracking_mode': 'faces', 'objects': [], 'looking_away': None,
+                    'tracking_mode': self.tracking_mode, 'objects': [], 'looking_away': None,
                     'settings': {'presence_defers_rest': True},
                     'faces': [{'track_id': 1, 'azimuth': 0., 'elevation': 0., 'frontal': False}]}))
                 time.sleep(.2)
@@ -35,7 +36,7 @@ class SurroundingsTests(DaemonTestCase):
             self.wait_for_rest(path, 'awake')
             self.assertTrue(request(path, 'gaze surroundings status')['ready'])
             stamp = boottime_ns()
-            body = {'capture_boottime_ns': stamp, 'camera_on': True, 'tracking_mode': 'faces',
+            body = {'capture_boottime_ns': stamp, 'camera_on': True, 'tracking_mode': self.tracking_mode,
                 'settings': {'object_glances': True}, 'looking_away': None,
                 'objects': [{'id': 'object:1', 'category': 'book', 'azimuth': .4,
                     'elevation': -.3, 'capture_boottime_ns': str(stamp), 'point': None}]}
@@ -57,7 +58,7 @@ class SurroundingsTests(DaemonTestCase):
             self.wait_for_rest(path, 'awake')
             def observe():
                 return 'gaze surroundings ' + json.dumps({
-                    'capture_boottime_ns': boottime_ns(), 'camera_on': True, 'tracking_mode': 'faces',
+                    'capture_boottime_ns': boottime_ns(), 'camera_on': True, 'tracking_mode': self.tracking_mode,
                     'settings': {'mutual_gaze': True}, 'objects': [], 'looking_away': False,
                     'faces': [{'track_id': 1, 'azimuth': .06, 'elevation': 0., 'frontal': True}]})
             self.ok(path, observe())
@@ -80,7 +81,7 @@ class SurroundingsTests(DaemonTestCase):
             def observe(dwell, category='book'):
                 stamp = boottime_ns()
                 return 'gaze surroundings ' + json.dumps({
-                    'capture_boottime_ns': stamp, 'camera_on': True, 'tracking_mode': 'faces',
+                    'capture_boottime_ns': stamp, 'camera_on': True, 'tracking_mode': self.tracking_mode,
                     'settings': {'new_object_peek': True}, 'objects': [], 'looking_away': None,
                     'novelty': {'id': 'object:1', 'interest_key': 'object:book:0:-2',
                         'category': category, 'azimuth': .06, 'elevation': -.6,
@@ -94,3 +95,8 @@ class SurroundingsTests(DaemonTestCase):
             self.ok(path, 'gaze surroundings clear')
             self.wait_for(path, 'character status', lambda status: status['character'].get('active_clip') != 'peek_new_object')
             self.assertEqual(request(path, 'character status')['character']['active_anchor'], anchor)
+
+
+class IdleSurroundingsTests(SurroundingsTests):
+    """Idle keeps the same autonomous reactions, presence and priority gates."""
+    tracking_mode = 'idle'

@@ -205,7 +205,10 @@ impl CharacterCoordinator {
             || value.capture_boottime_ns <= self.surroundings.stamp
             || value.capture_boottime_ns > boot.saturating_add(50_000_000)
             || boot.saturating_sub(value.capture_boottime_ns) > 1_000_000_000
-            || !matches!(value.tracking_mode.as_str(), "faces" | "off" | "hands")
+            || !matches!(
+                value.tracking_mode.as_str(),
+                "idle" | "faces" | "off" | "hands"
+            )
         {
             return Err(Error::InvalidArgument(
                 "Invalid or stale surroundings".into(),
@@ -219,7 +222,7 @@ impl CharacterCoordinator {
         self.surroundings.received = Some(now);
         self.surroundings.settings = value.settings;
         self.surroundings.present = match value.tracking_mode.as_str() {
-            "faces" => !value.faces.is_empty(),
+            "idle" | "faces" => !value.faces.is_empty(),
             "hands" => value.hand_count > 0,
             _ => false,
         };
@@ -415,6 +418,13 @@ mod tests {
     use std::sync::atomic::Ordering;
     #[test]
     fn object_glances_preserve_clip_envelope_budget_anchor_and_stop() {
+        check_object_glances("faces");
+    }
+    #[test]
+    fn idle_observations_allow_object_glances_with_the_same_safety_gates() {
+        check_object_glances("idle");
+    }
+    fn check_object_glances(mode: &str) {
         let (mut core, _, boot) = crate::expression::gaze::tests::following();
         let mut character = CharacterCoordinator::new(1);
         character.set_gaze_enabled(true);
@@ -431,7 +441,7 @@ mod tests {
         let anchor = character.status.active_anchor.clone().unwrap();
         let message = |stamp: u64| {
             serde_json::from_value(serde_json::json!({
-                "capture_boottime_ns":stamp, "camera_on":true, "tracking_mode":"faces",
+                "capture_boottime_ns":stamp, "camera_on":true, "tracking_mode":mode,
                 "settings":{"object_glances":true}, "looking_away":null,
                 "objects":[{"id":"object:1","category":"book","azimuth":0.4,"elevation":-0.3,
                     "capture_boottime_ns":stamp.to_string(),"point":null},
@@ -568,6 +578,8 @@ mod tests {
         let (mut core, mut character, boot) = presence_fixture();
         for (index, (mode, face, hands, enabled, camera, expected)) in [
             ("faces", true, 0, true, true, true),
+            ("idle", true, 0, true, true, true),
+            ("idle", false, 1, true, true, false),
             ("hands", false, 1, true, true, true),
             ("faces", false, 1, true, true, false),
             ("hands", true, 0, true, true, false),

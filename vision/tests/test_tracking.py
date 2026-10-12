@@ -24,6 +24,24 @@ def intrinsics():
 
 
 class ConversationTargetTests(unittest.TestCase):
+    def test_idle_has_no_ambient_target_and_never_substitutes_a_missing_speaker(self):
+        now = [10.]
+        pipeline = FacePipeline(MagicMock(), intrinsics(), MagicMock(), clock=lambda: now[0],
+                                boot_clock=lambda: 10_000_000_000)
+        pipeline.reset(True, mode='idle')
+        tracks = pipeline.tracker.update(10_000_000_000,
+            [face((100, 100), 50), face((200, 100), 35)],
+            [{'azimuth': .2, 'elevation': .1}, {'azimuth': -.4, 'elevation': .1}])
+        self.assertIsNone(pipeline._choose_target(tracks, 10_000_000_000))
+        chosen = pipeline.speaker(9_000_000_000)['speaker']['track_id']
+        speaker = next(track for track in tracks if track.id == chosen)
+        other = next(track for track in tracks if track.id != chosen)
+        other.face = face((200, 100), 150)
+        self.assertIs(pipeline._choose_target(tracks, 10_000_000_000), speaker)
+        self.assertIsNone(pipeline._choose_target([other], 10_000_000_000))
+        now[0] = 14.
+        self.assertIsNone(pipeline._choose_target([other], 10_000_000_000))
+
     def test_speaker_pin_does_not_switch_to_a_larger_bystander_and_expires(self):
         now = [10.]
         pipeline = FacePipeline(MagicMock(), intrinsics(), MagicMock(), clock=lambda: now[0],

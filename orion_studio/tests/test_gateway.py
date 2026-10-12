@@ -654,11 +654,13 @@ class TrackingPreferenceTests(unittest.TestCase):
         path.unlink(); path.mkdir()
         self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'off')
 
-    def test_hands_mode_is_persisted_and_read_back(self):
-        saved = self.gateway.set_tracking_mode({'tracking_mode': 'hands'})
-        self.assertEqual(saved['tracking_mode'], 'hands')
-        self.assertEqual(json.loads(self.gateway.tracking_preference_file.read_text()), {'tracking_mode': 'hands'})
-        self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], 'hands')
+    def test_hands_and_idle_modes_are_persisted_and_read_back(self):
+        for mode in ('hands', 'idle'):
+            with self.subTest(mode=mode):
+                saved = self.gateway.set_tracking_mode({'tracking_mode': mode})
+                self.assertEqual(saved['tracking_mode'], mode)
+                self.assertEqual(json.loads(self.gateway.tracking_preference_file.read_text()), {'tracking_mode': mode})
+                self.assertEqual(self.gateway.get_tracking_mode()['tracking_mode'], mode)
 
     def test_setter_rejects_unknown_modes_and_non_objects_without_writing(self):
         for payload in (None, [], False, {}, {'tracking_mode': 'bodies'}, {'tracking_mode': True},

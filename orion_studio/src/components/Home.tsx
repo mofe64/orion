@@ -191,7 +191,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         </section>}
         <ListsCard connection={connection} />
       </div>
-      {trackingSupported && <CameraCard connection={connection} overlay={tracking.mode === "faces" || tracking.mode === "hands"} onEnabledChange={tracking.cameraChanged} />}
+      {trackingSupported && <CameraCard connection={connection} overlay={tracking.mode === "idle" || tracking.mode === "faces" || tracking.mode === "hands"} onEnabledChange={tracking.cameraChanged} />}
     </div>
     {onDiagnostics && <div className="oh-quick-actions"><button className="quiet-button" onClick={onDiagnostics}>Diagnostics</button></div>}
     {status?.rest?.error && <p className="oh-feedback" role="alert">{status.rest.error}</p>}

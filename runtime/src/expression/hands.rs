@@ -321,7 +321,7 @@ impl CharacterCoordinator {
                 let recovery = if run.kind == MoveKind::Return {
                     "Go to rest, then resume Orion."
                 } else {
-                    "Choose Faces or Off to request a return; if recovery fails, go to rest."
+                    "Choose Idle, Faces or Off to request a return; if recovery fails, go to rest."
                 };
                 self.fail_hands(
                     stage,

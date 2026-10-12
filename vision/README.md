@@ -95,7 +95,7 @@ contention. The Unix socket is user-only
 | `/stream` | `multipart/x-mixed-replace`, boundary `orion-frame`, JPEG parts with length and timestamp |
 | `/observations` | Recent base-bearing face tracks, normalized boxes, pixel landmarks and capture timestamps |
 | `/detections` | Latest preview detection batch; 503 `camera_not_viewed` without a stream or snapshot lease |
-| `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window; 503 `tracking_off` in Off mode |
+| `/speaker?since_ns=…` | Chosen face and selection strategy within a bounded mouth-motion window; available in Idle and Faces, 503 `tracking_off` in Off and Hands |
 
 `POST /find` accepts `{"category":"book"}` and returns `found`, `not_found`
 or `ambiguous`, with at most sixteen candidates. Each candidate contains a
@@ -203,6 +203,12 @@ The same watcher polls the independent tracking preference. Off clears
 pending inference and tracks, discards in-flight results, and reports a zero
 detection rate. `/observations` and the viewed `/detections` batch are empty;
 `/speaker` returns `503 tracking_off`. Faces resumes with fresh track IDs.
+Idle runs the face detector and enabled background object passes, publishes
+autonomous surroundings, and exposes observations and speaker selection.
+It sends face-following updates only for the selected speaker while runtime
+confirms a live conversation; ending or losing that confirmation clears following.
+Idle never chooses an ambient target or substitutes a bystander for a missing
+speaker. Viewed frames and detection boxes still share the same capture.
 Hands also refuses `/speaker`, and selects the palm detector instead of YuNet
 at 5 Hz. The viewed stream pairs each JPEG with that frame's palm inference, so
 `/detections` carries `"class": "hand"` boxes from the same capture and the feed

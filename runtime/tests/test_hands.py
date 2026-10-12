@@ -32,3 +32,25 @@ class HandsTests(DaemonTestCase):
             self.ok(path,observe())
             self.assertFalse(request(path,'gaze status')['gaze']['enabled'])
             self.assertNotEqual(request(path,'character status')['character'].get('active_clip'),'hands_entry')
+
+    def test_idle_mode_leaves_hands_and_restores_the_previous_anchor(self):
+        with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:
+            original = self.wait_for_rest(path, 'awake')['character']['active_anchor']
+            def observe_hands():
+                self.ok(path, 'gaze surroundings ' + json.dumps(dict(
+                    capture_boottime_ns=boottime_ns(), camera_on=True, tracking_mode='hands',
+                    settings={}, objects=[], faces=[], looking_away=None, hand_count=1, hand_point=None)))
+            observe_hands()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                time.sleep(.3); observe_hands()
+                status = request(path, 'character status')['character']
+                if status.get('active_clip') != 'hands_entry':
+                    break
+            self.assertAlmostEqual(status['active_anchor']['head_pitch_joint'], .4)
+            self.ok(path, 'gaze surroundings ' + json.dumps(dict(
+                capture_boottime_ns=boottime_ns(), camera_on=True, tracking_mode='idle',
+                settings={}, objects=[], faces=[], looking_away=None)))
+            self.wait_for(path, 'character status', lambda value:
+                value['character']['active_anchor'] == original)
+            self.assertTrue(request(path, 'gaze surroundings status')['ready'])

@@ -6,13 +6,19 @@ import type { TrackingMode } from "../lib/gateway";
 const props = { connected: true, supported: true, mode: "faces" as TrackingMode, cameraEnabled: true,
   pending: false, notice: "", error: null, onChange: vi.fn() };
 describe("Home tracking mode", () => {
-  it.each(["off", "faces", "hands"] as const)("selects only the saved %s mode", mode => {
+  it.each(["off", "idle", "faces", "hands"] as const)("selects only the saved %s mode", mode => {
     const html = renderToStaticMarkup(<TrackingControl {...props} mode={mode} />);
     expect(html.match(/checked=""/g)).toHaveLength(1);
     expect(html.match(/<input[^>]*checked=""[^>]*>/g)?.[0]).toContain(`value="${mode}"`);
     expect(html).toContain(">Off</span>"); expect(html).toContain(">Faces</span>");
+    expect(html).toContain(">Idle</span>");
     expect(html).not.toContain('role="switch"');
     expect(html).not.toContain('disabled=""');
+  });
+  it("explains that Idle allows autonomous behaviours and conversation gaze", () => {
+    const html = renderToStaticMarkup(<TrackingControl {...props} mode="idle" />);
+    expect(html).toContain("Autonomous behaviours · conversation gaze");
+    expect(html).not.toContain("Following faces");
   });
   it.each([
     [{ cameraEnabled: false }, "Camera is off · mode saved"],

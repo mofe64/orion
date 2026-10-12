@@ -38,7 +38,7 @@ def camera_enabled(path):
 def tracking_mode(path):
     try:
         value = json.loads(Path(path).read_text())['tracking_mode']
-        return value if value in ('off', 'faces', 'hands') else 'off'
+        return value if value in ('off', 'idle', 'faces', 'hands') else 'off'
     except FileNotFoundError:
         return 'faces'
     except (OSError, ValueError, KeyError, TypeError):
@@ -262,7 +262,7 @@ class Vision:
                 stamp, rgb = self.latest
                 # Inference previews keep boxes and pixels from one capture. When
                 # detection is unavailable, the ordinary camera feed still works.
-                preview = self.pipeline.preview() if self.pipeline and self.tracking_mode in ('faces', 'hands') else None
+                preview = self.pipeline.preview() if self.pipeline and self.tracking_mode in ('idle', 'faces', 'hands') else None
                 if preview is not None:
                     stamp, rgb, _ = preview
                 if self.cached and (stamp == self.cached[0] or time.monotonic() - self.last_encode < 1 / 15):
@@ -371,12 +371,12 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/health":
                 return self.respond(200, body)
             if self.path == "/observations":
-                return self.respond(200, vision.pipeline.observations() if vision.pipeline and vision.tracking_mode == 'faces' else [])
+                return self.respond(200, vision.pipeline.observations() if vision.pipeline and vision.tracking_mode in ('idle', 'faces') else [])
             if self.path == "/detections":
                 status, body = vision.detections()
                 return self.respond(status, body)
             if urlsplit(self.path).path == "/speaker":
-                if vision.tracking_mode != 'faces':
+                if vision.tracking_mode not in ('idle', 'faces'):
                     return self.respond(503, {"error": {"code": "tracking_off"}})
                 if not vision.pipeline:
                     return self.respond(503, {"error": {"code": "detection_unavailable"}})

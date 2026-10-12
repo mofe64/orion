@@ -121,11 +121,13 @@ Home shows Orion’s mode, listening, Expressions and lamp controls after connec
 When disconnected, it shows one **Connect Orion** action and a compact placeholder;
 Animation remains available for scenes and previews.
 
-On V2, **Tracking: Off / Faces / Hands** sits beside Listening. It loads the saved Pi
+On V2, **Tracking: Off / Idle / Faces / Hands** sits beside Listening. It loads the saved Pi
 mode and allows one selection at a time. Saving shows a notice; a failed save
 restores the previous choice and displays an error. Camera-off and disconnected
 states disable it with an explanation. Off hides boxes while the plain feed
-continues. See [camera and tracking behaviour](../docs/system-architecture.md#camera-and-vision)
+continues. Tracking Idle allows enabled autonomous behaviours and conversation
+gaze without continuous ambient following. This selection is separate from the
+Idle/Lamp routine mode. See [camera and tracking behaviour](../docs/system-architecture.md#camera-and-vision)
 for detector, work-following, gaze and wake-turn effects.
 
 Choose **Idle mode** for autonomous movement with timed rest, or **Lamp mode** to
@@ -197,7 +199,7 @@ The gateway protects all camera routes with the existing bearer token:
 | `GET /api/v2/camera/detections` | Proxy fresh preview boxes while an existing healthy viewer holds the lease |
 | `POST /api/v2/camera/enabled` | Save `{"camera_enabled": true}` or `false` |
 | `GET /api/v2/tracking/mode` | Read saved `tracking_mode` and camera privacy state |
-| `POST /api/v2/tracking/mode` | Atomically save `{"tracking_mode": "off"}`, `"faces"` or `"hands"`; reject unknown modes |
+| `POST /api/v2/tracking/mode` | Atomically save `{"tracking_mode": "off"}`, `"idle"`, `"faces"` or `"hands"`; reject unknown modes |
 
 Streams and snapshots return HTTP 503 with `error.code: camera_resting` while
 rest is `going_to_rest`, `resting`, `waking` or `fault`. Open streams end when

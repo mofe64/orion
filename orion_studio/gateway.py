@@ -398,7 +398,7 @@ class OrionGateway:
     def tracking_mode(self):
         try:
             value = json.loads(self.tracking_preference_file.read_text()).get('tracking_mode')
-            return value if value in ('off', 'faces', 'hands') else 'off'
+            return value if value in ('off', 'idle', 'faces', 'hands') else 'off'
         except FileNotFoundError:
             return 'faces'
         except (OSError, ValueError, AttributeError):
@@ -413,9 +413,9 @@ class OrionGateway:
     def set_tracking_mode(self, payload):
         if self.hardware != 'v2':
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
-        if not isinstance(payload, dict) or payload.get('tracking_mode') not in ('off', 'faces', 'hands'):
+        if not isinstance(payload, dict) or payload.get('tracking_mode') not in ('off', 'idle', 'faces', 'hands'):
             raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_tracking_mode',
-                'tracking_mode must be off, faces or hands.')
+                'tracking_mode must be off, idle, faces or hands.')
         path = self.tracking_preference_file
         temporary = None
         try:

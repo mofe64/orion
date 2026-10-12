@@ -6,6 +6,23 @@ const connection = { url: "http://orion", token: "secret" };
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
 describe("saved tracking preference", () => {
+  it("loads and saves Idle with its conversation behaviour explained", async () => {
+    vi.useFakeTimers();
+    const save = vi.fn().mockResolvedValue({ tracking_mode: "idle", camera_enabled: true });
+    const model = new TrackingPreference(connection, {
+      read: vi.fn().mockResolvedValue({ tracking_mode: "faces", camera_enabled: true }), save,
+    });
+    model.start(); await flush(); await model.choose("idle");
+    expect(save.mock.calls[0][1]).toBe("idle");
+    expect(model.snapshot()).toMatchObject({ mode: "idle", pending: false,
+      notice: "Autonomous behaviours and conversation gaze are on.", error: null });
+    model.stop();
+    // A saved Idle response is also a valid read, not a corrupt preference.
+    const restored = new TrackingPreference(connection, { read: save, save });
+    restored.start(); await flush();
+    expect(restored.snapshot().mode).toBe("idle");
+    restored.stop();
+  });
   it("loads the saved mode, optimistically changes one mode, and reverts on failure", async () => {
     vi.useFakeTimers();
     let reject!: (error: Error) => void;

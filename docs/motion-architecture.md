@@ -154,8 +154,8 @@ quiet-hours schedule.
 
 ### Presence defers automatic rest
 
-With `presence_defers_rest` enabled, fresh face observations in Faces mode or
-palm observations in Hands mode can keep an already powered, awake lamp from
+With `presence_defers_rest` enabled, fresh face observations in Idle or Faces
+mode or palm observations in Hands mode can keep an already powered, awake lamp from
 starting automatic rest. Evidence expires after two seconds; camera privacy,
 Tracking Off, an empty observation or disabling the preference removes it.
 Object detections and pets do not count. Only the active detector's presence
@@ -171,6 +171,12 @@ An already descending or resting lamp ignores presence as a wake signal.
 This policy spends no curiosity budget because it initiates no movement; it
 only inhibits an automatic transition. Lamp checks remain owed for sustained
 work, departure, privacy, explicit rest and absence of surprise waking.
+
+### Idle tracking
+
+Tracking Idle preserves the autonomous context without ambient following and
+allows the selected conversation speaker to be followed. It is separate from
+the Idle/Lamp routine mode. See [camera and tracking modes](system-architecture.md#camera-and-vision).
 
 ### Hands following
 

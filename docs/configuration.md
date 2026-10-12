@@ -23,7 +23,7 @@ Paths below are relative to the Pi user's home unless stated otherwise.
 | `.config/orion/microphone.json` | Persistent microphone mute preference |
 | `.config/orion/camera.json` | `{"camera_enabled": true}` or `false`; vision watches this privacy preference |
 | `.config/orion/behaviours.json` | Opt-in camera behaviours; missing or corrupt settings disable them |
-| `.config/orion/tracking.json` | `{"tracking_mode": "off"}`, `"faces"` or `"hands"`; saved independently of camera privacy |
+| `.config/orion/tracking.json` | `{"tracking_mode": "off"}`, `"idle"`, `"faces"` or `"hands"`; saved independently of camera privacy |
 | `.config/orion/servo_calibration.json` | Joint zeros, directions and calibrated ranges |
 | `.config/orion/studio-token` | Gateway and listener authentication token |
 | `.local/share/orion/SOUL.md` | Saved personality choices and generated instructions |
@@ -57,12 +57,14 @@ settings disable capture. Vision watches this file every 100 ms and closes the
 camera within one second of disabling it. Deployment and rollback leave the
 preference untouched.
 
-`tracking_mode` in `~/.config/orion/tracking.json` selects one detector mode:
-`off`, `faces` or `hands`. A missing file defaults to `faces`; unreadable, corrupt or
+`tracking_mode` in `~/.config/orion/tracking.json` selects `off`, `idle`, `faces`
+or `hands`. A missing file defaults to `faces`; unreadable, corrupt or
 unknown settings select `off`. Vision polls it at the same interval as camera
 privacy. The gateway atomically writes this separate file before acknowledging
 a change, and deployment and rollback preserve it. Camera privacy wins over
-the selected mode. See [camera and tracking behaviour](system-architecture.md#camera-and-vision).
+the selected mode. Idle keeps autonomous observations and confirmed-conversation
+gaze without continuous ambient face or hand following. It is independent of
+the Idle/Lamp routine mode. See [camera and tracking behaviour](system-architecture.md#camera-and-vision).
 
 `hardware/profiles/v2.json` enables the service and selects camera index 0,
 CAM/DISP1, `hflip: false`, `vflip: false` and the retained
