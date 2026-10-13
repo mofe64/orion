@@ -1,5 +1,5 @@
 use orion_service::{Host, Request, rpc};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -34,15 +34,7 @@ async fn run() -> Result<(), String> {
         return Ok(());
     }
     if command == "check" {
-        let root = orion_service::project_root()?;
-        let python = std::env::var_os("ORION_STUDIO_VOICE_PYTHON")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| root.join("speech/.venv/bin/python"));
-        if !python.is_file() || !root.join("speech/orion_speech_worker/worker.py").is_file() {
-            return Err(
-                "Prepare the speech worker and its Python environment before starting".into(),
-            );
-        }
+        orion_service::release::InstalledRelease::discover()?.check_speech()?;
         orion_service::settings::load_voice_settings()?.validate()?;
         println!("Orion service files and settings are ready");
         return Ok(());
@@ -50,6 +42,7 @@ async fn run() -> Result<(), String> {
     if command != "serve" {
         return Err("Unknown command; use --help".into());
     }
+    orion_service::release::InstalledRelease::discover()?.check_speech()?;
     let host = Arc::new(Host::new(&directory)?);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

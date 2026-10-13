@@ -49,7 +49,6 @@ class PiperTests(unittest.TestCase):
             OfflineTts=FakeTts,
         )
         environment = patch.dict(os.environ, {
-            'ORION_SPEECH_BACKEND': 'pi',
             'ORION_PIPER_MODEL_DIR': str(self.root),
             'ORION_TTS_THREADS': '3',
         })

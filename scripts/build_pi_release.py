@@ -59,9 +59,8 @@ def package_python(release, component, wheels):
     python = Path('/opt/wheels-311/bin/python' if component == 'speech' else '/opt/wheels-312/bin/python')
     wheels.mkdir(parents=True)
     requirements = wheels / 'locked-requirements.txt'
-    extras = ['--extra', 'pi'] if component == 'speech' else []
     run('uv', 'export', '--project', release / component, '--locked', '--no-emit-local',
-        '--no-dev', '--no-annotate', '--no-header', '--output-file', requirements, *extras,
+        '--no-dev', '--no-annotate', '--no-header', '--output-file', requirements,
         stdout=subprocess.DEVNULL)
     run(python, '-m', 'pip', 'wheel', '--no-deps', '--require-hashes',
         '--wheel-dir', wheels, '--requirement', requirements)

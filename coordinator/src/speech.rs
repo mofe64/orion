@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{
-    path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
-};
+use std::{path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -17,7 +13,6 @@ pub struct SpeechConfig {
     pub root: PathBuf,
     pub asr_model: String,
     pub tts_model: String,
-    pub cache_path: String,
 }
 
 #[derive(Debug)]
@@ -139,18 +134,12 @@ impl Process {
     async fn start(config: &SpeechConfig, role: &str) -> Result<Self, String> {
         let mut command = Command::new(&config.python);
         command
-            .args(["-m", "orion_speech_worker.worker"])
+            .args(["-I", "-m", "orion_speech_worker.worker"])
             .current_dir(&config.root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
-        if !config.cache_path.is_empty() {
-            command.env("HF_HOME", &config.cache_path).env(
-                "HF_HUB_CACHE",
-                PathBuf::from(&config.cache_path).join("hub"),
-            );
-        }
         let mut child = command
             .spawn()
             .map_err(|e| format!("Cannot start speech worker: {e}"))?;
@@ -174,17 +163,7 @@ impl Process {
             || ready["protocol"] != 2
             || ready["role"] != role
             || (role == "asr" && ready["asr"]["provider"] != "qwen3-asr")
-            || (role == "tts"
-                && ready["tts"]["provider"]
-                    != if config.tts_model == "piper-alba-medium"
-                        || Path::new(&config.tts_model)
-                            .join("en_GB-alba-medium.onnx")
-                            .is_file()
-                    {
-                        "piper-tts"
-                    } else {
-                        "chatterbox-turbo"
-                    })
+            || (role == "tts" && ready["tts"]["provider"] != "piper-tts")
         {
             return Err("Unsupported speech worker handshake".into());
         }
@@ -334,6 +313,29 @@ fn duration(value: &Value, key: &str) -> Result<f64, String> {
 #[cfg(test)]
 mod isolation_tests {
     use super::*;
+
+    fn fixture(tts_model: &str) -> (tempfile::TempDir, SpeechConfig) {
+        let directory = tempfile::tempdir().unwrap();
+        let environment = directory.path().join(".venv");
+        assert!(
+            std::process::Command::new("python3")
+                .arg(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/install_speech.py")
+                )
+                .arg(&environment)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let config = SpeechConfig {
+            python: environment.join("bin/python"),
+            root: directory.path().into(),
+            asr_model: "fixture".into(),
+            tts_model: tts_model.into(),
+        };
+        (directory, config)
+    }
     #[test]
     fn long_unpunctuated_text_is_split_without_losing_words_or_unicode() {
         let text = "something ".repeat(2000);
@@ -356,13 +358,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn piper_handshake_matches_the_selected_model() {
-        let runtime = SpeechRuntime::new(SpeechConfig {
-            python: "python3".into(),
-            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
-            asr_model: "fixture".into(),
-            tts_model: "piper-alba-medium".into(),
-            cache_path: String::new(),
-        });
+        let (_directory, config) = fixture("piper-alba-medium");
+        let runtime = SpeechRuntime::new(config);
         assert_eq!(
             runtime.info().await.unwrap()["tts"]["provider"],
             "piper-tts"
@@ -371,13 +368,8 @@ mod isolation_tests {
     }
     #[tokio::test]
     async fn cancelled_tts_preserves_asr_process() {
-        let runtime = SpeechRuntime::new(SpeechConfig {
-            python: "python3".into(),
-            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
-            asr_model: "fixture".into(),
-            tts_model: "fixture".into(),
-            cache_path: String::new(),
-        });
+        let (_directory, config) = fixture("fixture");
+        let runtime = SpeechRuntime::new(config);
         runtime.info().await.unwrap();
         let asr = runtime.asr.lock().await.as_ref().unwrap().child.id();
         let tts = runtime.tts.lock().await.as_ref().unwrap().child.id();

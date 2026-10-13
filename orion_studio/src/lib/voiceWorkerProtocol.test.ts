@@ -26,7 +26,7 @@ const ready = JSON.stringify({
   asr: { provider: "qwen3-asr", model: "Qwen/Qwen3-ASR-0.6B" },
   wake: { provider: "rustpotter", model: "hey_orion_reference.rpw", threshold: 0.4 },
   agent: { provider: "codex", model: "configured-default" },
-  tts: { provider: "chatterbox-turbo", model: "mlx-community/chatterbox-turbo-8bit" },
+  tts: { provider: "piper-tts", model: "piper-alba-medium" },
 });
 
 describe("VoiceWorkerClient", () => {

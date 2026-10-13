@@ -90,7 +90,7 @@ the ADC starts, and then reports readiness. Unmute can therefore take a short
 startup interval before capture is ready.
 
 Set microphone overrides in `~/.config/orion/voice.env` and restart the listener.
-The [configuration reference](../docs/configuration.md#pi-runtime-and-listener)
+The [configuration reference](../docs/configuration.md#microphone-listener)
 lists wake sensitivity, gain, VAD and direction settings. Direction estimation
 on V1 requires measured microphone spacing and channel orientation. Optional V2
 USB direction diagnostics require a measured mounting offset and sign; both
@@ -241,7 +241,7 @@ $M analyze ~/orion-measurements/* --json ~/orion-measurements/summary.json
 The summary reports, per trial, the level of channel 0 (conference) and channel
 1 (ASR) before, during and after playback, how quickly `AEC_AECCONVERGED` reached
 1, Rustpotter hits per channel (marked when they fall inside playback) at the
-[managed Rustpotter threshold](../docs/configuration.md#pi-runtime-and-listener),
+[managed Rustpotter threshold](../docs/configuration.md#microphone-listener),
 and the auto-select beam's azimuth while the board reports speech. Across
 direction trials it fits the board's mounting offset and
 rotation sense, and prints the worst error after that fit. With the six-channel
@@ -266,7 +266,7 @@ Keep processed channel 0. Fit the mounting with the base cover in its normal
 position: from about 1.5 m, record `dir-front`, `dir-left` and `dir-right` trials
 with `--expected-azimuth 0`, `90` and `270`, saying “Hey Orion” three times at
 each position. Run `analyze` as above and copy its mounting `sign` and
-`offset_deg` into the [XVF listener settings](../docs/configuration.md#pi-runtime-and-listener).
+`offset_deg` into the [XVF listener settings](../docs/configuration.md#microphone-listener).
 Set `ORION_XVF_DIRECTION=1` only after the positions separate clearly. If the
 cover collapses the positions into two beams, report that acoustic obstruction
 before trusting the diagnostic direction.

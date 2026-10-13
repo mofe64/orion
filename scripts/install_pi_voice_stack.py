@@ -384,9 +384,7 @@ def expected_tts(home):
         if model == '~' or model.startswith('~/'):
             model = str(home / model.removeprefix('~/'))
     else:
-        environment = home / '.config/orion/voice-stack.env'
-        values = read_env(environment.read_text()) if environment.exists() else {}
-        model = values.get('ORION_STUDIO_TTS_MODEL', 'piper-alba-medium')
+        model = 'piper-alba-medium'
     if model.startswith('pocket-'):
         model = 'piper-alba-medium'
     if model != 'piper-alba-medium' and not (Path(model) / 'en_GB-alba-medium.onnx').is_file():
@@ -640,8 +638,7 @@ def preflight(release, home, files, system):
     if stray:
         raise RuntimeError(f'Stop the oriond started by hand (PID {", ".join(stray)}) before deploying; '
                            'it holds the servo port and the runtime socket')
-    environment = {**os.environ, **read_env(files[home / '.config/orion/voice-stack.env']),
-                   'ORION_PROJECT_ROOT': str(release), 'ORION_ONBOARD': '1', 'ORION_SPEECH_BACKEND': 'pi'}
+    environment = {**os.environ, **read_env(files[home / '.config/orion/voice-stack.env'])}
     system.run(environment['ORION_STUDIO_CODEX_BIN'], 'login', 'status')
     system.run(release / 'orion-service/target/release/orion-service', 'check', env=environment)
 

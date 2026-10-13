@@ -39,7 +39,7 @@ lamp.
 | `orion-service/` | Pi voice/agent host and Studio remote client |
 | `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
 | `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
-| `speech/` | CPU Qwen and Piper workers plus optional Apple Silicon development adapters |
+| `speech/` | Qwen speech recognition and Piper speech output on the Pi |
 | `orion_studio/` | Tauri/React desktop application and Pi gateway |
 | `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
 | `scenes/` | Versioned multimodal scene documents |

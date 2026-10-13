@@ -79,7 +79,6 @@ def wav(pcm):
 def synthesize(args):
     env = os.environ.copy()
     env['PYTHONPATH'] = str(args.speech_root)
-    env['ORION_SPEECH_BACKEND'] = 'pi'
     env['ORION_PIPER_MODEL_DIR'] = str(args.piper_model)
     with open(args.output / 'tts-worker.log', 'wb') as errors:
         worker = subprocess.Popen([str(args.speech_python), '-m', 'orion_speech_worker.worker'],

@@ -7,8 +7,8 @@ policy is in [conversation and memory](../docs/voice-architecture.md#agent-conve
 
 ## Files and configuration
 
-`ORION_ONBOARD=1` enables `~/.local/share/orion/voice-stack/history` by default.
-`ORION_VOICE_HISTORY_DIR` overrides it and enables storage on other hosts.
+History defaults to `~/.local/share/orion/voice-stack/history`.
+`ORION_VOICE_HISTORY_DIR` selects a different folder.
 Set the same directory for `oriond` and the voice service.
 
 ```text

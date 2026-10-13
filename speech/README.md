@@ -2,8 +2,7 @@
 
 Separate Python workers run Qwen3-ASR transcription and Piper Alba Medium TTS on the Pi.
 The [Rust coordinator](../coordinator/README.md) submits inference jobs and owns
-the surrounding voice session, agent call and playback lifecycle. An optional
-Apple Silicon adapter supports standalone Qwen3-ASR and Chatterbox development.
+the surrounding voice session, agent call and playback lifecycle.
 
 ## Setup on the Pi
 
@@ -13,8 +12,8 @@ Qwen GGUF server. The listener uses a separate Python 3.12 environment with
 Silero ONNX and Rustpotter.
 See [Pi installation](../docs/quickstart.md#prepare-a-new-pi).
 
-`ORION_SPEECH_BACKEND=pi` selects the CPU adapters. `ORION_LLAMA_SERVER` selects
-the native binary; the ASR model folder contains `model.gguf` and `mmproj.gguf`.
+`ORION_LLAMA_SERVER` selects the Qwen server program; the ASR model folder contains
+`model.gguf` and `mmproj.gguf`.
 The Pi adapter pre-fills Qwen's English transcription prefix, so the model
 decodes English speech without first guessing among its supported languages.
 Orion's agent speaks English unless asked explicitly to switch languages.
@@ -30,26 +29,11 @@ and divides it into chunks of at most two seconds.
 The [Piper Alba model card](https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_GB/alba/medium/MODEL_CARD)
 records the voice's training source and dataset license.
 
-Service inference uses the prepared local assets with `HF_HUB_OFFLINE=1`.
-
-## Optional Apple Silicon development
-
-The workstation adapter requires Apple Silicon and Python 3.12.
-From this directory:
-
-```bash
-uv sync --python 3.12 --locked
-.venv/bin/orion-voice-models
-```
-
-This command downloads development model weights into the Hugging Face cache.
-After moving an existing checkout, run `uv sync` here to refresh editable-package
-paths and console scripts. Studio uses the Pi service; this adapter is an
-independent development option.
+Service inference uses the prepared local model files.
 
 ## Inference protocol
 
-The coordinator launches `python -m orion_speech_worker.worker` with private
+The coordinator launches `python -I -m orion_speech_worker.worker` with private
 stdin/stdout pipes. Its first JSON line contains `protocol: 2`, `role` (`asr` or `tts`), `asr_model`, and
 `tts_model`. Each worker loads only its assigned model and returns `ready`.
 Protocol 1 remains available for legacy development clients.

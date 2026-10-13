@@ -75,7 +75,6 @@ pub(super) struct Options {
     pub(super) character_on_start: bool,
     pub(super) gaze_on: bool,
     pub(super) rest_after_seconds: f64,
-    pub(super) routines_file: Option<PathBuf>,
     pub(super) tracking_log: Option<PathBuf>,
     pub(super) servo_gain_override: Option<ServoGainOverride>,
     pub(super) wait: bool,
@@ -114,7 +113,6 @@ impl Default for Options {
             character_on_start: true,
             gaze_on: false,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
-            routines_file: None,
             tracking_log: None,
             servo_gain_override: None,
             wait: false,
@@ -205,7 +203,6 @@ pub(super) fn usage() -> &'static str {
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
   --character-on-start on|off  Start character automatically (default: on).\n\
   --rest-after-seconds SECONDS  Idle-mode inactivity before rest (default: 1800).\n\
-  --routines-file PATH  Saved user mode and alerts (hardware: ~/.config/orion/routines.json).\n\
   --tracking-log FILE  Opt-in asynchronous movement JSONL capture; file must not exist.\n\
   --experimental-servo-gains JOINT:P:I  One arm's EEPROM gain override; hardware --serve with --tracking-log only.\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
@@ -305,9 +302,6 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
             }
             "--calibration" => {
                 options.calibration_file = require_value(&mut arguments, &argument)?.into()
-            }
-            "--routines-file" => {
-                options.routines_file = Some(require_value(&mut arguments, &argument)?.into())
             }
             "--socket" => options.socket_path = require_value(&mut arguments, &argument)?.into(),
             "--poses" => options.poses_file = require_value(&mut arguments, &argument)?.into(),

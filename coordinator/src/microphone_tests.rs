@@ -14,7 +14,6 @@ async fn check_control_close(request: Option<bool>, acknowledge_close: bool) {
             root: ".".into(),
             asr_model: String::new(),
             tts_model: String::new(),
-            cache_path: String::new(),
         },
     };
     let peer = tokio::spawn(async move {

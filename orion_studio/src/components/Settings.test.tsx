@@ -41,8 +41,6 @@ describe("Pi speech settings", () => {
     const html = markup({ ...voice, loaded: false, loadError: null });
     expect(html).toContain("Loading Orion’s voice settings…");
     expect(html).not.toContain("Choose folder");
-    expect(html).not.toContain("Apple Silicon");
-    expect(html).not.toContain("Chatterbox");
     expect(html).not.toContain("Voice: Piper");
     const agent = html.slice(html.indexOf("<h2>Voice</h2>"), html.indexOf("<h2>Studio</h2>"));
     expect(agent).toContain("Loading Orion’s voice settings…");

@@ -135,7 +135,7 @@ hardware/audio/configure-capture.sh
 The script selects the HAT's single-ended `LINE1L` and `LINE1R` microphone
 routes, disables the codec's automatic gain control (AGC), and applies a fixed
 programmable-gain amplifier (PGA) capture gain. `ORION_CAPTURE_GAIN_DB` accepts
-the range documented in [listener configuration](../../docs/configuration.md#pi-runtime-and-listener).
+the range documented in [listener configuration](../../docs/configuration.md#microphone-listener).
 The managed listener supplies its own gain override. The listener configures routing before opening `arecord`, discards
 300 ms, reapplies the gain after the ADC starts, then discards another 300 ms.
 Reapplying gain prevents ADC startup from undoing the chosen setting. Direct

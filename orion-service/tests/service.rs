@@ -21,46 +21,98 @@ struct Process {
     child: Child,
     root: tempfile::TempDir,
     directory: PathBuf,
+    release: PathBuf,
 }
+
+fn install_release(root: &Path, revision: &str) -> PathBuf {
+    let executable = root.join("orion-service/target/release/orion-service");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_orion-service"), &executable).unwrap();
+    std::fs::write(
+        root.join("release.json"),
+        json!({"revision": revision}).to_string(),
+    )
+    .unwrap();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    assert!(
+        Command::new("python3")
+            .arg(repository.join("coordinator/tests/fixtures/install_speech.py"))
+            .arg(root.join("speech/.venv"))
+            .arg(revision)
+            .status()
+            .unwrap()
+            .success()
+    );
+    executable
+}
+
 impl Process {
     async fn start() -> Self {
+        Self::start_with_voice_url(None).await
+    }
+    async fn start_with_voice_url(voice_url: Option<&str>) -> Self {
+        Self::start_at("installed/releases/test", "test-release", voice_url).await
+    }
+    async fn start_at(install_path: &str, revision: &str, voice_url: Option<&str>) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let directory = root.path().join("service");
-        let fixture = root.path().join("speech/orion_speech_worker");
-        std::fs::create_dir_all(&fixture).unwrap();
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        std::fs::copy(
-            repository.join("coordinator/tests/fixtures/orion_speech_worker/worker.py"),
-            fixture.join("worker.py"),
-        )
-        .unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_orion-service"))
-            .args(["serve", "--no-autostart"])
-            .env("ORION_STUDIO_SERVICE_HOME", &directory)
-            // Keep the developer's real ~/.config/orion out of the test.
-            .env("HOME", root.path())
-            .env("ORION_PROJECT_ROOT", root.path())
-            .env("ORION_STUDIO_VOICE_PYTHON", "python3")
-            .env(
-                "ORION_STUDIO_CODEX_BIN",
-                repository.join("agent/tests/fixtures/codex.py"),
-            )
-            .env("ORION_MEMORY_PATH", root.path().join("MEMORY.md"))
-            .env("ORION_VOICE_HISTORY_DIR", root.path().join("history"))
-            .env("ORION_SOUL_PATH", root.path().join("SOUL.md"))
-            .stdout(Stdio::null())
-            .spawn()
-            .unwrap();
+        let release = root.path().join(install_path);
+        let executable = install_release(&release, revision);
+        Self::launch(root, release, executable, voice_url).await
+    }
+    async fn launch(
+        root: tempfile::TempDir,
+        release: PathBuf,
+        executable: PathBuf,
+        voice_url: Option<&str>,
+    ) -> Self {
+        let directory = root.path().join(".local/share/orion/studio-service");
+        let child = Self::spawn(root.path(), &executable, voice_url);
         let mut result = Self {
             child,
             root,
             directory,
+            release,
         };
-        for _ in 0..100 {
-            if result.directory.join("connection.json").exists() {
-                return result;
+        result.wait_ready().await;
+        result
+    }
+    fn spawn(root: &Path, executable: &Path, voice_url: Option<&str>) -> Child {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let token = root.join(".config/orion/studio-token");
+        std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+        std::fs::write(token, "a".repeat(32)).unwrap();
+        Command::new(executable)
+            .args(["serve", "--no-autostart"])
+            .current_dir(root)
+            // Keep the developer's real ~/.config/orion out of the test.
+            .env("HOME", root)
+            // Old startup values must not override the installed local speech defaults.
+            .env("HF_HOME", root.join("unused cache"))
+            .env("HF_HUB_OFFLINE", "0")
+            .env("ORION_STUDIO_TTS_MODEL", "unsupported-old-default")
+            .env_remove("ORION_PI_VOICE_URL")
+            .envs(voice_url.map(|url| ("ORION_PI_VOICE_URL", url)))
+            // An inherited Python path must not supply speech from the checkout.
+            .env("PYTHONPATH", repository.join("coordinator/tests/fixtures"))
+            .env(
+                "ORION_STUDIO_CODEX_BIN",
+                repository.join("agent/tests/fixtures/codex.py"),
+            )
+            .env("ORION_MEMORY_PATH", root.join("MEMORY.md"))
+            .env_remove("ORION_VOICE_HISTORY_DIR")
+            .env("ORION_SOUL_PATH", root.join("SOUL.md"))
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+    async fn wait_ready(&mut self) {
+        // Starting a copied executable and checking its venv can contend with parallel tests.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while tokio::time::Instant::now() < deadline {
+            if self.directory.join("connection.json").exists() {
+                return;
             }
-            assert!(result.child.try_wait().unwrap().is_none());
+            assert!(self.child.try_wait().unwrap().is_none());
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         panic!("Service startup timed out");
@@ -89,6 +141,106 @@ impl Process {
         panic!("Service shutdown timed out");
     }
 }
+
+#[tokio::test]
+async fn installed_service_works_at_different_paths_and_from_unrelated_working_directory() {
+    for (path, revision) in [
+        (
+            "home/alice/.local/share/orion/voice-stack/releases/one",
+            "one",
+        ),
+        ("opt/custom-orion/releases/two", "two"),
+        ("users/Bob Smith/custom install/three", "three"),
+    ] {
+        let mut process = Process::start_at(path, revision, None).await;
+        let status = process.call(Request::Status).await;
+        assert_eq!(
+            status["project_root"],
+            process.release.canonicalize().unwrap().to_str().unwrap()
+        );
+        assert_eq!(status["revision"], revision);
+        let settings = process.call(Request::LoadSettings).await;
+        assert_eq!(settings["ttsModel"], "piper-alba-medium");
+        assert!(settings.get("cachePath").is_none());
+        // Exercise the real gateway bridge against the service's default discovery folder.
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let bridge = Command::new("python3")
+            .args(["-I", "-c", "import json, sys; sys.path.insert(0, sys.argv[1]); from gateway import voice_service_request; print(json.dumps(voice_service_request({'method': 'status'})))"])
+            .arg(repository.join("orion_studio"))
+            .env("HOME", process.root.path())
+            .current_dir(process.root.path())
+            .output().unwrap();
+        assert!(
+            bridge.status.success(),
+            "{}",
+            String::from_utf8_lossy(&bridge.stderr)
+        );
+        let gateway_status: Value = serde_json::from_slice(&bridge.stdout).unwrap();
+        assert_eq!(gateway_status["pid"], process.child.id());
+        assert_eq!(gateway_status["revision"], revision);
+        let check = Command::new(
+            process
+                .release
+                .join("orion-service/target/release/orion-service"),
+        )
+        .arg("check")
+        .current_dir(process.root.path())
+        .env("HOME", process.root.path())
+        .output()
+        .unwrap();
+        assert!(
+            check.status.success(),
+            "{}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        process.terminate().await;
+    }
+}
+
+#[test]
+fn incomplete_release_reports_missing_environment_or_package_without_source_fallback() {
+    let base = tempfile::tempdir().unwrap();
+    let release = base.path().join("release");
+    let executable = install_release(&release, "incomplete");
+    let python = release.join("speech/.venv/bin/python");
+    let result = Command::new(&python)
+        .args([
+            "-I",
+            "-c",
+            "import sysconfig; print(sysconfig.get_path('purelib'))",
+        ])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let package =
+        PathBuf::from(String::from_utf8(result.stdout).unwrap().trim()).join("orion_speech_worker");
+    std::fs::remove_dir_all(&package).unwrap();
+    // A bundled source copy or inherited Python path must not hide an incomplete venv.
+    let source = release.join("speech/orion_speech_worker");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("worker.py"), "").unwrap();
+    let check = || {
+        Command::new(&executable)
+            .arg("check")
+            .env("HOME", base.path())
+            .env("PYTHONPATH", release.join("speech"))
+            .current_dir(&release)
+            .output()
+            .unwrap()
+    };
+    let missing_package = check();
+    assert!(!missing_package.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_package.stderr).contains("Invalid speech environment")
+    );
+    std::fs::remove_file(python).unwrap();
+    let missing_environment = check();
+    assert!(!missing_environment.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_environment.stderr)
+            .contains("Missing speech Python environment")
+    );
+}
 impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -99,7 +251,12 @@ impl Drop for Process {
 #[tokio::test]
 async fn service_reads_grouped_conversations_and_filtered_behaviour_files() {
     let mut process = Process::start().await;
-    let store = orion_history::Store::new(process.root.path().join("history"));
+    let store = orion_history::Store::new(
+        process
+            .root
+            .path()
+            .join(".local/share/orion/voice-stack/history"),
+    );
     let now = "2026-10-12T11:00:00Z".parse().unwrap();
     store.accept_turn("first", "Hello", now).unwrap();
     store.accept_turn("second", "Follow-up", now).unwrap();
@@ -163,14 +320,19 @@ async fn service_authentication_single_owner_and_clean_shutdown() {
         process.child.id()
     );
     assert_eq!(status["pid"], process.child.id());
+    assert_eq!(status["onboard"], true);
     assert_eq!(status["coordinator_running"], false);
     assert!(rpc::Owner::acquire(&process.directory).is_err());
-    let mut second = Command::new(env!("CARGO_BIN_EXE_orion-service"))
-        .args(["serve", "--no-autostart"])
-        .env("ORION_STUDIO_SERVICE_HOME", &process.directory)
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut second = Command::new(
+        process
+            .release
+            .join("orion-service/target/release/orion-service"),
+    )
+    .args(["serve", "--no-autostart"])
+    .env("HOME", process.root.path())
+    .stderr(Stdio::null())
+    .spawn()
+    .unwrap();
     assert!(!second.wait().unwrap().success());
     let connection: rpc::Connection =
         serde_json::from_slice(&std::fs::read(process.directory.join("connection.json")).unwrap())
@@ -282,6 +444,82 @@ async fn until<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
 }
 
 #[tokio::test]
+async fn saved_start_connects_to_listener_with_pi_speech_defaults() {
+    let mut listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut pi_url = format!("ws://{}", listener.local_addr().unwrap());
+    let mut process = Process::start_with_voice_url(Some(&pi_url)).await;
+    let settings = orion_service::settings::VoiceSettings {
+        model: "test-model".into(),
+        effort: "high".into(),
+        ..Default::default()
+    };
+    std::fs::write(
+        process
+            .root
+            .path()
+            .join(".config/orion/voice-settings.json"),
+        serde_json::to_vec(&settings).unwrap(),
+    )
+    .unwrap();
+    for revision in ["test-release", "updated-release"] {
+        if revision == "updated-release" {
+            let release = process.root.path().join("installed/releases/update");
+            let executable = install_release(&release, revision);
+            // Preparing a new release does not change the running service's identity.
+            assert_eq!(
+                process.call(Request::Status).await["revision"],
+                "test-release"
+            );
+            process.terminate().await;
+            // Discard unaccepted control connections left by the stopped fake peer.
+            listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            pi_url = format!("ws://{}", listener.local_addr().unwrap());
+            process.child = Process::spawn(process.root.path(), &executable, Some(&pi_url));
+            process.release = release;
+            process.wait_ready().await;
+        }
+        let connection = process.call(Request::StartSaved).await;
+        // The coordinator also polls microphone status on a separate control connection.
+        let mut pi = loop {
+            let (stream, _) = tokio::time::timeout(Duration::from_secs(8), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let hello = next(&mut socket).await;
+            assert_eq!(hello["token"], "a".repeat(32));
+            if hello["role"] == "control" {
+                send(
+                    &mut socket,
+                    json!({"type":"microphone.status","muted":false}),
+                )
+                .await;
+                socket.close(None).await.unwrap();
+            } else {
+                break socket;
+            }
+        };
+        send(&mut pi, json!({"type":"ready","protocol":2,"sampleRate":16000,"channels":1,"encoding":"pcm_s16le","muted":false,
+            "conversationWindow":true,"toolFeedback":true,"wake":{"provider":"rustpotter","model":"fixture","threshold":0.4}})).await;
+        let (mut observer, _) = connect_async(connection["url"].as_str().unwrap())
+            .await
+            .unwrap();
+        send(
+            &mut observer,
+            json!({"type":"hello","protocol":7,"token":connection["token"]}),
+        )
+        .await;
+        let ready = until(&mut observer, "ready").await;
+        assert_eq!(ready["tts"]["provider"], "piper-tts");
+        assert_eq!(ready["tts"]["model"], "piper-alba-medium");
+        assert_eq!(ready["asr"]["model"], revision);
+        assert_eq!(process.call(Request::Status).await["revision"], revision);
+        assert_eq!(process.call(Request::Status).await["onboard"], true);
+    }
+    process.terminate().await;
+}
+
+#[tokio::test]
 async fn headless_process_runs_voice_without_ui_and_reuses_owner_for_observers() {
     let mut process = Process::start().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -342,10 +580,9 @@ async fn headless_process_runs_voice_without_ui_and_reuses_owner_for_observers()
         agent_model: Some("test-model".into()),
         agent_effort: Some("high".into()),
         asr_model: Some("fixture".into()),
-        tts_model: Some("fixture".into()),
+        tts_model: Some("piper-alba-medium".into()),
         asr_path: Some(String::new()),
         tts_path: Some(String::new()),
-        cache_path: Some(String::new()),
     };
     let connection = process.call(Request::Start(options.clone())).await;
     let mut pi = tokio::time::timeout(Duration::from_secs(8), receiver.recv())

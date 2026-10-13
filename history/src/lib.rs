@@ -16,9 +16,6 @@ pub fn directory() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("ORION_VOICE_HISTORY_DIR") {
         return Ok(path.into());
     }
-    if std::env::var("ORION_ONBOARD").as_deref() != Ok("1") {
-        return Err("History is stored only on Orion".into());
-    }
     Ok(
         PathBuf::from(std::env::var_os("HOME").ok_or("Home is unavailable")?)
             .join(".local/share/orion/voice-stack/history"),

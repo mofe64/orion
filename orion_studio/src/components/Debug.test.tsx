@@ -20,6 +20,7 @@ describe("Debug torque release availability",()=>{
     expect(markup(base)).toContain("Silero VAD");
     expect(markup(base)).toContain("ASR files");
     expect(markup(base)).toContain("/pi/models/qwen");
+    expect(markup(base)).not.toContain("Cache directory");
     expect(markup(base)).toContain("gpt-6-luna");
   });
   it("offers release only for a connected stationary robot holding torque",()=>{ expect(markup(base)).toContain('class="quiet-button">Turn torque off</button>'); expect(markup(base,false)).toContain('disabled="">Turn torque off</button>'); });

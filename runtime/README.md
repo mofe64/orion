@@ -164,8 +164,9 @@ vision eligible during a conversation.
 ## Build and test
 
 Behaviour logging uses the shared [history store](../history/README.md).
-`ORION_ONBOARD=1` enables its Pi default; `ORION_VOICE_HISTORY_DIR` selects an
-explicit directory. Match the voice service's directory for Studio access.
+The hardware runtime saves it under `~/.local/share/orion/voice-stack/history`;
+`ORION_VOICE_HISTORY_DIR` selects a different folder and also enables logging in
+the simulator. Match the voice service's directory for Studio access.
 The motor tick queues metadata to a bounded background writer; it does no
 journal disk I/O. Action IDs connect starts with measured completion, failure
 or interruption, and gaze intervals retain duration. See the

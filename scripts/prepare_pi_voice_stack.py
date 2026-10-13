@@ -124,10 +124,9 @@ def prepare_assets(root):
         download(root, url, relative, digest)
     prepare_piper_alba(root)
     entries = []
-    for folder in [root / 'models', root / 'cache/hf']:
-        for path in folder.rglob('*'):
-            if path.is_file() and not path.is_symlink():
-                entries.append(dict(path=str(path), bytes=path.stat().st_size))
+    for path in (root / 'models').rglob('*'):
+        if path.is_file() and not path.is_symlink():
+            entries.append(dict(path=str(path), bytes=path.stat().st_size))
     (root / 'model-files.json').write_text(json.dumps(entries, indent=2))
 
 

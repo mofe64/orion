@@ -17,6 +17,14 @@ use crate::{
 
 use super::OBSERVE_PERIOD;
 
+pub(super) fn routines_path(backend: Backend, home: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    if backend == Backend::Hardware {
+        home.map(|home| PathBuf::from(home).join(".config/orion/routines.json"))
+    } else {
+        None
+    }
+}
+
 pub(super) fn render_light(options: &Options, pixel: Option<usize>) -> crate::Result<i32> {
     let mut device = Pi5NeoPixelDevice::open(
         &options.lighting_device,
@@ -220,20 +228,17 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             .unwrap_or_default()
             .as_secs_f64()
     };
-    let routines_path = options.routines_file.clone().or_else(|| {
-        (options.backend == Backend::Hardware)
-            .then(|| {
-                std::env::var_os("HOME")
-                    .map(|home| PathBuf::from(home).join(".config/orion/routines.json"))
-            })
-            .flatten()
-    });
+    let routines_path = routines_path(options.backend, std::env::var_os("HOME").as_deref());
     let mut routines = crate::expression::routines::Routines::load(routines_path, wall_time(), 0.0)
         .map_err(crate::Error::Runtime)?;
     lighting.clear()?;
     let mut scenes = SceneCoordinator::new(scene_library, Rgbw8::OFF);
     let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
-    let behaviour_writer = orion_history::directory().ok().and_then(|root| {
+    let behaviour_writer = (options.backend == Backend::Hardware
+        || std::env::var_os("ORION_VOICE_HISTORY_DIR").is_some())
+    .then(orion_history::directory)
+    .and_then(Result::ok)
+    .and_then(|root| {
         orion_history::BehaviourWriter::start(root)
             .map_err(|error| eprintln!("oriond: behaviour log unavailable: {error}"))
             .ok()

@@ -15,7 +15,6 @@ pub async fn start_voice_worker(
     tts_model: Option<String>,
     asr_path: Option<String>,
     tts_path: Option<String>,
-    cache_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
     backend
         .request(Request::Start(StartOptions {
@@ -28,7 +27,6 @@ pub async fn start_voice_worker(
             tts_model,
             asr_path,
             tts_path,
-            cache_path,
         }))
         .await
 }

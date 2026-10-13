@@ -44,6 +44,30 @@ class Fixture(unittest.TestCase):
 
 
 class ConfigurationTests(Fixture):
+    def test_release_updates_use_the_selected_executable_at_different_install_paths(self):
+        template = self.release
+        for relative in ('home/alice/.local/share/orion/voice-stack', 'opt/custom-orion', 'srv/robots/bob'):
+            with self.subTest(root=relative):
+                root = self.base / relative
+                home = root.parent / 'settings-home'; home.mkdir(parents=True, exist_ok=True)
+                project = root.parent / 'assets'; project.mkdir(exist_ok=True)
+                units = root.parent / 'systemd'; units.mkdir(exist_ok=True)
+                first = root / 'releases/first'; shutil.copytree(template, first)
+                first_plan = render_plan(first, root, project, home, 'pi', units)
+                for path, text in first_plan.items():
+                    self.write(path, text)
+                second = root / 'releases/second'; shutil.copytree(template, second)
+                (second / 'release.json').write_text('{"revision":"second"}')
+                plan = render_plan(second, root, project, home, 'pi', units)
+                unit = plan[units / 'orion-voice-stack.service']
+                self.assertIn('ExecStart=' + str(second / 'orion-service/target/release/orion-service') + ' serve', unit)
+                self.assertIn('WorkingDirectory=' + str(second), unit)
+                self.assertNotIn(str(first), unit)
+                gateway_unit = plan[units / 'orion-studio-gateway.service']
+                self.assertIn(str(second / 'orion_studio/gateway.py'), gateway_unit)
+                self.assertIn('--project-root ' + str(project), gateway_unit)
+                self.assertNotIn(str(first), gateway_unit)
+
     def test_v2_camera_geometry_and_detector_are_loaded_from_release_including_overrides(self):
         (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
         self.write(self.release / 'vision/orion_vision/detect_hands.py', '# module present')
@@ -133,24 +157,51 @@ class ConfigurationTests(Fixture):
         self.assertNotIn('/old/release', result)
         self.assertEqual(result.count('--verifier-dir'), 1)
 
-    def test_preserves_custom_environment_and_only_changes_release_fields(self):
+    def test_removes_retired_environment_and_preserves_other_tuning(self):
         self.env.write_text('# operator tuning\nORION_ASR_THREADS="2"\nORION_TTS_THREADS=4\n'
             'ORION_ASR_CONTEXT="Hey Orion and Ada"\nORION_ASR_MODEL_DIR="/custom/qwen"\n'
             'HF_HOME=/custom/cache\nHF_HUB_OFFLINE=0\nORION_STUDIO_CODEX_BIN=/custom/codex\n'
-            'ORION_STUDIO_TTS_MODEL=pocket-int8\nORION_STUDIO_VOICE_PYTHON=/old/python\n'
-            'ORION_PROJECT_ROOT=/old/root\nORION_RELEASE_REVISION=old\nCUSTOM=value')
+            'HF_HUB_CACHE=/custom/hub\nHUGGINGFACE_HUB_CACHE=/other/hub\n'
+            'ORION_STUDIO_TTS_MODEL=pocket-int8\n'
+            'CUSTOM=value')
         old = read_env(self.env.read_text()); result = self.plan()[self.env]; new = read_env(result)
+        retired = {'HF_HOME', 'HF_HUB_OFFLINE', 'HF_HUB_CACHE', 'HUGGINGFACE_HUB_CACHE', 'ORION_STUDIO_TTS_MODEL'}
         for key, value in old.items():
-            if key not in ('ORION_STUDIO_VOICE_PYTHON', 'ORION_PROJECT_ROOT', 'ORION_RELEASE_REVISION', 'ORION_STUDIO_TTS_MODEL'):
+            if key not in retired:
                 self.assertEqual(new[key], value, key)
-        self.assertEqual(new['ORION_STUDIO_VOICE_PYTHON'], str(self.release / 'speech/.venv/bin/python'))
-        self.assertEqual(new['ORION_PROJECT_ROOT'], str(self.release))
-        self.assertEqual(new['ORION_RELEASE_REVISION'], 'new')
-        self.assertEqual(new['ORION_STUDIO_TTS_MODEL'], 'piper-alba-medium')
+        self.assertTrue(retired.isdisjoint(new))
         self.assertEqual(new['ORION_PIPER_MODEL_DIR'], str(self.root / 'models/piper-alba-medium'))
         self.assertIn('# operator tuning\n', result)
         self.assertIn('CUSTOM=value\n', result)
         self.assertEqual(self.env.read_text().splitlines()[-1], 'CUSTOM=value')
+
+    def test_retired_routines_file_is_removed_from_existing_service_commands(self):
+        for hardware in ('v1', 'v2'):
+            for argument in ('--routines-file /custom/routines.json',
+                             '--routines-file "/custom folder/routines.json"',
+                             "--routines-file '/custom folder/routines.json'",
+                             '--routines-file=/custom/routines.json'):
+                for override in (False, True):
+                    with self.subTest(hardware=hardware, argument=argument, override=override):
+                        (self.release / 'release.json').write_text(json.dumps({'revision': 'new', 'hardware': hardware}))
+                        self.installed_units()
+                        path = self.units / 'oriond.service'
+                        if override:
+                            path = self.units / 'oriond.service.d/99-local.conf'
+                        original = ('[Service]\nExecStart=\nExecStart=/old/release/runtime/target/release/oriond '
+                                    f'--serve {argument} --character-on-start on --rest-after-seconds 1234 '
+                                    '--socket /tmp/custom.sock\n')
+                        self.write(path, original)
+                        plan = self.plan()
+                        start = effective_start([(candidate, text) for candidate, text in plan.items()
+                                                 if candidate == self.units / 'oriond.service' or candidate.parent == self.units / 'oriond.service.d'])
+                        self.assertNotIn('--routines-file', start)
+                        self.assertNotIn('routines.json', start)
+                        self.assertIn('--character-on-start on', start)
+                        self.assertIn('--rest-after-seconds 1234 --socket /tmp/custom.sock', start)
+                        self.assertEqual(path.read_text(), original)
+                        if override:
+                            path.unlink()
 
     def test_all_override_commands_move_and_tuning_survives(self):
         self.installed_units()
@@ -958,8 +1009,8 @@ class ReadinessTests(Fixture):
         with self.assertRaisesRegex(RuntimeError, 'Unsupported Pi speech model'):
             installer.expected_tts(self.home)
 
-    def test_preflight_uses_saved_env_including_project_override_without_mutation(self):
-        self.env.write_text('ORION_PROJECT_ROOT=/old/root\nORION_STUDIO_CODEX_BIN=/custom/codex\nORION_TTS_THREADS=2\n')
+    def test_preflight_uses_saved_env_without_mutation(self):
+        self.env.write_text('ORION_STUDIO_CODEX_BIN=/custom/codex\nORION_TTS_THREADS=2\n')
         for name in ('runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
                      'orion-service/target/release/orion-service', 'speech/.venv/bin/python', 'voice/.venv/bin/orion-listener'):
             self.write(self.release / name, 'fixture')
@@ -971,7 +1022,7 @@ class ReadinessTests(Fixture):
             installer.preflight(self.release, self.home, self.plan(), system)
         self.assertEqual(run.call_args_list[0].args, ('/custom/codex', 'login', 'status'))
         self.assertEqual(run.call_args.kwargs['env']['ORION_TTS_THREADS'], '2')
-        self.assertEqual(run.call_args.kwargs['env']['ORION_PROJECT_ROOT'], str(self.release))
+        self.assertEqual(run.call_args.args, (self.release / 'orion-service/target/release/orion-service', 'check'))
         self.assertEqual(self.env.read_bytes(), before)
 
     def test_preflight_reports_the_selected_missing_calibration_before_external_checks(self):

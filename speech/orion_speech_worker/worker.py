@@ -30,18 +30,13 @@ def send(writer, message, pcm=None):
 
 def load_models(config):
     role = config.get('role', 'both')
-    if os.environ.get('ORION_SPEECH_BACKEND') == 'pi':
+    asr = tts = None
+    if role in ('both', 'asr'):
         from .pi import QwenGgufTranscriber
-        asr = QwenGgufTranscriber(config['asr_model']) if role in ('both', 'asr') else None
-        tts = None
-        if role in ('both', 'tts'):
-            from .piper import PiperAlbaSynthesizer
-            tts = PiperAlbaSynthesizer(config['tts_model'])
-    else:
-        from .providers import Qwen3AsrTranscriber
-        from .tts import ChatterboxSynthesizer
-        asr = Qwen3AsrTranscriber(config['asr_model']) if role in ('both', 'asr') else None
-        tts = ChatterboxSynthesizer(config['tts_model']) if role in ('both', 'tts') else None
+        asr = QwenGgufTranscriber(config['asr_model'])
+    if role in ('both', 'tts'):
+        from .piper import PiperAlbaSynthesizer
+        tts = PiperAlbaSynthesizer(config['tts_model'])
     return asr, tts
 
 

@@ -47,7 +47,6 @@ pub fn start_voice_worker(
         tts_model,
         asr_path,
         tts_path,
-        cache_path,
     } = options;
     let mut settings = crate::settings::load_voice_settings()?;
     if let Some(value) = agent_model {
@@ -68,9 +67,6 @@ pub fn start_voice_worker(
     if let Some(value) = tts_path {
         settings.tts_path = value;
     }
-    if let Some(value) = cache_path {
-        settings.cache_path = value;
-    }
     settings.validate()?;
     let resolve = |path: &str, model: &str| -> Result<String, String> {
         if path.is_empty() {
@@ -81,28 +77,16 @@ pub fn start_voice_worker(
                 .into_owned())
         }
     };
-    let root = crate::project_root()?
-        .join("speech")
-        .canonicalize()
-        .map_err(|e| format!("Could not locate speech worker: {e}"))?;
+    let release = crate::release::InstalledRelease::discover()?;
     let config = CoordinatorConfig {
         pi_url: std::env::var("ORION_PI_VOICE_URL").unwrap_or(pi_url),
         pi_token,
         gateway_url,
         speech: SpeechConfig {
-            python: std::env::var_os("ORION_STUDIO_VOICE_PYTHON")
-                .map(Into::into)
-                .unwrap_or_else(|| root.join(".venv/bin/python")),
-            root,
+            python: release.python(),
+            root: release.root,
             asr_model: resolve(&settings.asr_path, &settings.asr_model)?,
             tts_model: resolve(&settings.tts_path, &settings.tts_model)?,
-            cache_path: if settings.cache_path.is_empty() {
-                String::new()
-            } else {
-                crate::settings::expand_path(&settings.cache_path)?
-                    .to_string_lossy()
-                    .into_owned()
-            },
         },
     };
     let mut slot = manager.0.lock().map_err(|e| e.to_string())?;

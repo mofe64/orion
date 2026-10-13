@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod coordinator;
 pub mod pairing;
+pub mod release;
 mod remote;
 pub mod rpc;
 pub mod settings;
@@ -8,18 +9,6 @@ pub mod settings;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::Mutex};
-
-pub fn project_root() -> Result<PathBuf, String> {
-    let root = std::env::var_os("ORION_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
-    root.canonicalize()
-        .map_err(|e| format!("Could not locate Orion project: {e}"))
-}
-
-pub fn onboard() -> bool {
-    std::env::var("ORION_ONBOARD").as_deref() == Ok("1")
-}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,7 +22,6 @@ pub struct StartOptions {
     pub tts_model: Option<String>,
     pub asr_path: Option<String>,
     pub tts_path: Option<String>,
-    pub cache_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -127,20 +115,17 @@ impl Host {
         }
     }
     async fn start_saved(&self) -> Result<Value, String> {
-        if onboard() {
-            let token_path = PathBuf::from(std::env::var_os("HOME").ok_or("Home is unavailable")?)
-                .join(".config/orion/studio-token");
-            return self.start(StartOptions {
-                pi_url: "ws://127.0.0.1:7448".into(),
-                gateway_url: "http://127.0.0.1:7447".into(),
-                pi_token: std::fs::read_to_string(token_path)
-                    .map_err(|e| e.to_string())?
-                    .trim()
-                    .into(),
-                ..Default::default()
-            });
-        }
-        Err("Automatic voice startup is only supported on the Pi (ORION_ONBOARD=1)".into())
+        let token_path = PathBuf::from(std::env::var_os("HOME").ok_or("Home is unavailable")?)
+            .join(".config/orion/studio-token");
+        self.start(StartOptions {
+            pi_url: "ws://127.0.0.1:7448".into(),
+            gateway_url: "http://127.0.0.1:7447".into(),
+            pi_token: std::fs::read_to_string(token_path)
+                .map_err(|e| e.to_string())?
+                .trim()
+                .into(),
+            ..Default::default()
+        })
     }
 
     pub async fn dispatch(&self, request: Request) -> Result<Value, String> {
@@ -157,12 +142,15 @@ impl Host {
             None
         };
         match request {
-            Request::Status => Ok(json!({"protocol": rpc::PROTOCOL, "pid": std::process::id(),
-                "onboard": onboard(),
+            Request::Status => {
+                let release = release::InstalledRelease::discover()?;
+                Ok(json!({"protocol": rpc::PROTOCOL, "pid": std::process::id(),
+                "onboard": true,
                 "coordinator_running": self.coordinator.is_running(),
                 "error": *self.error.lock().map_err(|_| "Service unavailable")?,
-                "project_root": project_root()?,
-                "revision": std::env::var("ORION_RELEASE_REVISION").unwrap_or_else(|_| "development".into())})),
+                "project_root": release.root,
+                "revision": release.revision}))
+            }
             Request::Start(options) => self.start(options),
             Request::StartSaved => self.start_saved().await,
             Request::Observe => Ok(self.coordinator.events()),

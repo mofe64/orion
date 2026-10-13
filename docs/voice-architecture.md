@@ -118,7 +118,7 @@ acknowledges unmute or reports processing readiness.
 
 The standalone listener can use an energy detector when no VAD model is supplied.
 The managed installation supplies Silero. Capture gain and wake sensitivity are
-separate settings described in [configuration](configuration.md#pi-runtime-and-listener).
+separate settings described in [configuration](configuration.md#microphone-listener).
 
 ## Confirmed waking
 

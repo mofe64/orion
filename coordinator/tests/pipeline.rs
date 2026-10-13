@@ -106,6 +106,7 @@ struct Harness {
     gateway: Arc<Mutex<GatewayState>>,
     receive_pi: mpsc::Receiver<PiSocket>,
     tasks: JoinSet<()>,
+    _speech_environment: tempfile::TempDir,
 }
 async fn send<S>(socket: &mut WebSocketStream<S>, value: Value)
 where
@@ -195,6 +196,16 @@ impl Harness {
             }
         });
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let speech_environment = tempfile::tempdir().unwrap();
+        let python_environment = speech_environment.path().join(".venv");
+        assert!(
+            std::process::Command::new("python3")
+                .arg(root.join("tests/fixtures/install_speech.py"))
+                .arg(&python_environment)
+                .status()
+                .unwrap()
+                .success()
+        );
         let agent = AgentService::start(AgentConfig {
             soul_path: None,
             memory_path,
@@ -210,11 +221,10 @@ impl Harness {
                 pi_token: TOKEN.into(),
                 gateway_url,
                 speech: SpeechConfig {
-                    python: "python3".into(),
-                    root: root.join("tests/fixtures"),
+                    python: python_environment.join("bin/python"),
+                    root: speech_environment.path().into(),
                     asr_model: "fixture".into(),
                     tts_model: "fixture".into(),
-                    cache_path: String::new(),
                 },
             },
             agent.handle(),
@@ -242,6 +252,7 @@ impl Harness {
             gateway,
             receive_pi,
             tasks,
+            _speech_environment: speech_environment,
         }
     }
     async fn utterance(&mut self, sid: &str, purpose: &str, text: &str) {

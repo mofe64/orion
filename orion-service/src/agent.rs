@@ -12,6 +12,10 @@ impl AgentManager {
             effort: effort.into(),
             ..AgentConfig::default()
         };
+        self.ensure_config(config)
+    }
+
+    fn ensure_config(&self, config: AgentConfig) -> Result<AgentHandle, String> {
         let mut slot = self.0.lock().map_err(|e| e.to_string())?;
         if let Some((current, service)) = slot.as_ref()
             && current == &config
@@ -50,10 +54,17 @@ mod tests {
     #[test]
     fn reuses_agent_until_agent_settings_change() {
         let manager = AgentManager::default();
-        let first = manager.ensure("model", "medium").unwrap();
-        let second = manager.ensure("model", "medium").unwrap();
+        let history = tempfile::tempdir().unwrap();
+        let config = |effort: &str| AgentConfig {
+            model: "model".into(),
+            effort: effort.into(),
+            history_path: Some(history.path().into()),
+            ..AgentConfig::default()
+        };
+        let first = manager.ensure_config(config("medium")).unwrap();
+        let second = manager.ensure_config(config("medium")).unwrap();
         assert!(first.same_runtime(&second));
-        let changed = manager.ensure("model", "high").unwrap();
+        let changed = manager.ensure_config(config("high")).unwrap();
         assert!(!first.same_runtime(&changed));
         manager.shutdown();
     }

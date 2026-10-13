@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 
 import {
   StudioVoicePipeline,
@@ -9,6 +10,7 @@ import {
 } from "./studioVoicePipeline";
 import type { VoiceWorkerEvent, VoiceWorkerListener, VoiceWorkerReadyEvent } from "./voiceWorkerProtocol";
 import type { SpeechPlayer } from "./studioSpeaker";
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 class FakeLauncher implements VoiceWorkerLauncher {
   stopCount = 0;
@@ -24,7 +26,7 @@ const READY: VoiceWorkerReadyEvent = {
   asr: { provider: "qwen3-asr", model: "Qwen/Qwen3-ASR-0.6B" },
   wake: { provider: "rustpotter", model: "hey_orion_reference.rpw", threshold: 0.4 },
   agent: { provider: "codex", model: "configured-default" },
-  tts: { provider: "chatterbox-turbo", model: "mlx-community/chatterbox-turbo-8bit" },
+  tts: { provider: "piper-tts", model: "piper-alba-medium" },
 };
 
 class FakeTransport implements VoiceWorkerTransport {
@@ -47,6 +49,22 @@ class FakeSpeaker implements SpeechPlayer {
 }
 
 describe("StudioVoicePipeline", () => {
+  it("passes saved local model folders through the native launch command", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ url: "ws://127.0.0.1:8765", token: "secret", asrModel: "qwen" });
+    const pipeline = new StudioVoicePipeline({
+      connection: { url: "http://orion.local:7447", token: "paired-token" },
+      settings: { model: "chosen-model", effort: "high", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "piper-alba-medium", asrPath: "/pi/custom qwen", ttsPath: "/pi/custom voice" },
+      createTransport: () => new FakeTransport(), speaker: new FakeSpeaker(),
+    });
+    await pipeline.start();
+    expect(invoke).toHaveBeenCalledWith("start_voice_worker", {
+      gatewayUrl: "http://orion.local:7447", piUrl: "ws://orion.local:7448/", piToken: "paired-token",
+      agentModel: "chosen-model", agentEffort: "high", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "piper-alba-medium",
+      asrPath: "/pi/custom qwen", ttsPath: "/pi/custom voice",
+    });
+    await pipeline.stop();
+  });
+
   it("keeps replayed playback state when attaching to an active Pi", async () => {
     const transport = new FakeTransport();
     transport.connect = async () => {
@@ -160,7 +178,7 @@ describe("StudioVoicePipeline", () => {
       wakeProvider: "rustpotter",
       wakeThreshold: 0.4,
       agentProvider: "codex",
-      ttsProvider: "chatterbox-turbo",
+      ttsProvider: "piper-tts",
     });
 
     expect(pipeline.current().deviceLabel).toContain("Pi capture");

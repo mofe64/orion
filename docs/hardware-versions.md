@@ -134,7 +134,7 @@ channel 0. The listener accepts `--capture-channels 2|6 --processed-channel N`
 for other firmware layouts; see the
 [Seeed USB guide](https://wiki.seeedstudio.com/respeaker_xvf3800_introduction/).
 V2 skips HAT mixer commands and raw-microphone direction estimation. Calibrated
-beam-based attention is opt-in; see [listener settings](configuration.md#pi-runtime-and-listener).
+beam-based attention is opt-in; see [listener settings](configuration.md#microphone-listener).
 
 The Orion service user needs one-time access to the read-only USB control
 interface. Install the [XVF3800 udev rule](../voice/README.md#measure-the-xvf3800-on-v2),

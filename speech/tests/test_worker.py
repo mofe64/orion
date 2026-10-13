@@ -2,7 +2,8 @@ import io
 import json
 import unittest
 from types import SimpleNamespace
-from orion_speech_worker.worker import serve
+from unittest.mock import patch
+from orion_speech_worker.worker import load_models, serve
 
 
 class Asr:
@@ -14,7 +15,7 @@ class Asr:
 
 
 class Tts:
-    provider='chatterbox-turbo'; model_name='fake'
+    provider='piper-tts'; model_name='fake'
     def stream(self, text):
         yield SimpleNamespace(pcm=b'\1\0'*2, samples=2, sample_rate=24000)
         if text=='fail': raise RuntimeError('inference failed')
@@ -25,6 +26,26 @@ def control(value): return json.dumps(value).encode()+b'\n'
 
 
 class WorkerTests(unittest.TestCase):
+    def test_model_loader_uses_qwen_and_piper_for_each_role(self):
+        for role in ('asr', 'tts', 'both'):
+            with self.subTest(role=role), \
+                    patch('orion_speech_worker.pi.QwenGgufTranscriber') as qwen, \
+                    patch('orion_speech_worker.piper.PiperAlbaSynthesizer') as piper:
+                asr, tts = load_models(dict(role=role, asr_model='/models/qwen',
+                                           tts_model='piper-alba-medium'))
+                if role in ('asr', 'both'):
+                    qwen.assert_called_once_with('/models/qwen')
+                    self.assertIs(asr, qwen.return_value)
+                else:
+                    qwen.assert_not_called()
+                    self.assertIsNone(asr)
+                if role in ('tts', 'both'):
+                    piper.assert_called_once_with('piper-alba-medium')
+                    self.assertIs(tts, piper.return_value)
+                else:
+                    piper.assert_not_called()
+                    self.assertIsNone(tts)
+
     def run_worker(self, jobs):
         reader=io.BytesIO(control(dict(protocol=1,asr_model='fake',tts_model='fake'))+jobs)
         writer=io.BytesIO(); asr=Asr()

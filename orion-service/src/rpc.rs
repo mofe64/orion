@@ -15,10 +15,7 @@ pub const PROTOCOL: u32 = 1;
 const LIMIT: u64 = 1024 * 1024;
 
 pub fn service_home() -> Result<PathBuf, String> {
-    std::env::var_os("ORION_STUDIO_SERVICE_HOME")
-        .map(PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(|| crate::settings::expand_path("~/.local/share/orion/studio-service"))
+    crate::settings::expand_path("~/.local/share/orion/studio-service")
 }
 pub fn private_directory(path: &Path) -> Result<(), String> {
     std::fs::create_dir_all(path).map_err(|e| e.to_string())?;

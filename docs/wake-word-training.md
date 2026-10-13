@@ -2,7 +2,7 @@
 
 Orion's managed listener uses the six-example Rustpotter reference model,
 followed by the openWakeWord “Hey Orion” phrase verifier. The
-[listener configuration](configuration.md#pi-runtime-and-listener) lists the
+[listener configuration](configuration.md#microphone-listener) lists the
 active model, both wake thresholds and the retained trained model for comparison.
 Rustpotter can load either `.rpw` without changing the listener's audio path.
 
@@ -13,7 +13,7 @@ of openWakeWord's training features.
 ## Record the baseline
 
 Measure the active reference model on the Pi with its normal capture path and
-[managed listener settings](configuration.md#pi-runtime-and-listener), including
+[managed listener settings](configuration.md#microphone-listener), including
 acoustic phrase verification and Qwen's complete-recording wake check. Log each
 intended wake attempt,
 whether Rustpotter proposed it, whether the verifier accepted it, whether Qwen confirmed it,

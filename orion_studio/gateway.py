@@ -32,6 +32,8 @@ from urllib.parse import urlparse
 
 
 API_VERSION = 2
+# Resolve once so a running gateway stays with its release if a launcher symlink changes.
+GATEWAY_PROGRAM = Path(__file__).resolve()
 DEFAULT_SOCKET = "/tmp/oriond.sock"
 DEFAULT_SPEECH_SPOOL = Path("/tmp/orion-speech-spool")
 DEFAULT_CALIBRATION = Path("~/.config/orion/servo_calibration.json")
@@ -79,6 +81,21 @@ class GatewayError(Exception):
         super().__init__(message)
         self.status = status
         self.code = code
+
+
+def installed_release() -> Path:
+    root = next((parent for parent in GATEWAY_PROGRAM.parents if (parent / "release.json").exists()), None)
+    if root is None:
+        raise RuntimeError(f"No installed Orion release found above {GATEWAY_PROGRAM} (missing release.json)")
+    manifest = root / "release.json"
+    try:
+        metadata = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Invalid Orion release metadata at {manifest}: {error}") from error
+    revision = metadata.get("revision") if isinstance(metadata, dict) else None
+    if not isinstance(revision, str) or not revision.strip():
+        raise RuntimeError(f"Missing revision in {manifest}")
+    return root
 
 
 class PairingCodes:
@@ -900,9 +917,13 @@ class OrionGateway:
         }
 
     def speak(self, text: str) -> None:
-        root = self.project_root or Path(__file__).resolve().parents[1]
+        root = installed_release()
+        # Keep the venv path intact: its executable can be a symlink to a base interpreter.
+        python = root / "speech/.venv/bin/python"
+        if not python.is_file():
+            raise RuntimeError(f"Missing speech Python environment: {python}")
         environment = os.environ.copy()
-        keys = {"ORION_STUDIO_VOICE_PYTHON", "ORION_PIPER_MODEL_DIR", "ORION_STUDIO_TTS_MODEL", "ORION_TTS_THREADS"}
+        keys = {"ORION_PIPER_MODEL_DIR", "ORION_TTS_THREADS"}
         try:
             lines = Path("~/.config/orion/voice-stack.env").expanduser().read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
@@ -911,24 +932,22 @@ class OrionGateway:
             key, separator, value = line.strip().partition("=")
             if separator and key.strip() in keys:
                 environment[key.strip()] = value.strip().strip("\"'")
-        python = Path(environment.get("ORION_STUDIO_VOICE_PYTHON") or root / "speech/.venv/bin/python").expanduser()
-        # Keep the venv path intact: its executable can be a symlink to a base interpreter.
-        speech_root = python.parent.parent.parent
-        if not (speech_root / "orion_speech_worker").is_dir():
-            speech_root = root / "speech"
-        model = environment.get("ORION_STUDIO_TTS_MODEL") or "piper-alba-medium"
+        model = "piper-alba-medium"
         if "ORION_PIPER_MODEL_DIR" in environment:
             environment["ORION_PIPER_MODEL_DIR"] = str(Path(environment["ORION_PIPER_MODEL_DIR"]).expanduser())
-        environment["PYTHONPATH"] = str(speech_root)
         script = (
-            "import sys\n"
+            "import importlib.util, pathlib, sys\n"
+            "expected = pathlib.Path(sys.argv[3]).resolve()\n"
+            "assert pathlib.Path(sys.prefix).resolve() == expected, 'Python is not using the release environment'\n"
+            "spec = importlib.util.find_spec('orion_speech_worker.piper')\n"
+            "assert spec and spec.origin and pathlib.Path(spec.origin).resolve().is_relative_to(expected), 'Piper is not installed in the release environment'\n"
             "from orion_speech_worker.piper import PiperAlbaSynthesizer\n"
             "for chunk in PiperAlbaSynthesizer(sys.argv[1]).stream(sys.argv[2]):\n"
             "    sys.stdout.buffer.write(chunk.pcm)\n"
         )
         try:
-            result = subprocess.run([str(python), "-c", script, model, text],
-                                    env=environment, capture_output=True, timeout=30, check=True)
+            result = subprocess.run([str(python), "-I", "-c", script, model, text, str(root / "speech/.venv")],
+                                    cwd=root, env=environment, capture_output=True, timeout=30, check=True)
         except subprocess.CalledProcessError as error:
             detail = error.stderr.decode("utf-8", errors="replace").strip() if error.stderr else str(error)
             raise RuntimeError(f"Piper synthesis failed: {detail}") from error
@@ -1922,7 +1941,7 @@ class OrionGateway:
 
 
 def voice_service_directory() -> Path:
-    return Path(os.environ.get("ORION_STUDIO_SERVICE_HOME", "~/.local/share/orion/studio-service")).expanduser()
+    return Path("~/.local/share/orion/studio-service").expanduser()
 
 
 def voice_service_request(request: dict[str, Any]) -> Any:

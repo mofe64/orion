@@ -1,44 +1,9 @@
-from types import SimpleNamespace
 import unittest
 
-import numpy as np
-
-from orion_speech_worker.tts import ChatterboxSynthesizer, speech_segments
+from orion_speech_worker.tts import SpeechAudio, speech_segments
 
 
-class FakeModel:
-    def __init__(self, results: list[object]) -> None:
-        self.results = results
-
-    def generate(self, **_options: object):
-        yield from self.results
-
-
-class ChatterboxSynthesizerTests(unittest.TestCase):
-    def test_stream_requests_native_chunks_and_keeps_gain_constant(self):
-        options = {}
-        class Model:
-            def generate(self, **kwargs):
-                options.update(kwargs)
-                yield SimpleNamespace(audio=np.array([.2]), sample_rate=24000)
-                yield SimpleNamespace(audio=np.array([.1]), sample_rate=24000)
-        stream = ChatterboxSynthesizer('test', model_loader=lambda _: Model()).stream('hello')
-        first, second = list(stream)
-        self.assertTrue(options['stream'])
-        self.assertEqual(options['streaming_interval'], .8)
-        self.assertEqual(np.frombuffer(first.pcm, dtype='<i2')[0], 26213)
-        self.assertEqual(np.frombuffer(second.pcm, dtype='<i2')[0], 13106)
-
-    def test_sentence_boundaries_reset_model_context_but_preserve_gain(self):
-        calls = []
-        class Model:
-            def generate(self, **kwargs):
-                calls.append(kwargs['text'])
-                yield SimpleNamespace(audio=np.array([.2 if len(calls) == 1 else .1]), sample_rate=24000)
-        chunks = list(ChatterboxSynthesizer('test', model_loader=lambda _: Model()).stream('Hello there. How are you?'))
-        self.assertEqual(calls, ['Hello there.', 'How are you?'])
-        self.assertEqual([np.frombuffer(c.pcm, dtype='<i2')[0] for c in chunks], [26213, 13106])
-
+class SpeechSegmentsTests(unittest.TestCase):
     def test_long_sentences_are_bounded_without_losing_words(self):
         text = ' '.join(['something'] * 80) + '.'
         segments = list(speech_segments(text))
@@ -46,55 +11,15 @@ class ChatterboxSynthesizerTests(unittest.TestCase):
         self.assertEqual(' '.join(segments), text)
         self.assertEqual(''.join(speech_segments('x' * 500)), 'x' * 500)
 
-    def test_converts_generated_float_audio_to_pcm16(self) -> None:
-        model = FakeModel([
-            SimpleNamespace(audio=np.array([-1.0, 0.0, 1.0]), sample_rate=24_000),
-        ])
-        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: model)
-        audio = synthesizer.synthesize("Hello")
+    def test_splits_sentences_and_lines_without_empty_segments(self):
+        self.assertEqual(list(speech_segments(' Hello there. How are you?\n\nFine! ')),
+                         ['Hello there.', 'How are you?', 'Fine!'])
 
-        self.assertEqual(audio.sample_rate, 24_000)
-        self.assertEqual(audio.samples, 3)
-        self.assertEqual(np.frombuffer(audio.pcm, dtype="<i2").tolist(), [-32767, 0, 32767])
-
-    def test_applies_bounded_peak_gain_to_quiet_speech(self) -> None:
-        model = FakeModel([
-            SimpleNamespace(audio=np.array([-0.2, 0.0, 0.1]), sample_rate=24_000),
-        ])
-        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: model)
-
-        samples = np.frombuffer(synthesizer.synthesize("Hello").pcm, dtype="<i2")
-
-        self.assertEqual(samples.tolist(), [-26213, 0, 13106])
-
-    def test_rejects_inaudible_generation(self) -> None:
-        model = FakeModel([
-            SimpleNamespace(audio=np.array([0.0, 0.00001]), sample_rate=24_000),
-        ])
-        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: model)
-        with self.assertRaisesRegex(RuntimeError, "inaudible audio"):
-            synthesizer.synthesize("Hello")
-
-    def test_rejects_empty_or_inconsistent_generation(self) -> None:
-        empty = ChatterboxSynthesizer("test", model_loader=lambda _name: FakeModel([]))
-        with self.assertRaisesRegex(RuntimeError, "no audio"):
-            empty.synthesize("Hello")
-
-        mixed = FakeModel([
-            SimpleNamespace(audio=np.array([0.0]), sample_rate=24_000),
-            SimpleNamespace(audio=np.array([0.0]), sample_rate=16_000),
-        ])
-        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: mixed)
-        with self.assertRaisesRegex(RuntimeError, "changed sample rate"):
-            synthesizer.synthesize("Hello")
-
-        invalid_rate = FakeModel([
-            SimpleNamespace(audio=np.array([0.0]), sample_rate=0),
-        ])
-        synthesizer = ChatterboxSynthesizer("test", model_loader=lambda _name: invalid_rate)
-        with self.assertRaisesRegex(RuntimeError, "invalid sample rate"):
-            synthesizer.synthesize("Hello")
+    def test_pcm_audio_reports_sample_count_and_duration(self):
+        audio = SpeechAudio(pcm=b'\0\0' * 24_000, sample_rate=24_000)
+        self.assertEqual(audio.samples, 24_000)
+        self.assertEqual(audio.duration_ms, 1000)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

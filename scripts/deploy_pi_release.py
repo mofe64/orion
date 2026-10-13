@@ -75,8 +75,8 @@ def prepare_vision(release):
 
 def validate_voice(release, root):
     validate_listener(release)
-    environment = {**os.environ, 'HF_HOME': str(root / 'cache/hf'), 'HF_HUB_OFFLINE': '1',
-                   'ORION_SPEECH_BACKEND': 'pi', 'PYTHONPATH': str(release / 'speech'),
+    environment = {**os.environ,
+                   'PYTHONPATH': str(release / 'speech'),
                    'ORION_TTS_THREADS': '3', 'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium')}
     run(release / 'speech/.venv/bin/python', '-c',
         "from orion_speech_worker.piper import PiperAlbaSynthesizer; "

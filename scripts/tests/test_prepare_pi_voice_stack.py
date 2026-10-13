@@ -14,6 +14,23 @@ SPEC.loader.exec_module(prepare)
 
 
 class PreparationTests(unittest.TestCase):
+    def test_model_inventory_records_prepared_files_and_ignores_old_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / 'models/qwen/model.gguf'
+            model.parent.mkdir(parents=True)
+            model.write_bytes(b'weights')
+            old = root / 'cache/hf/unused-model'
+            old.parent.mkdir(parents=True)
+            old.write_bytes(b'obsolete')
+            with patch.object(prepare, 'prepare_archive'), \
+                 patch.object(prepare, 'MODEL_ASSETS', []), \
+                 patch.object(prepare, 'prepare_piper_alba'):
+                prepare.prepare_assets(root)
+            self.assertEqual(json.loads((root / 'model-files.json').read_text()), [
+                {'path': str(model), 'bytes': 7},
+            ])
+
     def test_fresh_download_is_verified_recorded_and_reused_offline(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -166,6 +166,88 @@ mod tests {
     }
 
     #[test]
+    fn routines_file_override_is_not_a_startup_option() {
+        assert!(parse(&["--serve", "--routines-file", "/tmp/custom-routines.json"]).is_err());
+        assert!(!usage().contains("--routines-file"));
+    }
+
+    #[test]
+    fn onboard_routines_and_sounds_survive_restart_in_the_standard_home_folder() {
+        use crate::expression::routines::{Request, Routines, UserMode};
+
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["alice", "bob with spaces"] {
+            let home = directory.path().join(name);
+            let path = home.join(".config/orion/routines.json");
+            let mut routines = Routines::load(
+                routines_path(Backend::Hardware, Some(home.as_os_str())),
+                100.,
+                0.,
+            )
+            .unwrap();
+            let mut audio = RecordingAudioDevice::default();
+            for request in [
+                Request::SetMode {
+                    mode: UserMode::Lamp,
+                },
+                Request::Timer {
+                    seconds: 60.,
+                    label: "tea".into(),
+                },
+                serde_json::from_str(
+                    r#"{"action":"set_sound","kind":"timer","sound":"funny_alarm"}"#,
+                )
+                .unwrap(),
+            ] {
+                routines.request(request, 100., 0., &mut audio).unwrap();
+            }
+            assert!(path.is_file());
+            assert!(path.with_extension("sounds.json").is_file());
+            let restored = Routines::load(
+                routines_path(Backend::Hardware, Some(home.as_os_str())),
+                101.,
+                0.,
+            )
+            .unwrap();
+            let status = restored.status(101., 0.);
+            assert_eq!(restored.mode(), UserMode::Lamp);
+            assert_eq!(status["alerts"][0]["label"], "tea");
+            assert_eq!(status["sounds"]["timer"], "funny_alarm");
+        }
+    }
+
+    #[test]
+    fn simulator_routines_ignore_onboard_settings_and_reset_after_restart() {
+        use crate::expression::routines::{Request, Routines, UserMode};
+
+        let home = tempfile::tempdir().unwrap();
+        let onboard = home.path().join(".config/orion/routines.json");
+        std::fs::create_dir_all(onboard.parent().unwrap()).unwrap();
+        std::fs::write(&onboard, "invalid onboard settings").unwrap();
+        let path = routines_path(Backend::Mujoco, Some(home.path().as_os_str()));
+        let mut routines = Routines::load(path.clone(), 100., 0.).unwrap();
+        routines
+            .request(
+                Request::SetMode {
+                    mode: UserMode::Lamp,
+                },
+                100.,
+                0.,
+                &mut RecordingAudioDevice::default(),
+            )
+            .unwrap();
+        assert_eq!(routines.mode(), UserMode::Lamp);
+        assert_eq!(
+            Routines::load(path, 101., 0.).unwrap().mode(),
+            UserMode::Idle
+        );
+        assert_eq!(
+            std::fs::read_to_string(onboard).unwrap(),
+            "invalid onboard settings"
+        );
+    }
+
+    #[test]
     fn rest_timeout_defaults_to_thirty_minutes_and_rejects_invalid_values() {
         assert_eq!(
             parse(&["--serve", "--backend", "mujoco"])

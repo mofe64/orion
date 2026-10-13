@@ -1,5 +1,4 @@
 """Plan a Pi release switch while preserving installed service settings."""
-import json
 from pathlib import Path
 import re
 import shlex
@@ -10,6 +9,11 @@ SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-sta
 STOP_ORDER = tuple(reversed(SERVICES))
 MANAGED_SERVICES = (*SERVICES, 'orion-vision')
 MANAGED_STOP_ORDER = tuple(reversed(MANAGED_SERVICES))
+# Discard obsolete values when updating an existing installation.
+REMOVED_VOICE_ENV = frozenset((
+    'HF_HOME', 'HF_HUB_OFFLINE', 'HF_HUB_CACHE', 'HUGGINGFACE_HUB_CACHE',
+    'ORION_STUDIO_TTS_MODEL',
+))
 
 
 def services_for_release(release):
@@ -57,20 +61,18 @@ def read_env(text):
     return values
 
 
-def merge_env(text, defaults, managed):
-    """Only managed keys change. Existing tuning and comments survive verbatim."""
+def merge_env(text, defaults, removed=()):
+    """Drop retired keys and add missing defaults; preserve tuning and comments."""
     existing = read_env(text)
     lines = []
     for line in text.splitlines(keepends=True):
         key = line.strip().partition('=')[0]
-        if key in managed:
-            lines.append(f'{key}={quote(managed[key])}\n')
-        else:
+        if key not in removed:
             lines.append(line)
     result = ''.join(lines)
     if result and not result.endswith('\n'):
         result += '\n'
-    for key, value in {**defaults, **managed}.items():
+    for key, value in defaults.items():
         if key not in existing:
             result += f'{key}={quote(value)}\n'
     return result
@@ -182,6 +184,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 if name in ('oriond', 'orion-studio-gateway'):
                     start = set_option(start, '--calibration', calibration)
                 if name == 'oriond':
+                    # The runtime now always uses ~/.config/orion/routines.json.
+                    start = re.sub(r'(?<!\S)--routines-file(?:\s+|=)(?:"[^"]*"|\'[^\']*\'|\S+)', '', start)
                     start = set_option(start, '--poses', runtime_project / selected['poses'])
                     for flag, field in (('--motions', 'motions'), ('--scenes', 'scenes'), ('--user-poses', 'user_poses')):
                         start = set_option(start, flag, runtime_project / selected[field])
@@ -243,8 +247,6 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
             if name in ('orion-listener', 'orion-voice-stack'):
                 directory = release / 'voice' if name == 'orion-listener' else release
                 value = re.sub(r'^WorkingDirectory=.*$', f'WorkingDirectory={directory}', value, flags=re.M)
-            if name == 'orion-voice-stack':
-                value = re.sub(r'^Environment=ORION_PROJECT_ROOT=.*$', f'Environment=ORION_PROJECT_ROOT={release}', value, flags=re.M)
             if name == 'orion-vision':
                 value = re.sub(r'^WorkingDirectory=.*$', f'WorkingDirectory={release}', value, flags=re.M)
             files[p] = value
@@ -253,19 +255,10 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
     defaults = {
         'ORION_STUDIO_CODEX_BIN': str(root / 'codex-0.157.0/bin/codex'),
         'ORION_ASR_MODEL_DIR': str(root / 'models/qwen'), 'ORION_LLAMA_SERVER': str(root / 'llama-b10976/llama-server'),
-        'ORION_ASR_THREADS': '3', 'ORION_TTS_THREADS': '3', 'HF_HOME': str(root / 'cache/hf'),
-        'HF_HUB_OFFLINE': '1', 'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
+        'ORION_ASR_THREADS': '3', 'ORION_TTS_THREADS': '3',
         'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium'),
     }
-    metadata = json.loads((release / 'release.json').read_text()) if (release / 'release.json').exists() else {}
-    previous_env = read_env(text)
-    files[environment_path] = merge_env(text, defaults, {
-        'ORION_STUDIO_VOICE_PYTHON': str(release / 'speech/.venv/bin/python'),
-        'ORION_RELEASE_REVISION': metadata.get('revision', release.name),
-        'ORION_STUDIO_TTS_MODEL': 'piper-alba-medium',
-        # This override may already be present in a customized EnvironmentFile.
-        **({'ORION_PROJECT_ROOT': str(release)} if 'ORION_PROJECT_ROOT' in previous_env else {}),
-    })
+    files[environment_path] = merge_env(text, defaults, REMOVED_VOICE_ENV)
     files[home / '.config/orion/hardware'] = hardware + '\n'
     files[home / '.local/share/orion/studio-service/installed'] = str(release) + '\n'
     return files

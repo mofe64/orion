@@ -11,29 +11,17 @@ pub struct VoiceSettings {
     pub tts_model: String,
     pub asr_path: String,
     pub tts_path: String,
-    pub cache_path: String,
 }
 impl Default for VoiceSettings {
     fn default() -> Self {
-        let onboard = crate::onboard();
         Self {
             provider: "codex".into(),
             model: orion_agent::DEFAULT_MODEL.into(),
             effort: orion_agent::DEFAULT_EFFORT.into(),
             asr_model: "Qwen/Qwen3-ASR-0.6B".into(),
-            tts_model: if onboard {
-                "piper-alba-medium"
-            } else {
-                "mlx-community/chatterbox-turbo-8bit"
-            }
-            .into(),
-            asr_path: if onboard {
-                std::env::var("ORION_ASR_MODEL_DIR").unwrap_or_default()
-            } else {
-                String::new()
-            },
+            tts_model: "piper-alba-medium".into(),
+            asr_path: std::env::var("ORION_ASR_MODEL_DIR").unwrap_or_default(),
             tts_path: String::new(),
-            cache_path: String::new(),
         }
     }
 }
@@ -54,7 +42,7 @@ impl VoiceSettings {
         if self.tts_model.starts_with("pocket-") {
             return Err("That voice model is no longer supported.".into());
         }
-        if crate::onboard() && self.tts_model != "piper-alba-medium" {
+        if self.tts_model != "piper-alba-medium" {
             return Err("Orion's Pi supports Piper Alba Medium for speech output.".into());
         }
         if self.provider != "codex" {
@@ -65,7 +53,7 @@ impl VoiceSettings {
                 return Err("Enter a valid model and reasoning effort.".into());
             }
         }
-        for value in [&self.asr_path, &self.tts_path, &self.cache_path] {
+        for value in [&self.asr_path, &self.tts_path] {
             if !value.is_empty() {
                 if value.len() > 4096 || value.chars().any(char::is_control) {
                     return Err("Invalid model folder path.".into());
@@ -89,9 +77,6 @@ fn read(path: &Path) -> Result<VoiceSettings, String> {
         let settings = VoiceSettings {
             asr_model: std::env::var("ORION_STUDIO_ASR_MODEL")
                 .unwrap_or_else(|_| VoiceSettings::default().asr_model),
-            tts_model: std::env::var("ORION_STUDIO_TTS_MODEL")
-                .unwrap_or_else(|_| VoiceSettings::default().tts_model),
-            cache_path: std::env::var("HF_HOME").unwrap_or_default(),
             ..VoiceSettings::default()
         };
         return Ok(settings);
@@ -99,9 +84,10 @@ fn read(path: &Path) -> Result<VoiceSettings, String> {
     let mut value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    // A saved preset is harmless but no longer part of the settings protocol.
+    // Discard retired fields while preserving the user's other saved choices.
     if let Some(object) = value.as_object_mut() {
         object.remove("ttsVoice");
+        object.remove("cachePath");
     }
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
@@ -133,6 +119,24 @@ pub fn save_voice_settings(settings: VoiceSettings) -> Result<VoiceSettings, Str
 mod tests {
     use super::*;
     #[test]
+    fn voice_defaults_use_pi_speech_and_reject_other_voices() {
+        let settings = VoiceSettings::default();
+        assert_eq!(settings.tts_model, "piper-alba-medium");
+        assert_eq!(
+            settings.asr_path,
+            std::env::var("ORION_ASR_MODEL_DIR").unwrap_or_default()
+        );
+        assert!(
+            VoiceSettings {
+                tts_model: "unsupported-voice".into(),
+                ..settings
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
     fn copied_weights_report_architecture_without_inventing_repository() {
         let root = std::env::temp_dir().join(format!("orion-model-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -142,30 +146,53 @@ mod tests {
             Some("Architecture: qwen3_asr · Original model ID unavailable".into())
         );
         std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(
-            model_identity(Some("/cache/models--Qwen--Qwen3-ASR-0.6B/snapshots/abc123")),
-            Some("Qwen/Qwen3-ASR-0.6B".into())
-        );
     }
     #[test]
-    fn cache_lookup_uses_current_revision_and_honors_override() {
-        let root = std::env::temp_dir().join(format!("orion-cache-{}", uuid::Uuid::new_v4()));
-        let repo = root.join("models--org--model");
-        std::fs::create_dir_all(repo.join("refs")).unwrap();
-        std::fs::create_dir_all(repo.join("snapshots/abc123")).unwrap();
-        std::fs::write(repo.join("refs/main"), "abc123").unwrap();
+    fn model_locations_use_local_folders_and_saved_paths_take_priority() {
+        let root = tempfile::tempdir().unwrap();
+        let installed = root.path().join("installed");
+        let chosen = root.path().join("chosen voice");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::create_dir_all(&chosen).unwrap();
         assert_eq!(
-            cached_model(&root, "org/model", ""),
-            Some(repo.join("snapshots/abc123").to_string_lossy().into_owned())
+            local_model("", "piper-alba-medium", installed.to_str()).unwrap(),
+            Some(installed.to_string_lossy().into_owned())
         );
-        assert_eq!(cached_model(&root, "org/missing", ""), None);
         assert_eq!(
-            cached_model(&root, "org/model", root.to_str().unwrap()),
-            Some(root.to_string_lossy().into_owned())
+            local_model(
+                chosen.to_str().unwrap(),
+                "piper-alba-medium",
+                installed.to_str()
+            )
+            .unwrap(),
+            Some(chosen.to_string_lossy().into_owned())
         );
-        std::fs::write(repo.join("refs/main"), "../../outside").unwrap();
-        assert_eq!(cached_model(&root, "org/model", ""), None);
-        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(local_model("", "Qwen/Qwen3-ASR-0.6B", None).unwrap(), None);
+        let locations = serde_json::to_value(
+            voice_model_locations(VoiceSettings {
+                asr_path: installed.to_string_lossy().into_owned(),
+                tts_path: chosen.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            locations,
+            serde_json::json!({
+                "asrPath": installed, "ttsPath": chosen, "asrIdentity": null, "ttsIdentity": null
+            })
+        );
+        std::fs::remove_dir_all(&chosen).unwrap();
+        assert_eq!(
+            local_model(
+                chosen.to_str().unwrap(),
+                "piper-alba-medium",
+                installed.to_str()
+            )
+            .unwrap(),
+            None
+        );
     }
     #[test]
     fn unsupported_providers_and_relative_paths_are_rejected() {
@@ -179,7 +206,7 @@ mod tests {
         );
         assert!(
             VoiceSettings {
-                cache_path: "relative/weights".into(),
+                asr_path: "relative/weights".into(),
                 ..Default::default()
             }
             .validate()
@@ -196,19 +223,28 @@ mod tests {
         );
     }
     #[test]
-    fn model_paths_survive_reload() {
+    fn old_settings_drop_retired_fields_and_preserve_saved_choices() {
         let path =
             std::env::temp_dir().join(format!("orion-settings-{}.json", uuid::Uuid::new_v4()));
         let value = VoiceSettings {
             model: "chosen-model".into(),
             effort: "high".into(),
             asr_path: std::env::temp_dir().to_string_lossy().into(),
-            cache_path: "~/voice-cache".into(),
             ..Default::default()
         };
         value.validate().unwrap();
-        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert_eq!(read(&path).unwrap(), value);
+        let mut old = serde_json::to_value(&value).unwrap();
+        old["cachePath"] = serde_json::json!("~/unused-cache");
+        old["ttsVoice"] = serde_json::json!("old-preset");
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        let loaded = read(&path).unwrap();
+        assert_eq!(loaded, value);
+        let cleaned = serde_json::to_value(&loaded).unwrap();
+        assert!(cleaned.get("cachePath").is_none());
+        assert!(cleaned.get("ttsVoice").is_none());
+        old["unknownSetting"] = serde_json::json!(true);
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        assert!(read(&path).is_err());
         std::fs::remove_file(path).unwrap();
     }
 }
@@ -218,46 +254,25 @@ mod tests {
 pub struct ModelLocations {
     asr_path: Option<String>,
     tts_path: Option<String>,
-    cache_path: String,
-    hub_path: String,
     asr_identity: Option<String>,
     tts_identity: Option<String>,
 }
-fn cached_model(hub: &Path, model: &str, chosen: &str) -> Option<String> {
-    if !chosen.is_empty() {
-        return expand_path(chosen)
-            .ok()
-            .filter(|p| p.is_dir())
-            .map(|p| p.to_string_lossy().into_owned());
+fn local_model(chosen: &str, model: &str, default: Option<&str>) -> Result<Option<String>, String> {
+    let value = if !chosen.is_empty() {
+        chosen
+    } else if Path::new(model).is_absolute() || model.starts_with("~/") {
+        model
+    } else {
+        default.unwrap_or_default()
+    };
+    if value.is_empty() {
+        return Ok(None);
     }
-    if Path::new(model).is_dir() {
-        return Some(model.into());
-    }
-    // Resolve the cache's current main revision, not an arbitrary old snapshot.
-    let repository = hub.join(format!("models--{}", model.replace('/', "--")));
-    let revision = std::fs::read_to_string(repository.join("refs/main")).ok()?;
-    let revision = revision.trim();
-    if revision.is_empty() || !revision.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let snapshot = repository.join("snapshots").join(revision);
-    snapshot
-        .is_dir()
-        .then(|| snapshot.to_string_lossy().into_owned())
+    let path = expand_path(value)?;
+    Ok(path.is_dir().then(|| path.to_string_lossy().into_owned()))
 }
 fn model_identity(folder: Option<&str>) -> Option<String> {
     let folder = Path::new(folder?);
-    // A Hub snapshot path preserves the repository ID; arbitrary folders may not.
-    if folder.parent()?.file_name()?.to_str()? == "snapshots"
-        && let Some(repo) = folder
-            .parent()?
-            .parent()?
-            .file_name()?
-            .to_str()?
-            .strip_prefix("models--")
-    {
-        return Some(repo.replace("--", "/"));
-    }
     let config = folder.join("config.json");
     if std::fs::metadata(&config).ok()?.len() > 1024 * 1024 {
         return None;
@@ -272,31 +287,13 @@ fn model_identity(folder: Option<&str>) -> Option<String> {
     ))
 }
 pub fn voice_model_locations(settings: VoiceSettings) -> Result<ModelLocations, String> {
-    let home = if !settings.cache_path.is_empty() {
-        expand_path(&settings.cache_path)?
-    } else if let Some(value) = std::env::var_os("HF_HOME") {
-        PathBuf::from(value)
-    } else if let Some(value) = std::env::var_os("XDG_CACHE_HOME") {
-        PathBuf::from(value).join("huggingface")
-    } else {
-        expand_path("~/.cache/huggingface")?
-    };
-    let hub = if !settings.cache_path.is_empty() {
-        home.join("hub")
-    } else {
-        std::env::var_os("HF_HUB_CACHE")
-            .or_else(|| std::env::var_os("HUGGINGFACE_HUB_CACHE"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join("hub"))
-    };
-    let asr_path = cached_model(&hub, &settings.asr_model, &settings.asr_path);
-    let tts_path = cached_model(&hub, &settings.tts_model, &settings.tts_path);
+    let asr_path = local_model(&settings.asr_path, &settings.asr_model, None)?;
+    let piper = std::env::var("ORION_PIPER_MODEL_DIR").ok();
+    let tts_path = local_model(&settings.tts_path, &settings.tts_model, piper.as_deref())?;
     Ok(ModelLocations {
         asr_identity: model_identity(asr_path.as_deref()),
         tts_identity: model_identity(tts_path.as_deref()),
         asr_path,
         tts_path,
-        cache_path: home.to_string_lossy().into_owned(),
-        hub_path: hub.to_string_lossy().into_owned(),
     })
 }

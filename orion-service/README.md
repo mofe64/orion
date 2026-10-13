@@ -6,17 +6,19 @@ The same crate supplies Studio's `Backend`, a client that stores desktop pairing
 and forwards requests to the Pi gateway.
 
 Use the [Pi quickstart](../docs/quickstart.md#prepare-a-new-pi) for setup.
-`ORION_ONBOARD=1` starts saved settings against the loopback listener and gateway.
+The service starts saved settings against the Pi's local listener and gateway.
 The listener grants processing ownership to the local coordinator. Studio
 observes events and changes settings through the gateway. The host continues
 running when the desktop disconnects.
 
 The executable accepts `serve`, `status`, and `check`. `serve --no-autostart` is
-available for isolated integration tests. `check` validates the source root,
-Python executable and saved settings without starting inference. SIGTERM shuts
+available for isolated integration tests. The service finds its installed release
+through `release.json` above its executable and uses that release’s speech Python
+environment. `check` validates the installed speech package and saved settings
+without starting inference. SIGTERM shuts
 down workers and the agent cleanly. An OS owner lock prevents duplicate hosts.
 The historical discovery directory is retained for installed Pi gateways; see
-[configuration](../docs/configuration.md#pi-service-control).
+[configuration](../docs/configuration.md#systemd-services-that-run-on-orions-onboard-computer).
 
 ## Modules
 
@@ -24,6 +26,7 @@ The historical discovery directory is retained for installed Pi gateways; see
 | --- | --- |
 | `lib.rs` | Pi host lifecycle and desktop remote client |
 | `main.rs` | Service startup, retry and signal handling |
+| `release.rs` | Installed release discovery and speech environment checks |
 | `rpc.rs` | Owner lock and authenticated loopback control |
 | `coordinator.rs` | Coordinator configuration and reuse |
 | `agent.rs` | Agent lifetime independent of speech reloads |
