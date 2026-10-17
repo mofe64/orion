@@ -110,6 +110,23 @@ def lamp_contacts(model, data):
         yield contact, (a, b)
 
 
+def idle_endpoint_speeds(item):
+    """Check the first/last 50 Hz command intervals and exact endpoint velocities."""
+    if item['kind'] != 'motion' or not item['name'].startswith('idle_'):
+        return None
+    samples = item['samples']
+    speeds = {}
+    for label, first, last, endpoint in (
+            ('start', samples[0], samples[1], samples[0]),
+            ('end', samples[-2], samples[-1], samples[-1])):
+        dt = last['time'] - first['time']
+        command_speed = max(abs(q - first['positions'][joint]) / dt
+                            for joint, q in last['positions'].items())
+        endpoint_speed = max(abs(v) for v in endpoint['velocities'].values())
+        speeds[label] = float(np.degrees(max(command_speed, endpoint_speed)))
+    return speeds
+
+
 def inspect(item, document, model):
     if 'error' in item: return {'problems': [item['error']], 'contacts': [], 'clamped_samples': [], 'peak_speed': {}}
     table = intent_table()
@@ -154,6 +171,10 @@ def inspect(item, document, model):
     end_error = max(abs(final[name] - item['expected_end'][name]) for name in names)
     speed_limit = document['maximum_velocity_rad_s']
     problems = []
+    endpoint_speeds = idle_endpoint_speeds(item)
+    for endpoint, speed in (endpoint_speeds or {}).items():
+        if speed >= 2.0:
+            problems.append(f'Idle {endpoint} speed {speed:.3f} must be below 2 deg/s')
     if contacts: problems.append(f'{len(contacts)} non-adjacent lamp-body contact pairs')
     clamps = item['clamped_samples']
     if clamps: problems.append('Runtime clamped joints: ' + ', '.join(sorted(set(clamps))))
@@ -202,7 +223,7 @@ def inspect(item, document, model):
     arm_movement = max(np.degrees(abs(s['positions'][n] - start[n])) for s in item['samples'] for n in ('shoulder_pitch_joint', 'elbow_pitch_joint'))
     if item['kind'] == 'tracking' and arm_movement > item['maximum_arm_degrees'] + 1e-6:
         problems.append(f'Arm fallback exceeds {item["maximum_arm_degrees"]} degrees')
-    return {'largest_arm_movement_deg': float(arm_movement), 'problems': problems, 'contacts': list(contacts.values()), 'clamped_samples': clamps,
+    return {'idle_endpoint_speed_degrees_s': endpoint_speeds, 'largest_arm_movement_deg': float(arm_movement), 'problems': problems, 'contacts': list(contacts.values()), 'clamped_samples': clamps,
             'limit_boundary_samples': dict(boundary), 'minimum_margin_degrees': float(minimum_margin),
             'outside_limits': sorted(outside), 'peak_speed': peaks, 'peak_speed_degrees_s': {n: float(np.degrees(v)) for n, v in peaks.items()},
             'servo_speed_limit': speed_limit, 'end_anchor_error_rad': end_error,

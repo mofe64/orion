@@ -76,7 +76,7 @@ motions:
   idle_attentive_hold:
     intent: Raise the gaze slowly while holding an attentive posture.
     direction: up
-    main_keyframe: 1
+    main_keyframe: 0
     contexts:
     - start: attentive
       anchor: attentive
@@ -88,7 +88,7 @@ motions:
   idle_breathe:
     intent: Raise the head slowly, breathe through the arm, and settle back.
     direction: up
-    main_keyframe: 1
+    main_keyframe: 0
     contexts:
     - start: home
       anchor: home
@@ -100,7 +100,7 @@ motions:
   idle_directional_hold:
     intent: Raise the gaze slowly while holding a directional or desk anchor.
     direction: up
-    main_keyframe: 1
+    main_keyframe: 0
     contexts:
     - start: look_left
       anchor: look_left

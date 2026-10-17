@@ -104,3 +104,40 @@ def test_camera_encloses_the_entire_movement_in_each_view(catalogue, model):
         # An enclosing sphere fits both square views regardless of their rotation.
         radius = np.linalg.norm(bounds[1] - centre)
         assert distance * np.sin(np.radians(model.vis.global_.fovy / 2)) > radius
+
+
+def test_every_idle_starts_and_ends_below_two_degrees_per_second(catalogue):
+    idles = [item for item in catalogue['items'] if item['kind'] == 'motion' and item['name'].startswith('idle_')]
+    assert {item['name'] for item in idles} == {name for name in preview.intent_table()['motions'] if name.startswith('idle_')}
+    failures = [(item['name'], item['start_pose'], preview.idle_endpoint_speeds(item))
+                for item in idles if max(preview.idle_endpoint_speeds(item).values()) >= 2.0]
+    assert not failures, failures
+
+
+@pytest.mark.parametrize('endpoint', ['start', 'end'])
+def test_idle_check_rejects_fast_endpoint_commands_and_velocities(catalogue, model, endpoint):
+    original = next(item for item in catalogue['items'] if item['name'] == 'idle_head_curiosity')
+    for alter_velocity in (False, True):
+        item = copy.deepcopy(original)
+        if alter_velocity:
+            sample = item['samples'][0 if endpoint == 'start' else -1]
+            sample['velocities']['head_pitch_joint'] = np.radians(2.1)
+        else:
+            sample = item['samples'][1 if endpoint == 'start' else -2]
+            sample['positions']['head_pitch_joint'] += np.radians(2.1) * 0.02
+        assert any(f'Idle {endpoint} speed' in problem for problem in preview.inspect(item, catalogue, model)['problems'])
+
+
+@pytest.mark.parametrize('name, duration, scale, elbow', [
+    ('idle_breathe', 6.164146341463415, 0.9, -0.02),
+    ('idle_attentive_hold', 4.564444444444444, 1.0, -0.015),
+    ('idle_directional_hold', 6.164146341463415, 0.9, -0.015),
+])
+def test_folded_idle_leads_keep_the_full_stroke_and_compiled_duration(catalogue, name, duration, scale, elbow):
+    for item in (i for i in catalogue['items'] if i['kind'] == 'motion' and i['name'] == name):
+        assert item['keyframes'][-1]['time'] == pytest.approx(duration, rel=0, abs=1e-12)
+        main = item['keyframes'][preview.intent_table()['motions'][name]['main_keyframe']]['positions']
+        expected = {'head_pitch_joint': -np.radians(12) * scale,
+                    'shoulder_pitch_joint': -0.01 * scale, 'elbow_pitch_joint': elbow * scale}
+        for joint, position in item['samples'][0]['positions'].items():
+            assert main[joint] - position == pytest.approx(expected.get(joint, 0), rel=0, abs=1e-12)
