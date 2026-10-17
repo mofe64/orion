@@ -1,0 +1,31 @@
+{
+  "HAILO8L": {
+    "faces": {
+      "path": "hailo8l/scrfd_2.5g.hef",
+      "url": "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8l/scrfd_2.5g.hef",
+      "sha256": "31daf02151ed93906faeaa2a5a3d70ac59e3bb473f38f2e0abfffaf1a420c585"
+    },
+    "palms": {
+      "path": "hailo8l/palm_detection_lite.hef",
+      "url": "https://github.com/mofe64/orion/releases/download/orion-models-v1/palm_detection_lite-hailo8l.hef",
+      "sha256": "63d3be909506d253b05b0a8aa048451358ca66e617a2335c316907675d64df7d"
+    },
+    "objects": {
+      "path": "hailo8l/yolov11n.hef",
+      "url": "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8l/yolov11n.hef",
+      "sha256": "5cf8016edd35b58a09ea364300b9ab795d5c54110d778a9f8d9fdb876aa4cfdd"
+    }
+  },
+  "HAILO8": {
+    "faces": {
+      "path": "hailo8/scrfd_2.5g.hef",
+      "url": "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8/scrfd_2.5g.hef",
+      "sha256": "b53521f104f095c668af172997be8ccff57a4c233351b9a2baab2b6dfa073f62"
+    },
+    "objects": {
+      "path": "hailo8/yolov11n.hef",
+      "url": "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8/yolov11n.hef",
+      "sha256": "0bcac79ddc5112bd9ee1e59e46f7f234724be128a9264483254bf29bd47ef87c"
+    }
+  }
+}

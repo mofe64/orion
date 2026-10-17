@@ -7,13 +7,11 @@ import cv2
 import numpy as np
 
 from .intrinsics import SIZE, lores_bgr
+from .detector_policy import SCORES
 
 MODEL_PATH = Path("/usr/local/share/orion/vision/face_detection_yunet_2023mar.onnx")
 MODEL_SHA256 = "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
-# Lamp measurements (2026-10-11): at 3 m, squeezed 320x240 scored .59,
-# 320x180 .83, 427x240 .87 and 640x360 .91; at 1 m, .900-.915 was marginal
-# against the old .9 cutoff. Keep headroom for detection between those distances.
-FACE_SCORE_THRESHOLD = 0.75
+FACE_SCORE_THRESHOLD = SCORES['cpu']['faces']
 
 
 @dataclass

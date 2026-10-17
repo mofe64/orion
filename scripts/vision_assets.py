@@ -4,6 +4,41 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import sys
+import subprocess
+
+
+def hailo_models():
+    # The installer reads the same standard-library-only pins as the wheel.
+    source = str(Path(__file__).resolve().parents[1] / 'vision')
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from orion_vision import hailo_models as models
+    return models
+
+
+def prepare_hailo_models(root, present, run, directory=None):
+    if not present:
+        return
+    models = hailo_models()
+    directory = Path(directory) if directory is not None else models.MODEL_DIRECTORY
+    try:
+        architecture = models.device_architecture()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f'Hailo identification unavailable; vision will use CPU: {error}')
+        return
+    if architecture is None:
+        return
+    from prepare_pi_voice_stack import download, sha256
+    for entry in models.model_manifest()[architecture].values():
+        target = directory / entry['path']
+        if target.exists():
+            if sha256(target) != entry['sha256']:
+                raise RuntimeError(f'Hailo HEF SHA-256 mismatch: {target}')
+            continue
+        source = download(root, entry['url'], 'models/hailo/' + entry['path'], entry['sha256'])
+        run('sudo', 'install', '-d', target.parent)
+        run('sudo', 'install', '-m', '0644', source, target)
 
 
 def yolo_hashes(release):

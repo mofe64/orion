@@ -22,7 +22,7 @@ orion-vision = "orion_vision.service:main"
 include = ["orion_vision*"]
 
 [tool.setuptools.package-data]
-orion_vision = ["coco.json", "PALM-LICENSE"]
+orion_vision = ["coco.json", "PALM-LICENSE", "BLAZE-PALM-LICENSE", "hailo-models.json"]
 
 # Replace NCNN's desktop OpenCV dependency with the same headless cv2 API,
 # as in P0, and retain the wheel's other declared dependencies.

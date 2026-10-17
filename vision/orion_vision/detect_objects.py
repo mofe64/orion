@@ -13,6 +13,7 @@ import numpy as np
 
 from .intrinsics import SIZE, lores_bgr
 from .inference_process import InferenceProcess
+from .detector_policy import SCORES
 
 MODEL_PATH = Path('/usr/local/share/orion/vision/yolo11n_ncnn_model')
 MODEL_HASHES = {
@@ -20,7 +21,7 @@ MODEL_HASHES = {
     'model.ncnn.bin': 'e03a54d4028ca4c52ad5676ceebe4f5e8df7accf9f00187ec00f2aa4c91e8225',
 }
 CATEGORIES = tuple(json.loads(Path(__file__).with_name('coco.json').read_text()))
-SCORE_THRESHOLD, NMS_THRESHOLD = .4, .45
+SCORE_THRESHOLD, NMS_THRESHOLD = SCORES['cpu']['objects'], .45
 
 
 @dataclass

@@ -99,7 +99,7 @@ The installer creates offline virtual environments with `/opt/orion/python`. It 
 
 ## Models and release state
 
-Models use pinned URLs and hashes from `prepare_pi_voice_stack.py`, `release-models.json` and `check_hailo.py`. Downloads use temporary files before publication. Reuse includes a checksum check.
+Models use pinned URLs and hashes from `prepare_pi_voice_stack.py` and `release-models.json`. The [vision reference](vision-reference.md#model-installation) defines optional Hailo models and their manifest. Downloads use temporary files before publication. Reuse includes a checksum check.
 
 The `orion-models-v1` release supplies the NCNN model separately. Its AGPL-3.0 attribution stays with the model.
 

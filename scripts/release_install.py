@@ -18,6 +18,7 @@ from pi_service_config import MANAGED_SERVICES, render_plan
 from prepare_pi_voice_stack import CODEX_VERSION, prepare_assets
 from release_models import prepare_vision_models
 from release_assets import prepare_catalog
+from vision_assets import prepare_hailo_models
 
 COMPONENTS = ('speech', 'voice', 'vision', 'motion', 'orion_studio')
 PYTHON = Path('/opt/orion/python/bin/python3.12')
@@ -160,6 +161,7 @@ def install(payload, root, codename):
             raise RuntimeError('An interrupted deployment needs recovery; run this installer with --rollback')
         install_system_packages(root, codename, present, pins)
         configure_hailo(present)
+        prepare_hailo_models(root, present, run)
         installed = root / 'installation.json'
         active = json.loads(installed.read_text()) if installed.exists() else {}
         if active.get('release') == str(release):

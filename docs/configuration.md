@@ -16,6 +16,7 @@ Paths in this table are relative to the Pi user's home directory.
 | `.config/orion/microphone.json` | Microphone mute |
 | `.config/orion/camera.json` | Camera privacy |
 | `.config/orion/tracking.json` | Tracking mode |
+| `.config/orion/vision.json` | Vision accelerator selection |
 | `.config/orion/behaviours.json` | Optional character behaviors |
 | `.config/orion/servo_calibration.json` | V1 servo calibration |
 | `.config/orion/studio-token` | Gateway and listener access token |
@@ -42,6 +43,8 @@ The default asset project is `~/.local/share/orion/voice-stack/catalog/`. User a
 `tracking.json` stores `tracking_mode`: `off`, `idle`, `faces` or `hands`. A missing file selects Faces. Invalid settings select Off. Camera privacy disables capture in every mode.
 
 `hardware/profiles/v2.json` selects the camera and image orientation. See [vision](../vision/README.md#tracking-modes) for mode behavior.
+
+`vision.json` stores `vision.accelerator`: `auto`, `hailo` or `cpu`. A missing file selects `auto`. See [vision detectors](vision-reference.md#accelerator-setting) for CPU selection and backend names.
 
 ## Voice settings
 

@@ -41,6 +41,10 @@ The login user needs sudo access. Models share storage across releases. Allow sp
 
 The installer enables the services. First installation leaves them stopped for servo setup. Orion rises slowly to `home` when the services start.
 
+The AI HAT+ is optional. HAILO8L runs face, object and palm networks when available. Each detector can fall back to the CPU. Lamps without the HAT use CPU detectors. See [vision setup](vision-reference.md) for accelerator selection and backend names.
+
+If Hailo identification needs a reboot, run the same installer after reboot to fetch its model files.
+
 ## Connect Studio
 
 1. Follow [Studio development](../orion_studio/README.md#development) on your computer.

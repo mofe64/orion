@@ -439,6 +439,22 @@ def optional_model(name, factory, path):
         return None
 
 
+def accelerator_setting(path):
+    try:
+        settings = json.loads(path.read_text())
+        if not isinstance(settings, dict) or not isinstance(settings.get('vision', {}), dict):
+            raise ValueError('Expected a vision settings object')
+        value = settings.get('vision', {}).get('accelerator', 'auto')
+        if value not in ('auto', 'hailo', 'cpu'):
+            raise ValueError('Expected auto, hailo or cpu')
+        return value
+    except FileNotFoundError:
+        return 'auto'
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        LOG.warning('Invalid vision.accelerator; using CPU: %s', error)
+        return 'cpu'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", type=Path, default=Path("/tmp/orion-vision.sock"))
@@ -447,12 +463,15 @@ def main():
         help="Tracking preference (default: tracking.json beside camera preference)")
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--replay", type=Path, help="Directory of synthetic JPEG test inputs")
+    parser.add_argument('--settings-file', type=Path, default=Path.home() / '.config/orion/vision.json')
+    parser.add_argument('--accelerator', choices=('auto', 'hailo', 'cpu'), help='Override vision.accelerator')
     from .intrinsics import Intrinsics
     from .detect_faces import MODEL_PATH, YuNet
     from .detect_hands import MODEL_PATH as PALM_MODEL_PATH, PalmDetector
     from .gaze_client import GazeClient
     from .pipeline import FacePipeline
     from .detect_objects import YoloNCNN, MODEL_PATH as OBJECT_MODEL_PATH
+    from .hailo_backend import detector, select_accelerator
     parser.add_argument("--face-model", type=Path, default=MODEL_PATH)
     parser.add_argument("--palm-model", type=Path, default=PALM_MODEL_PATH)
     parser.add_argument('--object-model', type=Path, default=OBJECT_MODEL_PATH)
@@ -478,18 +497,25 @@ def main():
             else:
                 raise RuntimeError("Vision socket already has a running owner")
     pipeline, detection_error = None, None
-    objects = optional_model("Object", YoloNCNN, args.object_model)
-    palms = optional_model("Palm", PalmDetector, args.palm_model)
+    accelerator = select_accelerator(args.accelerator or accelerator_setting(args.settings_file))
+    objects = optional_model("Object", lambda path: detector('objects', YoloNCNN, path, accelerator), args.object_model)
+    palms = optional_model("Palm", lambda path: detector('palms', PalmDetector, path, accelerator), args.palm_model)
     try:
-        pipeline = FacePipeline(YuNet(args.face_model), Intrinsics.camera_module_3_wide(),
-                                GazeClient(args.runtime_socket), objects=objects, palms=palms)
+        faces = detector('faces', YuNet, args.face_model, accelerator)
+        pipeline = FacePipeline(faces, Intrinsics.camera_module_3_wide(),
+                                GazeClient(args.runtime_socket), objects=objects, palms=palms,
+                                accelerator=accelerator)
+        LOG.info('Vision backends: %s', ', '.join(f'{name}: {value}'
+                 for name, value in pipeline.status()['backends'].items()))
         if isinstance(source, Picamera2Source):
             source.expected_geometry = pipeline.intrinsics.geometry
-    except (OSError, ValueError, KeyError) as error:
+    except Exception as error:
         detection_error = str(error)
         LOG.warning("Face tracking unavailable: %s", error)
         if objects is not None:
             objects.close()
+        if accelerator is not None:
+            accelerator.close()
     vision = Vision(source, args.preference_file, pipeline=pipeline, detection_error=detection_error,
                     tracking_file=args.tracking_preference_file)
     server = VisionServer(args.socket, vision)

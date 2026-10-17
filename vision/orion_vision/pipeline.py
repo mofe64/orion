@@ -11,8 +11,8 @@ from .behaviours import KEYS, ObjectMap, overlaps
 from .novelty import NoveltyTrack
 from .hands import HandWindow
 from .intrinsics import SIZE
+from .detector_policy import backend, rates
 
-IDLE_HZ, VOICE_HZ = 10, 3
 GAZE_RETRY_SECONDS = 3.
 TARGET_AREA_RATIO = 1.5
 TARGET_HOLD_NS = 1_000_000_000
@@ -20,7 +20,7 @@ TARGET_HOLD_NS = 1_000_000_000
 
 class FacePipeline:
     def __init__(self, detector, intrinsics, client, clock=time.monotonic, boot_clock=boottime_ns,
-                 objects=None, palms=None):
+                 objects=None, palms=None, accelerator=None):
         self.detector, self.intrinsics, self.client = detector, intrinsics, client
         self.clock, self.boot_clock = clock, boot_clock
         self.changed, self.stop = Condition(), Event()
@@ -34,7 +34,8 @@ class FacePipeline:
         self.dropped = self.inferences = 0
         self.tracker = Tracker()
         self.error = None
-        self.rate_hz = IDLE_HZ
+        self.rate_hz = rates(detector).idle_hz
+        self.accelerator = accelerator
         self.next_voice_poll = 0.
         self.thread = None
         self.gaze_available = True
@@ -127,11 +128,15 @@ class FacePipeline:
             return
         # This shares the inference worker with YuNet and explicit /find.
         # A refusal also backs off; switches cannot create inference bursts.
-        self.next_object_pass = now + 60.
+        self.next_object_pass = now + rates(self.objects).objects_seconds
         if not self.client.background_ready() or not self.client.find_allowed():
             return
         camera = self.client.camera_pose(stamp)
-        objects = self.objects.detect(buffer)
+        try:
+            objects = self.objects.detect(buffer)
+        finally:
+            # A failed accelerator can switch this detector to the CPU here.
+            self.next_object_pass = now + rates(self.objects).objects_seconds
         candidates = locate([obj for obj in objects if obj.category != 'person'
             and not any(overlaps(obj.box, face.box) for face in faces)], self.intrinsics, camera, stamp)
         if not self.client.find_allowed() or not self.client.background_ready():
@@ -183,9 +188,9 @@ class FacePipeline:
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
             return False
-        # Hands streams every 5 Hz inference so the runtime can follow
+        # Hands streams every palm inference so the runtime can follow
         # continuously; other modes need only a slower heartbeat.
-        self.next_surroundings = self.clock() + (.15 if self.mode == 'hands' else .5)
+        self.next_surroundings = self.clock() + (rates(self.palms).hands_publish_seconds if self.mode == 'hands' else .5)
         self.client.surroundings({'capture_boottime_ns': stamp,
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': self.mode if self.enabled else 'off',
@@ -203,8 +208,9 @@ class FacePipeline:
         self.stop.set()
         with self.changed:
             self.changed.notify_all()
-        if self.objects is not None and hasattr(self.objects, 'close'):
-            self.objects.close()
+        for detector in (self.objects, self.palms, self.detector, self.accelerator):
+            if detector is not None and hasattr(detector, 'close'):
+                detector.close()
         if self.thread:
             self.thread.join(timeout=2)
 
@@ -247,6 +253,8 @@ class FacePipeline:
                 "gaze_available": self.gaze_available, "gaze_error": self.gaze_error,
                 "object_lookup": self.find_job is not None, "objects_available": self.objects is not None and getattr(self.objects, "available", True) is not False,
                 "palms_available": self.palms is not None, "tracking_mode": self.mode,
+                "backends": {name: backend(detector) if detector is not None else 'unavailable'
+                             for name, detector in (('faces', self.detector), ('palms', self.palms), ('objects', self.objects))},
                 "hand_count": self.hand_count if self.mode == "hands" else 0,
                 "hand_point": self.hand_point if self.mode == "hands" else None}
 
@@ -442,6 +450,7 @@ class FacePipeline:
     def _run(self):
         next_inference = 0.
         last_inference = None
+        active = True
         while not self.stop.is_set():
             with self.changed:
                 if self.find_job and self.find_job.done.is_set():
@@ -473,10 +482,11 @@ class FacePipeline:
                     if conversing:
                         with self.changed:
                             self.speaker_until = now + 3.
-                self.rate_hz = 5 if self.mode == "hands" else (VOICE_HZ if active else IDLE_HZ)
-                if active and self.mode != "hands" and last_inference is not None:
-                    next_inference = max(next_inference, last_inference + 1 / VOICE_HZ)
                 self.next_voice_poll = now + .2
+            policy = rates(self.palms if self.mode == 'hands' else self.detector)
+            self.rate_hz = policy.hands_hz if self.mode == 'hands' else (policy.voice_hz if active else policy.idle_hz)
+            if last_inference is not None:
+                next_inference = last_inference + 1 / self.rate_hz
             if now < next_inference:
                 self.stop.wait(min(next_inference - now, .05))
                 continue

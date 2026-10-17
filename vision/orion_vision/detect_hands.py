@@ -10,10 +10,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 from .intrinsics import SIZE, lores_bgr
+from .detector_policy import SCORES
+from .postprocessing import nms
 
 MODEL_PATH = Path('/usr/local/share/orion/vision/palm_detection_mediapipe_2023feb.onnx')
 MODEL_SHA256 = '78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c'
 INPUT_SIZE = 192
+SCORE_THRESHOLD = SCORES['cpu']['palms']
 
 
 @dataclass
@@ -33,24 +36,26 @@ def anchors():
         for y in range(grid) for x in range(grid) for _ in range(copies)], np.float32)
 
 
-def preprocess(buffer):
+def preprocess(buffer, *, normalise=True):
     image = lores_bgr(buffer)
     scale = INPUT_SIZE / max(SIZE)
     width, height = round(SIZE[0] * scale), round(SIZE[1] * scale)
     left, top = (INPUT_SIZE - width) // 2, (INPUT_SIZE - height) // 2
     padded = np.zeros((INPUT_SIZE, INPUT_SIZE, 3), np.uint8)
     padded[top:top + height, left:left + width] = cv2.resize(image, (width, height))
-    blob = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB).astype(np.float32)[None] / 255.
+    blob = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)[None]
+    if normalise:
+        blob = blob.astype(np.float32) / 255.
     return blob, (scale, left, top)
 
 
-def decode(outputs, geometry):
+def decode(outputs, geometry, *, threshold=SCORE_THRESHOLD):
     boxes, scores = (np.asarray(value) for value in outputs)
     if boxes.shape != (1, 2016, 18) or scores.shape != (1, 2016, 1):
         raise ValueError('Unexpected palm model outputs')
     score = 1 / (1 + np.exp(-np.clip(scores[0, :, 0].astype(float), -100, 100)))
     finite = np.isfinite(boxes[0]).all(axis=1) & np.isfinite(score)
-    selected = np.flatnonzero(finite & (score >= .6))
+    selected = np.flatnonzero(finite & (score >= threshold))
     selected = selected[np.argsort(-score[selected])[:128]]
     if not len(selected):
         return []
@@ -65,8 +70,8 @@ def decode(outputs, geometry):
     valid = (wh > 1).all(axis=1)
     rectangles = np.column_stack((xy[valid], wh[valid])).astype(float)
     probabilities = score[selected][valid]
-    kept = cv2.dnn.NMSBoxes(rectangles.tolist(), probabilities.tolist(), .6, .3, top_k=128)
-    return [Palm(rectangles[i].tolist(), float(probabilities[i])) for i in np.asarray(kept).reshape(-1)[:8]]
+    kept = nms(rectangles, probabilities, .3, 8, candidate_limit=128)
+    return [Palm(rectangles[i].tolist(), float(probabilities[i])) for i in kept]
 
 
 class PalmDetector:

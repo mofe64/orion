@@ -10,17 +10,7 @@ The camera profile is `hardware/profiles/v2.json`. The service uses an IMX708 Wi
 
 ## AI HAT+ setup
 
-The installer detects Hailo PCIe devices. It installs the matching driver, firmware and runtime packages. It also enables PCIe Gen 3. A reboot applies these device changes.
-
-The installer omits TAPPAS and camera demo packages. Hailo setup does not change Orion's detector selection.
-
-1. Run the Hailo check after reboot.
-
-   ```bash
-   orion-check-hailo
-   ```
-
-The check identifies Hailo-8 or Hailo-8L. It opens the device through `hailo_platform` in the vision environment. It downloads the matching pinned ResNet-18 model and reports frames per second. Device and rate output go to `~/.local/share/orion/voice-stack/hailo-check.json`.
+The HAT is optional. Faces, objects and palms can run on HAILO8L. Each detector has a CPU fallback. See the [vision reference](../docs/vision-reference.md) for models, rates and accelerator settings.
 
 ## Service setup and development
 
@@ -52,9 +42,9 @@ Camera callbacks copy buffers and metadata. JPEG encoding and inference run outs
 
 Capture timestamps use exposure-midpoint `CLOCK_BOOTTIME`. Runtime `camera-rays` supplies the measured capture-time transform. This keeps a target's world direction stable while the lamp moves.
 
-One worker schedules face, palm and object work. YuNet detects faces. A MediaPipe palm model supports Hands mode. YOLO11n runs through NCNN in a child process. The child keeps its model execution outside Python camera callbacks.
+One worker schedules face, palm and object work. The CPU path uses YuNet, MediaPipe palms and YOLO11n through NCNN. The Hailo path shares one child process for all three networks. Both paths keep model execution outside camera callbacks.
 
-`scripts/release-models.json` defines model downloads and hashes. The dependency lock selects NumPy and headless OpenCV versions. Model licenses remain with their packages.
+The [model reference](../docs/vision-reference.md#model-installation) links the download manifests. The dependency lock selects NumPy and headless OpenCV versions. Model licenses remain with their packages.
 
 ## Tracking modes
 

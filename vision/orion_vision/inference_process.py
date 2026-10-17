@@ -10,6 +10,7 @@ STARTUP_TIMEOUT_SECONDS = 20.
 
 
 def _worker(connection, factory, argument):
+    detector = None
     try:
         detector = factory(argument)
         connection.send(('ready', None))
@@ -31,24 +32,29 @@ def _worker(connection, factory, argument):
         except (EOFError, BrokenPipeError, OSError):
             pass
     finally:
-        connection.close()
+        try:
+            if detector is not None and hasattr(detector, 'close'):
+                detector.close()
+        finally:
+            connection.close()
 
 
 class InferenceProcess:
-    def __init__(self, factory, argument, *, timeout=INFERENCE_TIMEOUT_SECONDS):
+    def __init__(self, factory, argument, *, timeout=INFERENCE_TIMEOUT_SECONDS, name='Object'):
+        self.name = name
         self.timeout = timeout
         self.lock = Lock()
         self.closed = Event()
         context = multiprocessing.get_context('spawn')
         self.connection, child = context.Pipe()
         self.process = context.Process(target=_worker, args=(child, factory, argument),
-                                       name='orion-yolo', daemon=True)
+                                       name='orion-yolo' if name == 'Object' else 'orion-' + name.lower(), daemon=True)
         try:
             self.process.start()
             child.close()
             kind, message = self._receive(STARTUP_TIMEOUT_SECONDS)
             if kind != 'ready':
-                raise RuntimeError(f'Object detector startup failed: {message}')
+                raise RuntimeError(f'{self.name} detector startup failed: {message}')
         except BaseException:
             child.close()
             self.close()
@@ -63,12 +69,12 @@ class InferenceProcess:
         while not self.closed.is_set():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError('Object inference worker timed out')
+                raise TimeoutError(f'{self.name} inference worker timed out')
             if self.connection.poll(min(.05, remaining)):
                 return self.connection.recv()
             if not self.process.is_alive():
-                raise RuntimeError('Object inference worker exited')
-        raise RuntimeError('Object inference worker closed')
+                raise RuntimeError(f'{self.name} inference worker exited')
+        raise RuntimeError(f'{self.name} inference worker closed')
 
     def _terminate(self):
         if self.process.pid is not None:
@@ -85,14 +91,14 @@ class InferenceProcess:
         # concurrent callers from queuing frames or overlapping extraction.
         with self.lock:
             if not self.available:
-                raise RuntimeError('Object detector unavailable')
+                raise RuntimeError(f'{self.name} detector unavailable')
             started = time.monotonic()
             outcome = 'error'
             try:
                 self.connection.send(pixels)
                 kind, value = self._receive(self.timeout)
                 if kind != 'result':
-                    raise RuntimeError(f'Object inference failed: {value}')
+                    raise RuntimeError(f'{self.name} inference failed: {value}')
                 outcome = 'ok'
                 return value
             except (EOFError, OSError, RuntimeError):
@@ -102,8 +108,9 @@ class InferenceProcess:
                 self._terminate()
                 raise
             finally:
-                LOG.info('YOLO inference outcome=%s duration_ms=%.1f', outcome,
-                         (time.monotonic() - started) * 1000)
+                if self.name == 'Object':
+                    LOG.info('YOLO inference outcome=%s duration_ms=%.1f', outcome,
+                             (time.monotonic() - started) * 1000)
 
     def close(self):
         self.closed.set()

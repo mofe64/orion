@@ -27,7 +27,40 @@ def eventually(predicate, timeout=1):
     raise AssertionError("Timed out waiting for condition")
 
 
-class StartupTests(unittest.TestCase):
+class DetectorStartupTests(unittest.TestCase):
+    def test_hailo_service_runs_three_detectors_with_one_shared_owner(self):
+        from orion_vision.service import main
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / 'test.jpg').write_bytes(simplejpeg.encode_jpeg(np.zeros((360, 640, 3), np.uint8)))
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'camera': {'enabled': True, 'index': 0, 'hflip': False, 'vflip': False}}))
+            broker = MagicMock(failures={}, names={'faces', 'objects', 'palms'})
+            broker.detect.return_value = {'result': []}
+            palms, client = MagicMock(), MagicMock()
+            client.voice_active.return_value = False
+            argv = ['vision', '--profile', str(profile), '--replay', tmp, '--accelerator', 'hailo',
+                    '--socket', str(directory / 'vision.sock'), '--preference-file', str(directory / 'camera.json')]
+            def check_server(path, vision):
+                server = MagicMock()
+                def serve(**kwargs):
+                    eventually(lambda: vision.last_capture > 0 and broker.detect.called, timeout=2)
+                    self.assertEqual(vision.status()[1]['detection']['backends'],
+                                     {'faces': 'hailo', 'palms': 'hailo', 'objects': 'hailo'})
+                    self.assertEqual(vision.pipeline.rate_hz, 15)
+                server.serve_forever.side_effect = serve
+                return server
+            with patch.object(sys, 'argv', argv), patch('orion_vision.service.signal.signal'), \
+                 patch('orion_vision.service.VisionServer', side_effect=check_server), \
+                 patch('orion_vision.hailo_backend.select_accelerator', return_value=broker) as select, \
+                 patch('orion_vision.detect_faces.YuNet', side_effect=AssertionError('CPU face loaded')), \
+                 patch('orion_vision.detect_objects.YoloNCNN', side_effect=AssertionError('CPU objects loaded')), \
+                 patch('orion_vision.detect_hands.PalmDetector', side_effect=AssertionError('CPU palms loaded')), \
+                 patch('orion_vision.gaze_client.GazeClient', return_value=client):
+                main()
+            select.assert_called_once_with('hailo')
+            broker.close.assert_called_once()
+
     def test_optional_model_failures_keep_capture_and_faces_running(self):
         from orion_vision.service import main
         # Exercise main, capture and the real inference worker for each optional

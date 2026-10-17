@@ -11,6 +11,8 @@
 ## References
 
 - [Configuration](configuration.md)
+- [Vision detectors](vision-reference.md)
+- [Third-party model notices](../THIRD_PARTY_NOTICES.md)
 - [Motion schemas and controls](motion-reference.md)
 - [Speech animation](speech-animation-runtime.md)
 - [Release packaging](release-packaging.md)
