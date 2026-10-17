@@ -1,19 +1,23 @@
 format_version: 2
 motion:
   name: idle_micro_glance
-  description: Readable base-and-head glance with a full return.
+  description: Turn the base slowly for a brief glance with a full return.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: 0.11, head_roll_joint: -0.070}
-      duration: 0.65
-      arrival: settle
-      hold: 0.75
-      marker: glance_fixation
-    - offsets: {base_yaw_joint: 0.050, head_roll_joint: -0.030}
-      duration: 0.55
-      arrival: through
-    - offsets: {}
-      duration: 0.75
-      arrival: settle
+  - offsets:
+      base_yaw_joint: 0.20943951023931956
+      head_roll_joint: -0.07
+    duration: 1.5
+    arrival: settle
+    hold: 0.75
+    marker: glance_fixation
+  - offsets:
+      base_yaw_joint: 0.08377580409572782
+      head_roll_joint: -0.03
+    duration: 1.3
+    arrival: through
+  - offsets: {}
+    duration: 1.7
+    arrival: settle

@@ -5,17 +5,17 @@ motion:
   space: absolute
   style: expressive_turn
   keyframes:
-    - pose: attention_right_anticipation
-      duration: 0.22
-      arrival: through
-    - pose: attention_right_lean
-      duration: 0.42
-      arrival: through
-      marker: notice
-    - pose: attention_right_overshoot
-      duration: 0.28
-      arrival: through
-    - pose: attention_right
-      duration: 0.38
-      arrival: settle
-      marker: settled
+  - pose: attention_right_anticipation
+    duration: 0.65
+    arrival: through
+  - pose: attention_right_lean
+    duration: 1.1
+    arrival: through
+    marker: notice
+  - pose: attention_right_overshoot
+    duration: 0.8
+    arrival: through
+  - pose: attention_right
+    duration: 1.0
+    arrival: settle
+    marker: settled

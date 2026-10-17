@@ -1,17 +1,23 @@
 format_version: 2
 motion:
   name: idle_shoulder_adjust
-  description: Small shoulder and elbow redistribution.
+  description: Redistribute the shoulder and elbow slowly, then return.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {shoulder_pitch_joint: -0.085, elbow_pitch_joint: 0.105}
-      duration: 0.8
-      arrival: through
-    - offsets: {shoulder_pitch_joint: -0.035, elbow_pitch_joint: 0.045, head_pitch_joint: -0.030}
-      duration: 0.65
-      arrival: through
-    - offsets: {}
-      duration: 0.9
-      arrival: settle
+  - offsets:
+      shoulder_pitch_joint: -0.20943951023931956
+      elbow_pitch_joint: 0.1
+      head_pitch_joint: 0.03
+    duration: 1.6
+    arrival: through
+  - offsets:
+      shoulder_pitch_joint: -0.08377580409572782
+      elbow_pitch_joint: 0.04
+      head_pitch_joint: 0.01
+    duration: 1.4
+    arrival: through
+  - offsets: {}
+    duration: 1.8
+    arrival: settle

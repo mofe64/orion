@@ -27,7 +27,7 @@ if [[ ! -r ${channel_parameter} ]] || [[ $(<"${channel_parameter}") != 0 ]]; the
 fi
 
 if ! pin_state=$(/usr/bin/pinctrl get 12 2>&1); then
-    # Ubuntu can require root for pinctrl even when the LED device is accessible.
+    # Some kernel versions require root for pinctrl even when the LED device is accessible.
     # Keep the device permission checks above under the invoking Orion user.
     echo "GPIO12 state read requires elevated access; retrying with sudo." >&2
     if ! pin_state=$(sudo /usr/bin/pinctrl get 12 2>&1); then

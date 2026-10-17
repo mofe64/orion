@@ -1,17 +1,25 @@
 format_version: 2
 motion:
   name: speak_calm_sway
-  description: Readable conversational head-and-body sway with a quiet return.
+  description: Sway the neck and arm gently with alternating raised and lowered gaze.
   space: anchor_relative
   style: speaking_calm
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.10, shoulder_pitch_joint: 0.06, elbow_pitch_joint: -0.05}
-      duration: 0.52
-      arrival: through
-    - offsets: {head_roll_joint: -0.08, shoulder_pitch_joint: -0.04, elbow_pitch_joint: 0.04, head_pitch_joint: 0.06}
-      duration: 0.58
-      arrival: through
-    - offsets: {}
-      duration: 0.60
-      arrival: settle
+  - offsets:
+      head_roll_joint: 0.12
+      shoulder_pitch_joint: -0.025
+      elbow_pitch_joint: 0.015
+      head_pitch_joint: -0.04
+    duration: 0.9
+    arrival: through
+  - offsets:
+      head_roll_joint: -0.1
+      shoulder_pitch_joint: 0.02
+      elbow_pitch_joint: -0.015
+      head_pitch_joint: 0.03
+    duration: 1.0
+    arrival: through
+  - offsets: {}
+    duration: 1.0
+    arrival: settle

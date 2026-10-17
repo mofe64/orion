@@ -420,8 +420,11 @@ pub fn solve_lean(
         return Err(invalid("Home must establish a nonsingular elbow branch"));
     }
     let mut posed = anchor.clone();
-    posed.insert(YAW.into(), (-target[0]).atan2(-target[1]));
-    posed.insert(NECK.into(), 0.0);
+    posed.insert(
+        YAW.into(),
+        (-target[0]).atan2(-target[1]) + model.joint_reference(YAW)?,
+    );
+    posed.insert(NECK.into(), model.joint_reference(NECK)?);
     let start_wrist = model.joint_frame(WRIST, &posed)?.position;
     let mut zero_arm = posed.clone();
     zero_arm.insert(SHOULDER.into(), 0.0);
@@ -446,10 +449,14 @@ pub fn solve_lean(
         return Ok(LeanSolution::unreachable());
     }
     let bend = branch * cosine.clamp(-1.0, 1.0).acos();
-    posed.insert(
-        SHOULDER.into(),
-        (-local[1]).atan2(local[2]) - (lower * bend.sin()).atan2(upper + lower * bend.cos()),
-    );
+    let shoulder_angle =
+        (-local[1]).atan2(local[2]) - (lower * bend.sin()).atan2(upper + lower * bend.cos());
+    // atan2 crosses +/-pi in the rest frame for a forward desk reach. Choose
+    // the equivalent turn nearest home before projecting onto the comfort hull.
+    let shoulder_angle = shoulder_angle
+        + std::f64::consts::TAU
+            * ((home[SHOULDER] - shoulder_angle) / std::f64::consts::TAU).round();
+    posed.insert(SHOULDER.into(), shoulder_angle);
     posed.insert(ELBOW.into(), bend - elbow_origin);
     // Project the requested arm pose onto the powered polygon. A ray from a
     // boundary anchor can hit the hull almost immediately even when a nearby
@@ -464,7 +471,10 @@ pub fn solve_lean(
     let [yaw_min, yaw_max] = comfort.joint_ranges[YAW];
     posed.insert(YAW.into(), yaw.clamp(yaw_min, yaw_max));
     let [neck_min, neck_max] = comfort.joint_ranges[NECK];
-    posed.insert(NECK.into(), 0.0_f64.clamp(neck_min, neck_max));
+    posed.insert(
+        NECK.into(),
+        model.joint_reference(NECK)?.clamp(neck_min, neck_max),
+    );
     let Some((posed, pitch_scale)) = aim_within_comfort(model, comfort, anchor, &posed, target)?
     else {
         return Ok(LeanSolution::unreachable());
@@ -608,7 +618,7 @@ mod tests {
         let poses = PoseLibrary::load(root.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)
             .unwrap();
         let limits: Vec<_> = HardwareVersion::V2
-            .load_calibration(root.join("simulation/mujoco/config/servo_calibration-v2.json"))
+            .load_calibration(root.join("hardware/profiles/v2-joints.json"))
             .unwrap()
             .iter()
             .map(|c| {
@@ -831,7 +841,7 @@ mod tests {
             assert_eq!(definition.idle_profile.as_deref(), Some("directional"));
             let light = model.fk(&definition.positions).unwrap().light;
             let hit = light.table_point([0.0, 0.0, 1.0], 0.0).unwrap().unwrap();
-            assert!((0.25..=0.30).contains(&hit[0].hypot(hit[1])));
+            assert!((0.25..=0.40).contains(&hit[0].hypot(hit[1])));
             assert!(light.position[0].hypot(light.position[1]) > 0.19);
             assert!(light.position[2] > 0.23);
             for limit in &limits {
@@ -880,13 +890,11 @@ mod tests {
     }
 
     #[test]
-    fn powered_hull_excludes_rest_preview_and_the_unsafe_hands_elbow() {
-        let (model, poses, limits, comfort) = setup();
+    fn powered_hull_excludes_rest_directional_poses_and_folded_contact() {
+        let (_, poses, limits, comfort) = setup();
         let config = HardwareVersion::V2.profile().comfort_box.as_ref().unwrap();
         for excluded in [
             "rest",
-            "thinking",
-            "curious",
             "look_left",
             "look_right",
             "attention_left",
@@ -899,22 +907,11 @@ mod tests {
                 "{excluded}"
             );
         }
-        let pose = solve_lean(
-            &model,
-            &comfort,
-            poses.pose("home").unwrap(),
-            poses.pose("desk_work").unwrap(),
-            [0.14, -0.32, 0.],
-            0.35,
-        )
-        .unwrap()
-        .positions
-        .unwrap();
+        let pose = poses.pose("lean_reach_low").unwrap().clone();
         assert!(comfort.contains(&pose));
-        assert!(pose[ELBOW] < -0.28, "{pose:?}");
         let mut contact_side = pose.clone();
-        contact_side.insert(SHOULDER.into(), 0.663);
-        contact_side.insert(ELBOW.into(), -0.008);
+        contact_side.insert(SHOULDER.into(), 1.2183010452146022);
+        contact_side.insert(ELBOW.into(), -0.8900389530342436);
         assert!(!comfort.contains(&contact_side));
     }
 

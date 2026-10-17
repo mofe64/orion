@@ -3,11 +3,6 @@ use super::*;
 use crate::motion::ik::{ComfortBox, ComfortBoxConfig, LeanSolution, solve_lean};
 use crate::{MotionKeyframe, MotionStyle};
 
-/// Peak joint speed for continuous Hands steps; gaze uses 1.5 rad/s.
-pub(crate) const HANDS_TRACK_PEAK_RAD_S: f64 = 0.8;
-/// Shortest Hands step, so 5 Hz redirections blend instead of snapping.
-pub(crate) const HANDS_TRACK_MIN_SECONDS: f64 = 0.45;
-
 pub(crate) struct PreparedAim {
     sequence: MotionSequence,
     target: JointPositions,
@@ -19,12 +14,11 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     /// keeps holding. Continue from that command, rather than commanding the
     /// measured load error as a new starting goal. Other owners and failed
     /// runs still use their existing measured-start behavior.
-    pub(super) fn completed_hands_command(&self) -> Result<Option<crate::TrajectorySample>> {
+    pub(crate) fn completed_hands_command(&self) -> Result<Option<crate::TrajectorySample>> {
         if self.mode != RuntimeMode::Holding
             || self.active_movement.is_some()
             || !self.last_movement.as_ref().is_some_and(|motion| {
-                motion.state == MovementPhase::Completed
-                    && matches!(motion.name.as_str(), "hands_entry" | "hands_track")
+                motion.state == MovementPhase::Completed && motion.name == "hands_track"
             })
         {
             return Ok(None);
@@ -42,14 +36,6 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     .into(),
             ));
         }
-        self.comfort
-            .as_ref()
-            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
-            .1
-            .tracking_start(
-                &self.measured_positions(),
-                COMPLETION_POSITION_TOLERANCE_RAD,
-            )?;
         self.driver.validate_positions(target)?;
         let zeros = target.keys().map(|name| (name.clone(), 0.0)).collect();
         Ok(Some(crate::TrajectorySample {
@@ -122,7 +108,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             COMPLETION_POSITION_TOLERANCE_RAD,
         )?;
         let mut target = self.poses.pose("attentive")?.clone();
-        let delta = azimuth - centre["base_yaw_joint"];
+        let delta = azimuth + model.joint_reference("base_yaw_joint")? - centre["base_yaw_joint"];
         target.insert(
             "base_yaw_joint".into(),
             centre["base_yaw_joint"] + delta.sin().atan2(delta.cos()).clamp(-0.35, 0.35),
@@ -249,7 +235,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             }
         };
         let mut facing = lift.clone();
-        let delta = azimuth - lift["base_yaw_joint"];
+        let delta = azimuth + model.joint_reference("base_yaw_joint")? - lift["base_yaw_joint"];
         *facing.get_mut("base_yaw_joint").unwrap() +=
             delta.sin().atan2(delta.cos()).clamp(-0.10, 0.10);
         let solved = crate::expression::gaze::solve_aim(
@@ -367,141 +353,103 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         definition.style.overshoot_scale = 0.0;
         Ok(())
     }
+    /// Try the head first. Search bounded arm directions only after head reach fails.
+    /// Each trial calls the gaze solver; the search never implements head IK.
     pub(crate) fn hands_light_target(
         &self,
         anchor: &JointPositions,
         point: [f64; 3],
+        maximum_arm_rad: f64,
     ) -> Result<JointPositions> {
-        let comfort = &self
-            .comfort
-            .as_ref()
-            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
-            .1;
+        use crate::control::camera_rays::Bearing;
+        use crate::expression::gaze::solve_aim;
         let model = self
             .camera_kinematics()
             .ok_or_else(|| Error::InvalidState("Hands needs V2 geometry".into()))?;
-        model.fk(anchor)?;
-        if !comfort.contains(anchor) {
-            return Err(Error::InvalidState(
-                "Hands anchor is outside the comfort box".into(),
-            ));
+        let mut limits = self.driver.joint_limits()?;
+        // Keep operating targets away from mechanical stops without changing calibration.
+        for limit in &mut limits {
+            limit.lower_rad += 3_f64.to_radians();
+            limit.upper_rad -= 3_f64.to_radians();
         }
-        // Lean is a fraction of the desk pose's reach, not of the previous
-        // completed target. Reusing each target here compounds arm extension
-        // every time the hand changes direction. The compiler separately
-        // preserves continuity from the current commanded/measured state.
-        let solution = solve_lean(
-            model,
-            comfort,
-            self.poses.pose("home")?,
-            self.poses.pose("desk_work")?,
-            point,
-            0.35,
-        )?;
-        solution
-            .positions
-            .ok_or_else(|| Error::InvalidState("Work point outside desk reach".into()))
-    }
-    /// One continuous Hands step, like a gaze extension: a single settle at
-    /// the new work pose, compiled from the commanded state when it replaces a
-    /// running step so redirections never stop or jump. The arm moves at a
-    /// gentler peak speed than gaze to keep the light pool calm.
-    pub(crate) fn prepare_hands_track(
-        &self,
-        target: &JointPositions,
-        replacing: Option<(u64, f64)>,
-    ) -> Result<MotionDefinition> {
-        let from = replacing
-            .filter(|(id, _)| {
-                self.active_movement
-                    .as_ref()
-                    .is_some_and(|motion| motion.status.run_id == *id)
-            })
-            .and_then(|(_, now)| {
-                self.motion_sequence
-                    .as_ref()
-                    .map(|sequence| sequence.sample((now - self.movement_started_at).max(0.0)))
-            })
-            .transpose()?
-            .or(if replacing.is_none() {
-                self.completed_hands_command()?.map(|state| state.positions)
-            } else {
-                None
-            })
-            .unwrap_or_else(|| self.measured_positions());
-        let seconds = target
-            .iter()
-            .map(|(joint, q)| 1.875 * (q - from[joint]).abs() / HANDS_TRACK_PEAK_RAD_S)
-            .fold(HANDS_TRACK_MIN_SECONDS, f64::max);
-        let mut style = MotionStyle::named("speaking_calm")?;
-        style.joint_lag = 0.0;
-        style.overshoot_scale = 0.0;
-        style.amplitude = 1.0;
-        let definition = MotionDefinition {
-            name: "hands_track".into(),
-            description: "Continuous work-light follow toward the latest hand point".into(),
-            space: MotionSpace::AnchorRelative,
-            style,
-            return_to_anchor: true,
-            keyframes: vec![MotionKeyframe {
-                pose_name: None,
-                target: target.keys().map(|joint| (joint.clone(), 0.0)).collect(),
-                duration_seconds: seconds,
-                arrival: KeyframeArrival::Settle,
-                hold_seconds: 0.,
-                marker: None,
-            }],
-        };
-        self.validate_curiosity_motion(&definition, target, replacing)?;
-        Ok(definition)
-    }
-    pub(crate) fn prepare_hands_motion(
-        &self,
-        name: &str,
-        target: &JointPositions,
-        replacing: Option<(u64, f64)>,
-    ) -> Result<MotionDefinition> {
-        let comfort = &self
-            .comfort
-            .as_ref()
-            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
-            .1;
-        let start = comfort.tracking_start(
-            &self.measured_positions(),
-            COMPLETION_POSITION_TOLERANCE_RAD,
-        )?;
-        let mut pullback = start.clone();
-        let mut lead = start.clone();
-        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
-            pullback.insert(
-                joint.into(),
-                start[joint] - 0.04 * (target[joint] - start[joint]),
-            );
-            lead.insert(
-                joint.into(),
-                start[joint] + 0.25 * (target[joint] - start[joint]),
-            );
-        }
-        let pullback = comfort.project(&start, &pullback)?.0;
-        let mut definition = self.motions.motion(name)?.clone();
-        definition.space = MotionSpace::AnchorRelative;
-        definition.return_to_anchor = true;
-        for frame in &mut definition.keyframes {
-            frame.pose_name = None;
-            let pose = match frame.marker.as_deref() {
-                Some("anticipation") => &pullback,
-                Some("arm_lead") => &lead,
-                _ => target,
-            };
-            frame.target = pose
+        let solve = |pose: &JointPositions| -> Result<(JointPositions, bool, f64)> {
+            let mut q = pose.clone();
+            let mut clipped = false;
+            // The camera origin moves with the head. Recompute its finite-point bearing.
+            for _ in 0..3 {
+                let camera = model.fk(&q)?.camera;
+                let direction = std::array::from_fn(|i| point[i] - camera.position[i]);
+                let bearing = Bearing::from_direction(direction);
+                (q, clipped) = solve_aim(model, &q, bearing.azimuth, bearing.elevation, &limits)?;
+            }
+            let camera = model.fk(&q)?.camera;
+            let direction: [f64; 3] = std::array::from_fn(|i| point[i] - camera.position[i]);
+            let length = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
+            let axis = camera.rotate_vector([0., 0., 1.]);
+            let error = axis
                 .iter()
-                .map(|(joint, value)| (joint.clone(), value - target[joint]))
-                .collect();
+                .zip(direction)
+                .map(|(a, b)| a * b / length)
+                .sum::<f64>()
+                .clamp(-1., 1.)
+                .acos();
+            Ok((
+                q,
+                clipped || error > crate::expression::gaze::GAZE_DEADBAND_RAD,
+                error,
+            ))
+        };
+        let (head, clipped, mut best_error) = solve(anchor)?;
+        if !clipped || maximum_arm_rad == 0. {
+            return Ok(head);
         }
-        definition.style.joint_lag = 0.0;
-        definition.style.amplitude = 1.0;
-        self.validate_curiosity_motion(&definition, target, replacing)?;
-        Ok(definition)
+        let mut best = head;
+        let mut best_radius = f64::INFINITY;
+        // Polar search minimizes arm displacement (Euclidean joint angle), then
+        // bisects the first reachable radius. Angular resolution is 22.5 degrees.
+        for direction in 0..16 {
+            let angle = direction as f64 * std::f64::consts::TAU / 16.;
+            let unit = [angle.cos(), angle.sin()];
+            let maximum = maximum_arm_rad / unit[0].abs().max(unit[1].abs());
+            let trial = |radius: f64| -> Result<(JointPositions, bool, f64)> {
+                let mut q = anchor.clone();
+                for (name, scale) in ["shoulder_pitch_joint", "elbow_pitch_joint"]
+                    .into_iter()
+                    .zip(unit)
+                {
+                    let limit = limits.iter().find(|l| l.name == name).unwrap();
+                    q.insert(
+                        name.into(),
+                        (anchor[name] + radius * scale).clamp(limit.lower_rad, limit.upper_rad),
+                    );
+                }
+                solve(&q)
+            };
+            let (mut q, unreachable, error) = trial(maximum)?;
+            if unreachable {
+                if best_radius.is_infinite() && error < best_error {
+                    best = q;
+                    best_error = error;
+                }
+                continue;
+            }
+            let (mut low, mut high) = (0., maximum);
+            for _ in 0..9 {
+                let mid = (low + high) / 2.;
+                let (candidate, clipped, _) = trial(mid)?;
+                if clipped {
+                    low = mid;
+                } else {
+                    high = mid;
+                    q = candidate;
+                }
+            }
+            if high < best_radius {
+                best_radius = high;
+                best = q;
+            }
+        }
+        Ok(best)
     }
 
     pub fn configure_comfort_box(&mut self, config: ComfortBoxConfig) -> Result<()> {
@@ -735,8 +683,7 @@ mod recovery_tests {
                 .unwrap(),
         )
         .unwrap();
-        let desk = core.poses.pose("desk_work").unwrap().clone();
-        let anchor = core.hands_light_target(&desk, [0.14, -0.32, 0.]).unwrap();
+        let anchor = core.poses.pose("lean_reach_low").unwrap().clone();
         let mut measured = anchor.clone();
         *measured.get_mut("shoulder_pitch_joint").unwrap() += 0.02;
         assert!(!core.comfort.as_ref().unwrap().1.plans(&measured));
@@ -746,30 +693,14 @@ mod recovery_tests {
     }
 
     #[test]
-    fn settled_tracking_error_allows_idle_follow_return_aim_peek_and_pet() {
-        for action in ["idle", "follow", "return", "aim", "peek", "pet"] {
+    fn settled_tracking_error_allows_idle_aim_peek_and_pet() {
+        for action in ["idle", "aim", "peek", "pet"] {
             let (mut core, anchor, measured) = fixture();
             core.set_character_comfort(true);
             match action {
                 "idle" => {
                     let definition = core.motions.motion("idle_breathe").unwrap().clone();
                     core.play_generated_anchored_relative(definition, anchor, 0.1)
-                        .unwrap();
-                }
-                "follow" | "return" => {
-                    let target = if action == "follow" {
-                        core.hands_light_target(&anchor, [-0.12, -0.35, 0.])
-                            .unwrap()
-                    } else {
-                        core.poses.pose("home").unwrap().clone()
-                    };
-                    let definition = if action == "follow" {
-                        core.prepare_hands_track(&target, None).unwrap()
-                    } else {
-                        core.prepare_hands_motion("hands_return", &target, None)
-                            .unwrap()
-                    };
-                    core.play_generated_anchored_relative(definition, target, 0.1)
                         .unwrap();
                 }
                 "aim" => {

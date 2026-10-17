@@ -1,9 +1,7 @@
-# Orion user motions
+# V1 user motions
 
-Orion Studio stores user-authored named motions here. Each motion references
-named poses; it never contains raw servo registers or a joint command stream.
-Built-in functional and expressive motions remain in their existing
-directories and cannot be replaced.
+Studio stores user motions in this directory. Motions reference named poses or relative offsets. They do not contain raw servo registers.
 
-User motions are immutable after creation. Orion continues to generate each
-transition with its runtime quintic trajectory and measured completion logic.
+User names cannot replace built-in motion names. Saved motions use the Rust trajectory compiler and normal measured completion rules.
+
+See the [motion schema](../../../../docs/motion-reference.md#motion-schema).

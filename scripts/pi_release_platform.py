@@ -1,39 +1,36 @@
 #!/usr/bin/env python3
-"""Read the robot platform and select a compatible ARM64 Linux builder."""
+"""Raspberry Pi OS compatibility; Python is supplied by the release."""
 import argparse
 import json
 import platform
 from pathlib import Path
-import sys
 
-
-TARGET_PLATFORM = {
-    'id': 'ubuntu', 'version_id': '24.04', 'machine': 'aarch64',
-    'system_python': '3.12', 'libc': 'glibc-2.39',
-}
-PLATFORM_KEYS = tuple(TARGET_PLATFORM)
+SUPPORTED_CODENAMES = ('bookworm', 'trixie')
+TARGET_PLATFORM = {'id': 'raspbian', 'version_codename': 'bookworm', 'machine': 'aarch64', 'libc': 'glibc-2.36'}
+PLATFORM_KEYS = ('machine',)
 
 
 def read_platform():
-    operating_system = platform.freedesktop_os_release()
-    return {
-        'id': operating_system['ID'],
-        'version_id': operating_system['VERSION_ID'],
-        'machine': platform.machine(),
-        'system_python': f'{sys.version_info.major}.{sys.version_info.minor}',
-        'libc': '-'.join(platform.libc_ver()),
-    }
+    os_release = platform.freedesktop_os_release()
+    return {'id': os_release['ID'], 'version_codename': os_release.get('VERSION_CODENAME', ''),
+            'machine': platform.machine(), 'libc': '-'.join(platform.libc_ver()),
+            'raspberry_pi_os': Path('/etc/rpi-issue').exists()}
 
 
 def builder_image(target):
-    if any(target.get(key) != value for key, value in TARGET_PLATFORM.items()):
-        raise RuntimeError(f'This builder targets Ubuntu 24.04 ARM64, glibc 2.39 and system Python 3.12; found {target}')
-    return 'ubuntu:24.04'
+    if target.get('machine') not in ('aarch64', 'arm64') or target.get('version_codename') not in SUPPORTED_CODENAMES:
+        raise RuntimeError(f'Requires Raspberry Pi OS Bookworm or Trixie ARM64; found {target}')
+    # All shared binaries use the oldest supported glibc. Only native binding
+    # wheels are rebuilt for the Trixie library ABI.
+    return 'debian:bookworm'
 
 
 def check_platform(expected, actual):
-    if any(expected.get(key) != actual.get(key) for key in PLATFORM_KEYS):
-        raise RuntimeError(f'Robot platform changed since preparation: built for {expected}, found {actual}')
+    builder_image(actual)
+    if actual.get('id') not in ('debian', 'raspbian') or actual.get('raspberry_pi_os') is False:
+        raise RuntimeError('Requires Raspberry Pi OS, identified by /etc/rpi-issue')
+    if expected.get('machine') not in ('aarch64', 'arm64'):
+        raise RuntimeError('Release must target ARM64')
 
 
 def main():
@@ -41,13 +38,9 @@ def main():
     parser.add_argument('--probe', action='store_true')
     parser.add_argument('--target', type=Path)
     args = parser.parse_args()
-    if args.probe:
-        print(json.dumps(read_platform(), sort_keys=True))
-    elif args.target:
-        print(builder_image(json.loads(args.target.read_text())))
-    else:
-        parser.error('Select --probe or --target')
+    if args.probe: print(json.dumps(read_platform(), sort_keys=True))
+    elif args.target: print(builder_image(json.loads(args.target.read_text())))
+    else: parser.error('Select --probe or --target')
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == '__main__': main()

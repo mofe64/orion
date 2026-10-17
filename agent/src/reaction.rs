@@ -8,6 +8,8 @@ pub enum ReactionCue {
     Thinking,
     Surprised,
     Sympathy,
+    Sorry,
+    Shy,
     Unsure,
     Laugh,
 }
@@ -21,6 +23,8 @@ impl ReactionCue {
             Self::Thinking,
             Self::Surprised,
             Self::Sympathy,
+            Self::Sorry,
+            Self::Shy,
             Self::Unsure,
             Self::Laugh,
         ]
@@ -34,6 +38,8 @@ impl ReactionCue {
             Self::Thinking => "thinking",
             Self::Surprised => "surprised",
             Self::Sympathy => "sympathy",
+            Self::Sorry => "sorry",
+            Self::Shy => "shy",
             Self::Unsure => "unsure",
             Self::Laugh => "laugh",
         }
@@ -42,13 +48,15 @@ impl ReactionCue {
         match self {
             Self::Agree => "agrees, confirms or answers yes",
             Self::Disagree => "corrects, disagrees or answers no",
-            Self::Happy => "shares good news, thanks the user or shares their delight",
+            Self::Happy => "shares good news or shares the user's delight",
             Self::Curious => "asks the user a question or finds something intriguing",
             Self::Thinking => "weighs options, estimates or works something out",
             Self::Surprised => {
                 "reacts to something unexpected, including a surprising fact the user shares (prefer this over agree)"
             }
             Self::Sympathy => "responds to sadness, frustration or bad news",
+            Self::Sorry => "apologises after mishearing or being unable to do something",
+            Self::Shy => "responds to compliments or thanks",
             Self::Unsure => "is uncertain, such as maybe, it depends or I'm not sure",
             Self::Laugh => "responds to a joke or makes a light one",
         }
@@ -62,6 +70,8 @@ impl ReactionCue {
             "thinking" => Self::Thinking,
             "surprised" => Self::Surprised,
             "sympathy" => Self::Sympathy,
+            "sorry" | "apologise" | "apologize" | "oops" => Self::Sorry,
+            "shy" | "bashful" | "flattered" => Self::Shy,
             "unsure" => Self::Unsure,
             "laugh" => Self::Laugh,
             _ => return None,
@@ -87,6 +97,8 @@ mod tests {
                 "thinking",
                 "surprised",
                 "sympathy",
+                "sorry",
+                "shy",
                 "unsure",
                 "laugh"
             ]
@@ -96,6 +108,12 @@ mod tests {
         }
         assert_eq!(ReactionCue::parse(" SHAKE "), Some(ReactionCue::Disagree));
         assert_eq!(ReactionCue::parse("nod"), Some(ReactionCue::Agree));
+        for alias in ["apologise", "apologize", "oops"] {
+            assert_eq!(ReactionCue::parse(alias), Some(ReactionCue::Sorry));
+        }
+        for alias in ["bashful", "flattered"] {
+            assert_eq!(ReactionCue::parse(alias), Some(ReactionCue::Shy));
+        }
         assert!(ReactionCue::parse("joy").is_none());
     }
 }

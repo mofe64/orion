@@ -1,18 +1,24 @@
 format_version: 2
 motion:
   name: speak_react_unsure
-  description: A slow side-to-side head tilt used as a spoken unsure reaction.
+  description: Look slightly down while turning the neck from side to side.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.19, base_yaw_joint: 0.07}
-      duration: 0.32
-      arrival: through
-      marker: unsure
-    - offsets: {head_roll_joint: -0.17, base_yaw_joint: -0.06}
-      duration: 0.38
-      arrival: through
-    - offsets: {}
-      duration: 0.35
-      arrival: settle
+  - offsets:
+      head_roll_joint: 0.19
+      base_yaw_joint: 0.05
+      head_pitch_joint: 0.08
+    duration: 0.32
+    arrival: through
+    marker: unsure
+  - offsets:
+      head_roll_joint: -0.17
+      base_yaw_joint: -0.05
+      head_pitch_joint: 0.08
+    duration: 0.38
+    arrival: through
+  - offsets: {}
+    duration: 0.35
+    arrival: settle

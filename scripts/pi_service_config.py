@@ -31,11 +31,11 @@ PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',
     'voice/.venv/bin/orion-listener', 'orion_studio/gateway.py',
-    'vision/.venv/bin/orion-vision',
+    'vision/.venv/bin/orion-vision', 'orion_studio/.venv/bin/python',
     'voice/models/wake/hey_orion_trained_080.rpw',
     'voice/models/wake/hey_orion_reference.rpw',
     'voice/models/verifier',
-    'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh',
+    'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh', 'audio/cues',
 )
 
 
@@ -159,7 +159,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         raise ValueError('Unsupported service user')
     hardware = release_hardware(release)
     selected = profile(hardware)
-    calibration = home / ".config/orion" / selected["calibration_file"]
+    calibration = release / selected["joint_profile"] if hardware == "v2" else home / ".config/orion" / selected["calibration_file"]
     files = {}
     for name in services_for_release(release):
         path = unit_dir / f'{name}.service'
@@ -183,12 +183,16 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 start = set_option(start, '--hardware', hardware)
                 if name in ('oriond', 'orion-studio-gateway'):
                     start = set_option(start, '--calibration', calibration)
+                if name == 'orion-studio-gateway':
+                    start = set_option(start, '--project-root', runtime_project)
                 if name == 'oriond':
+                    start = start.replace(' --port /dev/ttyACM0', '')
                     # The runtime now always uses ~/.config/orion/routines.json.
                     start = re.sub(r'(?<!\S)--routines-file(?:\s+|=)(?:"[^"]*"|\'[^\']*\'|\S+)', '', start)
                     start = set_option(start, '--poses', runtime_project / selected['poses'])
                     for flag, field in (('--motions', 'motions'), ('--scenes', 'scenes'), ('--user-poses', 'user_poses')):
                         start = set_option(start, flag, runtime_project / selected[field])
+                    start = set_option(start, '--cues', runtime_project / 'audio/cues')
                     start = set_option(start, '--audio-card', selected['audio']['card'])
                     start = set_option(start, '--audio-device', selected['audio']['pcm'])
                     if hardware == 'v2':
@@ -242,8 +246,23 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
             if additions:
                 p, value = contents[0]
                 contents[0] = (p, value.replace('[Service]', '[Service]\n' + '\n'.join(additions), 1))
+        check_command = [str(release / 'runtime/target/release/oriond'), '--check', '--hardware', hardware, '--calibration', str(calibration)]
+        if name == 'oriond':
+            start_arguments = shlex.split(effective_start(contents))
+            for flag in ('--port', '--baud-rate'):
+                for i, argument in enumerate(start_arguments):
+                    if argument == flag and i + 1 < len(start_arguments):
+                        check_command.extend((flag, start_arguments[i + 1]))
+                    elif argument.startswith(flag + '='):
+                        check_command.extend((flag, argument.partition('=')[2]))
         for p, value in contents:
             value = rebase_commands(value, release)
+            if name == 'orion-studio-gateway':
+                value = value.replace('/usr/bin/python3 ', str(release / 'orion_studio/.venv/bin/python') + ' ')
+            if name == 'oriond' and p == path:
+                value = re.sub(r'^ExecStartPre=.*oriond --check.*\n?', '', value, flags=re.M)
+                value = value.replace('[Service]', '[Service]\nExecStartPre=' + shlex.join(check_command), 1)
+
             if name in ('orion-listener', 'orion-voice-stack'):
                 directory = release / 'voice' if name == 'orion-listener' else release
                 value = re.sub(r'^WorkingDirectory=.*$', f'WorkingDirectory={directory}', value, flags=re.M)
@@ -254,11 +273,11 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
     text = environment_path.read_text() if environment_path.exists() else ''
     defaults = {
         'ORION_STUDIO_CODEX_BIN': str(root / 'codex-0.157.0/bin/codex'),
-        'ORION_ASR_MODEL_DIR': str(root / 'models/qwen'), 'ORION_LLAMA_SERVER': str(root / 'llama-b10976/llama-server'),
+        'ORION_ASR_MODEL_DIR': str(root / 'models/qwen'), 'ORION_LLAMA_SERVER': str(release / 'native/llama-server'),
         'ORION_ASR_THREADS': '3', 'ORION_TTS_THREADS': '3',
         'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium'),
     }
-    files[environment_path] = merge_env(text, defaults, REMOVED_VOICE_ENV)
+    files[environment_path] = merge_env(text, defaults, REMOVED_VOICE_ENV | {'ORION_LLAMA_SERVER'})
     files[home / '.config/orion/hardware'] = hardware + '\n'
     files[home / '.local/share/orion/studio-service/installed'] = str(release) + '\n'
     return files

@@ -243,7 +243,7 @@ for line in sys.stdin:
         if text == 'crowded-reaction-cues-fixture':
             response = '[agree] [happy] [surprised] [curious] [laugh] Yes!'
         if text == 'all-reaction-cues-fixture':
-            names = ['agree', 'disagree', 'happy', 'curious', 'thinking', 'surprised', 'sympathy', 'unsure', 'laugh']
+            names = ['agree', 'disagree', 'happy', 'curious', 'thinking', 'surprised', 'sympathy', 'sorry', 'shy', 'unsure', 'laugh']
             emit({'method':'item/started','params':{'threadId':thread_id,'turnId':turn_id,
                   'item':{'type':'agentMessage','id':'final','phase':'final_answer'}}})
             sentences = [f'[{name.title()}] {name.title()}.' for name in names]

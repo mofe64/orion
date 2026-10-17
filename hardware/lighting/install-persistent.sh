@@ -49,11 +49,14 @@ fi
 
 # Future kernels need their headers installed alongside them, or DKMS cannot
 # rebuild the driver when they arrive.
-if [[ -r /etc/os-release ]] && grep -q '^ID=ubuntu' /etc/os-release \
-    && ! dpkg-query -W -f='${Status}' linux-headers-raspi 2>/dev/null | grep -q 'install ok installed'; then
-    echo "Install linux-headers-raspi so each kernel update brings matching headers:" >&2
-    echo "  sudo apt install linux-headers-raspi" >&2
-    exit 1
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ ${VERSION_CODENAME:-} != bookworm && ${VERSION_CODENAME:-} != trixie ]]; then
+        echo "Requires Raspberry Pi OS Bookworm or Trixie." >&2; exit 1
+    fi
+    if ! dpkg-query -W -f='${Status}' linux-headers-rpi-2712 2>/dev/null | grep -q 'install ok installed'; then
+        echo "Install linux-headers-rpi-2712 for DKMS rebuilds after kernel updates." >&2; exit 1
+    fi
 fi
 
 if [[ -d /boot/firmware/overlays && -f /boot/firmware/config.txt ]]; then
@@ -85,16 +88,31 @@ install -m 0644 "${driver_directory}"/*.c "${driver_directory}"/*.h \
 install -m 0644 "${script_directory}/dkms.conf" "${dkms_source}/dkms.conf"
 # Upstream declares remove() as returning void, which kernels before 6.11 only
 # accept through .remove_new. Select the field by kernel version so the same
-# source builds on Ubuntu's 6.8 kernel and on later kernels.
+# source builds across supported Raspberry Pi OS kernel versions.
 driver_copy=${dkms_source}/rp1_ws281x_pwm.c
 if grep -q '^void rp1_ws281x_pwm_remove' "${driver_copy}" \
     && ! grep -q 'remove_new' "${driver_copy}"; then
     perl -0pi -e 's/#include <linux\/kernel.h>\n/#include <linux\/kernel.h>\n#include <linux\/version.h>\n/; s/^(\t)\.remove = rp1_ws281x_pwm_remove,$/#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)\n$1.remove_new = rp1_ws281x_pwm_remove,\n#else\n$1.remove = rp1_ws281x_pwm_remove,\n#endif/m' "${driver_copy}"
 fi
 dkms add "${dkms_name}/${dkms_version}"
-dkms build "${dkms_name}/${dkms_version}" -k "${kernel_release}"
-dkms install "${dkms_name}/${dkms_version}" -k "${kernel_release}" --force
-depmod -a "${kernel_release}"
+# Imager's running kernel may predate apt's kernel/header pair. Build for each
+# available Pi 5 header tree; the release installer supplies both metapackages.
+built_kernels=()
+for kernel_tree in /lib/modules/*-rpi-2712; do
+    [[ -f ${kernel_tree}/build/Makefile ]] || continue
+    build_kernel=${kernel_tree##*/}
+    dkms build "${dkms_name}/${dkms_version}" -k "${build_kernel}"
+    dkms install "${dkms_name}/${dkms_version}" -k "${build_kernel}" --force
+    depmod -a "${build_kernel}"
+    built_kernels+=("${build_kernel}")
+done
+if [[ ${#built_kernels[@]} -eq 0 ]]; then
+    echo 'No Pi 5 kernel headers found. Install linux-image-rpi-2712 and linux-headers-rpi-2712, then retry.' >&2
+    exit 1
+fi
+if [[ ! -f /lib/modules/${kernel_release}/build/Makefile ]]; then
+    echo "Running kernel ${kernel_release} has no headers; reboot into the installed Pi 5 kernel before starting Orion."
+fi
 
 # Kernel releases name the RP1 node differently (/axi/pcie@120000/rp1 on
 # Ubuntu's 6.8, /axi/pcie@1000120000/rp1 on later Raspberry Pi kernels), and
@@ -136,7 +154,7 @@ if ! grep -Eq '^[[:space:]]*dtoverlay=rp1_ws281x_pwm([[:space:]]|$)' "${boot_con
         cp -a "${boot_config}" "${boot_config}.orion-backup"
     fi
     {
-        printf '\n# Orion GPIO12 RGBW matrix/ring RP1 PWM device\n'
+        printf '\n[all]\n# Orion GPIO12 RGBW matrix/ring RP1 PWM device\n'
         printf 'dtoverlay=rp1_ws281x_pwm\n'
     } >> "${boot_config}"
 fi
@@ -148,7 +166,7 @@ if [[ -e /sys/class/misc/ws281x_pwm ]]; then
     udevadm trigger --action=add /sys/class/misc/ws281x_pwm
 fi
 
-echo "Installed persistent Orion NeoPixel support for kernel ${kernel_release}."
+echo "Installed persistent Orion NeoPixel support for kernels: ${built_kernels[*]}."
 echo "DKMS rebuilds the driver for each kernel update: $(dkms status "${dkms_name}/${dkms_version}" | tr '\n' ' ')"
 echo "Boot configuration: ${boot_config}"
 if [[ -e ${boot_config}.orion-backup ]]; then

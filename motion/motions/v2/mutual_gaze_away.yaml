@@ -1,16 +1,18 @@
 format_version: 2
 motion:
   name: mutual_gaze_away
-  description: A quiet neck-led look away after the observed person turns away.
+  description: Turn the neck aside with a raised gaze, then return.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: -0.065, head_pitch_joint: 0.015}
-      duration: 0.55
-      arrival: settle
-      hold: 0.35
-      marker: look_away
-    - offsets: {}
-      duration: 0.85
-      arrival: settle
+  - offsets:
+      head_roll_joint: -0.17453292519943295
+      head_pitch_joint: -0.1
+    duration: 1.0
+    arrival: settle
+    hold: 0.35
+    marker: look_away
+  - offsets: {}
+    duration: 1.1
+    arrival: settle

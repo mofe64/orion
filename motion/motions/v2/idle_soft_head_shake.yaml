@@ -1,20 +1,26 @@
 format_version: 2
 motion:
   name: idle_soft_head_shake
-  description: Restrained asymmetric head shake and settle.
+  description: Turn the neck slowly left and right with a soft return.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: -0.10, head_roll_joint: 0.070}
-      duration: 0.5
-      arrival: through
-    - offsets: {base_yaw_joint: 0.13, head_roll_joint: -0.060}
-      duration: 0.55
-      arrival: through
-    - offsets: {base_yaw_joint: -0.040, head_roll_joint: 0.020}
-      duration: 0.45
-      arrival: through
-    - offsets: {}
-      duration: 0.65
-      arrival: settle
+  - offsets:
+      base_yaw_joint: -0.03
+      head_roll_joint: -0.20943951023931956
+    duration: 1.4
+    arrival: through
+  - offsets:
+      base_yaw_joint: 0.03
+      head_roll_joint: 0.20943951023931956
+    duration: 1.6
+    arrival: through
+  - offsets:
+      base_yaw_joint: -0.01
+      head_roll_joint: -0.07330382858376185
+    duration: 1.3
+    arrival: through
+  - offsets: {}
+    duration: 1.6
+    arrival: settle

@@ -1,14 +1,16 @@
-# Orion scene v2
+# Orion scenes
 
-Scenes coordinate named motion, RGBW effects, and local audio under one
-monotonic clock. Built-in and Studio-authored scenes use `format_version: 2`.
-The runtime resolves named actions into calibrated hardware commands.
+Scenes combine motion, light and audio under one monotonic clock. A monotonic clock measures elapsed time without wall-clock adjustments. Scenes use `format_version: 2`.
+
+## Schema
+
+This scene starts a motion and uses its marker for light and audio:
 
 ```yaml
 format_version: 2
 scene:
   name: acknowledge_left
-  description: One fluid left turn with warm acknowledgement.
+  description: Turn left with a warm acknowledgement.
   motion:
     - {at: 0.0, play: look_at_left_expressive}
   lighting:
@@ -19,52 +21,40 @@ scene:
   finish: {anchor: final_pose, lighting: pose_default}
 ```
 
-The motion track is ordered and may not overlap. Lighting and audio may use an
-absolute `at` time or a named motion `on_marker` trigger. Marker timing comes
-from the retimed Rust trajectory, so expression remains synchronized when the
-STS3215 speed ceiling stretches motion. One audio cue owns playback at a time;
-due cues queue in authored order.
+Motion clips are ordered and cannot overlap. Light and audio events use either `at` seconds or an `on_marker` trigger. They cannot use both fields. Markers follow the compiler's adjusted motion timing.
 
-Completion waits for the final motion's measured settle, the last light effect
-or transition, and audio playback. The final measured position becomes the
-next character anchor, and the scene restores the nearest pose's
-`default_lighting`. Cancellation stops scene-owned movement and audio.
+Completion waits for motion settling, light completion and audio completion. Cancellation stops scene-owned movement and audio. The final measured pose becomes the character anchor.
 
-The v2 effect vocabulary is `warm_idle_breathe`, `attentive_focus`,
-`thinking_drift`, `speaking_energy`, `acknowledge_pulse`, `curious_sweep`,
-`delight_spark`, `settle_glow`, and `off`. Every frame contains 40 RGBW
-pixels for V1's 8×5 matrix or 24 for V2's ring, selected by the hardware profile. Cue names resolve to WAV stems under
-`audio/cues/`.
+## Light and audio fields
 
-Built-ins live in `scenes/v1/` and `scenes/v2/`; user scenes live in the
-selected version's `user/` subdirectory.
-Studio publishes through the authenticated v2 gateway. The gateway writes
-transactionally, asks `oriond` to validate and reload the complete catalog,
-and rolls back a rejected update. Built-ins cannot be shadowed.
+Named light effects include `warm_idle_breathe`, `attentive_focus`, `thinking_drift`, `speaking_energy`, `acknowledge_pulse`, `curious_sweep`, `delight_spark`, `settle_glow` and `off`.
 
-Run a scene through the owning daemon:
+Custom effects use `constant`, `pulse`, `breathe` or `fade`. `colors` has one stage for constant output and two for other effects. Each stage uses `warm_white` or a `#rrggbb` value.
 
-```bash
-runtime/target/release/oriond --run-scene acknowledge_left --wait
-runtime/target/release/oriond --scene-status
-```
+`levels` sets stage brightness from zero to one. `intensity` scales the complete effect. `period` controls pulse or breathe cycles and must be at least 0.1 seconds. Fade uses `duration`.
 
-`deployment_smoke` is a lighting and audio diagnostic that can be requested
-explicitly. The release deployment does not run expression scenes automatically.
-Mechanical rest uses the runtime rest coordinator, which tracks descent to the
-calibrated pose and releases torque after measured completion.
+The hardware profile selects 40 RGBW pixels for V1 or 24 for V2. Audio cue names resolve to WAV stems in `audio/cues/`.
 
-## Studio-authored light effects and scoped assets
+## Files and publication
 
-Lighting events also accept `constant`, `pulse`, `breathe`, and `fade`. `colors`
-contains one stage for constant or two for the other effects. Each stage is
-`warm_white` (the dedicated white channel) or a `#rrggbb` color. Optional `levels`
-sets per-stage brightness in the range 0–1; `intensity` scales the whole effect.
-`period` is the pulse/breathe cycle length in seconds, at least 0.1. Fade spans
-`duration`. Pulse and breathe default to 15% base brightness and 100% peak brightness.
+Built-ins live in `scenes/v1/` and `scenes/v2/`. Each version's `user/` directory stores user scenes. User names cannot replace built-ins.
 
-An optional top-level `studio` object preserves scene-owned pose and movement data.
-The Studio gateway validates ownership names, stages those dependencies, and reloads
-the asset libraries when publishing. The runtime ignores the metadata itself; moving
-a bundled scene file directly to the Pi does not install its dependencies. See the
-[Studio editor documentation](../orion_studio/README.md#animation-library-and-scene-editor).
+An optional top-level `studio` object carries scene-owned poses and motions. The gateway installs these dependencies before runtime reload. Copying the scene file alone does not install them.
+
+## Run a scene
+
+The owning daemon must be running. The following example uses its source-build client.
+
+1. Run the scene and wait for completion.
+
+   ```bash
+   runtime/target/release/oriond --run-scene acknowledge_left --wait
+   ```
+
+2. Read scene status.
+
+   ```bash
+   runtime/target/release/oriond --scene-status
+   ```
+
+See the [Studio editor](../orion_studio/README.md#animation-library-and-scene-editor).

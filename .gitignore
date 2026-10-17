@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
+hailort.log
 *.egg-info/
 docs/milestones/
 runtime/target/
@@ -24,3 +25,6 @@ artifacts/
 
 # Local agent handover notes
 .scratch/
+
+.release-cache/
+.asset-app/

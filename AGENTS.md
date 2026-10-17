@@ -1,71 +1,48 @@
-# Orion Working Agreements
+# Orion working agreements
 
 ## Teaching-first development
 
-Orion is a learning project. Complete the authorized work while explaining
-enough of the mechanism for me to understand and reproduce it.
+Orion is a learning project. Complete the authorized task. Explain decisions that affect operation or maintenance.
 
-Before each coherent change, explain the affected files' roles, the behavior
-being changed, and why the change is needed. Keep changes small enough to
-review, but group files that implement one architectural idea.
+Before a related set of changes, explain the affected files and intended behavior. Keep each change small enough to review.
 
-Explain resource paths, coordinate conventions, joint names and limits,
-controller interfaces, package boundaries, and simulator assumptions before
-changing them. Include the relevant invariant and how it will be verified.
+Explain resource paths, joint coordinates, controller interfaces, package boundaries and simulator assumptions before changing them. State the invariant that the change preserves. Describe the check that protects it.
 
-Continue through authorized steps after explaining them. Pause at checkpoints
-when I explicitly request a guided exercise or review before implementation.
+Continue through authorized work after each explanation. Pause when the user requests a guided exercise or review before implementation.
 
 ## Project context
 
-Before substantial work, use `docs/README.md` to locate the relevant architecture
-and reference documents, then confirm behaviour against code, tests, and
-component instructions.
+Use [the documentation index](docs/README.md) to find relevant project documents. Confirm their behavior against code, configuration and component instructions.
 
 ## Documentation changes
 
-### Reader-first writing
+### Writing rules
 
-- Write only what helps someone understand, operate, troubleshoot, or develop
-  Orion.
-- Lead with the Orion fact, outcome, prerequisite, or action. Do not narrate
-  why a page exists or how the documentation was organised.
-- Avoid openings such as “This page explains,” “This tutorial covers,” “source
-  of truth,” or “the following documentation.”
-- Use direct, active sentences and present tense for implemented behaviour.
-- Distinguish implemented, partial, and planned behaviour explicitly. Do not
-  use vague status words such as “new,” “currently,” or “next.”
-- Define an unfamiliar term when it first appears, but do not explain basic
-  syntax the reader already needs for the procedure.
+- Write in ASD-STE100 style. Use one topic per paragraph. Use at most six sentences per paragraph.
+- Use at most 20 words in procedural sentences. Use at most 25 words in descriptive sentences.
+- Give one instruction per sentence. Use imperative verbs for procedures. Use active voice and present tense.
+- Use each word with one meaning. Prefer common words. Treat joint names, commands and file names as technical nouns.
+- Use numbered steps for procedures. Put each command in a fenced block. Put one sentence before each command to explain its function.
+- Describe what Orion does and how to use, build or change it.
+- Delete verification status, measurement dates, capture dates, commissioning records, test evidence, review history and experiment results. Delete explanations of how values were found. Do not move this material to another document.
+- Replace jargon with common words. Define each necessary technical term in one short sentence at its first use.
+- Put a WARNING note immediately before a step that has an injury risk. Put a CAUTION note immediately before a step that has a damage risk.
 
 ### File responsibilities
 
-- `README.md` gives the product overview, system summary, repository map,
-  first actions, common validation, and safety warning.
-- `docs/README.md` is a compact link index. It must not explain the
-  documentation taxonomy or contributor process.
-- Architecture documents directly under `docs/` describe data flow,
-  boundaries, state transitions, invariants, and design rationale.
-- Reference documents directly under `docs/` contain configuration, motion
-  schemas, control details, and the animation catalogue.
-- `docs/learning_notes/` teaches Orion concepts while linking to the code or
-  configuration that supplies exact values.
-- Component READMEs contain only behaviour, setup, commands, and constraints
-  local to that directory. Cross-system explanations belong under `docs/`.
+- `README.md` gives the overview, system summary, repository map, first actions, common checks and safety guidance.
+- `docs/README.md` contains a compact link index.
+- Architecture documents describe data flow, boundaries, state changes, invariants and design choices.
+- Reference documents contain configuration, schemas, control details and the animation catalogue.
+- `docs/learning_notes/` teaches Orion concepts. Link to code or configuration for exact values.
+- Component READMEs describe only local behavior, setup, commands and constraints. Put cross-system explanations in `docs/`.
 
-### Accuracy and maintenance
+### Maintenance rules
 
-- Give each changing fact one maintained location and link to it elsewhere.
-  Repeat only safety warnings that a reader could otherwise miss.
-- Keep product status out of component feature descriptions unless the status
-  directly changes how the component is used.
-- State platform and hardware restrictions beside the affected command.
-- Treat code, manifests, configuration, tests, and commissioned hardware
-  evidence as authoritative; do not preserve prose that contradicts them.
-- Update affected instructions in the same change as behaviour, configuration,
-  file paths, commands, or dependencies.
-- Remove obsolete pages after preserving any still-valid product information.
-  Keep an archive notice only when active code or an operational procedure
-  still depends on the archived material.
-- Use meaningful relative links, sentence-case headings, one level-one heading
-  per page, and language identifiers on fenced code blocks.
+- Keep each changing fact in one maintained location. Link to that location elsewhere. Repeat safety notes when necessary.
+- Keep only information that helps a reader understand, operate, troubleshoot or develop Orion.
+- Check commands, paths, flags, file names and links against the code. Remove statements that contradict it.
+- State platform and hardware restrictions beside the affected procedure.
+- Update instructions when behavior, paths, commands or dependencies change.
+- Remove obsolete pages after preserving useful operating information.
+- Use meaningful relative links and sentence-case headings. Give each page one level-one heading. Give fenced blocks a language identifier.

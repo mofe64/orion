@@ -51,15 +51,15 @@
     <geom type="plane" size="2 2 .01" rgba=".9 .9 .87 1" />
     <body name="v21_base" pos="0 0 0">
       <body name="v21_base_yaw_link" pos="0.0 0.0 0.060000000000000005">
-        <joint name="base_yaw_joint" type="hinge" axis="0 0 -1" ref="0" range="-1.4388739790367313 1.5401167110371838" />
+        <joint name="base_yaw_joint" type="hinge" axis="0 0 -1" ref="-0.04908738521234052" range="-1.4879613642490719 1.4910293258248433" />
         <body name="v21_shoulder_pitch_link" pos="0.0 0.0 0.05299999999999999">
-          <joint name="shoulder_pitch_joint" type="hinge" axis="1 0 0" ref="1.118" range="-0.5553010452146021 1.2547962844904545" />
+          <joint name="shoulder_pitch_joint" type="hinge" axis="1 0 0" ref="1.5980932991569734" range="0.0 1.8100973297050567" />
           <body name="v21_elbow_pitch_link" pos="0.0 0.0 0.15000000000000002">
-            <joint name="elbow_pitch_joint" type="hinge" axis="1 0 0" ref="-1.5" range="-1.5707963267948966 1.069184609156292" />
+            <joint name="elbow_pitch_joint" type="hinge" axis="1 0 0" ref="-2.297002562636047" range="-2.45283527982914 0.18714565612204836" />
             <body name="v21_wrist_pitch_link" pos="0.0 0.0 0.131">
-              <joint name="head_pitch_joint" type="hinge" axis="1 0 0" ref="0.07" range="-0.6718835850939109 1.3453011509757073" />
+              <joint name="head_pitch_joint" type="hinge" axis="1 0 0" ref="-0.08911356580737373" range="-0.8912428377615575 1.1259418983080607" />
               <body name="v21_neck_swivel_link" pos="0.0 -0.0175 0.04899999999999999">
-                <joint name="head_roll_joint" type="hinge" axis="0 0 -1" ref="0" range="-1.7778837331594581 1.6122138080678088" />
+                <joint name="head_roll_joint" type="hinge" axis="0 0 -1" ref="0.01380582709097077" range="-1.7640779060684875 1.6260196351587795" />
                 <geom name="v21_8" type="mesh" mesh="v21_8" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
                 <geom name="v21_9" type="mesh" mesh="v21_9" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
                 <geom name="v21_12" type="mesh" mesh="v21_12" pos="-0.0 0.0175 -0.453" rgba=".27 .51 .61 1" />
@@ -71,9 +71,7 @@
                 <geom name="v21_31" type="mesh" mesh="v21_31" pos="0.0 0.0175 -0.433" rgba=".96 .91 .69 1" />
                 <geom name="v21_32" type="mesh" mesh="v21_32" pos="0.0 0.0175 -0.433" rgba=".16 .18 .18 1" />
                 <site name="v21_face" pos="0 -.085 .020" size=".002" rgba="0 0 0 0" />
-                <!-- MuJoCo camera axes: +X right, +Y up, -Z forward. -->
                 <camera name="camera_optical_frame" mode="fixed" pos="0 -0.082 0.0157" quat="0 0 0.7071067811865476 0.7071067811865476" />
-                <!-- Light uses the URDF optical axes: +X right, +Y down, +Z forward. -->
                 <site name="light_frame" pos="0 -0.077 0.020" quat="0 0 -0.7071067811865476 0.7071067811865476" size=".002" rgba="0 0 0 0" />
                 <inertial mass="0.29925124595845126" pos="-4.377315539681308e-05 -0.03902162685249138 0.02085453717818393" fullinertia="0.000480940372751178 0.00034629170794786557 0.0005082902884695034 1.956797464232746e-07 -2.432235430569997e-07 -6.5008799991696114e-06" />
               </body>

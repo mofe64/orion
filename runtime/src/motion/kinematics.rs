@@ -158,6 +158,22 @@ impl Kinematics {
         Ok(evaluate(&self.light[..=index], positions))
     }
 
+    /// Joint coordinate at the CAD's identity rotation. Baked URDF origins
+    /// encode the negative reference; yaw axes point along -Z, pitch along +X.
+    pub(crate) fn joint_reference(&self, name: &str) -> Result<f64> {
+        let joint = self
+            .light
+            .iter()
+            .find(|j| j.name == name)
+            .ok_or_else(|| invalid(format!("Missing joint {name}")))?;
+        let r = joint.origin.rotation;
+        match joint.axis {
+            Some([1.0, 0.0, 0.0]) => Ok(-r[2][1].atan2(r[1][1])),
+            Some([0.0, 0.0, -1.0]) => Ok(r[1][0].atan2(r[0][0])),
+            _ => Err(invalid("Unsupported reference axis")),
+        }
+    }
+
     /// Extract the two-link planar mechanism, including its baked joint-frame
     /// rotations. Reject a different mechanism instead of silently fitting it.
     pub(crate) fn planar_arm(&self) -> Result<([f64; 2], f64)> {
@@ -185,8 +201,16 @@ impl Kinematics {
                 return Err(invalid("Lean IK requires aligned pitch joint centres"));
             }
             let r = joint.origin.rotation;
-            if (r[0][0] - 1.0).abs() > 1e-9 || r[0][1].abs() > 1e-9 || r[0][2].abs() > 1e-9 {
+            if (1..=3).contains(&index)
+                && ((r[0][0] - 1.0).abs() > 1e-9 || r[0][1].abs() > 1e-9 || r[0][2].abs() > 1e-9)
+            {
                 return Err(invalid("Lean IK requires pitch-only joint origins"));
+            }
+        }
+        for index in [0, 4] {
+            let r = self.light[index].origin.rotation;
+            if r[2][0].abs() > 1e-9 || r[2][1].abs() > 1e-9 || (r[2][2] - 1.0).abs() > 1e-9 {
+                return Err(invalid("Lean IK requires yaw-only base and neck origins"));
             }
         }
         let lengths = [
@@ -508,7 +532,7 @@ mod tests {
                 .unwrap();
             centres.push(evaluate(&model.camera[..=index], &home.positions).position);
         }
-        for (pair, expected) in centres.windows(2).zip([-46.0, 25.0]) {
+        for (pair, expected) in centres.windows(2).zip([-42.05, 24.49]) {
             let y = pair[1][1] - pair[0][1];
             let z = pair[1][2] - pair[0][2];
             let lean = (-y).atan2(z).to_degrees();
@@ -516,7 +540,7 @@ mod tests {
         }
         let forward = camera.rotate_vector([0.0, 0.0, 1.0]);
         let elevation = forward[2].atan2(forward[0].hypot(forward[1])).to_degrees();
-        assert!((elevation + 13.0).abs() < 1.0, "home elevation {elevation}");
+        assert!((elevation + 9.0).abs() < 1.0, "home elevation {elevation}");
         assert!(forward[1] < -0.9, "home camera must look ahead");
     }
 
@@ -526,11 +550,10 @@ mod tests {
         // Before P4 every movable origin had identity rotation. Retain the
         // original translations, axes, meshes and optical mounts; restore only
         // those three origin rotations to reconstruct that CAD model.
-        let reference = [
-            ("shoulder_pitch_joint", 1.118),
-            ("elbow_pitch_joint", -1.500),
-            ("head_pitch_joint", 0.070),
-        ];
+        let reference: Vec<_> = crate::ORION_JOINT_NAMES
+            .iter()
+            .map(|name| (*name, model.joint_reference(name).unwrap()))
+            .collect();
         let mut old = model.clone();
         for chain in [&mut old.camera, &mut old.light] {
             for joint in chain {
@@ -550,8 +573,8 @@ mod tests {
         });
         for case in cases {
             let mut shifted = case.positions.clone();
-            for (name, offset) in reference {
-                *shifted.get_mut(name).unwrap() -= offset;
+            for (name, offset) in &reference {
+                *shifted.get_mut(*name).unwrap() -= offset;
             }
             let actual = model.fk(&case.positions).unwrap();
             let expected = old.fk(&shifted).unwrap();
@@ -582,18 +605,21 @@ mod tests {
         let mut positions = zero();
         // Preserve the original CAD-reference displacement assertions. The
         // calibrated zero is bent and places the camera behind the yaw axis.
-        positions.insert("shoulder_pitch_joint".into(), 1.118);
-        positions.insert("elbow_pitch_joint".into(), -1.500);
-        positions.insert("head_pitch_joint".into(), 0.070);
+        for name in crate::ORION_JOINT_NAMES {
+            positions.insert(name.into(), model.joint_reference(name).unwrap());
+        }
         let upright = positions.clone();
         let reference = model.fk(&positions).unwrap().camera;
-        positions.insert("base_yaw_joint".into(), 0.2);
+        positions.insert("base_yaw_joint".into(), upright["base_yaw_joint"] + 0.2);
         let right = model.fk(&positions).unwrap().camera;
         // Facing -Y, the lamp's own right is base -X.
         assert!(right.position[0] < reference.position[0] - 0.01);
         assert!(right.rotate_vector([0.0, 0.0, 1.0])[0] < -0.1);
         positions = upright;
-        positions.insert("head_pitch_joint".into(), 0.070 + 0.2);
+        positions.insert(
+            "head_pitch_joint".into(),
+            positions["head_pitch_joint"] + 0.2,
+        );
         assert!(
             model
                 .fk(&positions)
@@ -607,9 +633,9 @@ mod tests {
     #[test]
     fn upright_cad_reference_optical_axes_are_right_down_and_forward() {
         let mut upright = zero();
-        upright.insert("shoulder_pitch_joint".into(), 1.118);
-        upright.insert("elbow_pitch_joint".into(), -1.500);
-        upright.insert("head_pitch_joint".into(), 0.070);
+        for name in crate::ORION_JOINT_NAMES {
+            upright.insert(name.into(), model().joint_reference(name).unwrap());
+        }
         let frames = model().fk(&upright).unwrap();
         for frame in [frames.camera, frames.light] {
             for (local, expected) in [

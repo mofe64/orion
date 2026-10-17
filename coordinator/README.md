@@ -1,125 +1,52 @@
 # Orion coordinator
 
-`orion-coordinator` runs the voice pipeline inside the Pi's `orion-service`
-process. It owns listener connections, wake confirmation, ASR and TTS jobs, agent
-calls, response buffering, gateway uploads and playback acknowledgement.
+`orion-coordinator` runs the voice pipeline inside `orion-service`. It owns listener connections, speech jobs, agent requests, gateway uploads and playback acknowledgements.
 
-A host supplies `CoordinatorConfig` and an `orion_agent::AgentHandle` to
-`Coordinator::start`. Keeping the owning `AgentService` alive lets an idle
-coordinator restart preserve the agent conversation. The Python workers in
-[`speech/`](../speech/README.md) receive inference jobs over private pipes.
-The coordinator calls the agent through Rust channels.
+## Host interface
 
-`connection()` returns the authenticated protocol-7 observer endpoint.
-`events()` returns a bounded snapshot with a generation and increasing event IDs.
-The Pi gateway exposes these snapshots to Studio. `set_microphone()` sends a
-listener control request.
-Dropping the coordinator cancels its speech run and stops both Python workers.
+The host supplies `CoordinatorConfig` and an `AgentHandle` to `Coordinator::start`. Keeping `AgentService` alive preserves conversation state across coordinator restarts.
 
-Microphone status checks run once per second over temporary control WebSockets.
-Each successful request closes the connection, allowing up to one second for
-cleanup after a ten-second request deadline. A missing close reply does not
-invalidate an acknowledged mute change. The listener tolerates abrupt control
-client disconnects while capture continues.
+`connection()` returns the authenticated observer endpoint. `events()` returns bounded event snapshots with increasing IDs. `set_microphone()` sends a listener control request.
+
+Dropping the coordinator cancels its speech run and stops both Python workers. The listener owns capture and speech boundaries. The runtime owns hardware execution.
 
 ## Modules
 
-| Module | Responsibility |
+| Module | Function |
 | --- | --- |
-| `service.rs` | Coordinator lifecycle, observer listener and microphone controls |
-| `pipeline.rs` | Voice session events, concurrent work, uploads and playback completion |
-| `speech.rs` | Python worker lifecycle and inference framing |
+| `service.rs` | Coordinator lifecycle and observer endpoint |
+| `pipeline.rs` | Sessions, concurrent jobs, uploads and playback |
+| `speech.rs` | Python workers and inference messages |
 | `buffer.rs` | Startup reserve and complete-reply buffering |
-| `session.rs` | Wake phrase and utterance-state validation |
-| `gateway.rs` | Authenticated HTTP operations and WAV construction |
-| `hub.rs` | Bounded event replay and independent observers |
-| `history.rs` | Accepted-turn events in the shared file-based history store |
+| `session.rs` | Wake phrase and utterance checks |
+| `gateway.rs` | Authenticated HTTP requests and WAV data |
+| `hub.rs` | Bounded event replay |
+| `history.rs` | Accepted conversation turns |
 
-The listener owns capture, endpointing, the echo guard and follow-up window.
-`oriond` owns hardware execution. See the [voice architecture](../docs/voice-architecture.md)
-for session ordering and streaming behavior.
+## Reply and tool behavior
 
-## Tool feedback
+Speech text splits at sentence or word boundaries into jobs of at most 160 Unicode characters. Each job keeps its inference deadline. PCM queues remain bounded.
 
-Search acknowledgement uses the current voice session and a separate speech run.
-After playback, `session.processing` returns the listener to processing and the
-runtime to thinking feedback. Final playback waits for that acknowledgement;
-only the final response opens the follow-up window. The listener advertises
-support through `toolFeedback`. Older peers receive final speech directly.
+Slow synthesis selects complete buffering for the remaining reply. Fast synthesis uses a startup reserve. Uploads apply backpressure when playback has sufficient queued audio. Backpressure pauses a producer until its consumer has capacity.
 
-Lighting calls use `lamp_effect` through the gateway. The execution result returns
-to the agent, including the runtime's exact validation reason. HTTP errors use
-`error.message` with a status fallback; model-visible failures omit URLs and bearer
-tokens. `get_lighting` reads the manual state through `lamp_status`. Mode and alert tools use the same route through the `routines`
-operation. Sleep attaches the current voice session and suppresses the follow-up
-window after acknowledgement. An alarm interruption cancels the active voice job;
-the listener handles dismissal locally. Memory calls run silently inside the agent
-service.
+Tool acknowledgement uses a separate speech run within the active voice session. Final playback waits for that run. Only the final reply opens the follow-up window.
 
-## Long replies
+Robot tool failures return the runtime's reason to the agent. Error messages omit bearer tokens. Memory and list tools run inside the agent store.
 
-Text delivery queues independently of synthesis under the agent's streamed-answer
-and event size guards, so slow TTS does not consume the agent generation deadline.
-PCM queues remain bounded. Speech text is split at sentences or word boundaries into at most 160 Unicode
-characters per TTS job, with character splits for unbroken text. Each job retains
-its 240-second inference deadline. Runtime streams have a 30-minute audio sanity cap; rejection is explicit and
-its reason reaches the next model turn. Playback fails after 20 seconds without a state change, accepted chunk or
-advancing software playback position. Waiting for synthesis after the buffer drains
-does not use this stall budget; runtime underrun and upload validation still apply.
-The coordinator sends `session.keepalive` every five seconds during synthesis
-and playback to extend listener/runtime deadlines without changing feedback. A hung owner still expires after its last renewal.
+Scheduled announcements wait for idle voice ownership. Wake requests can interrupt them. Playback completion precedes acknowledgement, so acknowledgement retries cannot repeat delivered speech.
 
-Fast synthesis releases a six-to-twelve-second startup reserve. Once six seconds
-are available, generation taking more than 75% of audio duration, or a required
-reserve above twelve seconds, latches complete buffering. Every remaining chunk
-stays in the coordinator until the final end marker; later fast chunks cannot
-clear the latch.
+The [voice architecture](../docs/voice-architecture.md) defines session ordering and [speech workers](../speech/README.md) define inference messages.
 
-The coordinator checks the thirty-minute audio cap before retaining each chunk.
-Held PCM costs 2.88 MB per minute, up to 86.4 MB for a complete buffered reply,
-plus bounded in-flight chunks and allocation overhead. An oversized reply fails
-with the same explicit runtime sanity-limit reason and supplies that reason to
-the next model turn; it is never truncated.
+## Development
 
-Uploads wait while the runtime reports more than sixteen seconds ahead of
-playback. Complete buffered replies continue uploading while the runtime is
-queued, allowing their end marker to arrive before upload-idle expiry. They finish
-that burst even if playback starts midway with a large buffered lead. Replies
-uploaded to an already-playing runtime retain normal backpressure. A later synthesis slowdown can still
-exhaust a reserve that was released on the fast path. See
-[streaming replies](../docs/voice-architecture.md#streaming-replies-and-timing)
-for transport ordering and progress-estimate limitations.
+1. Run the crate tests from the repository root.
 
-## Validation
+   ```bash
+   cargo test --manifest-path coordinator/Cargo.toml --locked
+   ```
 
-Run from the repository root:
+2. Run the Rust lint checks.
 
-```bash
-cargo test --manifest-path coordinator/Cargo.toml
-cargo clippy --manifest-path coordinator/Cargo.toml --all-targets -- -D warnings
-```
-
-Integration tests use `python3`, local sockets, and fake listener, gateway, speech
-and Codex peers. They cover orchestration without model downloads or account
-usage. Scheduler integration regressions use the runtime crate in memory as a test dependency to exercise actual backoff and snooze state. Physical microphone, echo and playback checks require the Pi.
-
-Scheduled announcements use Pi listener protocol 2. The satellite supplies an
-`announcement` with a fresh session ID, alert ID, attempt, purpose and text.
-The coordinator queues it until voice sessions and response jobs finish, sends
-`announcement.start`, and waits for `announcement.ready` after runtime ownership
-and the `notice_warm` cue. Normal synthesis, upload, keepalive and playback checks
-then apply. `announcement.failed` routes listener ownership and daemon failures
-through the same runtime `announce_failed` path as failed playback. Completed
-playback is recorded before the separate `announced` acknowledgement stage;
-acknowledgement errors keep the connection and cannot replay delivered speech.
-See [scheduled announcement recovery](../docs/voice-architecture.md#scheduled-announcements)
-for retries and duplicate handling. Wake dismissal cancels announcement playback.
-
-Shopping and to-do tools execute in the agent store. They need no robot event or
-hardware access; successful tool results remain visible in voice history.
-
-Announcements with purpose `briefing` enter the same idle-only queue as reminder announcements. After listener readiness, they use an independent agent provider with the morning briefing instruction, then acknowledge the alert after playback. They create no user transcript, history entry or conversation window.
-
-Light routine tools use the ordinary request-scoped robot operation path. The coordinator forwards validated requests and confirms only after runtime success; it owns no light scheduler.
-
-Wake can cancel a queued or thinking announcement so a user command takes priority. The notice remains pending in the runtime. Interruption clears readiness; late readiness is logged and ignored without reconnecting.
+   ```bash
+   cargo clippy --manifest-path coordinator/Cargo.toml --all-targets --locked -- -D warnings
+   ```

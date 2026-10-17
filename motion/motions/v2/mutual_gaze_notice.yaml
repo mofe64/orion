@@ -1,21 +1,24 @@
 format_version: 2
 motion:
   name: mutual_gaze_notice
-  description: Meet a sustained frontal face with a small pitch adjustment and curious neck turn.
+  description: Raise the gaze, turn the neck with curiosity, and return.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.035}
-      duration: 0.4
-      arrival: settle
-      hold: 0.15
-      marker: meet
-    - offsets: {head_pitch_joint: 0.035, head_roll_joint: 0.080}
-      duration: 0.6
-      arrival: settle
-      hold: 2.0
-      marker: curious
-    - offsets: {}
-      duration: 0.9
-      arrival: settle
+  - offsets:
+      head_pitch_joint: -0.17453292519943295
+    duration: 0.75
+    arrival: settle
+    hold: 0.15
+    marker: meet
+  - offsets:
+      head_pitch_joint: -0.17453292519943295
+      head_roll_joint: 0.17453292519943295
+    duration: 0.9
+    arrival: settle
+    hold: 2.0
+    marker: curious
+  - offsets: {}
+    duration: 1.1
+    arrival: settle

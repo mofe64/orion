@@ -1,0 +1,18 @@
+format_version: 2
+motion:
+  name: speak_react_sorry
+  description: Shrink back and lower the head after a mistake.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      shoulder_pitch_joint: -0.1
+      head_pitch_joint: 0.31
+    duration: 0.42
+    arrival: settle
+    hold: 0.2
+    marker: sorry
+  - offsets: {}
+    duration: 0.43
+    arrival: settle

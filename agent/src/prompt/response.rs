@@ -131,6 +131,10 @@ mod tests {
             ("[nod] Yes.", "[agree] Yes."),
             ("Yes [Laugh] ok.", "Yes [laugh] ok."),
             ("[Happy] Great.", "[happy] Great."),
+            ("[oops] I misheard.", "[sorry] I misheard."),
+            ("[apologise] I cannot do that.", "[sorry] I cannot do that."),
+            ("[bashful] Thank you.", "[shy] Thank you."),
+            ("[flattered] That is kind.", "[shy] That is kind."),
             ("[foo] Yes.", "Yes."),
             ("See [1, 2] here.", "See [1, 2] here."),
             (

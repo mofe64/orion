@@ -80,7 +80,12 @@ pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<R
         );
     }
     let mut driver = Sts3215Driver::with_profiles(RustypotTransport::default(), profiles);
-    driver.connect(&options.port, options.baud_rate, calibrations)?;
+    let port = if options.port.is_empty() {
+        crate::devices::sts3215::setup::detect_port()?
+    } else {
+        options.port.clone()
+    };
+    driver.connect(&port, options.baud_rate, calibrations)?;
     Ok(driver)
 }
 
@@ -249,6 +254,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
     character.behaviour_log = behaviour_log.clone();
     character.set_gaze_enabled(options.gaze_on);
+    character.set_hands_maximum_arm_degrees(options.hands_max_arm_degrees)?;
     if options.gaze_on
         && let Some(error) = camera_error
     {

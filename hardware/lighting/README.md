@@ -1,43 +1,20 @@
 # Orion lighting hardware
 
-V1's commissioned light is an Adafruit NeoPixel Shield, product 2864:
+V1 uses a 40-pixel RGBW matrix. V2 uses a 24-pixel RGBW ring. RGBW gives each pixel separate red, green, blue and white channels.
 
-- 40 individually addressable SK6812-compatible red-green-blue-white (RGBW)
-  pixels.
-- Physical 5 by 8 matrix.
-- Dedicated approximately 3000 K warm-white channel.
-- 8-bit red, green, blue, and white channels.
-- 800 kHz single-wire NeoPixel protocol.
+Both profiles use GPIO12 and the Raspberry Pi 5 RP1 PWM driver. Pulse-width modulation, or PWM, controls signal timing. The device path is `/dev/ws281x_pwm`.
 
-V2 selects a 24-pixel RGBW ring with `--hardware v2`, retaining GPIO12, GRBW
-encoding and the persistent Pi 5 driver below. The V1 wiring and matrix layout in
-the next sections do not apply to the ring. See [V2 calibration and rest capture](../../docs/hardware-versions.md).
+## Wiring
 
-The assembled robot reports this direct Raspberry Pi 5 wiring:
+The V1 shield uses these header connections:
 
 ```text
-Pi physical pin 4  / 5 V   -> shield 5 V
-Pi physical pin 30 / ground -> shield ground
-Pi physical pin 32 / BCM12 -> shield D6 / DIN
+Pi pin 4:  5 V     → shield 5 V
+Pi pin 30: ground → shield ground
+Pi pin 32: GPIO12 → shield DIN
 ```
 
-V1 head cable allocation. Verify continuity before reconnecting a modified or
-replacement cable.
-
-| Conductors | Reported connection |
-| --- | --- |
-| Orange and white/orange | LED 5 V |
-| Brown, white/brown, and white/green | LED ground |
-| Solid green | LED data |
-| Blue and white/blue | Differential speaker pair; neither conductor is ground |
-
-The assembled robot has no 3.3 V-to-5 V data level shifter. The physical
-backend must therefore use BCM12, pulse-width modulation (PWM) channel 0,
-non-inverted output, 40 pixels,
-and an initial green-red-blue-white (GRBW)/800 kHz configuration.
-
-Physical checks on Orion confirmed a non-serpentine, row-major 8 by 5
-matrix. Every row runs left to right, starting at the top:
+The V1 matrix uses this row-major order:
 
 ```text
  0  1  2  3  4  5  6  7
@@ -47,168 +24,86 @@ matrix. Every row runs left to right, starting at the top:
 32 33 34 35 36 37 38 39
 ```
 
-Therefore a zero-based `(row, column)` coordinate maps directly to
-`row * ORION_LIGHT_WIDTH + column`. Confirmed reference points are pixel 0 at
-top-left, 7 at top-right, 8 at the second row's left edge, and 39 at
-bottom-right.
+The driver converts logical RGBW values to GRBW wire order. V2 ring indices run from 0 to 23. The selected hardware profile determines pixel count.
 
-Checks also confirmed that Orion's logical channel arguments display as
-red, green, blue, and warm white respectively. The backend's GRBW wire-order
-translation is therefore correct for the installed shield.
+CAUTION: Incorrect wiring can damage the Pi or LEDs. Disconnect power before changing connections.
 
-The complete 40-pixel frame was verified on the physical robot using the
-acknowledgement value `RGBW(8, 3, 0, 20)`, followed by a successful all-off
-frame. The persistent module, overlay, PWM channel, and BCM12 pin service were
-then verified after a full robot reboot with `verify-persistent.sh`. Physical
-lighting output and its boot configuration passed those checks.
-
-The shield is powered from the Pi's 5 V header rather than an independent
-supply. The runtime does not impose a brightness ceiling: RGBW values are sent
-exactly as requested. Use low values while confirming this particular wiring
-and channel order:
-
-```text
-all off
-pixel 0 red
-pixel 0 green
-pixel 0 blue
-pixel 0 white
-low-output 40-pixel chase
-```
-
-This sequence establishes channel order, data reliability, pixel count, and
-matrix orientation. If the direct 3.3 V data signal produces flicker,
-incorrect colours, or intermittent updates, the hardware path requires a
-5 V-compatible logic-level shifter; scene or colour code should not compensate
-for signalling errors.
+1. Check the board's supply, ground and data connections before applying power.
 
 ## Persistent Raspberry Pi 5 setup
 
-Raspberry Pi 5 support in `rpi_ws281x` uses the RP1 PWM kernel module from its
-`pi5` branch. Orion keeps the upstream source outside this repository and owns
-the boot installation through `install-persistent.sh`.
+The [release installer](../../docs/quickstart.md) installs the lighting driver. Manual source setup requires Raspberry Pi OS Bookworm or Trixie.
 
-Install DKMS, the headers for the running kernel, the headers package that
-follows kernel updates, and the device-tree compiler:
+1. Install the driver build packages and Pi 5 headers.
 
-```bash
-sudo apt install dkms linux-headers-$(uname -r) linux-headers-raspi device-tree-compiler
-```
+   ```bash
+   sudo apt-get install -y dkms linux-image-rpi-2712 linux-headers-rpi-2712 device-tree-compiler raspi-utils git
+   ```
 
-On Raspberry Pi OS, replace `linux-headers-raspi` with the headers package for
-your kernel flavour.
+2. Add the login user to the GPIO group.
 
-On Raspberry Pi OS, install `raspi-utils` for `/usr/bin/pinctrl`. On Ubuntu 24.04,
-build the [official Raspberry Pi utility](https://github.com/raspberrypi/utils/blob/master/pinctrl/README.md):
+   ```bash
+   sudo usermod -aG gpio "$USER"
+   ```
 
-```bash
-sudo apt install -y cmake build-essential git
-mkdir -p ~/dev
-git clone --depth 1 https://github.com/raspberrypi/utils.git ~/dev/orion-pi-utils
-cmake -S ~/dev/orion-pi-utils/pinctrl -B ~/dev/orion-pi-utils/build-pinctrl
-cmake --build ~/dev/orion-pi-utils/build-pinctrl -j 2
-sudo install -m 755 ~/dev/orion-pi-utils/build-pinctrl/pinctrl /usr/bin/pinctrl
-sudo groupadd -f gpio
-sudo usermod -aG gpio "$USER"
-```
+3. Clone the upstream Pi 5 driver sources.
 
-Clone the official Pi 5 branch. The installer builds the driver through DKMS
-and compiles the device-tree overlay itself:
+   ```bash
+   git clone --branch pi5 --single-branch https://github.com/jgarff/rpi_ws281x.git "$HOME/rpi_ws281x"
+   ```
 
-```bash
-cd ~/dev
-git clone --branch pi5 --single-branch \
-  https://github.com/jgarff/rpi_ws281x.git
-```
+4. Install persistent lighting configuration from the Orion repository root.
 
-Install Orion's persistent configuration from the Orion checkout:
+   ```bash
+   sudo hardware/lighting/install-persistent.sh "$HOME/rpi_ws281x"
+   ```
 
-```bash
-cd ~/dev/orion
-sudo hardware/lighting/install-persistent.sh /home/mofe/dev/rpi_ws281x
-sudo reboot
-```
+5. Reboot the Pi.
 
-The installer performs six persistent operations:
+   ```bash
+   sudo reboot
+   ```
 
-1. Registers the driver source with DKMS as `rp1_ws281x_pwm/orion1` under
-   `/usr/src/rp1_ws281x_pwm-orion1/`, then builds and installs it for the
-   running kernel. When the package manager installs a new kernel, DKMS
-   builds the driver for it before that kernel boots. The registered copy
-   selects the platform driver's `remove` field by kernel version, because
-   upstream targets kernel 6.11 and later and Ubuntu's 6.8 kernel rejects it.
-2. Compiles `rp1_ws281x_pwm.dtbo` from the upstream overlay source, installs it
-   into the Pi boot overlay directory, and adds `dtoverlay=rp1_ws281x_pwm` to
-   `config.txt`. The overlay targets the RP1 node found in the running device
-   tree, by its `rp1` label when the base tree provides one. Kernel releases
-   name that node differently, and the firmware skips an overlay whose target
-   is missing, leaving the module loaded without `/dev/ws281x_pwm`.
-3. Configures `rp1_ws281x_pwm` to use PWM channel 0 through
-   `/etc/modprobe.d/orion-neopixel.conf`.
-4. Loads the module at boot through
-   `/etc/modules-load.d/orion-neopixel.conf`.
-5. Installs a udev rule granting the Raspberry Pi `gpio` group read/write
-   access to `/dev/ws281x_pwm`, so checkout tools can run without root privileges.
-6. Enables `orion-neopixel-pin.service`, which assigns BCM12 to RP1 function
-   `a0` and verifies that `/dev/ws281x_pwm` exists.
+6. Check the installed module, pin function and device permissions.
 
-Before changing `config.txt`, the installer preserves its original contents as
-`config.txt.orion-backup`. The installer is idempotent and can be rerun.
+   ```bash
+   hardware/lighting/verify-persistent.sh
+   ```
 
-After the reboot, verify the complete boot contract:
+The installer registers `rp1_ws281x_pwm/orion1` with DKMS. DKMS rebuilds kernel modules when matching kernel headers are installed. The installer builds for available Pi 5 header trees.
 
-```bash
-cd ~/dev/orion
-hardware/lighting/verify-persistent.sh
-```
+It installs the boot overlay, module options and GPIO permissions. `orion-neopixel-pin.service` assigns GPIO12 to PWM channel 0. The original boot file remains in `config.txt.orion-backup`.
 
-Run `id -nG` once to confirm the development user belongs to the `gpio` group.
-The verifier requires readable and writable `/dev/ws281x_pwm`, the loaded
-module with `pwm_channel=0`, BCM12 configured as `PWM0_CHAN0`, and an enabled
-and active pin service. It prints `PASS` only when the complete contract holds.
-Run the verifier as the Orion user. On systems where `pinctrl` needs root, the
-verifier retries only the GPIO12 state read with `sudo`; device permissions are
-still checked as the invoking user. A failed GPIO read prints its diagnostic
-instead of exiting silently.
+## Kernel updates
 
-DKMS needs the new kernel's headers to rebuild the driver, which
-`linux-headers-raspi` installs with each kernel update. On Ubuntu the installer
-refuses to run without that package. To check the driver after a kernel update:
+1. List driver builds after a kernel update.
 
-```bash
-dkms status rp1_ws281x_pwm
-```
+   ```bash
+   dkms status rp1_ws281x_pwm
+   ```
 
-Each installed kernel should be listed as `installed`. If one is missing,
-install its headers and run `sudo dkms autoinstall -k KERNEL`.
+2. Build a missing kernel module after installing that kernel's headers.
 
-Run the installer once per Pi. Pi deployment runs `verify-persistent.sh` but
-not the installer, so a deploy on a Pi without this setup stops with
-`/dev/ws281x_pwm is not a character device`. Run the installer, reboot, and
-deploy again.
+   ```bash
+   sudo dkms autoinstall -k KERNEL
+   ```
 
-## Orion output checks
+## Light controls
 
-Build the Rust runtime on the Pi, then verify the four logical channels with
-pixel 0 before lighting the full matrix:
+`oriond` owns the device while the daemon runs. Named scene effects provide normal animated lighting.
 
-```bash
-cargo build --release --manifest-path runtime/Cargo.toml
+CAUTION: High output can overload the LED supply. Start with low channel values when checking wiring.
 
-runtime/target/release/oriond --lights-off
-runtime/target/release/oriond --light-pixel 0 8 0 0 0
-runtime/target/release/oriond --light-pixel 0 0 8 0 0
-runtime/target/release/oriond --light-pixel 0 0 0 8 0
-runtime/target/release/oriond --light-pixel 0 0 0 0 8
-runtime/target/release/oriond --light 0 0 0 8
-runtime/target/release/oriond --lights-off
-```
+1. Set one V2 pixel to low red output.
 
-`Pi5NeoPixelDevice` is behind the portable `LightingDevice` interface. It
-encodes logical RGBW as GRBW and writes the selected 40- or 24-pixel
-RP1 PWM frame to `/dev/ws281x_pwm`. Add `--hardware v2` to the commands above
-for the ring. `--lighting-device PATH` can
-override that path for diagnostics. These direct commands do not require the
-servo daemon and provide direct physical light checks. When the
-hardware daemon is active, it owns the device exclusively and scenes become
-the normal semantic lighting interface.
+   ```bash
+   oriond --hardware v2 --light-pixel 0 8 0 0 0
+   ```
+
+2. Turn the light off.
+
+   ```bash
+   oriond --hardware v2 --lights-off
+   ```
+
+Each channel accepts 0–255. The runtime does not impose a separate brightness ceiling. Persistent flicker or incorrect colors can indicate a wiring or signal-level problem.

@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "hardware": "v2",
+  "encoder_resolution": 4096,
+  "zero": "mechanical_rest",
+  "angle_formula": "(raw - 2047) * direction * 2*pi/4096",
+  "joints": {
+    "base_yaw_joint": {
+      "servo_id": 1,
+      "direction": 1,
+      "min_radians": -1.4879613642490719,
+      "max_radians": 1.4910293258248433
+    },
+    "shoulder_pitch_joint": {
+      "servo_id": 2,
+      "direction": 1,
+      "min_radians": 0.0,
+      "max_radians": 1.8100973297050567
+    },
+    "elbow_pitch_joint": {
+      "servo_id": 3,
+      "direction": 1,
+      "min_radians": -2.45283527982914,
+      "max_radians": 0.18714565612204836
+    },
+    "head_roll_joint": {
+      "servo_id": 5,
+      "direction": 1,
+      "min_radians": -1.7640779060684875,
+      "max_radians": 1.6260196351587795
+    },
+    "head_pitch_joint": {
+      "servo_id": 4,
+      "direction": 1,
+      "min_radians": -0.8912428377615575,
+      "max_radians": 1.1259418983080607
+    }
+  }
+}

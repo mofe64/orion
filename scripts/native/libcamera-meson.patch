@@ -1,0 +1,11 @@
+diff --git a/src/py/libcamera/meson.build b/src/py/libcamera/meson.build
+--- a/src/py/libcamera/meson.build
++++ b/src/py/libcamera/meson.build
+@@ -56,5 +56,7 @@
+     '-Wno-shadow',
+     '-DPYBIND11_USE_SMART_HOLDER_AS_DEFAULT',
++    '-DLIBCAMERA_BASE_PRIVATE',
+ ]
++subdir_done()
+ 
+ if meson.is_cross_build()

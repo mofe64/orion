@@ -1,198 +1,106 @@
 # Orion hardware versions
 
-Use `--hardware v1` or `--hardware v2` to match your robot. This selects its
-lights, audio devices, calibration file, poses, movements and scenes.
-
-<a id="select-the-hardware-profile"></a>
+`oriond` defaults to V2. The `--hardware v1` option selects V1 profiles and assets.
 
 ## Hardware differences
 
-The profiles are saved in `hardware/profiles/v1.json` and
-`hardware/profiles/v2.json`.
-
-| Hardware or file | V1 | V2 |
+| Item | V1 | V2 |
 | --- | --- | --- |
 | Lights | 40-pixel RGBW matrix | 24-pixel RGBW ring |
-| Light connection | GPIO12 on the Pi 5 | Same GPIO12 driver |
-| Audio | ReSpeaker 2-Mics V2 HAT, `seeed2micvoicec` | XVF3800 USB, `Array` |
-| Camera | No camera service | IMX708 Wide camera, managed by `orion-vision` |
-| Calibration | `servo_calibration.json` | `servo_calibration-v2.json` |
-| Poses | `motion/config/v1/poses.yaml` | `motion/config/v2/poses.yaml` |
-| Movements | `motion/motions/v1/` | `motion/motions/v2/` |
-| User poses | `motion/user/poses/v1/` | `motion/user/poses/v2/` |
-| Scenes | `scenes/v1/` | `scenes/v2/` |
-| Simulation | `simulation/mujoco/scene.xml` | `simulation/mujoco/v2/scene.xml` |
+| Light output | GPIO12 | GPIO12 |
+| Audio | ReSpeaker 2-Mics V2 HAT | XVF3800 USB array |
+| Camera | None | IMX708 Wide |
+| Hardware profile | `hardware/profiles/v1.json` | `hardware/profiles/v2.json` |
+| Joint configuration | `simulation/mujoco/config/servo_calibration.json` | `hardware/profiles/v2-joints.json` |
+| Pose file | `motion/config/v1/poses.yaml` | `motion/config/v2/poses.yaml` |
+| Motion directory | `motion/motions/v1/` | `motion/motions/v2/` |
+| Scene directory | `scenes/v1/` | `scenes/v2/` |
+| Simulation scene | `simulation/mujoco/scene.xml` | `simulation/mujoco/v2/scene.xml` |
 
-Calibration files are stored in `~/.config/orion/` on the onboard computer.
-The physical robot, Studio and simulation use the matching pose and movement
-files.
+V2 stores each motor's zero in EEPROM. EEPROM is memory that keeps its contents without power. The tracked joint profile supplies IDs, directions and limits. V2 does not use a calibration file in the user's configuration directory.
 
 ## Calibrate V2 first
 
-Run from the Orion checkout on the onboard computer, with the installed runtime
-stopped. Follow the [servo setup safety instructions](../hardware/servo_setup/README.md#safety-requirements)
-and replace `/dev/ttyACM0` with your servo controller's serial port.
+New servos need individual ID assignment. An assembled lamp needs mechanical-rest zeroing after servo replacement or horn removal.
 
-The commands below perform these steps in order:
+WARNING: Powered joints can pinch fingers. Disconnect servo power before changing wiring.
 
-1. **Verify** checks the five servos' settings and health.
-2. **Calibrate** records each joint's zero position and movement limits with the
-   motors unpowered.
-3. **Centre** adjusts each servo's stored position offset so its movement range
-   stays within the positions it can command, from 0 to 4095.
-4. **Capture rest** saves a position Orion can hold with the motors unpowered,
-   without hands or blocks supporting it. The tool checks that it stays still
-   before saving.
+1. Stop the Orion services before servo setup.
 
-```bash
-uv sync --project hardware/servo_setup --locked
-uv run --project hardware/servo_setup orion-verify-servos --hardware v2 \
-  --port /dev/ttyACM0
-uv run --project hardware/servo_setup orion-calibrate-servos --hardware v2 \
-  --port /dev/ttyACM0
-uv run --project hardware/servo_setup orion-centre-servos --hardware v2 \
-  --port /dev/ttyACM0
-uv run --project hardware/servo_setup orion-capture-rest --hardware v2 \
-  --port /dev/ttyACM0
-```
+   ```bash
+   sudo systemctl stop orion-voice-stack orion-vision orion-studio-gateway orion-listener oriond
+   ```
 
-Calibration saves `~/.config/orion/servo_calibration-v2.json`. Rest capture
-updates the `rest` pose in `motion/config/v2/poses.yaml`. Commit and push that
-pose change before deploying an update; deployment replaces the built-in pose
-file. The calibration file stays on the onboard computer.
+2. Connect one new servo to the bus.
+3. Assign its joint ID with the corresponding joint name.
 
-`oriond` rejects calibration ranges that cross the servo's 0/4095 position
-boundary. See [servo centring](../hardware/servo_setup/README.md#centre-the-servos-when-a-range-crosses-raw-04095)
-for the detailed procedure. Check other poses and movements on the assembled
-robot before using them.
+   ```bash
+   oriond servo set-id --joint shoulder_pitch_joint
+   ```
 
-## Joint names and directions
+4. Repeat individual assignment for each new servo.
+5. Connect all five servos.
+6. Fold the lamp into the rest position shown below.
 
-V2's joints run from the base through the shoulder, elbow, wrist and neck.
-Commands and pose files keep the existing software joint names:
+The upper arm lies back on the base. The forearm folds over the upper arm. The shoulder housing supports the head. The head and base face forward.
 
-| V2 servo ID | Software joint name | What it moves |
+![V2 rest, side view](images/v2-rest-side.png)
+![V2 rest, front view](images/v2-rest-front.png)
+
+CAUTION: An incorrect fold can cause joint damage after zeroing. Keep the lamp still during zeroing.
+
+7. Write the mechanical-rest offsets.
+
+   ```bash
+   oriond servo zero
+   ```
+
+8. Read the joint positions without enabling torque.
+
+   ```bash
+   oriond --check
+   ```
+
+All joints should read near zero radians. Zeroing requires two seconds with no movement greater than 10 encoder counts. It checks for final readings of 2047 ±8 counts. A failed write restores the previous offsets.
+
+WARNING: Orion moves toward `home` when its services start. Keep people and objects outside its movement area.
+
+9. Start the Orion services.
+
+   ```bash
+   sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision
+   ```
+
+The commands select one detected USB servo adapter automatically. The `--port` option selects an adapter when several are connected.
+
+## Joint names and limits
+
+| V2 ID | Joint name | Movement |
 | --- | --- | --- |
-| 1 | `base_yaw_joint` | Turns the base |
-| 2 | `shoulder_pitch_joint` | Tilts the upper arm |
-| 3 | `elbow_pitch_joint` | Tilts the forearm |
-| 4 | `head_pitch_joint` | Tilts the head at the wrist |
-| 5 | `head_roll_joint` | Turns the head at the neck |
+| 1 | `base_yaw_joint` | Base turn |
+| 2 | `shoulder_pitch_joint` | Upper-arm tilt |
+| 3 | `elbow_pitch_joint` | Forearm tilt |
+| 4 | `head_pitch_joint` | Head tilt at the wrist |
+| 5 | `head_roll_joint` | Head turn at the neck |
 
-On V1, servo 4 controls `head_roll_joint` and servo 5 controls
-`head_pitch_joint`. V2 uses the assignments above. `oriond` rejects a calibration
-whose servo IDs do not match the selected hardware profile.
+V1 assigns ID 4 to `head_roll_joint` and ID 5 to `head_pitch_joint`.
 
-With `encoder_direction: 1`, V2 moves in these directions:
+V2 uses this angle relation:
 
-| Software joint name | Negative angle | Positive angle |
-| --- | --- | --- |
-| `base_yaw_joint` | Turns to the lamp's left | Turns to the lamp's right |
-| `shoulder_pitch_joint` | Leans back | Leans forward |
-| `elbow_pitch_joint` | Raises the forearm | Lowers the forearm |
-| `head_pitch_joint` | Tilts the head up | Tilts the head down |
-| `head_roll_joint` | Turns the head to its left | Turns the head to its right |
-
-Calibration defaults to `encoder_direction: 1`. If a fitted joint moves in the
-opposite direction, use `--directions FILE` during calibration to set that
-joint to `-1`. Joint angles are in radians; model distances are in metres.
-
-Read calibrated hardware state without enabling the motors:
-
-```bash
-runtime/target/release/oriond --hardware v2 --check --port /dev/ttyACM0
+```text
+angle = (raw - 2047) × direction × 2π / 4096
 ```
 
-For supervised movement tests, follow the [hardware lifecycle](../runtime/README.md#physical-hardware)
-and start with `--serve --hardware v2 --character-on-start off`.
-V2's elbow setting still needs physical validation: check that each
-`lean_reach_*` pose finishes and that the elbow does not hum or oscillate.
-Motor settings are in [runtime/src/devices/sts3215/driver.rs](../runtime/src/devices/sts3215/driver.rs).
+The joint profile gives the permitted command range in radians. Startup accepts readings up to 20 counts outside that range. It clamps initial goals into range. Later commands use the strict profile limits.
 
-<a id="led-and-usb-audio-setup"></a>
+The runtime rejects ranges that cross the 0/4095 encoder boundary. Range checks cannot identify an incorrectly folded lamp. Mechanical-rest setup remains necessary.
 
-## Lights, audio and camera
+## USB capture and playback
 
-The V2 ring uses the same [GPIO12 light driver](../hardware/lighting/README.md#persistent-raspberry-pi-5-setup)
-as V1. After installing it, reboot and run
-`hardware/lighting/verify-persistent.sh`.
-Use `--hardware v2` with `oriond` when checking the ring or USB audio.
+V2 uses the ALSA card name `Array`. The listener owns microphone capture. `oriond` owns speaker playback. Hardware profiles select the default devices.
 
-### USB capture and playback
+The installer adds the login user to device groups and installs `voice/99-respeaker-xvf3800.rules`. A reboot applies those permissions. V1 audio setup is in the [audio HAT guide](../hardware/audio/README.md).
 
-V2 records two audio channels from the XVF3800 and uses processed channel 0,
-which contains the board's cleaned microphone audio. For different firmware
-layouts, the listener accepts `--capture-channels 2|6 --processed-channel N`.
-See the [Seeed USB guide](https://wiki.seeedstudio.com/respeaker_xvf3800_introduction/).
+## Lights and camera
 
-Microphone direction readings are optional; see [listener settings](configuration.md#microphone-listener).
-To read them, install the [XVF3800 USB access rule](../voice/README.md#measure-the-xvf3800-on-v2),
-add the account running Orion to `plugdev` with `sudo usermod -aG plugdev USER`,
-and restart the listener. Replace `USER` with that account's name. Recording
-can work without this permission even when direction readings fail. Release
-installation does not perform this setup.
-
-`oriond` sets both USB playback volume controls to 0 dB at startup. To set them
-by hand:
-
-```bash
-amixer -c Array sset PCM,0 0dB unmute
-amixer -c Array sset PCM,1 0dB unmute
-```
-
-### Camera
-
-V2 runs `orion-vision` to capture camera images and detect faces and objects.
-Set up the camera's libraries before deploying; see [vision setup](../vision/README.md#setup-on-ubuntu-2404--raspberry-pi-5).
-The V2 release includes the service. Studio's camera setting controls whether
-it captures images. V1 has no camera service.
-
-<a id="cad-urdf-and-mujoco"></a>
-
-## Simulation
-
-V2 uses `description/urdf/orion-v2.urdf` as its robot model and
-`simulation/mujoco/v2/scene.xml` for MuJoCo simulation. Studio and simulation
-use the same joint angles as the calibrated robot. Prepare the
-[simulator environment](../simulation/mujoco/README.md#python-environment)
-and build the runtime before starting a V2 preview:
-
-```bash
-runtime/target/release/oriond --serve --backend mujoco --hardware v2 \
-  --character-on-start on
-```
-
-The preview shows movement with a fixed base. It does not prove balance,
-collision clearance or how well the real motors follow a movement. The older
-standalone pose editors assume V1 geometry.
-
-For model work:
-
-| File | What it contains |
-| --- | --- |
-| [simulation/mujoco/config/model_reference-v2.json](../simulation/mujoco/config/model_reference-v2.json) | The measured alignment between the model and the robot's calibrated zero positions. |
-| `simulation/mujoco/v2/mass-properties.json` | Estimated part masses and weight distribution. |
-| `simulation/mujoco/v2/mass-inputs.example.json` | An example file for supplying measured part weights and additional components. |
-
-To rebuild the model or update its mass estimates:
-
-```bash
-.venv/bin/python scripts/import_v2_model.py
-.venv/bin/python scripts/estimate_v2_inertias.py --inputs /path/to/mass-inputs.json
-```
-
-See the [robot description](../description/README.md#v2-camera-and-light-frames)
-for model alignment and camera coordinates.
-
-## Deploy the selected version
-
-After calibration, centring and supervised movement checks, commit and push
-any pose or movement changes. Deploy with `--hardware v2` using the
-[Pi deployment procedure](quickstart.md#deploy-to-the-pi).
-The installer checks calibration and compiles movements against its limits
-before switching services.
-
-Installed V1 and V2 services start Orion's automatic movement and light
-behaviours. When starting `oriond` by hand, V1 defaults to `on` and V2 defaults
-to `off`. Use `--character-on-start on|off` to choose explicitly. See
-[runtime startup settings](configuration.md#customising-the-oriond-runtime).
+Both versions use the [GPIO12 lighting driver](../hardware/lighting/README.md). V2 uses the [vision service](../vision/README.md) for camera processing.

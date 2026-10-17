@@ -74,6 +74,7 @@ pub(super) struct Options {
     pub(super) help: bool,
     pub(super) character_on_start: bool,
     pub(super) gaze_on: bool,
+    pub(super) hands_max_arm_degrees: f64,
     pub(super) rest_after_seconds: f64,
     pub(super) tracking_log: Option<PathBuf>,
     pub(super) servo_gain_override: Option<ServoGainOverride>,
@@ -108,15 +109,16 @@ impl Default for Options {
         Self {
             operation: Operation::None,
             backend: Backend::Hardware,
-            hardware: crate::HardwareVersion::V1,
+            hardware: crate::HardwareVersion::V2,
             help: false,
             character_on_start: true,
             gaze_on: false,
+            hands_max_arm_degrees: 5.,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
             tracking_log: None,
             servo_gain_override: None,
             wait: false,
-            port: "/dev/ttyACM0".into(),
+            port: String::new(),
             baud_rate: DEFAULT_BAUD_RATE,
             calibration_file: PathBuf::new(),
             socket_path: DEFAULT_SOCKET_PATH.into(),
@@ -145,12 +147,15 @@ impl Default for Options {
 
 pub(super) fn usage() -> &'static str {
     "Usage:\n\
+  oriond servo set-id --joint NAME [--port DEVICE] [--hardware v2]\n\
+  oriond servo zero [--port DEVICE] [--hardware v2]\n\
   oriond --check  [--port DEVICE] [--baud-rate RATE] [--calibration FILE]\n\
   oriond --serve  [--backend hardware|mujoco] [--socket PATH]\n\
   oriond --status [--socket PATH]\n\n\
   oriond --configure [--socket PATH]\n\
   oriond --enable    [--socket PATH]\n\
   oriond --disable   [--socket PATH]\n\n\
+  oriond --validate-catalog --catalog DIR [--hardware v1|v2] [--output FILE]\n\n\
   oriond --goto POSE [--duration SECONDS] [--wait] [--socket PATH]\n\n\
   oriond --play MOTION [--wait] [--socket PATH]\n\
   oriond --stop        [--socket PATH]\n\n\
@@ -165,8 +170,9 @@ pub(super) fn usage() -> &'static str {
   oriond --stop-speech [--socket PATH]\n\n\
   --check             Print one direct hardware state snapshot and exit.\n\
   --serve             Sample the selected backend at 50 Hz and serve status JSON.\n\
-  --hardware v1|v2    Select hardware profile (default: v1).\n\
+  --hardware v1|v2    Select hardware profile (default: v2).\n\
   --gaze off|on       Bearing gaze (default: on for V2 serve, off otherwise).\n\
+  --hands-max-arm-degrees N  Hands arm fallback, 0 to 5 degrees (default: 5).\n\
   --backend NAME      Use hardware (default) or the native MuJoCo bridge.\n\
   --status            Request the latest JSON snapshot from the daemon.\n\
   --configure         Apply and verify Orion's servo profile, torque off.\n\
@@ -185,29 +191,29 @@ pub(super) fn usage() -> &'static str {
   --stop-scene       Cancel the active scene and its movement.\n\
   --speech-status    Show the active and most recent terminal speech run.\n\
   --stop-speech      Cancel the active speech run or playback.\n\
-  --scenes DIR       Scene library used by --serve (default: scenes/v1).\n\
+  --scenes DIR       Scene library used by --serve (default: scenes/v2).\n\
   --cues DIR         WAV cue library used by --serve and --play-cue (default: audio/cues).\n\
-  --audio-card CARD  ALSA mixer card (default: seeed2micvoicec).\n\
-  --audio-device PCM ALSA playback PCM (default: plughw:CARD=seeed2micvoicec,DEV=0).\n\
+  --audio-card CARD  ALSA mixer card (default: Array).\n\
+  --audio-device PCM ALSA playback PCM (default: plughw:CARD=Array,DEV=0).\n\
   --duration SECONDS  Quintic move duration (default: 3.0).\n\
   --wait              Follow the submitted run ID through completion.\n\
-  --port DEVICE       Servo serial device (default: /dev/ttyACM0).\n\
+  --port DEVICE       Servo serial device (default: single detected USB adapter).\n\
   --baud-rate RATE    Servo bus rate (default: 1000000).\n\
-  --calibration FILE  Orion calibration JSON file.\n\
+  --calibration FILE  V1 calibration or V2 joint profile JSON.\n\
   --socket PATH       Local API socket (default: /tmp/oriond.sock).\n\
   --poses FILE        Pose library used by --serve.\n\
   --camera-urdf FILE  V2 camera geometry used by --serve (default: description/urdf/orion-v2.urdf).\n\
   --user-poses DIR    Studio user-pose directory used by --serve.\n\
   --motions DIR       Motion-library directory used by --serve.\n\
-  --scene FILE        MuJoCo scene (default: simulation/mujoco/scene.xml).\n\
+  --scene FILE        MuJoCo scene (default: simulation/mujoco/v2/scene.xml).\n\
   --python FILE       Python with MuJoCo installed (default: .venv/bin/python).\n\
-  --character-on-start on|off  Start character automatically (default: on).\n\
+  --character-on-start on|off  Start character automatically (manual V2 default: off).\n\
   --rest-after-seconds SECONDS  Idle-mode inactivity before rest (default: 1800).\n\
   --tracking-log FILE  Opt-in asynchronous movement JSONL capture; file must not exist.\n\
   --experimental-servo-gains JOINT:P:I  One arm's EEPROM gain override; hardware --serve with --tracking-log only.\n\
   --start-pose POSE   MuJoCo initial pose (default: attentive).\n\
   --help              Show this help.\n\n\
-Check never enables torque. Serve starts powered character mode unless --character-on-start off.\n"
+Check keeps torque off. Use --character-on-start on to start powered character mode.\n"
 }
 
 pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::Result<Options> {
@@ -290,6 +296,20 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                         ));
                     }
                 };
+            }
+            "--hands-max-arm-degrees" => {
+                let degrees: f64 =
+                    require_value(&mut arguments, &argument)?
+                        .parse()
+                        .map_err(|_| {
+                            crate::Error::InvalidArgument("Invalid Hands arm maximum".into())
+                        })?;
+                if !degrees.is_finite() || !(0.0..=5.0).contains(&degrees) {
+                    return Err(crate::Error::InvalidArgument(
+                        "Hands arm maximum must be between 0 and 5 degrees".into(),
+                    ));
+                }
+                options.hands_max_arm_degrees = degrees;
             }
             "--port" => options.port = require_value(&mut arguments, &argument)?,
             "--baud-rate" => {
@@ -460,6 +480,11 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
         && matches!(options.operation, Operation::Check | Operation::Serve)
         && options.calibration_file.as_os_str().is_empty()
     {
+        if options.hardware == crate::HardwareVersion::V2 {
+            options.calibration_file =
+                crate::hardware::resource_root()?.join(&profile.joint_profile);
+            return Ok(options);
+        }
         let home = env::var_os("HOME")
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {

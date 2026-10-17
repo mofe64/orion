@@ -51,3 +51,14 @@ def test_relative_motion_returns_exactly_to_anchor():
     assert trajectory.space == "anchor_relative"
     assert trajectory.points[-1].positions == trajectory.points[0].positions
     assert 0.0 <= trajectory.amplitude_scale <= 1.0
+
+
+def test_v2_compiler_uses_the_shared_rest_frame_profile():
+    from orion_motion.compiled_trajectory import PROJECT_ROOT
+    from orion_motion.calibration import load_calibrated_joint_ranges
+    trajectory = compile_trajectory('return_home', 'rest', hardware='v2')
+    profile = load_calibrated_joint_ranges(PROJECT_ROOT / 'hardware/profiles/v2-joints.json')
+    assert trajectory.points[0].positions == (0.0,) * 5
+    expected = {r.name: (r.lower_rad, r.upper_rad) for r in profile}
+    for joint in trajectory.joint_ranges:
+        assert (joint.lower_rad, joint.upper_rad) == pytest.approx(expected[joint.name])

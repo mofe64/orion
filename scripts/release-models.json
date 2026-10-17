@@ -1,0 +1,52 @@
+[
+  {
+    "url": "https://raw.githubusercontent.com/mofe64/orion/4452130f8090374b37cbe166dbf2ae4d64a242f7/voice/models/verifier/config.json",
+    "path": "voice/models/verifier/config.json",
+    "sha256": "3203855a6054afcadab19aa29946a275e2f0fdbea875d6e8d814bae0387bf8e7"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/mofe64/orion/4452130f8090374b37cbe166dbf2ae4d64a242f7/voice/models/verifier/embedding_model.onnx",
+    "path": "voice/models/verifier/embedding_model.onnx",
+    "sha256": "70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/mofe64/orion/4452130f8090374b37cbe166dbf2ae4d64a242f7/voice/models/verifier/hey_orion_verifier.onnx",
+    "path": "voice/models/verifier/hey_orion_verifier.onnx",
+    "sha256": "3369d306cce287b7feadc44aa5f207d72087247afd1aed68cf7d8eff947e620c"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/mofe64/orion/4452130f8090374b37cbe166dbf2ae4d64a242f7/voice/models/verifier/melspectrogram.onnx",
+    "path": "voice/models/verifier/melspectrogram.onnx",
+    "sha256": "ba2b0e0f8b7b875369a2c89cb13360ff53bac436f2895cced9f479fa65eb176f"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/mofe64/orion/4452130f8090374b37cbe166dbf2ae4d64a242f7/voice/models/wake/hey_orion_reference.rpw",
+    "path": "voice/models/wake/hey_orion_reference.rpw",
+    "sha256": "a60fea02db3521403232cb840265a03193120183eb1a2369146dea5f28f17795"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/mofe64/orion/4452130f8090374b37cbe166dbf2ae4d64a242f7/voice/models/wake/hey_orion_trained_080.rpw",
+    "path": "voice/models/wake/hey_orion_trained_080.rpw",
+    "sha256": "48ab008693f9b279d8b143e65aead2123082951bd4e6c7490be0880679827896"
+  },
+  {
+    "url": "https://github.com/mofe64/orion/releases/download/orion-models-v1/model.ncnn.bin",
+    "path": "vision/models/yolo11n_ncnn_model/model.ncnn.bin",
+    "sha256": "e03a54d4028ca4c52ad5676ceebe4f5e8df7accf9f00187ec00f2aa4c91e8225"
+  },
+  {
+    "url": "https://github.com/mofe64/orion/releases/download/orion-models-v1/model.ncnn.param",
+    "path": "vision/models/yolo11n_ncnn_model/model.ncnn.param",
+    "sha256": "1f2df69cee32d80ed897bf67da1d945b29a70b6bf068594e720c990b445a77d9"
+  },
+  {
+    "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+    "path": "vision/models/face_detection_yunet_2023mar.onnx",
+    "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+  },
+  {
+    "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/47534e27c9851bb1128ccc0102f1145e27f23f98/models/palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx",
+    "path": "vision/models/palm_detection_mediapipe_2023feb.onnx",
+    "sha256": "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c"
+  }
+]

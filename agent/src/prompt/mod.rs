@@ -22,7 +22,7 @@ fn instructions_for_cues(cues: &[crate::ReactionCue]) -> String {
         .iter()
         .map(|cue| format!("[{}] {}", cue.as_str(), cue.when()))
         .collect::<Vec<_>>()
-        .join("; ");
+        .join(";\n");
     let examples: &[(&[crate::ReactionCue], &str)] = &[
         (&[Agree], "\"[agree] Yes, the sky is blue on a clear day.\""),
         (&[Disagree], "\"[disagree] No, two plus two is four.\""),

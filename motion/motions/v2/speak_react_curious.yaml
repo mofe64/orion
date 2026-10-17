@@ -1,16 +1,21 @@
 format_version: 2
 motion:
   name: speak_react_curious
-  description: A head tilt with a slight lean used as a spoken curious reaction.
+  description: Raise the gaze and turn the neck with a slight upright lean.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.20, head_pitch_joint: 0.10, base_yaw_joint: 0.09, shoulder_pitch_joint: 0.05}
-      duration: 0.34
-      arrival: settle
-      hold: 0.30
-      marker: curious
-    - offsets: {}
-      duration: 0.40
-      arrival: settle
+  - offsets:
+      head_roll_joint: 0.2
+      head_pitch_joint: -0.16
+      base_yaw_joint: 0.06
+      shoulder_pitch_joint: -0.015
+      elbow_pitch_joint: -0.02
+    duration: 0.34
+    arrival: settle
+    hold: 0.3
+    marker: curious
+  - offsets: {}
+    duration: 0.4
+    arrival: settle

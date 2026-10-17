@@ -12,12 +12,25 @@ import json
 import math
 import os
 import subprocess
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+def _resource_root() -> Path:
+    configured = os.environ.get("ORION_PROJECT_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    # A release venv lives inside its release. A separate test/diagnostic venv
+    # can instead run from a checkout. Neither layout resembles site-packages.
+    for root in (*Path(__file__).resolve().parents, Path.cwd(), *Path.cwd().parents):
+        if (root / "hardware/profiles/v2.json").is_file():
+            return root
+    return Path.cwd()
+
+
+PROJECT_ROOT = _resource_root()
 RUNTIME_MANIFEST = PROJECT_ROOT / "runtime" / "Cargo.toml"
 DEFAULT_POSE_FILE = PROJECT_ROOT / "motion" / "config" / "v1" / "poses.yaml"
 DEFAULT_MOTIONS_DIRECTORY = PROJECT_ROOT / "motion" / "motions" / "v1"
@@ -96,19 +109,20 @@ def _compiler_command() -> list[str]:
     configured = os.environ.get("ORION_TRAJECTORY_COMPILER")
     if configured:
         return [configured]
-    binary = PROJECT_ROOT / "runtime" / "target" / "debug" / "orion-trajectory"
-    if binary.is_file():
+    if (PROJECT_ROOT / "release.json").is_file():
+        binary = PROJECT_ROOT / "runtime/target/release/orion-trajectory"
+        if not binary.is_file():
+            raise TrajectoryCompilerError("Installed release is missing its prepared trajectory compiler.")
         return [str(binary)]
-    return [
-        "cargo",
-        "run",
-        "--quiet",
-        "--manifest-path",
-        str(RUNTIME_MANIFEST),
-        "--bin",
-        "orion-trajectory",
-        "--",
-    ]
+    if RUNTIME_MANIFEST.is_file():
+        # Cargo reuses a current binary but rebuilds after source changes. A
+        # stale release/debug executable must not silently select another frame.
+        return ["cargo", "run", "--quiet", "--locked", "--manifest-path", str(RUNTIME_MANIFEST),
+                "--bin", "orion-trajectory", "--"]
+    installed = shutil.which("orion-trajectory")
+    if installed:
+        return [installed]
+    raise TrajectoryCompilerError("Cannot locate the Rust compiler; set ORION_TRAJECTORY_COMPILER or run from an Orion checkout/release.")
 
 
 def compile_trajectory(
@@ -116,15 +130,22 @@ def compile_trajectory(
     start_pose_name: str,
     *,
     anchor_pose_name: str | None = None,
-    pose_file: Path = DEFAULT_POSE_FILE,
-    motions_directory: Path = DEFAULT_MOTIONS_DIRECTORY,
-    calibration_file: Path = DEFAULT_CALIBRATION_FILE,
+    pose_file: Path | None = None,
+    motions_directory: Path | None = None,
+    calibration_file: Path | None = None,
+    hardware: str = "v1",
     control_rate_hz: float = DEFAULT_CONTROL_RATE_HZ,
 ) -> CompiledTrajectory:
     """Ask Rust to compile one named v2 motion from a named start pose."""
 
+    if hardware not in ("v1", "v2"):
+        raise TrajectoryCompilerError("Hardware must be v1 or v2.")
+    pose_file = pose_file or PROJECT_ROOT / f"motion/config/{hardware}/poses.yaml"
+    motions_directory = motions_directory or PROJECT_ROOT / f"motion/motions/{hardware}"
+    calibration_file = calibration_file or (PROJECT_ROOT / "hardware/profiles/v2-joints.json" if hardware == "v2" else DEFAULT_CALIBRATION_FILE)
     command = [
         *_compiler_command(),
+        "--hardware", hardware,
         "--motion",
         motion_name,
         "--start-pose",

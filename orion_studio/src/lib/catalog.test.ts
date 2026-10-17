@@ -71,16 +71,18 @@ describe("owner library presentation", () => {
     const names = Object.values(catalog.poses).filter(isOwnerPose).map(pose => pose.name);
     expect(names).toContain("home");
     expect(names).toContain("look_left");
-    for (const name of ["zero_reference", "rest", "look_left_anticipation", "look_left_lean", "look_left_overshoot"]) {
+    for (const name of ["rest", "look_left_anticipation", "look_left_lean", "look_left_overshoot"]) {
       expect(names).not.toContain(name);
       expect(catalog.poses[name]).toBeDefined();
     }
+    if (hardware === "v1") expect(catalog.poses.zero_reference).toBeDefined();
+    else expect(catalog.poses.zero_reference).toBeUndefined();
     expect(isOwnerPose({ ...catalog.poses.home, name: "my_lean", source: "user", tags: [] })).toBe(true);
     expect(isOwnerPose({ ...catalog.poses.home, owner_scene: "my_scene" })).toBe(false);
   });
   it("keeps engineering records intact and only supplies approved built-in copy", () => {
     const home = catalogs.v2.poses.home;
-    expect(home.description).toContain("calibration zero");
+    expect(home.description).toContain("mechanical rest");
     expect(ownerAssetDescription("pose", home)).toBe("A compact, forward-facing pose.");
     expect(ownerAssetDescription("pose", { ...home, name: "unknown_reference" })).toBe("");
     expect(ownerAssetDescription("pose", { ...home, source: "user", description: "My reading pose." })).toBe("My reading pose.");

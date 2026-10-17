@@ -1,427 +1,132 @@
 # Orion system architecture
 
-Orion's Raspberry Pi runs microphone capture, speech recognition, speech
-synthesis, the agent coordinator, and the hardware runtime. Studio connects to
-the Pi for editing, controls, settings, and observation. Codex App Server runs
-on the Pi, while Codex model inference and web search use online services.
+The Pi runs hardware control, camera processing, speech recognition, speech synthesis and the voice host. Studio provides remote controls and editing. Codex inference and web search use online services.
 
 ## System boundary
 
 ```mermaid
 flowchart LR
-    studio[Studio desktop app]
-    cloud[Online Codex inference and search]
+    studio[Studio]
+    cloud[Codex inference and search]
     subgraph pi[Raspberry Pi]
-        listener[Listener: Rustpotter and Silero]
-        host[Orion service: coordinator and agent]
-        asr[Qwen ASR worker]
-        tts[Piper Alba TTS worker]
+        listener[Microphone listener]
+        host[Service: coordinator and agent]
+        asr[Qwen worker]
+        tts[Piper worker]
         codex[Codex App Server]
         gateway[Authenticated gateway]
-        runtime[oriond: movement, light and playback]
-        vision[orion-vision: camera capture]
-        gateway <-->|Private Unix HTTP socket| vision
-        listener <-->|Local WebSocket| host
-        host <-->|Private pipes| asr
-        host <-->|Private pipes| tts
-        host <-->|Private pipes| codex
-        host -->|Local HTTP: speech and lamp requests| gateway
-        gateway <-->|Local service RPC| host
-        gateway <-->|Private Unix socket| runtime
-        listener -->|Voice session events| runtime
+        runtime[oriond]
+        vision[Camera and vision]
+        listener <--> host
+        host <--> asr
+        host <--> tts
+        host <--> codex
+        host <--> gateway
+        gateway <--> runtime
+        gateway <--> vision
+        listener --> runtime
+        vision --> runtime
     end
-    studio <-->|Authenticated HTTP| gateway
+    studio <--> gateway
     codex <--> cloud
 ```
 
-The Pi uses four core systemd services and a camera service on profiles with
-`camera.enabled`. Their processes have separate responsibilities
-so model execution and network waits stay outside the 50 Hz movement loop.
-
-| Service | Responsibility |
-| --- | --- |
-| `oriond` | Servos, movement completion, character animation, RGBW output and speaker playback |
-| `orion-listener` | Microphone capture, Rustpotter wake candidates, Silero speech boundaries and voice-session state |
-| `orion-voice-stack` | Runs `orion-service`, which owns the coordinator, agent, speech workers and saved voice settings |
-| `orion-studio-gateway` | Authenticates requests, manages asset publication, forwards service controls and spools response audio |
-| `orion-vision` (camera profiles) | Owns camera capture and serves in-memory JPEGs and observations on `/tmp/orion-vision.sock` |
-
-The hardware and MuJoCo backends use the same movement lifecycle and trajectory
-compiler. Each backend supplies its own joint feedback. See the
-[motion architecture](motion-architecture.md) for execution details.
+Model execution and network waits stay outside the 50 Hz movement loop. Each process owns a specific resource or request boundary.
 
 ## Authority boundaries
 
+| Service | Ownership |
+| --- | --- |
+| `oriond` | Servo bus, light output, speaker playback and movement lifecycle |
+| `orion-listener` | Microphone capture, wake candidates and voice sessions |
+| `orion-voice-stack` | Coordinator, agent and speech workers |
+| `orion-studio-gateway` | External authentication, asset publication and local request forwarding |
+| `orion-vision` | Camera capture, in-memory images and local detections |
+
 ### Hardware runtime
 
-`oriond` owns the servo bus, RGBW device and audio playback (the ReSpeaker HAT on V1, the XVF3800 on V2). It applies
-calibration, compiles trajectories, checks measured movement completion, and
-coordinates scenes, speech animation, idle behavior, rest and scheduled alerts. Clients
-submit named poses, motions, scenes or other supported operations. Every movement
-passes through the runtime's limits and ownership checks.
+Only the runtime writes servo goals. It checks joint limits, compiles trajectories and measures completion. Scenes, speech, gaze and idle planners share its ownership rules.
+
+Hardware and MuJoCo implement the same driver interface. They receive the same compiled samples. Their feedback sources differ.
 
 ### Camera and vision
 
-On V2, `orion-vision` owns the camera independently of movement and speech.
-It retains one latest RGB frame and serves JPEGs over a user-only Unix HTTP
-socket. Encoding is shared across stream viewers and limited to 15 fps. Capture
-metadata and privacy control continue without viewers, while RGB conversion
-follows viewing demand. No captured frame is written to disk. One inference
-thread runs YuNet on the latest lores capture, computes camera rays, and asks
-`oriond` for capture-time base bearings. Tracked targets reach motion only
-through runtime `gaze`, preserving calibration, the compiler, motion priority
-and Stop latches.
+Vision retains the latest frame in memory. Camera callbacks do not encode JPEGs or run models. One bounded worker schedules face, palm and object work.
 
-Explicit `aim_light` requests follow agent → coordinator → gateway → vision
-lookup → runtime planning. The single inference worker schedules YuNet, palms and YOLO11n exclusively;
-YOLO runs in a child process so NCNN cannot hold capture's Python GIL.
-Capture and its stall watchdog continue independently. Before inference, vision
-reads the capture-time camera transform from `camera-rays`. This preserves
-the measured pose even when inference outlasts the one-second pose history.
-Detected centres become rays and intersect the base-frame desk plane at `z = 0`.
-A single camera cannot prove that an object is actually on that plane.
+Capture-time geometry converts camera rays into base-frame bearings. Gaze requests pass through runtime compilation. Vision cannot bypass Stop, rest, foreground ownership or joint limits.
 
-The coordinator admits this explicit lookup only after ASR, before final speech.
-A shared resource lock excludes ASR, TTS and playback, including a subsequent
-turn while an interrupted response finishes its lookup. The runtime grants the
-confirmed thinking session a sixty-second `vision_begin` lease, revoked by
-phase changes, expiry or `vision_end`. The gateway has one 58-second budget,
-including 14 seconds reserved for recovery and closing the voice interval;
-the coordinator retains the resource lock for up to 65 seconds. A new lookup
-is admitted only when its full 24-second allowance remains. Runtime `End`
-accepts failed scans immediately and limits its return lease to eight seconds.
-Cleanup errors are logged without replacing the original failure. If recovery
-replies are lost, the gateway keeps voice ownership through the return lease.
-Background object work never inherits
-this permission. A general `/find` request is refused while any voice owner exists.
+Camera privacy closes capture and clears image buffers. Tracking Off stops background inference but permits plain viewing. Other tracking modes select observations or following behavior.
 
-The runtime owns the search across three authored `look_around` stops. It saves
-the previous anchor, suppresses gaze and idle reactions, and compiles each
-movement against calibration and the coupled comfort envelope. The gateway
-checks camera privacy, tracking changes, voice ownership and measured movement
-completion between steps. Several matching objects return `ambiguous` for the
-agent to clarify. No match returns to the previous anchor. Invalid desk rays or
-unreachable points return `clamped` with no applied aim.
+Gateway viewing requires runtime permission. A cyan ring band indicates active viewing. Rest blocks streams and snapshots. Detection polling cannot create viewing permission.
 
-Only a completed aim becomes the held lamp anchor; face gaze and visual speaker
-attention then leave that work spot alone. Speech and idle clips use the held
-anchor, with comfort fitting active. Explicit movement, character restart or
-selecting Idle mode releases that attention hold. Gaze resume and confirmed
-wake after a soft Stop preserve the work hold. Stop, rest, speech and foreground controls
-revoke an in-progress search; its old owner cannot restart it. Search, aim,
-desk-plane accuracy and beam alignment remain lamp-unverified.
+Explicit object aiming follows agent, coordinator, gateway, vision and runtime planning. A voice resource lock separates object lookup from speech inference and playback. Search movement uses runtime-owned poses and completion checks.
 
-Explicit visual questions use the [look tool contract](voice-architecture.md#look-tool-contract):
-agent → coordinator → authenticated gateway snapshot → Codex image input.
-That contract defines authorization, image lifetime, transport and failure behaviour.
+An aim can return `aimed`, `clamped`, `not_found` or `ambiguous`. Ambiguous results require a target choice. Desk rays assume a base-frame plane; they cannot establish an object's actual support surface.
 
-Viewer previews pair completed detections with RGB from the same capture. The
-authenticated gateway proxies `/detections` only with a healthy viewer lease;
-polling cannot create one. Studio matches exact timestamp strings and removes
-boxes at 300 ms, including request delay in their age. This metadata remains in
-memory and never enters stored snapshots or logs. In Tracking Off mode, preview
-JPEGs use the latest plain capture instead of waiting for inference.
+Explicit visual questions follow the [look contract](voice-architecture.md#look-tool-contract). Image access is separate from autonomous observations.
 
-Vision observes the saved camera privacy setting outside camera callbacks.
-Disabling it purges frame/JPEG buffers and closes capture within one second;
-existing streams end and every endpoint returns `503 camera_off`. Capture
-stamps use the exposure midpoint in `CLOCK_BOOTTIME`, not host delivery time
-or `CLOCK_MONOTONIC`. See [vision setup and interfaces](../vision/README.md).
+### Listener and voice host
 
-Studio's Home has an exclusive Tracking Off / Idle / Faces / Hands control beside
-Listening. The gateway saves it on the Pi; Vision observes it outside camera
-callbacks. Every mode change invalidates pending and in-flight detector results.
-Off stops background inference and lores copies; an explicit object lookup can
-still request a frame. Idle and Faces use YuNet. Hands selects the pinned
-MediaPipe palm model at five frames per second on that same worker, with no face
-detector or background YOLO. Camera privacy closes capture in every mode; the saved choice
-survives. Camera viewing keeps the same privacy and indicator requirements.
+The listener owns audio capture and speech boundaries. Acoustic verification gates wake feedback. The coordinator confirms complete command text before an agent request.
 
-Idle publishes face and object observations for enabled autonomous behaviours
-without sending ambient face-following targets. Mutual gaze, arrival notice,
-object-directed idle glances, new-object peeks and presence deferral retain
-their existing opt-in settings, budgets and runtime priority gates. A confirmed
-conversation can select and follow one speaker, including between replies;
-speech gestures retain motion priority. Idle requires a verified live conversation
-for each follow update and never replaces a missing speaker with a bystander.
-When the conversation ends or cannot be verified, following clears and passive
-observation continues. It does not enable torque, wake a resting lamp or clear Stop.
+The service host preserves the agent across speech-worker reloads. Workers use private pipes. The coordinator uploads reply audio through the local gateway and waits for runtime playback completion.
 
-Hands enters an authored desk pose, follows a stable change in the work centroid
-and restores the previous character anchor when it leaves. Runtime owns these
-compiled movements and their shared curiosity budget. Idles and speech use the
-work anchor with coupled comfort protection. Neither selecting Hands nor hand
-presence wakes the lamp or clears Stop. See [Hands ownership and thresholds](motion-architecture.md#hands-following).
+### Gateway and Studio
 
-Idle and Faces expose `/speaker` for confirmed-wake attention. Off and Hands
-return `503 tracking_off`; V2 confirmed wakes then produce no visual turn or
-scan, and conversation gestures use the held anchor.
-V1 retains its acoustic side turn. Tracking does not change lamp routine mode
-or the automatic-rest timeout. Opt-in [presence deferral](motion-architecture.md#presence-defers-automatic-rest)
-can inhibit automatic rest while fresh face or hand observations continue. See [wake direction evidence](voice-architecture.md#direction-evidence)
-and [preference defaults](configuration.md#camera-privacy-and-profile).
+The gateway uses bearer-token authentication. It accepts a fixed set of operations rather than arbitrary shell or servo commands. It forwards requests over local sockets or the service interface.
 
-The service's CPU quota applies to all its threads, including libcamera request
-completion and camera callbacks. Its ceiling allows capture to proceed while
-Nice gives voice work scheduling priority; quota throttling can suspend camera
-threads and stall capture silently. A watchdog reopens the source after a
-capture-publication gap, invalidating callbacks from the closed source. Health
-retains the restart count across camera toggles. See [vision operating limits](../vision/README.md#service-setup-and-development).
-The ten-minute camera soak, privacy toggle, Off/Faces modes, steady two-person
-gaze and matched ASR comparison passed the reported lamp checks. The soak did
-not require a watchdog restart. Recorded evidence and remaining optical and
-recovery checks are in the [vision acceptance procedure](../vision/README.md#face-tracking).
-
-### Listener and voice service
-
-The listener keeps microphone capture open unless the saved mute setting disables
-it. Rustpotter detects a possible wake phrase, registers a session, and plays the
-candidate chime and light pulse. The coordinator verifies a short recording with Qwen while the
-listener continues recording the command. Silero decides when speech has ended.
-
-`orion-service` owns one agent executor and a restartable voice coordinator. The
-coordinator sends inference jobs to separate ASR and TTS workers, calls the agent
-through Rust channels, uploads reply audio, and waits for playback completion.
-Keeping the agent alive across an idle coordinator restart preserves the
-provider thread. Restarting the service replaces that thread and recovers text
-from the saved 24-hour logical conversation. The
-[history and retirement policy](voice-architecture.md#agent-conversation-and-memory)
-defines grouping, false-wake filtering and memory extraction.
-
-A confirmed command reaches Codex as text. The available agent tools support web
-search, explicit memory operations, validated lamp and mode changes, sleep, timers
-and alarms. Character motion
-comes from runtime behavior or explicit user controls. See the
-[voice architecture](voice-architecture.md) for capture, conversation and playback
-ordering.
-
-### Gateway
-
-The gateway exposes versioned operations for assets, movement, lighting, speech,
-settings and status. Hardware requests use `/tmp/oriond.sock`. Voice settings and
-observation use the service's private loopback RPC connection. The onboard
-coordinator also reaches the gateway over loopback to upload speech and apply
-lamp changes.
-
-Remote access uses a bearer token over HTTP and assumes a trusted local network.
-The listener restricts its processing connection to loopback; authenticated
-control clients can still inspect or change microphone mute. The service's
-private credentials stay on the Pi.
-
-### Studio
-
-Studio owns asset browsing, editing, previews and its connection to the gateway.
-It stores desktop pairing credentials and local UI preferences. Voice settings,
-agent personality, memories and microphone mute are saved on the Pi. Studio polls
-bounded event snapshots for transcripts, model information and timing.
-
-Editing a draft changes the preview. Publishing or choosing an explicit robot
-control sends a request to the Pi. The connected runtime compiles movement
-previews against its calibration. Static model previews do not show live joint
-telemetry.
+Studio stores local drafts and desktop pairing. The Pi stores published user assets and operating settings. Closing Studio leaves Pi services running.
 
 ## Assets and installed releases
 
-The computer prepares runtime, gateway, listener and voice-service code from one
-Git commit in a temporary folder. A local Ubuntu 24.04 ARM64 Docker environment
-builds production binaries and Python wheels and runs software tests. The Pi's
-OS, architecture, glibc and system Python are checked before preparation and
-again before installation. Compiler and package caches stay on the computer.
+The installer separates immutable release programs, editable user assets and shared models. A release switch updates programs, built-in assets and service configuration together.
 
-The Pi verifies a checksummed bundle, checks installation space and installs
-only its prebuilt wheels with source builds, package registry access and caching
-disabled. Python environments are created at their final release paths. Camera
-environments see the provisioned system `libcamera` and `pykms` bindings.
-For camera releases, preparation downloads the pinned YuNet model into
-`vision/models/` and verifies its SHA-256 before activation. The vision unit uses
-that release-local model. Readiness rejects unavailable V2 gaze and vision
-detection errors and requires an inference when the camera is enabled; a saved
-camera-off preference remains valid.
-Transfer files and wheels are temporary; active and rollback releases keep their
-installed dependencies. Shared model files and native inference tools live under
-`~/.local/share/orion/voice-stack/`.
+The installer verifies archive and payload checksums. Virtual environments use the bundled Python and offline wheels. Native package holds preserve camera and Hailo compatibility.
 
-The runtime and gateway keep the existing catalog root, normally
-`/home/mofe/dev/orion`. It contains the calibrated pose library, motion definitions,
-scenes, audio cues and user assets. Activation updates built-in pose, motion and
-scene YAML from the same Git commit as the executables. Calibration remains in
-the Pi user's configuration directory, and user-authored assets remain in their
-separate catalog directories.
-V2 camera geometry uses an explicit `--camera-urdf` path inside the deployed
-release, so an older catalog checkout cannot supply obsolete camera frames.
-
-The installer records managed built-in paths in
-`~/.local/share/orion/voice-stack/catalog-assets.json`. The first update derives
-retired paths from the checkout's tracked YAML; later updates use that inventory.
-It snapshots overwritten and removed files in the service-switch transaction so
-rollback restores both code configuration and YAML. Git HEAD and the index are
-unchanged. Local edits to built-ins are replaced; untracked local assets remain.
-
-User poses, motions and scenes live in `motion/user/poses/<version>/`,
-`motion/motions/<version>/user/` and `scenes/<version>/user/`, with `version`
-selected as `v1` or `v2`. The gateway stages published changes,
-asks `oriond` to validate and reload the catalog, and restores the previous files
-if reload fails. Built-in names cannot be shadowed. Standalone user poses and
-motions use a new name for changed content. Updating or deleting a user scene
-requires the content revision that Studio loaded.
-
-The [quickstart](quickstart.md#deploy-to-the-pi) describes preparation, activation,
-readiness checks and rollback. [Configuration](configuration.md) identifies saved
-settings and the paths that each release manages.
-
-## Runtime state
-
-Movement follows this lifecycle:
-
-```text
-executing -> settling -> completed
-                      \-> timed_out
-executing/settling ----> cancelled
-```
-
-Scenes coordinate movement, lighting and audio under one monotonic clock. They
-finish after their dispatched work reaches a terminal result. Runtime status
-keeps the active movement and most recent terminal movement. Run IDs and retained
-results reset when the daemon restarts.
-
-Daemon startup enables character mode by default: it configures the servos,
-enables holding torque and moves home. Measured arrival establishes an anchor
-for idle and speech animation. Foreground motion or scenes take priority over
-speech, listening or thinking reactions, and idle. Repeated thinking events keep
-the existing gesture running; a change from transcription to agent processing
-does not replay its opening tilt.
-
-Studio's **Stop character** cancels owned work, returns home and leaves torque
-holding. Character behavior resumes after an explicit start or a daemon restart
-with character mode enabled. `--character-on-start off` starts maintenance mode
-with torque disabled. Microphone mute has its own saved setting.
+Rollback restores the previous release's package versions before restarting its services. It does not reverse servo EEPROM changes. See [release packaging](release-packaging.md).
 
 ## Automatic rest and waking
 
-Idle mode arms the inactivity timer after successful homing. The default interval
-is 30 minutes. Lamp mode keeps the same idle animations and disables automatic
-rest. Selecting idle mode starts a fresh inactivity interval. The selected mode
-survives service restarts and code deployments. Each voice session can reset the
-deadline once through an accepted
-Qwen wake confirmation. Candidates, rejected wakes and ordinary animation do
-not reset it.
+Idle mode starts an inactivity deadline after successful homing. Lamp mode keeps Orion awake. Confirmed voice sessions refresh the deadline once. Unconfirmed candidates do not refresh it.
 
-An active confirmed conversation, including the follow-up listening window,
-defers rest. Foreground movement, scenes, queued or playing speech, and speech
-settling also defer it. Once that work finishes, an expired deadline can start
-rest immediately. Background idle and unconfirmed thinking can yield to rest.
+Conversations, foreground motion, scenes and speech can delay descent. Optional fresh presence can also defer automatic rest. An expired deadline remains expired while work delays it.
 
-The rest coordinator tracks the descent by movement run ID and releases torque
-only after measured completion. A timeout, cancellation, missing result or failed
-torque release enters `fault`. A failed home movement during waking also enters
-`fault`. Automatic waking and voice reply playback then await explicit recovery.
+```text
+awake → going_to_rest → resting
+  ↑                        │ confirmed wake
+  └──────── waking ─────────┘
 
-At mechanical rest, a wake candidate plays the acknowledgement chime and a
-brief light pulse while the body remains still. Qwen confirmation starts the
-return home. If confirmation arrives during descent, Orion finishes descending and then
-returns home while retaining torque. Capture continues during both movements.
-After home completes, the runtime applies the latest listening or thinking state
-and checks any direction evidence before turning toward the speaker.
+failed descent, wake or torque release → fault
+```
 
-Studio's **Go to rest** starts this sequence immediately. The `go_to_sleep` agent
-tool queues rest behind its spoken acknowledgement and closes the voice session
-without a follow-up window. Explicit sleep works in either mode and keeps the
-selected mode for the next wake. Explicit Stop,
-`disable`, and maintenance startup disable automatic waking; an explicit character
-start rearms it. The lower-level `goto rest` command moves the body and requires
-a separate torque-release command after verified arrival. See
-[confirmed waking](voice-architecture.md#confirmed-waking) for reply ordering.
+The rest coordinator tracks descent by movement run ID. It releases torque only after measured completion. Timeout, cancellation or torque-release failure enters `fault`.
+
+A confirmed wake at rest starts home. Confirmation during descent waits for descent to finish. Capture continues while the body moves. Queued reply playback waits for home and accepted attention movement.
+
+Stop, disable and maintenance startup prevent automatic recovery. Explicit character start rearms it. Presence and camera viewing cannot enable torque or wake the lamp.
+
+Studio's **Go to rest** starts descent immediately. The sleep tool places rest after its acknowledgement and closes the follow-up window. A direct rest pose command needs separate torque release.
 
 ## Timers and alarms
 
-The runtime owns timers, timed reminders and one-time or recurring clock alarms. Once created, they run without
-Studio, Codex or a network connection. Timers use elapsed time while the daemon
-runs; clock alarms use an explicit timestamp. On restart, the runtime reconstructs
-timer deadlines from saved wall-clock times, so an accurate Pi clock matters.
-Recurring rules save selected weekdays, a local `HH:MM` time and the Pi IANA zone.
-Each firing saves its next occurrence atomically. DST spring gaps skip that day;
-autumn folds use the earlier occurrence once. The store caps active alerts at 32
-and total alerts at 64, reserving a next-occurrence slot for recurring creation.
+The runtime owns timers, reminders and one-time or repeating alarms. They continue without Studio or network access. An accurate Pi clock is necessary for scheduled times and restart recovery.
 
-A reminder chimes and speaks through an announcement voice session, waiting for
-active replies to finish. Saying “Hey Orion” during it acknowledges the reminder.
-Without acknowledgement it repeats once after two minutes, then becomes missed.
-After downtime, reminders up to twelve hours late announce their earlier time;
-older reminders become missed. The coordinator acknowledges completed playback
-through `announced`, so a failed delivery does not start the retry clock.
-After dismissal, a labelled alarm speaks its label through the same path.
-Snooze recreates the most recently dismissed ringing alarm or timer as a relative countdown with
-its label and kind, within a two-minute window (default nine minutes, range 1–60).
-Next-conversation reminders live in the agent’s separate reminder store and are
-removed only after the model turn that includes them succeeds.
+Recurring alarms store weekdays, local time and the Pi time zone. Spring clock gaps skip the occurrence. Autumn repeated times use the earlier occurrence once.
 
-Alarms can request a morning briefing after dismissal. The persisted dismissal notice uses the announcement queue; the coordinator starts an agent turn only when no reply is active. The agent reads weather, today’s alerts and the to-do list through tools. Weather location preferences are separate from memory in `weather.json`; fixed Open-Meteo requests use a five-second timeout.
+The store permits 32 active alert slots and 64 total entries. Recurring creation reserves a slot for its next occurrence. Terminal entries can be removed when the store reaches capacity.
 
-The runtime scheduler also owns sunrise eligibility and light routine deadlines. Manual lamp programs interpolate brightness and RGBW using monotonic time; scenes/speech retain foreground ownership. Ordinary fades remain masked during rest; sunrise alone may illuminate while mechanically resting. Wind-down enters the existing rest lifecycle after foreground activity ends. Focus uses a persisted timer and a temporary mode override, restoring the saved mode after ringing. See [runtime light controls](../runtime/README.md) for bounds, colors, cancellation and restart behaviour.
+Ringing interrupts scene audio and speech without enabling torque. “Hey Orion” dismisses an active alert locally. Muted microphones cannot provide voice dismissal. Studio can stop the sound.
 
-A due alert interrupts scene audio and speech, then repeats the selected sound
-through the normal audio device. The default two-tone signal includes short gaps
-to help the microphone hear the wake phrase. The two recorded alternatives use
-[prepared PCM embedded in the runtime](../audio/README.md#alarm-and-timer-sounds),
-so the motion loop does no file reads or audio decoding. An alert can ring at rest
-without enabling torque or moving home. Ringing defers automatic rest while Orion
-is awake.
+Sound playback has a five-minute limit. Overlapping alerts share the first ringing group's sound and deadline. Saved sound changes apply to later groups.
 
-Studio **Settings → Voice and sounds** saves separate alarm and timer defaults on
-the Pi; the agent exposes the same choice through `set_alert_sound`. The runtime chooses a sound when an alert starts, including alerts scheduled
-before the setting changed. Overlapping alerts share the sound chosen by the first
-alert to ring. Changing a default while ringing applies to a later alert group.
+Reminders use idle-only spoken announcements. Completion acknowledgement prevents repeated delivery after a transport retry. Next-conversation reminders use the agent store and clear only after completed reply playback.
 
-The listener checks alert status every 200 ms. While an alert rings, Rustpotter
-runs even if a conversation was playing. Saying “Hey Orion” dismisses the alert
-locally and ends that interaction; a later wake can start a conversation. This
-dismissal does not require Qwen confirmation. Muting the microphone prevents voice
-dismissal; Studio also provides **Stop sound**. The runtime stops playback after
-five minutes. Alerts that overlap share that limit rather than extending it.
-
-Mode, pending alerts and recent results are saved atomically in the
-[routines file](configuration.md#saved-files). Sound preferences use its companion
-`routines.sounds.json`, keeping the alert file compatible with older releases.
-Before ringing, the runtime saves the selected sound with its ringing deadline;
-a restart reuses that sound only when the saved deadline matches the alert.
-It resumes playback for the remaining time. Alerts missed by five minutes or more are marked
-missed. A shorter delay uses the remainder of the original five-minute window.
-Playback failures appear in routine status. The scheduler accepts at most 16
-active alerts and retains up to 32 recent entries.
+Sunrise, wind-down and focus use the runtime scheduler. Foreground scenes and speech keep output priority. Sunrise can illuminate at mechanical rest without moving the body.
 
 ## Light and rest status
 
-Descent freezes the visible light frame and fades it to black over one second.
-The light-device wrapper then suppresses output while descending, resting or in
-a rest fault. Stored lamp preferences survive. Waking releases the output gate
-so expressive lighting can resume.
+Descent fades the visible light to black. Rest suppresses ordinary output while retaining saved lamp preferences. Waking releases that suppression.
 
-`/api/v2/status` reports rest as `disabled`, `awake`, `going_to_rest`, `resting`,
-`waking` or `fault`. It also includes the timeout, last accepted confirmation,
-remaining time, tracked movement, effective light power and any transition error.
-Remaining time can be zero while active work defers rest. Studio uses these fields
-to show rest progress and the lamp's effective power.
+Status reports `disabled`, `awake`, `going_to_rest`, `resting`, `waking` or `fault`. It includes the tracked movement, deadline and failure reason. Remaining time can be zero while active work delays rest.
 
-## Validation limits
-
-Component and daemon tests cover timing, session ownership, measured completion
-and injected failures. The deterministic driver follows commanded positions to
-exercise software behavior. Native MuJoCo adds physics; its rest test includes a
-known arm/base contact failure that prevents the shoulder reaching rest and
-therefore keeps torque enabled.
-
-Physical checks establish whether the assembled robot reaches supported rest,
-returns home smoothly, retains speech captured while waking, and plays clear
-audio. Microphone direction, echo and cable clearance also require the robot.
-See the [runtime tests](../runtime/README.md#build-and-test) and
-[hardware setup](../hardware/servo_setup/README.md).
-
-## Shopping and to-do storage
-
-The agent owns `lists.json` beside `MEMORY.md`, separate from memory search and
-the runtime scheduler. Items have stable IDs, text and UTC creation times. The
-store locks mutations and atomically replaces the file; removal checks an item
-snapshot and clearing checks the complete list after explicit confirmation.
-Studio calls the private service through the gateway, while voice tools read and
-write the same store. Neither path adds a second scheduler or resets personality
-context.
+See [configuration](configuration.md), [motion architecture](motion-architecture.md) and [voice architecture](voice-architecture.md) for their local contracts.

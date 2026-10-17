@@ -1,100 +1,66 @@
 # Orion
 
-Orion is an expressive robotic lamp. Its Raspberry Pi runs the hardware runtime,
-local speech recognition and synthesis, and the Codex agent coordinator. Studio
-provides scene authoring, robot controls, and voice settings. Speech works with
-Studio closed; Codex inference and web search still require the internet.
+Orion is an expressive robotic lamp. A Raspberry Pi runs motion, camera processing, speech recognition, speech synthesis and the Codex coordinator. Studio provides robot controls, scene editing and settings.
 
-## Start here
+Speech processing runs on the Pi. Codex replies and web search require internet access. Closing Studio does not stop Orion.
 
-1. [Quickstart](docs/quickstart.md): set up a Pi, connect Studio and deploy updates.
-2. [System architecture](docs/system-architecture.md): the processes on the Pi and how they talk.
-3. [How Orion moves](docs/motion-architecture.md): from a request to servo movement.
-4. [Voice architecture](docs/voice-architecture.md): wake word, transcription, agent and reply.
-5. [Hardware versions](docs/hardware-versions.md): V1 and V2 lamps, V2 calibration and centring.
+## First actions
 
-Everything else is in the [documentation index](docs/README.md).
+1. Install Orion with the [Pi quickstart](docs/quickstart.md).
+2. Set servo IDs and joint zero with [hardware setup](docs/hardware-versions.md#calibrate-v2-first).
+3. Connect [Studio](orion_studio/README.md#connect-studio-to-the-pi).
 
-## How a conversation flows
+## System flow
 
 ```text
-microphone ─▶ wake word ─▶ record command ─▶ transcribe ─▶ Codex agent
-                (Rustpotter)  (Silero)         (Qwen)          │
-speaker + movement ◀─ oriond ◀─ gateway ◀─ synthesize reply ◀──┘
-                                             (Piper)
+microphone → wake detection → command recording → speech recognition
+                                                       ↓
+speaker + movement ← oriond ← gateway ← speech synthesis ← Codex
 ```
 
-Everything above runs on the Pi. Only Codex inference and web search go to the
-internet. `oriond` plays the reply, animates the lamp to match the speech, and
-owns the servos and the RGBW light. Studio connects to the Pi's authenticated
-gateway for authoring, controls and settings; closing Studio does not stop the
-lamp.
+The hardware runtime, `oriond`, owns servo writes, light output and audio playback. Other processes send requests through checked interfaces. See [system architecture](docs/system-architecture.md).
 
 ## Repository map
 
-| Path | Responsibility |
+| Directory | Function |
 | --- | --- |
-| `agent/` | Rust conversation runtime, memory/tools, and Codex integration |
-| `history/` | Shared JSON conversation storage and JSONL behaviour journal |
-| `orion-service/` | Pi voice/agent host and Studio remote client |
-| `runtime/` | Rust `oriond` daemon, hardware and MuJoCo backends, lifecycle, scenes, lighting, and playback |
-| `coordinator/` | Reusable Rust voice orchestration, Pi transport, buffering, and playback lifecycle |
-| `speech/` | Qwen speech recognition and Piper speech output on the Pi |
-| `orion_studio/` | Tauri/React desktop application and Pi gateway |
-| `motion/` | Pose and motion assets plus Python consumers of Rust-compiled trajectories |
-| `scenes/` | Versioned multimodal scene documents |
-| `description/` | Neutral Unified Robot Description Format (URDF) model and shared mesh assets |
-| `simulation/mujoco/` | MuJoCo model, playback tools, and simulator checks |
-| `hardware/` | Setup and operating instructions for servos, audio, and lighting |
-| `voice/` | Pi microphone capture, Rustpotter, Silero endpointing, and coordinator transport |
-| `audio/` | Named local audio cues |
-| `docs/` | Cross-system architecture, configuration, animation references, and learning notes |
+| `agent/` | Codex sessions, tools and memory |
+| `history/` | Conversation files and behavior journal |
+| `orion-service/` | Pi service host and Studio client |
+| `coordinator/` | Voice session control and Pi transport |
+| `runtime/` | Hardware control, simulation and playback |
+| `speech/` | Local speech recognition and synthesis |
+| `voice/` | Microphone capture and wake detection |
+| `vision/` | Camera processing and target selection |
+| `orion_studio/` | Desktop application and Pi gateway |
+| `motion/` | Poses, motions and trajectory consumers |
+| `scenes/` | Combined motion, light and audio assets |
+| `description/` | Robot description and meshes |
+| `simulation/mujoco/` | MuJoCo models and tools |
+| `hardware/` | Profiles and hardware setup |
+| `audio/` | Local sound assets |
+| `docs/` | Architecture, references and learning notes |
 
-## Validation
+## Development
 
-Run these from the repository root unless a linked guide says otherwise:
+Each Python component uses uv-managed Python 3.12. Installed releases use `/opt/orion/python`. The system Python does not run Orion components.
 
-```bash
-cargo test --manifest-path orion-service/Cargo.toml
-python3 -m unittest discover -s scripts/tests -v
-cargo test --manifest-path coordinator/Cargo.toml
-cargo test --manifest-path agent/Cargo.toml
-cargo test --manifest-path history/Cargo.toml
-cargo test --manifest-path runtime/Cargo.toml --all-targets
-PYTHONPATH=motion .venv/bin/python -m pytest -q motion/test
-python3 -m unittest discover -s orion_studio/tests -v
+1. Run the Rust runtime tests from the repository root.
 
-cd orion_studio
-pnpm test
-pnpm build
-```
+   ```bash
+   cargo test --manifest-path runtime/Cargo.toml --all-targets --locked
+   ```
 
-Some runtime integration tests expect the repository Python environment at
-`.venv/bin/python`. Model-independent voice-worker tests use the worker's own
-environment; see its [validation instructions](speech/README.md#validation).
-Most Orion environments use Python 3.12; Pi speech uses Python 3.11 for its
-CPU dependencies. Package metadata and setup scripts select the versions.
-The root `.venv` supports workstation simulation. Keep separate environments for Pi
-capture (`voice/.venv`), speech inference (`speech/.venv`), and
-servo setup (`hardware/servo_setup/.venv`). Use `uv sync --locked` for
-packages with a lockfile. The Pi gateway uses system Python. The release preparer creates separate
-environments for capture and inference.
+2. Follow the component READMEs for their dependencies and tests.
 
-## Operating limits
+The [documentation index](docs/README.md) links to build instructions and configuration references.
 
-Speech recognition and synthesis run locally on the Pi. Codex replies and web
-search require internet access. Orion waits for reply playback to finish before
-accepting a follow-up; acoustic echo cancellation and interruption during playback
-are not implemented.
+## Operating constraints
 
-The gateway uses HTTP with a bearer token on a trusted local network. The agent
-can search, manage explicitly requested memories and change the lamp through
-validated tools. Movement remains under the runtime and explicit robot controls.
-See [configuration](docs/configuration.md) for stored settings and credentials.
+The gateway uses a bearer token over HTTP on a trusted local network. A bearer token grants access to its holder. See [connection settings](docs/configuration.md#studio-gateway).
 
-## Safety
+Orion accepts a follow-up after reply playback ends. V2 also accepts verified wake phrases during playback. See [voice interruption](docs/voice-architecture.md#wake-phrase-interruption).
 
-Before powering or moving physical hardware, follow the
-[servo setup guide](hardware/servo_setup/README.md). Software torque
-disable is not an emergency stop. Keep an accessible physical power or torque
-interruption available during hardware work.
+WARNING: Powered joints can pinch fingers. Keep a physical power disconnect accessible during hardware work.
+
+1. Follow [hardware setup](docs/hardware-versions.md#calibrate-v2-first) before operating powered joints.

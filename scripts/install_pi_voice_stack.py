@@ -9,6 +9,7 @@ from pathlib import Path
 import pwd
 import re
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
@@ -105,7 +106,7 @@ class System:
         self.run('sudo', 'systemctl', 'daemon-reload')
 
     def write(self, path, data, mode):
-        if not str(path).startswith('/etc/'):
+        if not str(path).startswith(('/etc/', '/usr/local/')):
             # `install -D` would create missing parents as root, and a
             # root-owned ~/.local/share/orion/studio-service stops orion-service
             # from making its own directory private.
@@ -115,7 +116,7 @@ class System:
             # install to a sibling followed by rename keeps readers from seeing partial files.
             temporary = path.with_name(path.name + '.orion-installing')
             self.run('sudo', 'install', '-D', '-m', f'{mode:o}', source.name, temporary)
-            if not str(path).startswith('/etc/'):
+            if not str(path).startswith(('/etc/', '/usr/local/')):
                 self.run('sudo', 'chown', f'{os.getuid()}:{os.getgid()}', temporary)
             self.run('sudo', 'mv', '-f', temporary, path)
 
@@ -447,13 +448,15 @@ def snapshot(root, files, system):
     return folder, data
 
 
-def restore(folder, data, system):
+def restore(folder, data, system, before_restore=None):
     # A new runtime may be holding torque after partial activation.
     stop_order = tuple(name for name in MANAGED_STOP_ORDER if name in data['services'])
     for name in stop_order:
         if name == 'oriond' and system.state(name)['active']:
             system.rest_runtime()
         system.stop(name)
+    if before_restore is not None:
+        before_restore(folder, data)
     # Disable newly-created units while their definitions still exist, removing wants links.
     for name, old in data['services'].items():
         if old['enabled'] == 'not-found' and system.state(name)['enabled'] != 'not-found':
@@ -483,7 +486,7 @@ def restore(folder, data, system):
     atomic_json(folder / 'state.json', data)
 
 
-def activate(root, release, home, files, system):
+def activate(root, release, home, files, system, commissioning=False, before_restore=None):
     installed = root / 'installation.json'
     pending = root / 'pending-installation.json'
     if pending.exists():
@@ -496,6 +499,10 @@ def activate(root, release, home, files, system):
         raise RuntimeError('Stop the old hardware services before replacing the lamp; no services were changed')
     folder, data = snapshot(root, [*files, installed], system)
     data['release'] = str(release)
+    if commissioning and previous and release_hardware(release) == 'v2' and previous.get('hardware') == 'v2':
+        previous_metadata = Path(previous['release']) / 'release.json'
+        old_frame = json.loads(previous_metadata.read_text()).get('joint_frame') if previous_metadata.exists() else None
+        data['crosses_rest_frame'] = old_frame != 'mechanical_rest'
     atomic_json(folder / 'state.json', data)
     atomic_json(pending, {'transaction': str(folder)})
     switched = False
@@ -519,8 +526,9 @@ def activate(root, release, home, files, system):
                 system.remove(path)
             else:
                 mode = (path.stat().st_mode & 0o777 if path.exists() else
+                        0o755 if str(path).startswith('/usr/local/bin/') else
                         0o644 if str(path).startswith('/etc/') or path.suffix in ('.yaml', '.yml') else 0o600)
-                system.write(path, value.encode(), mode)
+                system.write(path, value if isinstance(value, bytes) else value.encode(), mode)
         system.reload()
         for name in MANAGED_SERVICES:
             if name not in wanted_services:
@@ -529,15 +537,28 @@ def activate(root, release, home, files, system):
                 continue
             if data['services'][name]['enabled'] == 'not-found':
                 system.enable(name, 'enabled')
-        system.start('oriond')
-        # oriond Wants= the listener. Keep all voice/Studio companions quiet
-        # until physical smoke playback has settled back to rest.
-        for name in MANAGED_STOP_ORDER[:-1]:
-            system.stop(name)
-        system.smoke_runtime(release)
-        for name in wanted_services[1:]:
-            system.start(name)
-        system.ready(release, home)
+        if commissioning:
+            # Check only after the old daemon releases the serial bus. Failed
+            # commissioning leaves the new units installed/enabled but stopped.
+            check_command = [str(release / 'runtime/target/release/oriond'), '--check', '--hardware', release_hardware(release)]
+            for path, text in files.items():
+                if path.name == 'oriond.service' and text:
+                    match = re.search(r'^ExecStartPre=(.*oriond --check.*)$', text, re.M)
+                    if match: check_command = shlex.split(match[1])
+            checked = subprocess.run(check_command, cwd=release)
+            if checked.returncode:
+                print('Motion remains off: fold into mechanical rest and run oriond servo zero, then oriond --check.', flush=True)
+            elif previous is None or data.get('crosses_rest_frame'):
+                print('First installation or V2 frame migration stays stopped until reboot and servo commissioning.', flush=True)
+            else:
+                for name in wanted_services: system.start(name)
+        else:
+            system.start('oriond')
+            # Keep companions quiet until physical smoke playback settles.
+            for name in MANAGED_STOP_ORDER[:-1]: system.stop(name)
+            system.smoke_runtime(release)
+            for name in wanted_services[1:]: system.start(name)
+            system.ready(release, home)
         atomic_json(installed, {'version': 2, 'release': str(release), 'hardware': release_hardware(release), 'rollback': str(folder)})
         data['status'] = 'committed'; atomic_json(folder / 'state.json', data)
     except BaseException as activation_error:
@@ -545,7 +566,7 @@ def activate(root, release, home, files, system):
         atomic_json(folder / 'state.json', data)
         if switched:
             try:
-                restore(folder, data, system)
+                restore(folder, data, system, before_restore=before_restore)
             except BaseException as recovery_error:
                 data['recovery_error'] = failure_details(recovery_error)
                 data['status'] = 'rollback_failed'; atomic_json(folder / 'state.json', data)
@@ -591,17 +612,19 @@ def prune_releases(active, rollback_release):
                 print(f'Could not remove old release {old}: {error}')
 
 
-def rollback(root, system):
+def rollback(root, system, before_restore=None):
     pending = root / 'pending-installation.json'
     pointer = json.loads((pending if pending.exists() else root / 'installation.json').read_text())
     folder = Path(pointer.get('transaction') or pointer.get('rollback') or '')
     if not folder.is_absolute() or folder.parent != root / 'transactions':
         raise RuntimeError('No recent transaction rollback exists; legacy pre-installation rollback is not an update rollback')
     data = json.loads((folder / 'state.json').read_text())
+    if data.get('crosses_rest_frame') and data['status'] == 'committed':
+        raise RuntimeError('Cannot roll back into the old V2 calibration frame after commissioning. EEPROM zero is not software rollback; install a rest-frame release instead.')
     already_restored = data['status'] == 'rolled_back'
     if not already_restored:
         atomic_json(pending, {'transaction': str(folder)})
-        restore(folder, data, system)
+        restore(folder, data, system, before_restore=before_restore)
     # A manual rollback consumes this one-level recovery point. An older transaction
     # may have been pruned; never leave an installation pointer to that missing backup.
     installed = root / 'installation.json'
@@ -622,7 +645,7 @@ def preflight(release, home, files, system):
         if not (release / name).is_file():
             raise RuntimeError(f'Prepare the complete release first: {name}')
     hardware = release_hardware(release)
-    calibration = calibration_path(home, hardware)
+    calibration = calibration_path(home, hardware, project=release)
     if not calibration.is_file():
         raise RuntimeError(f'Missing {hardware} servo calibration: {calibration}')
     token = home / '.config/orion/studio-token'
@@ -650,6 +673,15 @@ def check_calibration(path, hardware):
     except (ValueError, AttributeError) as error:
         raise RuntimeError(f'Calibration {path} is not readable JSON: {error}') from None
     expected = profile(hardware)['joints']
+    if hardware == 'v2':
+        import math
+        if set(joints) != set(expected): raise RuntimeError('V2 profile requires all five joints')
+        for name, joint in joints.items():
+            if joint['servo_id'] != expected[name]['servo_id'] or joint['direction'] not in (-1, 1):
+                raise RuntimeError(f'Invalid V2 joint mapping: {name}')
+            raw = [2047 + joint[key] * 4096 / math.tau * joint['direction'] for key in ('min_radians', 'max_radians')]
+            if min(raw) < -1e-9 or max(raw) > 4095 + 1e-9: raise RuntimeError(f'{name} profile crosses 0/4095')
+        return
     for name, joint in joints.items():
         if name in expected and joint.get('servo_id') != expected[name]['servo_id']:
             raise RuntimeError(f'{path} maps {name} to servo {joint.get("servo_id")}, but the {hardware} '
@@ -658,7 +690,7 @@ def check_calibration(path, hardware):
         high = joint['neutral_raw'] + joint['safe_max_delta_raw']
         if low < 0 or high > 4095:
             raise RuntimeError(f'{name} safe range covers raw {low}..{high}, crossing 0/4095; '
-                               'run orion-centre-servos before deploying')
+                               'correct the joint profile before deploying')
 
 
 def validate_catalog(release, project, calibration, system, assets, home=None):
@@ -722,7 +754,7 @@ def main():
         if hardware == 'v2':
             system.run('arecord', '-l')
             system.run('aplay', '-l')
-        validate_catalog(release, args.runtime_project.resolve(), calibration_path(home, hardware), system, assets, home)
+        validate_catalog(release, args.runtime_project.resolve(), calibration_path(home, hardware, project=release), system, assets, home)
         def interrupted(signum, frame):
             raise KeyboardInterrupt('Deployment interrupted')
         signal.signal(signal.SIGTERM, interrupted)

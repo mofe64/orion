@@ -22,6 +22,8 @@ def payload_files(folder):
 
 def write_manifest(folder, release, target):
     files = payload_files(folder)
+    files.pop('bundle.json', None)
+    files.pop('SHA256SUMS', None)
     expanded = 0
     for path in (folder / 'wheels').rglob('*.whl'):
         with zipfile.ZipFile(path) as wheel:
@@ -67,6 +69,7 @@ def inspect_archive(archive):
 def verify_payload(folder, manifest):
     files = payload_files(folder)
     files.pop('bundle.json', None)
+    files.pop('SHA256SUMS', None)
     if set(files) != set(manifest['files']):
         raise RuntimeError('Release bundle file inventory does not match its manifest')
     for name, path in files.items():

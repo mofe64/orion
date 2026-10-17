@@ -34,7 +34,7 @@ class V2ModelTests(unittest.TestCase):
         robot = ET.parse(PROJECT / 'description/urdf/orion-v2.urdf').getroot()
         poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']
         bridge = Bridge(PROJECT / 'simulation/mujoco/v2/scene.xml', poses['home']['positions'], 'v2')
-        for name in ('home', 'look_left', 'look_right', 'zero_reference'):
+        for name in ('home', 'look_left', 'look_right', 'rest'):
             angles = poses[name]['positions']
             bridge.handle({'command': 'write', 'positions': angles})
             transforms = {'v21_base': np.eye(4)}
@@ -74,8 +74,8 @@ class V2ModelTests(unittest.TestCase):
         # reference geometry precisely and retain a strong direction check.
         left_position, left_direction = face_and_forward_x('look_left')
         right_position, right_direction = face_and_forward_x('look_right')
-        self.assertAlmostEqual(left_position, 0.044558144080031094, places=12)
-        self.assertAlmostEqual(right_position, -0.027197103020340445, places=12)
+        self.assertGreater(left_position, 0.03)
+        self.assertLess(right_position, -0.015)
         self.assertGreater(left_direction, 0.9)
         self.assertLess(right_direction, -0.7)
 

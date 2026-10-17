@@ -1,11 +1,11 @@
 format_version: 2
 motion:
   name: delight_lift
-  description: Lift with restrained delight and settle in the open pose.
+  description: Lift the head and look up into the delight posture.
   space: absolute
   style: quick_reaction
   keyframes:
-    - pose: delight
-      duration: 0.75
-      arrival: settle
-      marker: delight
+  - pose: delight
+    duration: 0.75
+    arrival: settle
+    marker: delight

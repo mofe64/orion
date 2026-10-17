@@ -1,1455 +1,297 @@
 # Motion reference
 
-Exact schemas, values and catalogue for Orion motion. For how the pieces fit together, start with [how Orion moves](motion-architecture.md).
+The Rust runtime loads pose and motion files with `format_version: 2`. Joint values use radians. Unknown fields, duplicate names and invalid targets cause loading errors.
 
 ## Asset files
 
-```text
-motion/
-├── config/
-│   ├── v1/poses.yaml               V1 built-in complete poses
-│   ├── v2/poses.yaml               V2 built-in complete poses
-│   └── stability_limits.yaml       MuJoCo reporting policy only
-├── user/poses/
-│   ├── v1/**/*.yaml                V1 Studio-authored poses
-│   └── v2/**/*.yaml                V2 Studio-authored poses
-└── motions/
-    ├── v1/
-    │   ├── expressive/*.yaml       character actions
-    │   ├── functional/*.yaml       direct utility actions
-    │   ├── idle/*.yaml             anchor-relative ambient clips
-    │   ├── speaking/*.yaml         source drawings for generated speech
-    │   └── user/**/*.yaml          V1 Studio-authored motions
-    └── v2/
-        ├── *.yaml                 V2 built-in motions
-        └── user/**/*.yaml          V2 Studio-authored motions
-scenes/
-├── v1/                            V1 built-in scenes and user/ scenes
-└── v2/                            V2 built-in scenes and user/ scenes
-```
-
-The selected hardware profile supplies the version's pose, motion and scene paths.
-Loaders traverse only those directories, recursively in sorted path order.
-Semantic names are unique within each version and asset type. A user asset cannot
-shadow a built-in or another user asset in its version.
-
-Pi deployment replaces built-in pose, motion and scene YAML with the selected
-commit's copies, including local edits to built-ins, which are backed up for
-rollback. User-authored assets under `user/` and calibration are never touched.
-The active Pi calibration is the hardware position authority; the tracked
-`simulation/mujoco/config/servo_calibration.json` is the offline (V1) copy used
-for tests. `motion/config/stability_limits.yaml` is MuJoCo reporting policy, not
-a command limit.
-
-### Joint vocabulary
-
-Every complete position map uses exactly these five names, in radians:
-
-1. `base_yaw_joint`
-2. `shoulder_pitch_joint`
-3. `elbow_pitch_joint`
-4. `head_roll_joint`
-5. `head_pitch_joint`
-
-The order is the canonical `ORION_JOINT_NAMES` order used by calibration,
-drivers, state snapshots, Studio, and MuJoCo.
-
-## Bearing gaze tuning
-
-V2 gaze defaults on when serving; `--gaze off` disables it. V1 and non-serve
-operations leave gaze off. The [runtime contract](../runtime/README.md#bearing-gaze-v2)
-defines availability, Stop and recovery. `runtime/src/expression/gaze.rs` defines these tuning
-values; they change gaze character, never calibration or the motor ceiling:
-
-| Value | Setting |
+| Path | Content |
 | --- | --- |
-| Centre/target deadband | 4° |
-| Maximum extension frequency | 10 Hz |
-| Neck lead before base catch-up | 200 ms |
-| Every-joint compiled peak ceiling | 1.5 rad/s |
-| Neck planning-step speed | 2.5 rad/s |
-| Base catch-up planning speed | 0.6 rad/s |
-| Target freshness | 1 second in CLOCK_BOOTTIME |
+| `motion/config/<version>/poses.yaml` | Built-in complete poses |
+| `motion/user/poses/<version>/` | User pose files |
+| `motion/motions/<version>/` | Built-in motions |
+| `motion/motions/<version>/user/` | User motions |
+| `scenes/<version>/` | Built-in scenes and a `user/` subdirectory |
 
-The existing compiler previews each plan with a conservative shared peak
-ceiling of 1.5 rad/s, including anchor return. A fixed-budget FK solve chooses
-the nearer calibrated limit for unreachable bearings. Each generated
-performance contains an aim/hold and a zero-offset
-settle; shoulder and elbow retain their anchor-relative zero offsets.
-The neck counter-rotation is a starting guess for FK, not a bearing-to-angle
-conversion. Lamp tuning and physical acceptance remain unverified.
+Versions are `v1` and `v2`. User names cannot replace built-ins. The runtime validates the complete catalogue before swapping loaded assets.
+
+## Joint vocabulary and limits
+
+Each complete pose contains `base_yaw_joint`, `shoulder_pitch_joint`, `elbow_pitch_joint`, `head_roll_joint` and `head_pitch_joint`.
+
+This is the canonical export order. All numeric positions must be finite. Asset names contain ASCII letters, digits, hyphens or underscores.
+
+V2 uses mechanical-rest coordinates and the limits in [v2-joints.json](../hardware/profiles/v2-joints.json). V1 uses servo calibration. [Hardware setup](hardware-versions.md#joint-names-and-limits) defines servo IDs and conversion.
+
+Model geometry does not replace hardware command limits. Simulator stability settings do not grant additional travel.
 
 ## Pose schema
+
+This example defines a complete V2 rest pose:
 
 ```yaml
 format_version: 2
 units: radians
-
 poses:
-  attentive:
-    description: Forward-facing pose with upward, curious energy.
-    tags: [powered, attentive, idle_anchor]
-    idle_profile: attentive
-    default_lighting: attentive_focus
+  rest:
+    description: Folded mechanical rest.
+    tags: [rest]
     positions:
-      base_yaw_joint: -0.30
-      shoulder_pitch_joint: -0.10
-      elbow_pitch_joint: -0.28
-      head_roll_joint: -0.65
-      head_pitch_joint: -0.04
+      base_yaw_joint: 0.0
+      shoulder_pitch_joint: 0.0
+      elbow_pitch_joint: 0.0
+      head_roll_joint: 0.0
+      head_pitch_joint: 0.0
 ```
 
-### Pose fields
+| Pose field | Meaning |
+| --- | --- |
+| `description` | Human-readable text |
+| `tags` | Role labels |
+| `idle_profile` | Optional idle selection |
+| `default_lighting` | Optional named light effect |
+| `positions` | All five named joint angles |
 
-| Field              | Required | Contract                                                 |
-| ------------------ | -------- | -------------------------------------------------------- |
-| `format_version`   | Yes      | Integer `2`                                              |
-| `units`            | No       | If present, must be `radians`                            |
-| `poses`            | Yes      | Non-empty mapping keyed by unique semantic names         |
-| `description`      | No       | Human-readable intent and silhouette                     |
-| `tags`             | No       | Semantic-name list used for lifecycle and catalog policy |
-| `idle_profile`     | No       | Semantic profile used by character idle selection        |
-| `default_lighting` | No       | Must name a built-in lighting effect                     |
-| `positions`        | Yes      | Exactly one finite radian value for every Orion joint    |
-
-A semantic name is non-empty and contains only ASCII letters, digits,
-underscore, or hyphen.
-
-### Pose roles
-
-Tags communicate intended use:
-
-- `powered` identifies poses safe to hold with torque enabled.
-- `idle_anchor` identifies stable character silhouettes.
-- `transition` identifies a drawing used inside an action rather than held as
-ambient state.
-- `authored_overshoot` documents intentional target overshoot.
-- `shutdown_only` and `mechanical` reserve `rest` for supported torque release.
-- `calibration_reference` reserves `zero_reference` for calibration checks.
-
-Tags are descriptive except where character code explicitly checks
-`shutdown_only` or `mechanical`. Authors must not infer unimplemented policy
-from an unrecognized tag.
+`powered` and `idle_anchor` tags describe operating roles. `rest` and reference poses do not imply normal powered idle use. The selected pose file supplies exact targets.
 
 ## Motion schema
 
-One file contains one motion:
+This absolute motion returns to a named pose:
 
 ```yaml
 format_version: 2
 motion:
-  name: look_at_left_expressive
-  description: Notice, lean toward, and settle on the predefined left target.
+  name: example_return
+  description: Return to home.
   space: absolute
-  style: expressive_turn
+  style: return_home
   keyframes:
-    - pose: look_left_anticipation
-      duration: 0.25
-      arrival: through
-    - pose: look_left_lean
-      duration: 0.40
-      arrival: through
-      marker: notice
-    - pose: look_left_overshoot
-      duration: 0.30
-      arrival: through
-    - pose: look_left
-      duration: 0.35
+    - pose: home
+      duration: 2.0
       arrival: settle
-      marker: settled
+      marker: home_arrival
 ```
 
-### Motion fields
+This relative motion moves around its anchor:
 
-| Field              | Required      | Contract                                                           |
-| ------------------ | ------------- | ------------------------------------------------------------------ |
-| `format_version`   | Yes           | Integer `2`                                                        |
-| `motion`           | Yes           | One motion mapping                                                 |
-| `name`             | Yes           | Unique semantic name                                               |
-| `description`      | No            | User-facing purpose and acting intent                              |
-| `space`            | Yes           | `absolute` or `anchor_relative`                                    |
-| `style`            | Yes           | One named style from the table below                               |
-| `return_to_anchor` | Relative only | Must be `true` for relative motion; prohibited for absolute motion |
-| `keyframes`        | Yes           | Non-empty ordered list                                             |
+```yaml
+format_version: 2
+motion:
+  name: example_nod
+  description: Small head movement.
+  space: anchor_relative
+  style: speaking_calm
+  return_to_anchor: true
+  keyframes:
+    - offsets: {head_pitch_joint: 0.03}
+      duration: 0.8
+      arrival: through
+    - offsets: {}
+      duration: 0.8
+      arrival: settle
+```
 
-### Keyframe fields
+An anchor is the complete pose around which relative motion moves. Missing offset keys mean zero offset. Absolute frames use `pose`; relative frames use `offsets`.
 
-| Field      | Required      | Contract                                                                  |
-| ---------- | ------------- | ------------------------------------------------------------------------- |
-| `pose`     | Absolute only | Existing named pose; `offsets` must be absent                             |
-| `offsets`  | Relative only | Partial finite joint map; `pose` must be absent; omitted joints mean zero |
-| `duration` | Yes           | Finite seconds greater than zero before style tempo is applied            |
-| `arrival`  | Yes           | `through` or `settle`                                                     |
-| `hold`     | No            | Finite, non-negative seconds; greater than zero only with `settle`        |
-| `marker`   | No            | Unique semantic name reached at the compiled arrival time                 |
+| Motion field | Meaning |
+| --- | --- |
+| `name` | Unique semantic name |
+| `description` | Human-readable text |
+| `space` | `absolute` or `anchor_relative` |
+| `style` | Named timing and shape preset |
+| `return_to_anchor` | Relative motion's final return contract |
+| `keyframes` | Ordered targets |
 
-The final keyframe must use `settle`. The final relative keyframe must have no
-non-zero offsets.
+| Keyframe field | Meaning |
+| --- | --- |
+| `pose` | Named absolute pose |
+| `offsets` | Relative joint offsets |
+| `duration` | Positive travel time in seconds |
+| `arrival` | `through` or `settle` |
+| `hold` | Nonnegative hold after a settle arrival |
+| `marker` | Optional unique event name |
+
+`through` preserves movement across a target. `settle` sets final velocity and acceleration to zero. The final target settles. A hold cannot follow a through arrival.
+
+## Motion styles
+
+The presets are `living_idle`, `attentive`, `expressive_turn`, `speaking_calm`, `speaking_emphatic`, `thinking`, `quick_reaction` and `return_home`.
+
+| Style property | Effect |
+| --- | --- |
+| `tempo` | Divides authored travel time |
+| `tangent_tension` | Scales through-keyframe derivatives |
+| `joint_lag` | Changes derivative character across joints |
+| `amplitude` | Scales relative offsets |
+| `overshoot_scale` | Changes internal acceleration shaping |
+| `settle_character` | Adjusts settle travel time |
+
+`joint_lag` does not insert a literal delay. `overshoot_scale` does not specify an angle. Exact preset values remain in [style.rs](../runtime/src/motion/style.rs).
 
 ## Target resolution
 
-### Absolute motion
-
-An absolute keyframe resolves directly to the complete target of its named
-pose. The runtime validates every target against active driver calibration.
-
-Use absolute motion when the final world-relative silhouette matters, such as
-a directional look or an explicit return home.
-
-### Anchor-relative motion
-
-A relative keyframe begins with a complete immutable anchor and adds only its
-listed offsets:
+Absolute motion uses pose angles directly. Relative targets use this relation:
 
 ```text
 resolved = anchor + style.amplitude × runtime_scale × offsets
 ```
 
-`runtime_scale` is the largest uniform value from zero through one that keeps
-every offset in every keyframe within active calibration. Absolute motions use
-a scale of one.
-
-Use relative motion for ambient idle, speaking, and reusable detail that must
-work around several powered poses. Relative motion must return to its anchor;
-it cannot establish another anchor.
-
-## Arrival semantics
-
-### `through`
-
-The compiler derives internal velocity and acceleration from the neighboring
-segments and style. Position, velocity, and acceleration match on both sides
-of the keyframe. A direction reversal may have zero instantaneous velocity,
-but the compiler inserts no hold.
-
-### `settle`
-
-The compiler sets velocity and acceleration to zero at arrival. A hold may
-follow. Every motion ends with a settle because runtime completion needs an
-intentional final target.
-
-Markers do not change trajectory shape. They attach semantic timing to the
-retimed keyframe arrival so scene light and audio remain synchronized.
-
-## Motion styles
-
-The runtime defines styles as compiled constants. They control artistic timing
-and amplitude; calibration and motor limits are applied separately.
-
-| Style               | Tempo | Tangent tension | Joint lag | Amplitude | Overshoot scale | Settle character | Intended use                                        |
-| ------------------- | ----- | --------------- | --------- | --------- | --------------- | ---------------- | --------------------------------------------------- |
-| `living_idle`       | 0.82  | 0.38            | 0.18      | 0.90      | 0.00            | 0.85             | Unhurried low-amplitude ambient motion              |
-| `attentive`         | 1.08  | 0.58            | 0.12      | 1.00      | 0.15            | 0.58             | Upward attentive entry and hold detail              |
-| `expressive_turn`   | 1.00  | 0.72            | 0.22      | 1.00      | 1.00            | 0.62             | Anticipation, lean, authored overshoot, settle      |
-| `speaking_calm`     | 0.72  | 0.42            | 0.16      | 0.95      | 0.00            | 0.82             | Restrained conversational source clips              |
-| `speaking_emphatic` | 1.12  | 0.62            | 0.12      | 1.00      | 0.18            | 0.62             | Generated utterance performance and phrase emphasis |
-| `thinking`          | 0.68  | 0.36            | 0.24      | 0.62      | 0.08            | 0.88             | Slow asymmetric thought                             |
-| `quick_reaction`    | 1.34  | 0.70            | 0.08      | 0.92      | 0.24            | 0.48             | Short decisive acknowledgement                      |
-| `return_home`       | 0.74  | 0.32            | 0.20      | 1.00      | 0.00            | 1.00             | Weighted final return                               |
-
-Interpretation:
-
-- A higher `tempo` shortens authored segment duration.
-- `tangent_tension` scales internal derivative energy.
-- `joint_lag` changes derivative character across the ordered joint chain; it
-is not a separate scheduler delay.
-- `amplitude` scales anchor-relative offsets.
-- `overshoot_scale` affects internal acceleration character; it never creates
-permission to leave the interval between authored segment endpoints.
-- `settle_character` changes the timing weight of settle segments.
-
-## Asset validation
-
-Validation happens in this order:
-
-1. Serde rejects unknown fields and malformed types.
-2. Pose loading checks version, units, names, complete joints, finite values,
-  metadata, and duplicate names.
-3. Motion loading checks version, names, styles, space-specific fields,
-  durations, holds, markers, final settle, and anchor return.
-4. `RuntimeCore` validates all absolute pose and motion targets against the
-  active driver limits at startup and transactional reload.
-5. Relative targets are uniformly scaled and validated when instantiated
-  around a concrete anchor.
-6. The trajectory compiler validates full joint maps, derivative inputs,
-  calibration containment, and motor-speed retiming.
-
-No loader silently drops an invalid field, clips an authored absolute target,
-or substitutes a missing pose.
-
-## Animation catalogue
-
-### Generated speaker attention
-
-`gaze_attention` is the V2 speaker-facing turn and conversation adjustment.
-`attention_return` restores a held anchor or shortens an interrupted adjustment.
-They are generated in memory and use the ordinary calibrated motion compiler.
-The ten authoring decisions are:
-
-1. Face the confirmed speaker: the neck leads, then the base catches up.
-2. The eyeline faces the person while the arm silhouette stays at its anchor.
-3. The neck's first drawing announces the larger base turn.
-4. Wrist pitch and neck counter-rotation preserve the eyeline; the arm stays quiet.
-5. The facing drawing settles before becoming the conversation anchor. Returns
-   settle at the previously committed anchor.
-6. URDF FK coordinates swivel, base and pitch instead of equating bearings to joints.
-7. The shared 1.5 rad/s compiled ceiling and bounded 0.65-radian base travel
-   keep the motion readable; deadband updates avoid continuous fidgeting.
-8. Home and conversational anchors support it. A held desk-light anchor excludes it.
-9. Speech freezes its anchor. Scene, Stop and rest preempt attention. Target
-   loss or tracking clear revokes the track and replaces only its owned spline
-   with a continuous anchor return. Failure never commits a target anchor.
-10. V2 FK/compiler and simulated-daemon regressions check identity, deadband,
-    speech freeze, calibrated motion and return. Moving-speaker, two-person,
-    cable-clearance and interruption checks remain owed on the lamp.
-
-V2 speech reactions use dedicated `speak_react_*` assets. Listening and scenes
-retain their own subtler motions, including `acknowledge_nod` and `disagree_soft`.
-Every mapped speech reaction must use `anchor_relative`, return to the anchor,
-and have exactly one keyframe marker at its apex; loading rejects an invalid
-contract. The final keyframe has empty offsets and a `settle` arrival. Holds
-are permitted only at `settle` arrivals.
-
-Catalogue tests require either a joint offset of at least 0.18 rad at the
-apex or at least 0.20 rad peak to peak on one joint across the keyframes.
-Missing offsets mean zero relative to the anchor. Total authored duration,
-including holds, stays within 0.8–1.3 seconds. The speech
-composer keeps every authored head and body offset and plays reactions at
-duration scale 1.0. Style weighting and motor-speed retiming still apply;
-calibrated limits always constrain the compiled trajectory. See
-[reaction placement](speech-animation-runtime.md#reaction-cues) for quiet
-lead-ins, facing limits, spacing, and short-reply compression.
-
-Tune a reaction by editing its YAML apex offsets or durations; no runtime code
-change is needed. Catalogue tests enforce the size and duration bounds above.
-
-| Cue | Speech motion | When to use it |
-| --- | --- | --- |
-| `agree` | `speak_react_agree` | Agreement, confirmation, or yes |
-| `disagree` | `speak_react_disagree` | Correction, disagreement, or no |
-| `happy` | `speak_react_happy` | Good news, thanks, or shared delight |
-| `curious` | `speak_react_curious` | A question or something intriguing |
-| `thinking` | `speak_react_thinking` | Weighing options, estimating, or working something out |
-| `surprised` | `speak_react_surprised` | Something unexpected |
-| `sympathy` | `speak_react_sympathy` | Sadness, frustration, or bad news |
-| `unsure` | `speak_react_unsure` | Uncertainty, maybe, or it depends |
-| `laugh` | `speak_react_laugh` | A joke or a light remark |
-
-| Animation                        | Primary action and silhouette                                                  | Anticipation / follow-through                                                                                              | Timing and secondary action                                                                                                                                                  |
-| -------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `look_at_left_expressive`        | One broad leftward lamp-body arc ending in an attentive directional silhouette | Small opposite yaw prepares the turn; shoulder/head lag and an exact authored overshoot flow into settle                   | Expressive-turn timing; warm marker expression supports the readable turn                                                                                                    |
-| `look_at_right_expressive`       | Mirrored rightward arc without mechanical symmetry in the supporting joints    | Opposing preparation, layered lean, exact overshoot, weighted settle                                                       | Same dramatic beat as left while preserving calibrated right-side range                                                                                                      |
-| `attentive_entry`                | Upward opening into a forward attentive silhouette                             | Compact preparation releases into head/shoulder lift; elbow follows                                                        | Quick attentive style; light focus is the secondary action                                                                                                                   |
-| `acknowledge_nod`                | Restrained nod for listening and scenes around the held anchor                                         | Head lead, restrained shoulder follow-through, clean return                                                                | Quick reaction with one phrase-scale beat, not repeated bobbing                                                                                                              |
-| `disagree_soft`                  | Soft disagreement for listening and scenes                                     | First side prepares the reversal; smaller counterbeat dissipates energy                                                    | Calm readable disagreement; muted light/cue remain subordinate                                                                                                               |
-| `curious_tilt`                   | Open diagonal head/body examination                                            | Slight opposing base shift precedes the tilt; elbow settles last                                                           | Thinking-weighted timing and a spatial light sweep reinforce curiosity                                                                                                       |
-| `delight_lift`                   | Compact upward lift with an open, appealing silhouette                         | Small compression precedes extension; head and elbow finish after the body                                                 | Quick but restrained; sparkle and tonal cue land on the authored marker                                                                                                      |
-| `thinking_shift`                 | Asymmetric supported thinking pose                                             | Lateral preparation and slow head follow-through avoid a generic lean                                                      | Slow thinking style; drifting warm light is the secondary action                                                                                                             |
-| `return_home`                    | Weighted downward/central settle into powered home                             | No decorative overshoot; joints arrive with controlled overlap                                                             | Slow return-home style communicates weight and finality                                                                                                                      |
-| `look_at_left`                   | Functional direct left orientation                                             | No expressive anticipation; continuous compiler still supplies slow-in/out                                                 | Utility motion keeps a clean directional silhouette                                                                                                                          |
-| `look_at_right`                  | Functional direct right orientation                                            | No expressive anticipation; final settle is explicit                                                                       | Utility motion respects the same calibrated and spline contracts                                                                                                             |
-| `idle_breathe`                   | Coordinated visible rise and release                                           | 80 ms small head start, then unchanged arm drawing and anchor return                                             | Long living-idle timing; no sound                                                                                                                                            |
-| `idle_head_curiosity`            | Gentle pitch/roll examination                                                  | First tilt flows through a smaller counter-shape                                                                           | Head detail stays subordinate to the held pose; no sound                                                                                                                     |
-| `idle_micro_glance`              | Readable glance compatible with a held silhouette                              | Base starts the glance, head counters, both return                                                                         | Fixation settle and 0.5–1.0 s hold; long randomized interval                                                                                                                         |
-| `idle_shoulder_adjust`           | Small internal weight redistribution                                           | Shoulder initiates; elbow/head trail and settle                                                                            | Quiet living-idle timing; does not change the anchor                                                                                                                         |
-| `idle_weight_shift`              | Coordinated base/shoulder/elbow weight change                                  | Small head-only start, then original body drawing and tapered return                                                                      | Larger idle, selected less often; motion and light only                                                                                                                      |
-| `idle_soft_head_shake`           | Restrained asymmetric shake                                                    | Small first side, larger counter, diminished final echo                                                                    | Direction changes flow through spline points without stop plateaus                                                                                                           |
-| `idle_attentive_hold`            | Subtle upward energy within attentive anchors                                  | Small head-only start, unchanged shoulder/elbow rise, then diagonal detail                                                                          | Faster attentive character but low amplitude                                                                                                                                 |
-| `idle_directional_hold`          | Detail that preserves a left/right held silhouette                             | Small pitch start precedes unchanged shoulder drawing; roll/elbow follow                                                                                     | Avoids yaw that would undermine the directional staging                                                                                                                      |
-| `speak_react_agree`              | Clear double nod for `[agree]`                                                | 0.17 rad first pitch stroke, small counter, second nod, authored anchor return                                               | 1.00 s at duration scale 1.0; one apex marker; ordinary lead-in is quieted                                                                                             |
-| `speak_react_disagree`           | Clear three-beat shake for `[disagree]`                                         | ±0.14 rad yaw with neck counter-swivel, diminished third beat, authored anchor return                                        | 1.04 s at duration scale 1.0; facing clamp and 3.5-second emphasis spacing apply                                                                                        |
-| `speak_react_happy` | Bright lift with a small bounce for `[happy]` | 0.24 rad pitch with 0.13 rad shoulder and −0.11 rad elbow lift, smaller bounce, anchor return | 1.03 s; through arrivals keep the bounce flowing |
-| `speak_react_curious` | Tilt and slight lean for `[curious]` | 0.20 rad head roll with pitch, yaw and shoulder detail | 1.04 s; 0.30 s hold begins at the apex arrival |
-| `speak_react_thinking` | Glance aside and up for `[thinking]` | −0.20 rad yaw with pitch, counter-roll and shoulder detail | 1.15 s; 0.35 s apex hold, then anchor return |
-| `speak_react_surprised` | Quick pull back and lift for `[surprised]` | 0.24 rad pitch with −0.10 rad shoulder and +0.08 rad elbow motion | 0.90 s; fast arrival, 0.25 s hold, weighted return |
-| `speak_react_sympathy` | Slow droop and soft tilt for `[sympathy]` | −0.20 rad pitch, roll, shoulder droop and elbow detail | 1.25 s; 0.25 s apex hold, slow anchor return |
-| `speak_react_unsure` | Slow side-to-side tilt for `[unsure]` | +0.19 to −0.17 rad roll with opposing yaw detail | 1.05 s; through arrivals connect both tilts |
-| `speak_react_laugh` | Three quick head bounces for `[laugh]` | 0.20 rad first pitch stroke with 0.08 rad shoulder lift | 1.07 s; 0.15–0.17 s bounce steps, final anchor return |
-| `speak_calm_sway`                | Readable conversational head-and-body sway                                     | Supplies a calm dominant drawing to the speech performance                                                            | Weighted toward ordinary phrases; quiet intervals can hold its phrase pose                                                                                                                |
-| `speak_emphasis_nod`             | Clear phrase-boundary nod                                                      | Fast head drawing redirects the continuing body path                                                                       | Compiled stroke targets 0.17 s before an eligible audio peak; authored lift then drop                                                                                                         |
-| `speak_explanatory_lean`         | Clear forward explanatory emphasis                                             | Shoulder/head drawing carries momentum into the next phrase                                                                | Phrase-scale staging inside the continuous performance                                                                                                                       |
-| `speak_reflective_tilt`          | Reflective diagonal thought shape                                              | Authored roll sign supplies asymmetry; emphasis includes its pitch counter-shape                                                                    | Calm timing with a phrase hold when the audio pauses                                                                                                                               |
-| Generated `thinking_head`        | Readable diagonal thought around the conversational anchor                     | Opposing preparation, dominant head lead, delayed secondary body follow, asymmetric counter-tilt and diminished resolution | Existing thinking style; internal drawings flow through, final anchor return settles; amber/teal/lavender light breathes smoothly; repeated thinking requests preserve the active movement |
-| Generated `speaking_performance` | One fluid, head-led action spanning the whole utterance                        | Fresh onset prepares; every phrase stages head before body; eligible emphasis uses its authored counter-stroke; final resolution lifts toward the listener                        | Seeded variation and local RMS head scaling avoid a fixed cycle; matching yaw/roll signs bias the arc; compiled emphasis precedes audio peaks; energy-gated body beats have a three-phrase minimum interval; quiet pauses hold the phrase pose; the final return settles at the anchor                    |
-
-Per-play idle variation mirrors yaw/roll, varies head/yaw amplitude and travel
-tempo, and preserves arm offsets. Directional variants point inward.
-`idle_breathe` is micro only; stillness remains intentional between clips.
-
-`attention_left` and `attention_right` use small base-led conversational arcs:
-small opposing anticipation, a committed lean, restrained authored overshoot,
-and one final settle. Shoulder compression and elbow/head overlap support the
-facing idea. Their approximately 20-degree targets preserve a forward eyeline
-without copying the full directional turns. The temporary anchor is held with
-purposeful stillness until speech or return; no decorative cue is played.
-See the [design qualities](motion-architecture.md#designing-animation) and the
-[acceptance invariants](#acceptance-invariants) below.
-
-### Built-in motions by group
-
-**Expressive:** `look_at_left_expressive`, `look_at_right_expressive`, `attention_left`, `attention_right`, `attentive_entry`, `acknowledge_nod`, `disagree_soft`, `curious_tilt`, `delight_lift`, `thinking_shift`
-
-**Functional:** `look_at_left`, `look_at_right`, `return_home`
-
-**Idle:** `idle_breathe`, `idle_head_curiosity`, `idle_micro_glance`, `idle_shoulder_adjust`, `idle_weight_shift`, `idle_soft_head_shake`, `idle_attentive_hold`, `idle_directional_hold`
-
-**Speaking source drawings:** `speak_calm_sway`, `speak_emphasis_nod`, `speak_explanatory_lean`, `speak_reflective_tilt`
-
-**Speech reactions (V2):** the nine dedicated assets in the [cue vocabulary table](#animation-catalogue). Listening and scenes retain their own subtler motions. See [reaction placement and timing](speech-animation-runtime.md#reaction-cues).
-
-The runtime-generated `speaking_performance` and interruption-only `speak_settle` are not YAML assets. `CharacterCoordinator` builds them in memory from waveform analysis and the speaking source drawings.
-
-### Poses and scenes
-
-#### V2 desk reaches
-
-`lean_reach_low`, `lean_reach_left` and `lean_reach_right` are ordinary powered
-catalogue poses. They aim the light at a desk point 0.28 m from the base.
-They use the `directional` idle profile to avoid yaw clips around the held
-work area. Geometry and calibrated compilation are verified; physical contact,
-tipping, cable clearance, readability and shoulder load are lamp-unverified.
-
-| Pose | Single idea and lead | Main silhouette | Secondary head and base |
-| --- | --- | --- | --- |
-| `lean_reach_low` | Shoulder and elbow reach decisively forward | Light about 21 cm forward and 25 cm high | Centred base and neck; wrist pitches the beam onto the desk |
-| `lean_reach_left` | Shoulder and elbow extend toward the left work area | Open elbow, light about 19 cm radially forward and 29 cm high | Base faces 0.55 rad left; centred neck and downward wrist preserve the work point |
-| `lean_reach_right` | Shoulder and elbow extend toward the right work area | Mirror of the left reach, with the same arm height | Base faces 0.55 rad right; neck and wrist remain secondary |
-
-The ten authoring answers apply to each pose:
-
-1. The single idea and leading joints are listed in the table.
-2. The main drawing is the extended arm carrying the head out over the desk;
-   the table specifies the low or lateral silhouette.
-3. These poses define the reach apex. An expressive entry must supply a small
-   shoulder/elbow pullback before reaching; the pose itself contains no timing.
-4. The head follows the arm and keeps the beam on the selected desk point.
-   The side reaches turn the base only enough to face their work area.
-5. Settle is justified at the held work point and at the final anchor return.
-6. Coupled shoulder/elbow travel carries the head along an arc. The comfort
-   hull constrains their combined angles.
-7. Commission each pose from home with at least four seconds of authored
-   travel. Expressive transitions must keep a slower return that reads as weight.
-8. Home is the commissioning start. Idle and speech clips compile around all
-   three held reach anchors under the existing amplitude scaling.
-9. A pose does not schedule itself. Explicit playback retains ordinary Stop,
-   cancellation and timeout semantics; no failure changes the character anchor.
-   Autonomous entry/return and interruption choreography belong to the calling
-   behaviour, which must use the compiler and preserve the Stop latch.
-10. FK and MuJoCo check aim, geometry and contact along interpolated entry
-    paths; calibrated compilation checks each pose and catalogue clip. On the
-    lamp, enter slowly, check contact and tipping, record shoulder servo load
-    at each apex, and verify the silhouette before enabling autonomous reaches.
-
-#### Lean IK and table points
-
-`look_around` is an ordinary V2 catalogue motion. The aiming request executes
-its three marked stops separately so each detector pass sees a stationary
-camera, then returns or starts the aim. The ten authoring answers are:
-
-1. Search the desk; the neck leads and the base catches up.
-2. Readable left, centre and right stops keep the arm silhouette stable.
-3. A small opposing neck turn and upward pitch announce the first search.
-4. The base follows the neck; downward wrist pitch keeps the desk in view.
-5. Each search stop and final anchor return are real settles.
-6. Neck and base coordinate a shallow viewing arc; there is no arm oscillation.
-7. Slow 1.6 s base catches and a 2.8 s return express weight; the compiler can
-   lengthen them, and inference waits for measured settling.
-8. Home, speech and commissioned reach anchors must support it. Generated
-   search targets are shortened into the same comfort envelope.
-9. Stop, rest, speech and foreground work revoke search ownership. Failed or
-   cancelled stops do not replace the anchor. A normal no-match result compiles
-   a slow return to the saved anchor; a revoked owner cannot initiate recovery.
-10. Catalogue compilation and the following-driver integration check the
-    stops, recovery and ownership. Desk coverage, cable clearance and the
-    neck-first reading remain lamp-unverified.
-
-The generated `aim_light` approach uses the same ten decisions: its one idea is
-an arm-led reach toward the selected desk point; its silhouette is the open
-shoulder/elbow reach; an eight-percent opposing arm displacement supplies
-anticipation when the envelope permits it; head and base follow after 35% of
-the arm travel; only the target is a settle; coupled arm motion supplies the
-arc; 0.35/0.65/2.5 s authored stages and a 3.5 s recovery express weight; the
-saved powered anchor supplies the reference; failed or interrupted movement
-cannot commit its target; calibrated envelope sampling and measured-completion
-tests verify execution, while load, contact, tipping and readable acting remain
-lamp-unverified. Explicit staging uses zero independent joint lag to preserve
-the coupled arm envelope.
-
-`motion::ik::solve_lean` returns `aimed`, `clamped`, or `unreachable`. The
-status describes the light: `aimed` means it lands within `AIM_TOLERANCE_RAD`
-(1°) of the target, and `clamped` means limits leave it further off. A
-separate `lean_limited` flag reports when the comfort envelope shortened the
-requested lean; at lean 0.8 that is common and does not affect `aimed`. It is a
-pose planner, not an execution interface. A caller must compile its result
-through `MotionSequence` with live calibration and call
-`ComfortBox::validate_measured_sequence` before installing the movement. Unreachable
-results contain no pose. Invalid input and anchors outside the envelope are
-errors. No solver, geometry loading or file access runs in the 50 Hz tick.
-
-Points use base-frame metres: forward is −Y, the lamp's right is −X, and up
-is +Z. The supported work region is ahead of the base, at or above its table
-plane, outside the central 5 cm radius. `FramePose::table_point` intersects a
-forward optical ray with a horizontal plane (normally `z = 0`) using both the
-capture-time camera position and rotation. Upward, parallel and backward rays
-have no table point; invalid or nonfinite rays are rejected.
-
-The inverse solver reads the V2 chain's link lengths and baked joint frames
-from `Kinematics`. It uses the law of cosines and home's elbow branch, with no
-additional calibration offsets. Lean zero keeps the arm at the anchor and
-aims the head. Lean one requests the wrist near full geometric extension on
-the shoulder-to-target ray. The envelope projects that requested arm pose to the nearest point in its
-powered hull; head pitch then aims from the bounded wrist, including the LED ring's
-mount offset. If wrist limits prevent aim, a bounded search shortens the arm
-further. A calibrated yaw boundary can leave residual error, reported in `aim_error_rad`
-with `clamped`; callers must not describe that result as exact aim.
-
-The V2 profile's `comfort_box.poses` selects powered catalogue poses: home,
-attentive, delight and the three reach poses. Shutdown-only `rest` and all
-`simulation_preview` poses are excluded, and configuration validation rejects
-either category. Startup planners derive the shoulder, elbow and head-pitch spans and a convex
-hull of their `(shoulder_pitch_joint, elbow_pitch_joint)` pairs; base yaw and
-neck swivel keep calibration. The hull
-rejects combinations that fit individual spans but extend outside this powered
-arm envelope. Planning stays inside the hull and spans; executed curves may
-exceed them by `COMFORT_MARGIN_RAD` (0.05 rad) within calibration. Desk-light
-reaches flow through their anticipation and arm-lead keyframes, and the search
-keeps `look_around`'s authored arrivals and holds; each falls back to a settle
-at every keyframe only when its curve leaves the execution envelope. The live calibration must contain every reference pose.
-The hull is a geometric constraint, not proof that every interior pose is
-collision-free. Reference poses marked lamp-unverified still need physical
-commissioning; torque-free rest cannot establish powered clearance.
-
-`home`, `attentive`, `thinking`, `curious`, `delight`, `look_left`, and
-`look_right` are powered character anchors with distinct readable silhouettes.
-`home` holds the lamp head on a forward, slightly lowered cartoon eyeline rather
-than at the lower edge of calibrated pitch travel.
-`zero_reference` is calibration-only. `rest` is a mechanically supported
-shutdown pose and is intentionally excluded from character animation.
-Anticipation, lean, and overshoot poses are transition drawings, not idle
-anchors; their purpose is to shape one continuous arc.
-
-Each multimodal scene has one dominant motion: directional acknowledgement,
-agreement, disagreement, curiosity, delight, thinking, attentive entry, or
-return home. Marker-triggered light and sound land on the dominant beat and do
-not introduce competing action. `deployment_smoke` is the sole diagnostic
-exception: it intentionally has no motion and verifies the RGBW/audio devices.
-
-### Acceptance invariants
-
-- Character spline replacements preserve commanded position, velocity and
-acceleration unless calibration protection attenuates the offending joint's
-starting derivatives. Measured starts use zero acceleration.
-- Through keyframes preserve continuous position, velocity, and acceleration;
-a direction reversal may cross instantaneous zero velocity but never holds a
-zero-velocity plateau.
-- Authored overshoot poses remain exact. The compiler reduces bordering
-velocity and acceleration when a polynomial overshoots between those poses.
-- All relative idles and speech gestures use one uniform calibration-aware
-amplitude and end at zero offset from their immutable anchor.
-- Speech composes relative drawings into one movement run and extends its
-trajectory as audio arrives. A quiet interval can include a `settle` and hold
-at the phrase pose. Only the final return settles at the anchor.
-- Every speech phrase contains a readable head drawing. Ordinary shoulder and
-elbow motion remains secondary; full body beats are energy-gated, never
-adjacent, and limited to at most roughly one in three phrase drawings.
-- Routine idle has no sound, timers are randomized, and immediate repetition
-is excluded.
-- Final `settle` is intentional and reaches zero velocity and acceleration.
-
-## Idle behaviour details
-
-The coordinator owns two independent monotonic deadlines:
-
-- a micro-idle after a seeded random delay from 8 to 20 seconds;
-- a larger idle after a seeded random delay from 35 to 75 seconds.
-
-Whichever deadline is earlier is the next category. Completing an idle
-reschedules only that category, preserving the other deadline. Speech, a
-foreground action, or a reaction-state change resets the schedule so Orion
-does not immediately add ambient movement after a user-facing action.
-
-The scheduler seeds its pseudorandom generator. Physical runs still vary,
-while tests and previews can reproduce the exact selection sequence. The
-scheduler removes the immediately preceding clip from the candidate set.
-
-The nearest pose's `idle_profile` adapts ambient movement to the held
-silhouette:
-
-- ordinary powered anchors use breathing, head curiosity, micro glance,
-shoulder adjustment, weight shift, and soft head shake;
-- attentive anchors may add `idle_attentive_hold`;
-- directional anchors use `idle_directional_hold` and avoid yaw clips that
-would collapse against the left or right calibration boundary.
-
-Each play clones its selected asset, mirrors yaw and roll as a
-pair with 50% probability, varies head/yaw amplitude by 0.85–1.15, and divides
-travel durations by a seeded tempo factor of 0.9–1.1. Arm offsets retain their
-authored magnitudes. Directional variants point yaw inward; mirrors
-cannot push a lateral joint toward its nearby calibration limit.
-`idle_breathe` belongs only to micro selection. `idle_micro_glance` reaches a
-real settle at its look target, holds for 0.5–1.0 seconds per play, then returns.
-There is no continuous idle layer or coupling to voice attention.
-
-`idle_breathe`, `idle_attentive_hold`, `idle_directional_hold` and
-`idle_weight_shift` start with an 80 ms head-only drawing at 12% of their
-original first head target. Arms then follow to the unchanged authored
-drawing. Total authored travel time and all original arm offsets stay intact;
-tempo variation keeps the added head start inside 50–100 ms. This small
-intermediate drawing avoids compressing the entire head stroke into 80 ms.
-
-The two categories create contrast. Micro-idles are short details; larger
-idles redistribute more of the body and happen less often.
-
-Before compiling a relative clip, the runtime computes the largest single
-scale in `[0, 1]` that keeps every styled offset inside the live calibrated
-range around the anchor. The runtime applies one scale to the whole clip. This
-retains the authored relationship among joints instead of flattening whichever
-joint reaches its limit first.
-
-The motion starts from measured position and velocity but resolves every
-target from the immutable anchor. If foreground work arrives, `stop` cancels
-the idle lifecycle and the foreground trajectory blends from the measured
-interruption state. There is no forced trip back to the anchor before the
-action.
-
-The lowest-priority background light comes from the nearest anchor pose's
-`default_lighting`; `warm_idle_breathe` is the fallback. Listening, thinking,
-starting, and settling states select their corresponding restrained effects.
-
-Routine idles do not play sound. Repetitive ambient audio makes autonomous
-behavior feel like notification noise, while motion and low-intensity light
-are sufficient to communicate life.
-
-## Speech performance policy
-
-Speech uses one continuous performance lifecycle. Each plan covers at most
-20 seconds of audio, or all the remaining audio when no more than 25 seconds
-remain. Longer complete files are planned in pieces and extended like streamed
-audio, which keeps planning inside one 50 Hz cycle however long the reply is.
-Streaming replies and later pieces extend the spline from commanded position,
-velocity and acceleration after the current body follow and any hold finish. Newly received audio
-does not replace a gesture midway through its head lead. Gesture history, random
-state, and body shape advance only when the runtime passes a planned body-follow
-checkpoint; composing an unperformed future does not advance that history. The motion run and immutable
-anchor persist across extensions. Network chunks do not trigger separate gestures
-or intermediate returns to rest. The stream end marker revises the remaining
-plan at the next gesture boundary even when audio duration has not changed.
-With at most 0.9 seconds remaining,
-finalization installs only a settle rather than another expressive gesture.
-
-### Audio analysis
-
-The onboard coordinator sends the selected TTS model's audio as ordered RIFF/WAV chunks to the local gateway;
-the complete-file endpoint also remains available. The gateway requires mono, 24 kHz, signed 16-bit pulse-code modulation
-(PCM16). It applies size and duration limits, writes an atomic random spool
-item, and asks the speech coordinator to start or append that identifier. The coordinator
-never accepts an arbitrary path.
-
-The runtime divides PCM into 20 ms frames, matching its 50 Hz loop. For each
-frame it calculates root-mean-square (RMS) energy and applies exponential
-smoothing:
-
-```text
-smoothed[n] = 0.65 × smoothed[n-1] + 0.35 × rms[n]
-```
-
-It derives:
-
-- quiet regions below `max(12% of maximum energy, 0.004)`; the analyzer
-discards internal runs shorter than three frames but retains a trailing quiet
-run; and
-- phrase peaks above `1.35 × mean energy`, locally maximal, and separated by
-at least ten frames (200 ms).
-
-The same analysis drives movement planning and the `speaking_energy` light.
-The light has a faster attack than release, is capped below full brightness,
-and remains secondary to physical acting.
-
-### Planning the utterance
-
-The character coordinator allocates the waveform duration between active
-phrase motion and one final settle. It then plans phrase drawings with seeded
-variation:
-
-- ordinary phrases prefer `speak_calm_sway` and `speak_reflective_tilt`, with
-occasional explanatory shapes;
-- eligible peaks prefer `speak_emphasis_nod`, reflective tilts, or restrained sways;
-  strong, sufficiently spaced peaks may receive an explanatory body beat;
-- immediate clip repetition is excluded, and recent shapes receive lower
-  selection weights without forcing a fixed three-clip cycle;
-- duration varies around the phrase category's nominal timing;
-- head roll may retain its direction, ease toward neutral, or change sides;
-  yaw turns bias non-reflective roll toward matching signs (the same side in
-  grounded-base MuJoCo), while reflective tilts keep their authored sign;
-- head pitch supplies nods, lifts, and authored emphasis counter-strokes;
-  mean RMS over each drawing's audio window gently scales its head amplitude;
-- small base-yaw turns are chosen without repeating a direction and are
-constrained away from a directional anchor's nearby limit.
-
-The authored clips contribute approved character shapes. The generated
-performance varies and layers those shapes rather than inventing unconstrained
-joint targets.
-
-### Head-led staging
-
-Every planned phrase is divided into a head lead and body follow:
-
-1. **Head lead:** roll, pitch, and optional yaw establish the phrase direction
-  while the body retains the preceding secondary shape.
-2. **Body follow:** shoulder and elbow arrive later while the head blends
-  toward the next phrase's arc.
-
-Ordinary head leads receive roughly two-thirds of the phrase duration. Emphasis
-strokes receive 25–35%, followed by the authored second head drawing: the nod
-lifts and then drops. Reflective tilts retain their authored roll sign.
-Emphasis is planned backward from an audio peak, targeting a commanded apex
-0.17 seconds before it; a preceding drawing shorter than 0.35 seconds is
-not compressed to make room. Compiled arrival checks include style tempo and
-speed retiming. All emphases in a plan are aligned together: one compile
-measures every apex, corrections carry their time shift forward to later
-emphases, and a second pass corrects retiming effects, so a plan compiles at
-most three times. Peaks that cannot fit safely are skipped. During an ordinary
-body follow, the head target includes an 18% look-ahead toward the following
-phrase's head target. That staging creates anticipation and overlap inside the
-same continuous spline. At selected quiet intervals, the body follow instead
-settles at the phrase pose and holds briefly without returning to the anchor.
-
-The planner scales ordinary shoulder and elbow offsets to remain visibly
-subordinate to the head. It allows a larger explanatory body beat only when all
-of these conditions hold:
-
-- the drawing is associated with an eligible phrase peak, with at least 3.5
-  seconds of planned performance time since the previous emphasis;
-- its peak energy is at least 72% of the available waveform maximum;
-- its drawing index is at least three greater than the preceding body beat
-(at least two drawings intervene); and
-- it would not immediately repeat an explanatory lean.
-
-The full body beat uses the explanatory lean's approved arm shape beneath the
-selected head stroke; it does not replace the nod with another lift.
-
-This is the movement hierarchy:
-
-```text
-head direction and eyeline          primary on every phrase
-shoulder/elbow follow-through       visible secondary action
-full explanatory body beat          sparse emphasis only
-speaking-energy light               supporting state cue
-audio                               timing source and semantic content
-```
-
-A fresh speech onset from holding prepares with a 0.18-second head drawing
-opposite the first lead at 25% of its amplitude. An executing thinking or idle
-handover skips this preparation; streamed extensions never repeat it. Audio
-starts without waiting for motion preparation. Completed audio with at least
-two seconds of performance budget reserves a 0.28-second resolve drawing,
-lifting head pitch by 0.035 rad toward the listener before the anchor return.
-Provisional streams omit resolve, and finalization with at most 0.9 seconds
-left retains its plain settle-only path.
-
-The performance ends with one zero-offset `settle` around the pre-speech
-anchor. Internal drawings are `through` except intentional quiet holds, which
-use `settle` at a non-neutral phrase pose. There is no independent periodic
-elbow oscillator and no scheduler gap between gestures.
-
-### Policy values
-
-These values are character policy, not hardware limits:
-
-| Policy                                      | Implemented value                                     |
-| ------------------------------------------- | ----------------------------------------------------- |
-| Onset preparation                          | `0.18 s`, opposite head lead at `0.25 ×` amplitude      |
-| Turn-yield resolve                          | `0.28 s`, `+0.035 rad` pitch when budget permits        |
-| Idle head/yaw amplitude variation            | `0.85–1.15`; arm offsets unchanged                     |
-| Idle travel tempo variation                 | `0.9–1.1`; glance hold `0.5–1.0 s`                      |
-| Added idle head start                       | Nominal `0.08 s`; 12% intermediate head drawing        |
-| Motion end lead before audio duration       | `0.12 s`                                              |
-| Nominal final settle budget                 | `0.55 s`, bounded for short utterances                |
-| Phrase-duration scale                       | `1.35`                                                |
-| Ordinary phrase base duration               | `1.35 s` before scale, randomization, and style tempo |
-| Emphasis phrase base duration               | `0.90 s` before scale, randomization, and style tempo |
-| Emphasis eligibility spacing               | At least `3.5 s` of planned performance time          |
-| Commanded emphasis apex lead                | `0.17 s`; compiled acceptance `0.08–0.25 s` before peak |
-| Minimum preceding drawing                   | `0.35 s`                                             |
-| Quiet hold eligibility                      | Quiet interval at least `0.4 s`; hold matches the gap, capped at `1.2 s` |
-| Speech plan length                          | `20 s` per piece; up to `25 s` when that finishes the audio |
-| Duration randomization                      | `0.90–1.10`                                           |
-| Ordinary head amplitude multiplier          | `0.88–1.10`                                           |
-| Emphasis head amplitude multiplier          | `1.05–1.24`                                           |
-| Ordinary yaw turn                           | `0.045–0.085 rad`                                     |
-| Emphasis yaw turn                           | `0.070–0.110 rad`                                     |
-| Ordinary body multiplier on source drawing  | `0.32–0.48`                                           |
-| Full body-beat multiplier on source drawing | `0.78–0.96`                                           |
-| Head-lead share                             | Ordinary `0.64–0.74`; emphasis `0.25–0.35`              |
-| Local loudness head multiplier              | `0.85 + 0.30 × smoothstep(mean RMS / maximum RMS)`      |
-| Matching roll/yaw signs                     | 70% bias; reflective roll keeps its authored sign     |
-| Next-head look-ahead during body follow     | `0.18`                                                |
-| Full body-beat energy gate                  | At least `0.72` of available waveform maximum                  |
-| Full body-beat spacing                      | Drawing-index difference of at least `3`              |
-
-Seeded variation selects the value inside each range. The final compiled
-motion may be uniformly reduced near calibration boundaries and may be retimed
-to respect the motor-speed ceiling.
-
-### Interruption and failure
-
-Speech motion is best-effort: a movement-planning failure must not silence a
-valid response. If movement cannot start, audio continues.
-
-When playback ends before the generated movement, the runtime replaces the
-executing spline with an anchor-relative settle from commanded position,
-velocity and acceleration, preserving the motion run. A settle already installed by stream
-finalization, or a performance waiting for measured settling, continues without
-restarting. If spline replacement is unavailable,
-the runtime falls back to stopping and settling from measured state.
-Cancellation does the same. Position, velocity and acceleration are preserved at replacement when
-calibration permits. Near a limit, safety protection halves the offending
-joint's starting velocity and acceleration together; continuity yields to
-calibration bounds. Measured starts use zero acceleration.
-If audio upload, validation, synthesis, or playback
-fails, the speech run becomes `failed`, the coordinator removes its temporary
-file, and character motion returns to the anchor. Idle resumes only after the
-scheduler chooses another randomized delay.
-
-The voice coordinator's playback-complete acknowledgement may arrive while the physical
-settle is still running. Listening, thinking, and neutral reactions preserve
-the speaking or settling state until that movement is cleaned up. The next
-speech waits only for a matching active movement; a run that has left the
-runtime's bounded movement history cannot block a later performance.
-
-### Thinking handover
-
-Verification, endpointing and agent processing can all request thinking during
-the same voice turn. Once the character is thinking, repeated notifications keep
-the current movement and its timing. They can refresh attention expiry without
-replaying the opening tilt. This prevents a processing-stage transition from
-causing a sudden movement restart.
-
-When speech takes over, the runtime starts from the commanded thinking position,
-velocity and acceleration when available. Speech and its final settle retain priority over
-later listening, thinking or neutral notifications. These rules live in
-`CharacterCoordinator` and `RuntimeCore::extend_character_performance()`.
-Tests cover repeated thinking requests and the handover into speech.
+One runtime scale fits the complete relative clip inside limits. Absolute targets do not receive amplitude scaling. An invalid absolute target fails.
 
 ## Trajectory compiler
 
-### Constants and authorities
+The compiler connects targets with quintic segments. A quintic segment is a fifth-degree polynomial with position, velocity and acceleration boundary conditions.
 
-| Concern | Authority |
-| --- | --- |
-| Command rate | `50 Hz` (`20 ms` period) in `RuntimeCore` and the daemon loop |
-| Position limits | Active calibration loaded by the hardware driver |
-| Offline position limits | `simulation/mujoco/config/servo_calibration.json` |
-| Encoder resolution | `4096` counts/revolution |
-| Motor speed ceiling | `5.445427266... rad/s`, the 7.4 V STS3215 52 RPM no-load specification |
-| Completion position tolerance | `0.05 rad` maximum joint error |
-| Completion velocity tolerance | `0.05 rad/s` maximum measured joint speed |
-| Required settled duration | `0.25 s` continuously within both tolerances |
-| Settling timeout | `2.0 s` after authored trajectory completion |
-| Simulation reporting policy | `motion/config/stability_limits.yaml`; diagnostic, not a runtime gate |
-
-The driver reports voltage, current, temperature, and status telemetry.
-Position calibration and the motor profile remain the command authorities.
-
-### Compilation entry points
-
-#### One-target `goto`
-
-`JointTrajectory::with_start_velocity_calibrated` wraps one target as a single
-`settle` waypoint. It uses the same quintic compiler, speed retiming, measured
-start velocity, and calibration-safe interruption path as a multi-keyframe
-motion.
-
-#### Authored motion
-
-`MotionSequence::compile_scaled_calibrated`:
-
-1. resolves every keyframe target from its absolute pose or relative anchor;
-2. applies the one uniform relative amplitude scale;
-3. converts keyframe arrival and marker data to `TrajectoryWaypoint` values;
-4. invokes `CompiledTrajectory::compile_calibrated`; and
-5. retains keyframe and marker queries for runtime and scene status.
-
-#### Character-owned generated motion
-
-`RuntimeCore::play_generated_anchored_relative` accepts a generated
-`MotionDefinition` and applies the same contract as a loaded relative clip:
-
-- motion space must be `anchor_relative`;
-- `return_to_anchor` must be true;
-- the final keyframe must be one zero-offset `settle`;
-- every resolved target must pass driver validation; and
-- compilation preserves the immutable anchor, uniform amplitude scale,
-  calibration, and the STS3215 speed ceiling.
-
-A fresh movement starts from measured position and velocity while the runtime
-is holding. `extend_character_performance` replaces an executing character
-movement from its commanded position and velocity, keeping the same run ID.
-Speech uses this replacement path when taking over from thinking or idle,
-extending a stream, and returning to the anchor at playback end. Preserving
-the commanded state avoids restarting each continuation from delayed servo
-feedback. Both paths use the same trajectory compiler and limits.
-
-### Input normalization
-
-The compiler requires:
-
-- a non-empty name;
-- one complete finite start position and start velocity for the same joints;
-- at least one complete finite waypoint;
-- positive finite movement durations;
-- finite non-negative holds attached only to `settle` arrivals; and
-- a positive finite speed ceiling.
-
-Calibrated compilation additionally requires one unique, finite, ordered
-`lower_rad < upper_rad` range for every joint and a start position inside each
-range.
-
-### Quintic segment model
-
-For each joint and segment, the compiler constructs:
+Its position relation is:
 
 ```text
-p(t) = c0 + c1 t + c2 t² + c3 t³ + c4 t⁴ + c5 t⁵
+p(t) = c0 + c1t + c2t² + c3t³ + c4t⁴ + c5t⁵
 ```
 
-The six coefficients satisfy six endpoint constraints:
+Ordinary moves start from measured position and velocity. Streaming speech replacement starts from commanded position, velocity and acceleration. Internal through targets share derivatives. Settle targets end with zero derivatives.
 
-```text
-p(0) = p0       p(T) = p1
-v(0) = v0       v(T) = v1
-a(0) = a0       a(T) = a1
-```
+The compiler limits unintended overshoot. It lengthens segments that exceed the STS3215 speed ceiling. It checks sampled positions against joint limits at 50 Hz.
 
-Because adjacent segments use the same waypoint position, velocity, and
-acceleration, `through` boundaries are C2-continuous: position, first
-derivative, and second derivative match at the join.
-
-The compiler keeps exact target positions. It changes derivative values and
-segment durations, not authored keyframe positions.
-
-### Duration policy
-
-The initial compiled duration for each authored segment is:
-
-```text
-through: authored_duration / style.tempo
-
-settle:  authored_duration / style.tempo
-         × (0.85 + 0.30 × style.settle_character)
-```
-
-A hold is appended after arrival and does not participate in polynomial
-motion. Sampling during a hold returns the exact target with zero velocity and
-acceleration.
-
-Speed retiming may lengthen individual movement segments after this style
-transformation.
-
-### Internal derivatives
-
-Let `before` and `after` be the average slopes of the adjacent authored
-segments for one joint.
-
-#### Start point
-
-The caller supplies start position and velocity. Ordinary movements use the
-latest measured position, clamped to calibration, and measured velocity.
-Character performance replacements sample the executing trajectory's
-commanded position, velocity and acceleration. Optional start acceleration
-defaults to zero for measured starts. Replacements preserve all three values
-when calibration permits. Protection halves the offending joint's velocity
-and acceleration together if its curve leaves the calibrated range; safe
-joints keep their supplied derivatives. This safety exception can break
-continuity at a replacement near a limit.
-
-#### Final point and settle arrivals
-
-Velocity and acceleration are zero at the final waypoint and after every
-`settle` arrival.
-
-#### Through arrivals
-
-If adjacent slopes change sign or either is zero, the waypoint velocity is
-zero. This represents an instantaneous direction reversal, not a hold.
-
-Otherwise the compiler calculates a duration-weighted slope, bounds its
-magnitude to three times the smaller adjacent slope, and multiplies it by
-style tangent tension and joint-lag character.
-
-The compiler bases through acceleration on the change between adjacent slopes
-over their combined duration, then scales it by tangent tension, joint-lag
-character, and overshoot character.
-
-Joint-lag character uses the ordered chain:
-
-```text
-base yaw → shoulder pitch → elbow pitch → head roll → head pitch
-```
-
-The configured lag reduces derivative magnitude progressively across that
-order. It changes how joints travel through shared drawings; it does not delay
-servo packets or change the 50 Hz clock. Explicit head-first timing, such as
-speech body follow-through, is represented with additional semantic drawings.
-
-### Unrequested overshoot control
-
-For each segment and joint, the compiler samples the quintic at 80 subdivisions
-and compares its position with the closed interval between the segment's two
-authored endpoints.
-
-If a polynomial exits that interval, the compiler halves only the velocity and
-acceleration values bordering that segment and joint. It repeats this local
-process up to eight passes.
-
-Local attenuation matters. Flattening one joint's derivatives globally would
-allow a difficult turn in one place to create stopped-looking movement in an
-unrelated part of a long performance.
-
-An authored overshoot pose remains an endpoint, and the trajectory reaches it
-exactly. The overshoot guard prevents additional polynomial overshoot between
-authored endpoints.
-
-### Motor-speed retiming
-
-After compiling a candidate, the runtime samples every segment's joint
-velocity at 81 points. If a segment exceeds the STS3215 ceiling, only that
-segment's duration is multiplied by:
-
-```text
-(measured_peak / maximum_velocity) × 1.015
-```
-
-The compiler rebuilds derivatives and polynomials and repeats for up to 12
-iterations. It rejects the trajectory if the final peak remains more than
-0.1% above the ceiling.
-
-Retiming changes marker arrival times because markers belong to compiled
-keyframes. Scenes ask the active motion whether a marker has been reached,
-which keeps light and audio synchronized with the stretched motion.
-
-### Calibration-safe interruption
-
-The supplied start velocity shapes the transition into a movement. A high
-velocity near a joint boundary can make the polynomial leave calibration;
-noisy measured feedback can cause the same problem. `compile_calibrated`
-reduces only the affected joints' starting velocities:
-
-1. Validate that the start position is inside every range.
-2. Bound any starting speed above the motor ceiling to 95% of that ceiling,
-   preserving direction.
-3. Compile the full candidate.
-4. Sample it at the actual 50 Hz command rate.
-5. Identify only joints whose samples leave calibration.
-6. Halve only those joints' start velocities.
-7. Recompile, for at most 18 iterations.
-
-Safe joint velocities that do not cause a boundary violation remain intact.
-Targets, styles, and other joints do not change. Failure to find a safe blend
-is a rejected motion, never a clipped command.
-
-## Servo control
-
-### Calibration and radians conversion
-
-Each joint calibration contains:
-
-- semantic joint name;
-- unique servo ID;
-- raw encoder value corresponding to joint-space zero;
-- encoder direction, `+1` or `-1`; and
-- safe minimum and maximum raw deltas around neutral.
-
-The software converts safe raw deltas to an ordered radian range using the
-4096-count encoder. The driver converts a commanded radian value as follows:
-
-```text
-steps_per_radian = 4096 / (2π)
-delta = round(radians × steps_per_radian) × encoder_direction
-raw_goal = (neutral_raw + delta) modulo 4096
-```
-
-The driver rejects a delta outside its calibrated range before producing a raw
-goal. It also requires a command for exactly all five joints.
-
-Feedback conversion unwraps the raw value to the nearest signed half-turn from
-neutral and divides by encoder direction and `steps_per_radian`. Orion's five
-servos have Phase register 18 bit 2 set: Present Speed register 58 reports
-encoder counts per second. The transport decodes the little-endian word as
-sign magnitude, with bit 15 marking a negative value. The driver converts it
-with one named constant:
-
-```text
-velocity_rad_s = signed_present_speed × (2π / 4096) × encoder_direction
-```
-
-The [Feetech magnetic-encoder memory table](https://www.feetechrc.com/Data/feetechrc/upload/file/20240702/舵机协议内存表-磁编码版本.xlsx)
-defines the count/s unit and the Phase selection; clearing bit 2 instead selects
-50 counts/s per unit and is incompatible with this conversion. The
-[vendor SDK's ReadSpeed](https://github.com/ftservo/FTServo_Arduino/blob/main/src/SMS_STS.cpp)
-confirms the sign encoding. The Orion profile preserves bit 2. This conversion
-assumes the commissioned setting; the driver does not add a unit-mode check.
-
-Fresh measured starts and final completion use this physical rad/s value.
-Speech spline replacements use commanded derivatives, and MuJoCo already
-reports rad/s. The hardware speed quantum is 50 counts/s, about 0.0767 rad/s,
-despite the count/s unit. That exceeds
-the unchanged 0.05 rad/s completion threshold, so these servos still need a
-zero-speed reading throughout the settle window.
-
-### Hardware preparation and torque activation
-
-The STS3215 driver has three distinct stages.
-
-#### Connect and validate
-
-With torque off, it opens the serial port and verifies for every configured
-servo:
-
-- unique ID and joint name;
-- STS3215 model number;
-- torque disabled;
-- zero fault status; and
-- the same firmware version across all five devices.
-
-#### Apply the Orion profile
-
-The driver applies and reads back return delay, operating mode, direction,
-PID coefficients, maximum acceleration, and runtime acceleration. Persistent
-register writes unlock and relock EEPROM. Gravity-loaded joints use raised
-proportional gains so they follow small animation offsets and settle inside
-tolerance. V1: shoulder and elbow 32, head pitch 48. V2: shoulder and elbow 32.
-All other joints use the factory gain of 16.
-
-The servo acceleration registers shape the actuator's local response. They do
-not replace the host trajectory or define a second motion plan.
-
-#### Activate
-
-Immediately before torque-on, the driver synchronously reads present state,
-writes each present encoder position into its goal register, verifies those
-goals, and only then enables torque. This ordering prevents torque activation
-from snapping toward a stale target.
-
-Deactivation disables torque on every configured ID. Dropping the hardware
-driver also attempts torque-off before closing the serial port.
-
-### Synchronized servo I/O
-
-The physical transport uses the STS3215 serial protocol through `rustypot`.
-One synchronized feedback read requests the 15-byte state block from all five
-IDs. It decodes position, sign-magnitude velocity and current, voltage,
-temperature, and status.
-
-One synchronized goal write sends the five two-byte positions to goal register
-address 42. The trajectory loop does not issue five independently timed
-position writes.
-
-Register-level operations remain private to `Sts3215Driver` and
-`Sts3215Transport`. Network and character layers cannot address registers.
-
-### The 50 Hz daemon cycle
-
-The outer service loop advances a monotonic deadline by 20 ms each iteration.
-Its order is:
-
-1. `RuntimeCore::tick`
-2. scene coordinator tick
-3. speech coordinator tick
-4. speaking-energy light update
-5. character coordinator tick
-6. background character light update when no foreground owner exists
-7. pending Unix command handling
-8. sleep until the next deadline
-
-Inside `RuntimeCore::tick`:
-
-```text
-read synchronized feedback
-        │
-        ├─ active MotionSequence? ─ sample positions + markers
-        │
-        └─ active JointTrajectory? ─ sample positions
-        │
-write synchronized goals
-update executing progress
-        │
-authored duration complete?
-        ├─ no  → publish snapshot
-        └─ yes → enter measured settling → publish snapshot
-```
-
-The clock is supplied to `RuntimeCore`, which makes lifecycle and trajectory
-tests deterministic. Hardware uses `Instant`; tests can advance time directly.
-
-### Movement lifecycle
-
-```text
-executing ── authored samples exhausted ──▶ settling
-    │                                         │
-    │ stop                                    ├─ stable within tolerance ─▶ completed
-    ▼                                         └─ timeout ─────────────────▶ timed_out
-cancelled
-```
-
-`executing` tracks the compiled trajectory. `settling` tracks physical
-feedback against the final target. Completion requires the maximum absolute
-joint error and maximum absolute measured velocity to remain within tolerance
-for the full settle window.
-
-The daemon returns to `holding` for every terminal movement phase. Disabling
-torque is a separate command and cancels any active movement first.
-
-### Marker and status behavior
-
-`MotionSequence` exposes:
-
-- active keyframe label and index;
-- total keyframe count;
-- progress through total compiled duration;
-- compiled marker arrival times; and
-- all markers reached at the sampled elapsed time.
-
-Movement run IDs are daemon-local and reset at restart. Status retains only
-the active run and the most recent terminal run. Clients must retain the
-returned run ID and follow that specific ID; status is not an event database.
-
-### Runtime validation and failure modes
-
-| Boundary | Rejection or terminal behavior |
-| --- | --- |
-| Asset load | Malformed schema, unknown fields, invalid references, or duplicate names reject the catalog |
-| Runtime startup/reload | Absolute targets outside active calibration reject the catalog transaction |
-| Relative instantiation | Missing anchor joints, missing limits, or invalid final zero settle reject the clip |
-| Trajectory compile | Invalid maps, durations, holds, limits, speed, overshoot, or safe interruption reject movement before start |
-| Driver encode | Missing/non-finite/out-of-range commands reject before serial write |
-| Movement execution | Driver read/write errors propagate as runtime errors; no completion is claimed |
-| Settling | Failure to remain within measured tolerance becomes `timed_out` |
-| Cancellation | Compiled trajectory is dropped and the run becomes `cancelled`; holding torque remains on |
-
-### Shared hardware and simulation path
-
-`RuntimeDriver` is expressed in calibrated joint radians:
-
-```text
-apply_servo_profile
-activate / deactivate
-read
-write
-joint_limits
-validate_positions
-clamp_positions_to_safe_range
-```
-
-The physical driver converts radians to STS3215 packets. `MujocoDriver`
-exchanges radians with the simulator. Everything above that boundary—asset
-loading, trajectory compilation, timing, markers, run IDs, cancellation, and
-settling—uses the same Rust code.
-
-The `orion-trajectory` binary also calls the same compiler to emit portable
-50 Hz preview samples. Studio and offline tools consume those samples rather
-than reimplementing interpolation.
-
-### Verification map
-
-| Property | Primary automated evidence |
-| --- | --- |
-| Complete schema and catalog | `pose`, `motion`, and `scene` loader tests |
-| C2 continuity at `through` | `trajectory::keeps_position_velocity_and_acceleration_continuous_through_keyframes` |
-| Exact settle derivatives | trajectory and motion-sequence sampling tests |
-| Segment speed ceiling | `trajectory::retimes_fast_segments_to_the_sts3215_ceiling_without_extra_overshoot` |
-| Measured interruption continuity | interruption trajectory tests |
-| Calibration-safe interruption | calibrated interruption tests |
-| Relative scaling and anchor return | built-in relative clip tests |
-| 50 Hz movement lifecycle | daemon state-machine tests |
-| Shared MuJoCo execution | native MuJoCo runtime test |
-| Radians/raw and synchronized transport | driver and transport tests |
-
-Automated checks establish the numerical and lifecycle contracts. Physical
-review must also assess silhouette, perceived timing, mechanical sound, cable
-behavior, and appeal using the [animation catalogue](#animation-catalogue).
+Relative animation preserves its anchor. Interruption can reduce unsafe start derivatives while preserving a valid start position. Generated movement uses the same compiler as authored assets.
 
 ### Export a trajectory
 
-Generate a preview or diagnostic document with the same compiler:
+Run these steps from the repository root.
 
-```bash
-runtime/target/release/orion-trajectory --hardware v2 \
-  --motion look_at_left_expressive --start-pose attentive \
-  --pose-file motion/config/v2/poses.yaml \
-  --motions-directory motion/motions/v2 \
-  --calibration ~/.config/orion/servo_calibration-v2.json
+1. Build the release compiler.
+
+   ```bash
+   cargo build --release --manifest-path runtime/Cargo.toml --locked
+   ```
+
+2. Export a V2 motion as JSON.
+
+   ```bash
+   runtime/target/release/orion-trajectory --hardware v2      --motion look_at_left_expressive --start-pose home      --pose-file motion/config/v2/poses.yaml --motions-directory motion/motions/v2      --calibration hardware/profiles/v2-joints.json
+   ```
+
+The output contains joint names, ranges, adjusted duration, markers and samples. Each sample includes position, velocity, acceleration and keyframe information.
+
+`--anchor-pose` selects a relative anchor. `--start-state` reads JSON with complete `positions`, `velocities` and `anchor` maps. `--control-rate-hz` selects the export sample rate.
+
+The export rate must be greater than zero and at most 1000 Hz. Runtime control remains at 50 Hz.
+
+## Bearing gaze tuning
+
+V2 serving enables gaze by default. Other operations and V1 leave it off. The planner uses these values from [gaze.rs](../runtime/src/expression/gaze.rs):
+
+| Setting | Value |
+| --- | --- |
+| Target deadband | 4 degrees |
+| Maximum extension frequency | 10 Hz |
+| Neck lead | 200 ms |
+| Compiled peak speed | 1.5 rad/s |
+| Neck planning speed | 2.5 rad/s |
+| Base planning speed | 0.6 rad/s |
+| Maximum target age | 1 second |
+
+These settings change gaze planning without changing profile limits. Unreachable bearings select a permitted boundary. See [gaze recovery](../runtime/README.md#bearing-gaze).
+
+## Servo control
+
+V2 command conversion uses the tracked direction and rest zero:
+
+```text
+raw_goal = 2047 + round(angle × 4096 / 2π) × direction
 ```
 
-For an anchor-relative motion, add `--anchor-pose POSE_NAME`. The output holds
-positions, velocities, accelerations, markers, calibration ranges and
-hardware-profile metadata.
+The driver rejects command ranges crossing raw 0/4095. Startup permits readings up to 20 counts outside profile limits. Initial goals clamp into range before torque activation. Later commands remain inside strict limits.
 
-### Object-directed idle variant
+Activation requires valid status, available feedback and checked initial goal writes. It enables torque only after those checks. The zeroing command keeps torque off and restores previous offsets after failed verification.
 
-`idle_micro_glance` can receive a capture-grounded object direction when its
-setting is enabled. It remains the same catalogue clip and is lamp-unverified.
-The ten authoring answers are:
+Present speed converts from signed counts per second:
 
-1. Idea and lead: a small glance toward an observed object, preserving the
-   existing coordinated yaw/neck drawing.
-2. Silhouette: a slight sideways head displacement, with the arm unchanged.
-3. Anticipation: no added prelude; retain the ordinary idle pause and clip.
-4. Followers: no added body movement or competing secondary action.
-5. Settle: the authored fixation and final zero-offset anchor keyframe.
-6. Arc: preserve the clip's coupled yaw/neck curve; only its direction changes.
-7. Weight: preserve its authored duration and the existing bounded tempo variation.
-8. Anchors: ordinary idle anchors that permit `idle_micro_glance`; directional
-   profiles keep their existing inward-safe clips.
-9. Interruption: privacy, setting and mode changes compile an owned anchor
-   return. Foreground, speech, Stop and rest retain priority. Failed execution
-   spends budget and reschedules the idle rather than retrying in a burst.
-10. Checks: V2 compiled-envelope, shared-budget, stale-context and privacy-return
-    tests. Visual MuJoCo and lamp checks with differently placed objects remain
-    owed. Verify that the ordinary idle cadence and subtle scale still read.
+```text
+velocity_rad_s = present_speed × 2π / 4096 × direction
+```
 
-### Mutual-gaze responses
+This conversion requires the configured servo Phase bit. It does not imply one-count measurement precision.
 
-`mutual_gaze_notice`, `mutual_gaze_hi` and `mutual_gaze_away` are normal V2
-anchor-relative catalogue clips. They are head-only variants of the curious
-look and acknowledgement, suitable for a small autonomous response. The runtime
-centres their intermediate drawings on the held gaze posture and retains the
-original character anchor for every final settle. All three are lamp-unverified.
+## Runtime cycle and completion
 
-1. Idea and lead: notice uses pitch first, then neck; hi is one pitch nod; away
-   is one neck-led withdrawal. The arm and base remain secondary and still.
-2. Silhouette: notice slightly pitches and angles the head; hi makes one shallow
-   pitch stroke/recovery; away presents a small sideways turn.
-3. Anticipation: notice has a 0.15-second beat before its curious drawing; hi and
-   away follow the observed dwell or departure, without another preparatory swing.
-4. Followers: a small pitch detail supports away. No shoulder/elbow accent is added.
-5. Settle: notice settles for readable eye contact; hi settles at its recovery;
-   away settles briefly at its side drawing. Every clip ends at the anchor.
-6. Arc: calibrated quintic curves coordinate the head channels. Continuations
-   inherit commanded position, velocity and acceleration.
-7. Weight: notice holds for observation, hi uses a restrained 0.28/0.32-second
-   stroke/recovery, and away takes 0.55 seconds plus a 0.35-second hold.
-8. Anchors: the runtime requires a powered idle anchor and preflights the complete
-   curve against V2 calibration and the comfort box. At home, pitch does not move
-   below its validated lower boundary.
-9. Interruption: privacy and stale context request an owned return; a proven
-   existing return finishes if replacing it would cross the envelope. Higher
-   priority commands retain ownership. An episode admits no more stages after
-   eight seconds and never resets the Stop latch.
-10. Checks: continuous-dwell, track pinning, bounded stages, privacy return,
-    shared habituation, voice preemption and calibrated catalogue tests.
-    Visual MuJoCo and lamp checks remain owed, especially the small nod at home
-    and the return during a look-away.
+```text
+read synchronized feedback
+          ↓
+sample active trajectory and markers
+          ↓
+write synchronized goals
+          ↓
+update progress and settling state
+```
 
-### Silent arrival entry
+The cycle runs every 20 ms. Timeline completion enters settling. Stable measured position and velocity permit completion. Timeout produces `timed_out`; cancellation produces `cancelled`.
 
-`arrival_notice` is a normal V2 anchor-relative variant of `attentive_entry`.
-The `attentive` pose is a powered catalogue anchor. Runtime substitutes the
-observed arrival bearing into the head-leading and attentive drawings and
-returns to the original character anchor. The pose and variant are lamp-unverified.
+Markers follow adjusted compiler timing. Status includes run identity, current keyframe and terminal outcome. Clients must distinguish timeline progress from measured completion.
 
-1. Idea and lead: notice an arrival; the head leads, with shoulder and elbow
-   opening the attentive silhouette afterward.
-2. Silhouette: the head faces the arrival above the slightly opened arm.
-3. Anticipation: the 0.4-second head turn announces the body entry.
-4. Followers: the arm follows over 0.9 seconds; the base catches up by at most
-   0.35 radians. A small warm light lift supports the same idea without audio.
-5. Settle: the head lead, the 0.6-second attentive hold and the final anchor each
-   settle. These stops prevent tangent motion from starting the arm too early.
-6. Arc: each drawing uses a common calibrated curve, with projected targets
-   and sampled shoulder–elbow hull validation.
-7. Weight: a measured entry and 1.4-second return use the `return_home` style;
-   no overshoot is added, and the full-curve check includes the style’s joint lag.
-8. Anchors: powered idle anchors inside the comfort box; unreachable or unsafe
-   variants are declined before spending budget or interrupting motion.
-9. Interruption: the shared owned-return path handles camera/mode changes,
-   stale evidence and setting changes; higher-priority controls win. A failed
-   or blocked arrival is consumed and does not become a delayed greeting.
-10. Checks: ten-minute evidence, outage/reset, V2 catalogue compilation,
-    measured entry, bounded light and unchanged-anchor return tests. Visual
-    MuJoCo and lamp checks remain owed for facing direction, silhouette,
-    shoulder load, contact and the warm lift.
+## Animation catalogue
 
-### Desk peeks and pet delight
+V2 uses the motions below. [V1 motion files](../motion/motions/v1/) remain separate.
 
-`peek_new_object` and `pet_notice` are normal V2 anchor-relative catalogue
-assets. Runtime substitutes observed geometry at command time and retains the
-final zero-offset anchor drawing. The `delight` pose is a powered catalogue
-anchor; `pet_notice` takes its lift target from `delight_lift`. All are
-lamp-unverified. Nominal catalogue clips use `speaking_calm`; generated variants
-keep its restrained curve with unit tempo/amplitude and no independent joint
-lag, so the stated staging and IK reach survive exactly.
+| Motion | Intent | File |
+| --- | --- | --- |
+| `arrival_notice` | Raise the head first, then adopt the attentive posture and return. | [V2](../motion/motions/v2/arrival_notice.yaml) |
+| `attention_left` | A small grounded turn toward the confirmed speaker on the left. | [V2](../motion/motions/v2/attention_left.yaml) |
+| `attention_right` | A small grounded turn toward the confirmed speaker on the right. | [V2](../motion/motions/v2/attention_right.yaml) |
+| `delight_lift` | Lift the head and look up into the delight posture. | [V2](../motion/motions/v2/delight_lift.yaml) |
+| `idle_attentive_hold` | Raise the gaze slowly while holding an attentive posture. | [V2](../motion/motions/v2/idle_attentive_hold.yaml) |
+| `idle_breathe` | Raise the head slowly, breathe through the arm, and settle back. | [V2](../motion/motions/v2/idle_breathe.yaml) |
+| `idle_directional_hold` | Raise the gaze slowly while holding a directional or desk anchor. | [V2](../motion/motions/v2/idle_directional_hold.yaml) |
+| `idle_head_curiosity` | Raise the gaze and turn the neck slowly to inspect the surroundings. | [V2](../motion/motions/v2/idle_head_curiosity.yaml) |
+| `idle_micro_glance` | Turn the base slowly for a brief glance with a full return. | [V2](../motion/motions/v2/idle_micro_glance.yaml) |
+| `idle_shoulder_adjust` | Redistribute the shoulder and elbow slowly, then return. | [V2](../motion/motions/v2/idle_shoulder_adjust.yaml) |
+| `idle_soft_head_shake` | Turn the neck slowly left and right with a soft return. | [V2](../motion/motions/v2/idle_soft_head_shake.yaml) |
+| `idle_weight_shift` | Shift the shoulder and elbow slowly, then restore their balance. | [V2](../motion/motions/v2/idle_weight_shift.yaml) |
+| `look_around` | Deliberate three-stop desk search, neck leading the base, then returning to its anchor. | [V2](../motion/motions/v2/look_around.yaml) |
+| `look_at_left` | Turn directly toward the predefined target on Orion's left. | [V2](../motion/motions/v2/look_at_left.yaml) |
+| `look_at_left_expressive` | Notice, lean toward, and settle on the predefined left target. | [V2](../motion/motions/v2/look_at_left_expressive.yaml) |
+| `look_at_right` | Turn directly toward the predefined target on Orion's right. | [V2](../motion/motions/v2/look_at_right.yaml) |
+| `look_at_right_expressive` | Notice, lean toward, and settle on the predefined right target. | [V2](../motion/motions/v2/look_at_right_expressive.yaml) |
+| `mutual_gaze_away` | Turn the neck aside with a raised gaze, then return. | [V2](../motion/motions/v2/mutual_gaze_away.yaml) |
+| `mutual_gaze_hi` | Raise the gaze in a clear head-only greeting and return. | [V2](../motion/motions/v2/mutual_gaze_hi.yaml) |
+| `mutual_gaze_notice` | Raise the gaze, turn the neck with curiosity, and return. | [V2](../motion/motions/v2/mutual_gaze_notice.yaml) |
+| `peek_new_object` | Arm-led desk peek with a curious neck turn and a full anchor return. | [V2](../motion/motions/v2/peek_new_object.yaml) |
+| `pet_notice` | Lift into delight, follow the pet briefly, and return to the held anchor. | [V2](../motion/motions/v2/pet_notice.yaml) |
+| `return_home` | Move from the current joint state to Orion's home pose. | [V2](../motion/motions/v2/return_home.yaml) |
+| `speak_calm_sway` | Sway the neck and arm gently with alternating raised and lowered gaze. | [V2](../motion/motions/v2/speak_calm_sway.yaml) |
+| `speak_emphasis_nod` | Nod down at a phrase boundary, lift back, and settle at the anchor. | [V2](../motion/motions/v2/speak_emphasis_nod.yaml) |
+| `speak_explanatory_lean` | Lean forward with a raised gaze for explanatory emphasis, then return. | [V2](../motion/motions/v2/speak_explanatory_lean.yaml) |
+| `speak_react_agree` | Make two clear downward nods with an upward return between them. | [V2](../motion/motions/v2/speak_react_agree.yaml) |
+| `speak_react_curious` | Raise the gaze and turn the neck with a slight upright lean. | [V2](../motion/motions/v2/speak_react_curious.yaml) |
+| `speak_react_disagree` | A clear three-beat head shake used as a spoken disagreement reaction. | [V2](../motion/motions/v2/speak_react_disagree.yaml) |
+| `speak_react_happy` | Lift the head and gaze with two bright upward bounces. | [V2](../motion/motions/v2/speak_react_happy.yaml) |
+| `speak_react_laugh` | Make three raised head bounces with a light arm lift. | [V2](../motion/motions/v2/speak_react_laugh.yaml) |
+| `speak_react_surprised` | Pull the arm back and raise the head for a surprised pause. | [V2](../motion/motions/v2/speak_react_surprised.yaml) |
+| `speak_react_sympathy` | Lower the head and turn the neck softly for sympathy. | [V2](../motion/motions/v2/speak_react_sympathy.yaml) |
+| `speak_react_sorry` | Shrink back and lower the head after a mistake. | [V2](../motion/motions/v2/speak_react_sorry.yaml) |
+| `speak_react_shy` | Turn away and lower the head, peek back, then return. | [V2](../motion/motions/v2/speak_react_shy.yaml) |
+| `speak_react_thinking` | Look aside and slightly up during a thoughtful pause. | [V2](../motion/motions/v2/speak_react_thinking.yaml) |
+| `speak_react_unsure` | Look slightly down while turning the neck from side to side. | [V2](../motion/motions/v2/speak_react_unsure.yaml) |
+| `speak_reflective_tilt` | Turn the neck aside and lower the gaze, then return quietly. | [V2](../motion/motions/v2/speak_reflective_tilt.yaml) |
 
-1. Idea and lead: `peek_new_object` examines one real desk object, led by the
-   shoulder and elbow; `pet_notice` lifts toward a real cat or dog. The delight
-   pose supplies that compact, open lift, with the head higher than at home.
-2. Silhouette: the peek extends the head clearly over the desk at `lean=0.8`;
-   the pet lift opens the arm without becoming a reach toward the animal.
-3. Anticipation: peek pulls back by eight percent of its planned arm travel
-   for 0.35 seconds; pet compresses by six percent over 0.3 seconds. Projection
-   shortens either drawing at the comfort boundary.
-4. Followers: peek starts the arm for 0.65 seconds before the head joins the
-   2.5-second reach. Pet enters delight over 0.8 seconds, then leads each gaze
-   update with the neck for 0.25 seconds before a 0.35-second base catch-up.
-5. Settle: every drawing settles. Peek holds its reach for 0.4 seconds and its
-   curious neck turn for 0.45 seconds. Pet reserves three seconds for tracking;
-   repeated observations cannot extend that window.
-6. Arc: synchronous settle curves connect projected drawings inside the
-   shoulder–elbow convex hull. Full trajectories and pet replacements are
-   sampled at 20 ms against the comfort box as well as calibration.
-7. Weight: slow arm travel carries the committed reach; the curious swivel
-   adds only 0.06 radians. Both variants take three seconds to return before
-   compiler timing adjustments and measured settling.
-8. Anchors: any powered character anchor accepted by the comfort preflight;
-   admission never changes that anchor. Delight itself has calibrated five-joint
-   coordinates and is projected when used from a different starting posture.
-9. Interruption: Stop and explicit controls retain priority; privacy, mode,
-   voice and lost evidence request the shared owned return. If shortening the
-   tail would violate comfort, the already validated anchor tail finishes.
-10. Checks: V2 catalogue compilation at seven anchors, synthetic feature loss,
-    baseline and voice cancellation, visible reach, pet retargeting, budget
-    persistence, unreachable targets and anchor-return tests. Visual MuJoCo
-    and lamp checks remain owed for silhouette, own-light exposure, contact,
-    shoulder load, interruptions and CPU/ASR impact.
+V2 poses include home, rest, attentive, delight, desk-work and desk-reach postures. Left and right look targets include anticipation, lean and overshoot poses. Exact angles remain in [poses.yaml](../motion/config/v2/poses.yaml).
 
-### Hands desk entry and following
+Positive V2 head pitch lowers the gaze. Positive neck swivel turns the head right. V2 `head_roll_joint` names the neck swivel; it does not provide a sideways head tilt.
 
-`desk_work` is a normal V2 powered idle anchor with the `directional` profile.
-Its camera centre ray intersects the table about 34 cm forward under the CAD
-mount geometry. `desk_anticipation` and `desk_arm_lead` are normal powered
-transition drawings. `hands_entry` plays those drawings into `desk_work` and
-holds. `hands_return` is an anchor-relative catalogue template; runtime supplies
-the saved prior anchor and adapts its anticipation and arm lead. Following uses
-the generated `hands_track` step described in
-[motion architecture](motion-architecture.md), not a catalogue asset. All five
-assets and the generated step are lamp-unverified.
+The [intent table](../motion/config/v2/movement-intents.yaml) defines movement direction, main keyframes, drawing sizes, speed limits and preview contexts. A preview context identifies the starting pose and the anchor used for the return.
 
-1. Idea and lead: a useful steady desk light. Shoulder and elbow announce the
-   desk entry and return; the head follows. Following has no authored drawing. `desk_anticipation` and
-   `desk_arm_lead` isolate those first two drawings.
-2. Silhouette: `desk_work` places the wrist over the desk with a clear bent arm
-   and downward camera. The transition drawings retain home's head direction
-   until the arm has established the approach.
-3. Anticipation: a four-percent arm pullback over 0.45 authored seconds, projected
-   at comfort boundaries. The nominal drawing starts from home; live variants
-   use the measured pose, including when returning from another work point.
-4. Followers: a quarter of arm travel over 0.8 authored seconds, then the head
-   and base join the remaining 2.5-second approach. Light remains the existing
-   background effect; no sound competes with the work.
-5. Settle: every drawing settles; a 0.2-second final hold establishes the
-   destination. `desk_work` is the lasting anchor; anticipation/lead never are.
-6. Arc: one calibrated spline carries all joints. Runtime removes independent
-   joint lag and samples the full curve against the shoulder–elbow hull.
-7. Weight: `speaking_calm` tempo slows all three motions, with no overshoot.
-   Compiler timing can lengthen travel further to respect joint speed limits.
-8. Anchors: entry ends at desk_work, following at the successful IK destination,
-   return at the saved prior character anchor. All must satisfy comfort preflight;
-   following never adopts an unfinished or cancelled trajectory's target.
-9. Interruption: higher-priority work preempts only an owned run. Privacy/mode
-   exit returns continuously when allowed; Stop remains latched. Stale data
-   resets dwell, and explicit pose/scene changes retire the previous Hands session.
-10. Checks: catalogue calibration, camera-ray desk intersection, detector
-    exclusion, moving-camera centroid stability, shift/dwell/budget gates,
-    completed-anchor commitment, stale entry recovery, priority/Stop and
-    expression containment. Visual MuJoCo and lamp checks remain owed for
-    silhouettes, own-light exposure, contact, shoulder load and mode exit.
+The Hands preview starts from home and follows scripted desk points. It includes arm fallback, hand loss and the held-pose return. Arrival, pet and object-peek previews call their runtime planners with representative observation targets.
+
+The preview reports head height and gaze pitch relative to the starting pose. Positive gaze change means looking up. Operating targets retain a three-degree joint-limit margin. Rest and startup use the intentional mechanical-rest boundary.
+
+Look targets keep combined base yaw and neck swivel within 90 degrees. Expressive turns and acknowledgement scenes limit base speed to 150 degrees per second. Their other joints stay below 180 degrees per second.
+
+1. Compile the catalogue and run the movement checks without recording videos.
+
+   ```bash
+   .venv/bin/python scripts/preview_movements.py --validate-only --output ../scratch/motion-checks
+   ```
+
+2. Generate the videos and review index when required.
+
+   ```bash
+   .venv/bin/python scripts/preview_movements.py
+   ```

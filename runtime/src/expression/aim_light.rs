@@ -358,7 +358,7 @@ mod tests {
             }
             assert!(character.work.as_ref().unwrap().committed);
             let anchor = character.status.active_anchor.clone().unwrap();
-            assert!(anchor["shoulder_pitch_joint"] > 1.0);
+            assert!(anchor["shoulder_pitch_joint"] > 1.5553010452146021);
             if expired {
                 character.tick_work(65., &mut core).unwrap();
             } else {

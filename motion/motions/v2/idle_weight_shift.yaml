@@ -1,21 +1,31 @@
 format_version: 2
 motion:
   name: idle_weight_shift
-  description: Coordinated base, shoulder, and elbow weight change.
+  description: Shift the shoulder and elbow slowly, then restore their balance.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: -0.014400, head_roll_joint: 0.009600}
-      duration: 0.0656
-      arrival: through
-      marker: idle_head_start
-    - offsets: {base_yaw_joint: -0.12, shoulder_pitch_joint: -0.090, elbow_pitch_joint: 0.11, head_roll_joint: 0.080}
-      duration: 0.9344
-      arrival: through
-    - offsets: {base_yaw_joint: -0.050, shoulder_pitch_joint: -0.040, elbow_pitch_joint: 0.050, head_roll_joint: 0.025}
-      duration: 0.8
-      arrival: through
-    - offsets: {}
-      duration: 1.0
-      arrival: settle
+  - offsets:
+      base_yaw_joint: -0.006
+      head_roll_joint: 0.0048
+    duration: 0.0656
+    arrival: through
+    marker: idle_head_start
+  - offsets:
+      base_yaw_joint: -0.05
+      shoulder_pitch_joint: -0.20943951023931956
+      elbow_pitch_joint: 0.12
+      head_roll_joint: 0.04
+    duration: 1.6
+    arrival: through
+  - offsets:
+      base_yaw_joint: -0.02
+      shoulder_pitch_joint: -0.08377580409572782
+      elbow_pitch_joint: 0.05
+      head_roll_joint: 0.015
+    duration: 1.4
+    arrival: through
+  - offsets: {}
+    duration: 1.8
+    arrival: settle

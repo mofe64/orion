@@ -283,6 +283,9 @@ struct MotionEntry {
     name: String,
     #[serde(default)]
     description: String,
+    // Optional review metadata; live playback still uses the current anchor.
+    #[serde(default)]
+    anchor_poses: Vec<String>,
     space: MotionSpace,
     #[serde(default)]
     style: String,
@@ -450,6 +453,10 @@ fn load_motion_file(path: &Path, poses: &PoseLibrary) -> Result<MotionDefinition
     let entry = document.motion.ok_or_else(|| {
         OrionRuntimeError::Runtime("Motion file must contain a motion mapping.".into())
     })?;
+
+    for anchor in &entry.anchor_poses {
+        poses.pose(anchor)?;
+    }
 
     // validate the supplied motion details
     // name must be valid and keyframes not empty
@@ -933,13 +940,18 @@ mod tests {
         .unwrap();
         let source =
             fs::read_to_string(root.join("motion/motions/v2/speak_react_agree.yaml")).unwrap();
-        for document in [
-            source.replace("      marker: agree\n", ""),
-            source.replace(
-                "      duration: 0.30",
-                "      marker: extra\n      duration: 0.30",
-            ),
-        ] {
+        for extra_marker in [false, true] {
+            let mut document: serde_yaml::Value = serde_yaml::from_str(&source).unwrap();
+            let frames = document["motion"]["keyframes"].as_sequence_mut().unwrap();
+            if extra_marker {
+                frames.last_mut().unwrap()["marker"] = serde_yaml::Value::String("extra".into());
+            } else {
+                frames[0]
+                    .as_mapping_mut()
+                    .unwrap()
+                    .remove(serde_yaml::Value::String("marker".into()));
+            }
+            let document = serde_yaml::to_string(&document).unwrap();
             let temporary = tempfile::tempdir().unwrap();
             fs::write(temporary.path().join("reaction.yaml"), document).unwrap();
             let error = MotionLibrary::load(temporary.path(), &poses).unwrap_err();

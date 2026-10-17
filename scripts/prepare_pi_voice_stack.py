@@ -13,12 +13,11 @@ SILERO_REVISION = '41f03a954b841327835dea1ddb7bb28ae23ddc2c'
 CODEX_VERSION = '0.157.0'
 CODEX_SHA256 = 'c1c36beab0b4f72779adf53ba9e9e494bf7cbfbe4f3506a08ff67a24f5f00d08'
 LLAMA_VERSION = 'b10976'
-LLAMA_SHA256 = 'ed41c5fd09ae86dbe13e525a57549f1d27d51e7efdc9a9aa4583d42016be7786'
 PIPER_ALBA_ARCHIVE = 'vits-piper-en_GB-alba-medium.tar.bz2'
 PIPER_ALBA_SHA256 = 'fcd45962906933eec4431d3688f7d74aaac8713c87c6717f91fd3b23463aa1a1'
 PIPER_ALBA_WEIGHTS_SHA256 = 'c904d007a8047ab13628b021351b983d0a2627c0d7a81c64a6fe9ad661adb1cf'
 PIPER_ALBA_TOKENS_SHA256 = '87c8ef66eae5473ed0cc0366b3964c736ca6c5f676c979522ea31234e47430b9'
-QWEN_BASE = 'https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/'
+QWEN_BASE = 'https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/928ab958557df9aa2ef1c93e0e83c7ad0933fae2/'
 MODEL_ASSETS = [
     (QWEN_BASE + 'Qwen3-ASR-0.6B-Q8_0.gguf', 'models/qwen/model.gguf',
      'bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971'),
@@ -117,9 +116,6 @@ def prepare_assets(root):
     prepare_archive(root, f'codex-{CODEX_VERSION}',
         f'https://github.com/openai/codex/releases/download/rust-v{CODEX_VERSION}/codex-package-aarch64-unknown-linux-musl.tar.gz',
         CODEX_SHA256, 'bin/codex')
-    prepare_archive(root, f'llama-{LLAMA_VERSION}',
-        f'https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_VERSION}/llama-{LLAMA_VERSION}-bin-ubuntu-arm64.tar.gz',
-        LLAMA_SHA256, 'llama-server', nested=True)
     for url, relative, digest in MODEL_ASSETS:
         download(root, url, relative, digest)
     prepare_piper_alba(root)

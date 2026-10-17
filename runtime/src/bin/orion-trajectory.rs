@@ -205,9 +205,7 @@ fn run() -> Result<()> {
 }
 
 fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("runtime has a repository parent");
+    let root = orion_runtime::hardware::resource_root()?;
     let mut hardware = orion_runtime::HardwareVersion::V1;
     let mut supplied = std::collections::BTreeSet::new();
     let mut pose_file = root.join("motion/config/v1/poses.yaml");
@@ -260,12 +258,7 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments>
             motions_directory = root.join(&profile.motions);
         }
         if !supplied.contains("--calibration") {
-            calibration_file = PathBuf::from(
-                env::var_os("HOME")
-                    .ok_or_else(|| Error::Runtime("HOME is required for V2 calibration".into()))?,
-            )
-            .join(".config/orion")
-            .join(&profile.calibration_file);
+            calibration_file = root.join(&profile.joint_profile);
         }
     }
     if !control_rate_hz.is_finite() || control_rate_hz <= 0.0 || control_rate_hz > 1000.0 {

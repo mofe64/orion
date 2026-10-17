@@ -3,6 +3,7 @@ import { load } from "js-yaml";
 import posesYaml from "../../../motion/config/v1/poses.yaml?raw";
 import posesYamlV2 from "../../../motion/config/v2/poses.yaml?raw";
 import calibration from "../../../simulation/mujoco/config/servo_calibration.json";
+import v2JointProfile from "../../../hardware/profiles/v2-joints.json";
 import modelReference from "../../../simulation/mujoco/config/model_reference.json";
 import orionUrdf from "../../../description/urdf/orion.urdf?raw";
 import orionUrdfV2 from "../../../description/urdf/orion-v2.urdf?raw";
@@ -154,17 +155,6 @@ function meshUrls(files: Files): Record<string, string> {
   return Object.fromEntries(Object.entries(files).map(([path, url]) => [path.split("/").at(-1) ?? path, url]));
 }
 
-/**
- * V2 URDF limits are already calibrated angles from the tracked lamp calibration.
- */
-function urdfJointLimits(urdf: string): JointLimit[] {
-  return JOINT_NAMES.map((name) => {
-    const joint = urdf.match(new RegExp(`<joint name="${name}"[\\s\\S]*?<limit lower="([^"]+)" upper="([^"]+)"`));
-    if (!joint) throw new Error(`The V2 robot description is missing ${name}.`);
-    return { name, lower_rad: Number(joint[1]), upper_rad: Number(joint[2]) };
-  });
-}
-
 export type HardwareVersion = "v1" | "v2";
 
 export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
@@ -187,7 +177,7 @@ export const catalogs: Record<HardwareVersion, ProjectCatalog> = {
     cueUrls,
     urdf: orionUrdfV2,
     meshUrls: meshUrls(FILES.v2.meshes),
-    jointLimits: urdfJointLimits(orionUrdfV2),
+    jointLimits: JOINT_NAMES.map(name => ({ name, lower_rad: v2JointProfile.joints[name].min_radians, upper_rad: v2JointProfile.joints[name].max_radians })),
   },
 };
 

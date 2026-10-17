@@ -1,21 +1,22 @@
 format_version: 2
 motion:
   name: idle_attentive_hold
-  description: Clear upward movement for attentive anchors.
+  description: Raise the gaze slowly while holding an attentive posture.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.010800}
-      duration: 0.0864
-      arrival: through
-      marker: idle_head_start
-    - offsets: {shoulder_pitch_joint: 0.065, head_pitch_joint: 0.090, elbow_pitch_joint: -0.055}
-      duration: 0.6636
-      arrival: through
-    - offsets: {head_roll_joint: 0.060, head_pitch_joint: 0.040, shoulder_pitch_joint: 0.025}
-      duration: 0.65
-      arrival: through
-    - offsets: {}
-      duration: 0.85
-      arrival: settle
+  - offsets:
+      head_pitch_joint: -0.20943951023931956
+      shoulder_pitch_joint: -0.01
+      elbow_pitch_joint: -0.015
+    duration: 1.6864
+    arrival: through
+  - offsets:
+      head_roll_joint: 0.04
+      head_pitch_joint: -0.08377580409572782
+    duration: 1.4
+    arrival: through
+  - offsets: {}
+    duration: 1.8
+    arrival: settle
