@@ -22,9 +22,19 @@ def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
-def wheel(*args, destination):
+def wheel(*args, destination, constraints=()):
     destination.mkdir(parents=True, exist_ok=True)
-    run(sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', destination, *args)
+    environment = None
+    if constraints:
+        # Isolated build environments read PIP_CONSTRAINT for their build requirements.
+        path = destination.parent / f'build-constraints-{uuid.uuid4().hex}.txt'
+        path.write_text(''.join(line + '\n' for line in constraints))
+        environment = {**os.environ, 'PIP_CONSTRAINT': str(path)}
+    try:
+        run(sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', destination, *args, env=environment)
+    finally:
+        if constraints:
+            path.unlink()
 
 
 def binding_wrapper(name, revision):
@@ -51,7 +61,10 @@ def native(codename):
     wheel(camera, '-C', 'setup-args=-Drevision=' + pins['libcamera_revision'],
           '-C', 'setup-args=-Dversion=unknown', '-C', 'setup-args=-Dcpp_std=c++20',
           '-C', 'setup-args=-Dwerror=false',
-          '-C', 'compile-args=-j2', destination=out)
+          '-C', 'compile-args=-j2', destination=out,
+          # libcamera 0.5 binds Camera with its own shared-pointer holder, which
+          # pybind11 3 rejects; libcamera 0.7 needs pybind11 3's smart holder.
+          constraints=['pybind11==' + pins['pybind11_version']])
     kms = binding_wrapper('pykms', manifest['kms_wrapper_revision'])
     shutil.copy2(ROOT / 'scripts/native/kms-meson.patch', kms / 'pypatch.patch')
     wheel(kms, '-C', 'setup-args=-Drevision=' + manifest['kms_source_revision'],

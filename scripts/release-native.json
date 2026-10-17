@@ -12,6 +12,7 @@
     "libcamera_revision": "v0.5.2+rpt20250903",
     "libcamera_version": "0.5.2+rpt20250903-1~bpo12+1",
     "libcamera_package": "libcamera0.5",
+    "pybind11_version": "2.13.6",
     "hailort_version": "4.20.0",
     "hailo_packages": [
       "hailo-dkms=4.20.0-1",
@@ -24,6 +25,7 @@
     "libcamera_revision": "v0.7.2+rpt20261009",
     "libcamera_version": "0.7.2+rpt20261009-1",
     "libcamera_package": "libcamera0.7",
+    "pybind11_version": "3.0.1",
     "hailort_version": "4.23.0",
     "hailo_packages": [
       "hailort-pcie-driver=4.23.0",
