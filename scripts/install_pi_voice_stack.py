@@ -546,8 +546,8 @@ def activate(root, release, home, files, system, commissioning=False):
             checked = subprocess.run(check_command, cwd=release)
             if checked.returncode:
                 print('Motion remains off: fold into mechanical rest and run oriond servo zero, then oriond --check.', flush=True)
-            elif previous is None:
-                print('First installation stays stopped until reboot and servo commissioning.', flush=True)
+            elif previous is None or data.get('crosses_rest_frame'):
+                print('First installation or V2 frame migration stays stopped until reboot and servo commissioning.', flush=True)
             else:
                 for name in wanted_services: system.start(name)
         else:

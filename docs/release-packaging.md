@@ -52,6 +52,9 @@ launchers together with built-in YAML; pairing, user assets, credentials and
 shared model files persist. The direct servo check runs after the old daemon
 releases the bus. A failed check leaves motion off and prints the zeroing step.
 Systemd also runs that torque-free check before each daemon start.
+First installations and transitions from the old V2 frame stay stopped even
+if raw readings happen to fit the limits. Reboot and perform the documented
+fold/zero/check procedure before starting Orion.
 
 Validate the runtime and other Rust crates with `cargo test --manifest-path
 COMPONENT/Cargo.toml`. Run each Python component’s tests in its managed 3.12

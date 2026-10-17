@@ -54,6 +54,8 @@ sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stac
 
 Keep the area clear: Orion rises slowly to home. The installer enables the
 units but leaves motion stopped when the direct hardware check fails. The
+first install and a transition from the old V2 coordinate frame stay stopped
+even if that check passes; complete the commissioning steps above. The
 runtime also checks its joint profile before enabling torque. Updates reuse the
 same command and preserve pairing, credentials, preferences and user assets.
 

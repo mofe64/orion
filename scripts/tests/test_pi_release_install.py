@@ -1068,10 +1068,30 @@ class ReadinessTests(Fixture):
         self.assertFalse(token.exists())
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 class CommissioningTests(Fixture):
+    def test_rest_frame_update_resumes_units_after_successful_check(self):
+        (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
+        old = self.root / 'releases/old'; old.mkdir()
+        (old / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
+        (self.root / 'installation.json').write_text(json.dumps({'version': 2, 'release': str(old), 'hardware': 'v2'}))
+        system = FakeSystem(self.units)
+        with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+            installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
+        self.assertTrue(all(state['active'] for state in system.states.values()))
+
+    def test_old_v2_frame_stays_stopped_even_if_raw_readings_pass_new_limits(self):
+        (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
+        old = self.root / 'releases/old'; old.mkdir()
+        (old / 'release.json').write_text('{"hardware":"v2"}')
+        (self.root / 'installation.json').write_text(json.dumps({'version': 2, 'release': str(old), 'hardware': 'v2'}))
+        system = FakeSystem(self.units)
+        with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+            installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
+        self.assertTrue(all(not state['active'] for state in system.states.values()))
+        installed = json.loads((self.root / 'installation.json').read_text())
+        state = json.loads((Path(installed['rollback']) / 'state.json').read_text())
+        self.assertTrue(state['crosses_rest_frame'])
+
     def test_first_install_stays_stopped_even_if_direct_check_passes(self):
         (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
         system = FakeSystem(self.units, existing=False)
@@ -1100,3 +1120,7 @@ class CommissioningTests(Fixture):
         with self.assertRaisesRegex(RuntimeError, 'old V2 calibration frame'):
             installer.rollback(self.root, system)
         self.assertEqual(system.calls, [])
+
+
+if __name__ == '__main__':
+    unittest.main()
