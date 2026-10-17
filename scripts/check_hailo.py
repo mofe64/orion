@@ -15,8 +15,13 @@ MODELS = {
 
 
 def device_kind(output):
-    match = re.search(r'HAILO[-_ ]?(8L|8)\b', output, re.I)
-    if not match: raise RuntimeError('Expected Hailo-8 or Hailo-8L from hailortcli fw-control identify')
+    architecture = re.search(r'^[ \t]*Device Architecture:[ \t]*([^\r\n]*)', output, re.I | re.M)
+    if not architecture:
+        raise RuntimeError('Missing Device Architecture line in hailortcli fw-control identify output; expected HAILO8 or HAILO8L')
+    value = architecture[1].strip()
+    match = re.fullmatch(r'HAILO[-_ ]?(8L|8)', value, re.I)
+    if not match:
+        raise RuntimeError(f'Unsupported Device Architecture: {value!r}; expected HAILO8 or HAILO8L')
     return 'HAILO' + match[1].upper()
 
 

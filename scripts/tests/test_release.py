@@ -234,10 +234,26 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn(secret, repeated.stdout + repeated.stderr)
 
     def test_hailo_identification_distinguishes_8_and_8l(self):
+        self.assertEqual(check_hailo.device_kind('Device Architecture: HAILO8'), 'HAILO8')
         self.assertEqual(check_hailo.device_kind('Device Architecture: HAILO8L'), 'HAILO8L')
         self.assertEqual(check_hailo.device_kind('Device Architecture: Hailo-8'), 'HAILO8')
         with self.assertRaises(RuntimeError): check_hailo.device_kind('HAILO10H')
         self.assertTrue(all(len(digest) == 64 for _, digest in check_hailo.MODELS.values()))
+
+    def test_hailo_architecture_overrides_the_generic_board_name(self):
+        output = 'Board Name: Hailo-8\nDevice Architecture: HAILO8L\n'
+        self.assertEqual(check_hailo.device_kind(output), 'HAILO8L')
+
+    def test_hailo_identification_requires_the_architecture_field(self):
+        for output in ('Board Name: Hailo-8\n', 'HAILO8L', ''):
+            with self.subTest(output=output), self.assertRaisesRegex(RuntimeError, 'Missing Device Architecture'):
+                check_hailo.device_kind(output)
+
+    def test_hailo_identification_rejects_unsupported_architecture_without_board_fallback(self):
+        for value in ('HAILO10H', 'HAILO8L_UNKNOWN', ''):
+            output = f'Board Name: Hailo-8\nDevice Architecture: {value}\n'
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, 'Unsupported Device Architecture'):
+                check_hailo.device_kind(output)
 
     def test_no_hat_does_not_touch_boot_configuration(self):
         with patch.object(receiver, 'run') as run:
