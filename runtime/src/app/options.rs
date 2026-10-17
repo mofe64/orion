@@ -74,6 +74,7 @@ pub(super) struct Options {
     pub(super) help: bool,
     pub(super) character_on_start: bool,
     pub(super) gaze_on: bool,
+    pub(super) hands_max_arm_degrees: f64,
     pub(super) rest_after_seconds: f64,
     pub(super) tracking_log: Option<PathBuf>,
     pub(super) servo_gain_override: Option<ServoGainOverride>,
@@ -112,6 +113,7 @@ impl Default for Options {
             help: false,
             character_on_start: true,
             gaze_on: false,
+            hands_max_arm_degrees: 5.,
             rest_after_seconds: crate::expression::rest::DEFAULT_REST_AFTER_SECONDS,
             tracking_log: None,
             servo_gain_override: None,
@@ -170,6 +172,7 @@ pub(super) fn usage() -> &'static str {
   --serve             Sample the selected backend at 50 Hz and serve status JSON.\n\
   --hardware v1|v2    Select hardware profile (default: v2).\n\
   --gaze off|on       Bearing gaze (default: on for V2 serve, off otherwise).\n\
+  --hands-max-arm-degrees N  Hands arm fallback, 0 to 5 degrees (default: 5).\n\
   --backend NAME      Use hardware (default) or the native MuJoCo bridge.\n\
   --status            Request the latest JSON snapshot from the daemon.\n\
   --configure         Apply and verify Orion's servo profile, torque off.\n\
@@ -293,6 +296,20 @@ pub(super) fn parse_options(arguments: impl Iterator<Item = String>) -> crate::R
                         ));
                     }
                 };
+            }
+            "--hands-max-arm-degrees" => {
+                let degrees: f64 =
+                    require_value(&mut arguments, &argument)?
+                        .parse()
+                        .map_err(|_| {
+                            crate::Error::InvalidArgument("Invalid Hands arm maximum".into())
+                        })?;
+                if !degrees.is_finite() || !(0.0..=5.0).contains(&degrees) {
+                    return Err(crate::Error::InvalidArgument(
+                        "Hands arm maximum must be between 0 and 5 degrees".into(),
+                    ));
+                }
+                options.hands_max_arm_degrees = degrees;
             }
             "--port" => options.port = require_value(&mut arguments, &argument)?,
             "--baud-rate" => {

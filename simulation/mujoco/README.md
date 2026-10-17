@@ -91,13 +91,13 @@ The preview script requires the simulator environment, Cargo and `ffmpeg`. It us
 
 2. Open `../scratch/motion-previews/index.html` in a browser.
 
-Each video shows side and front views, the item name, starting pose, return anchor and elapsed time. The camera encloses the lamp throughout the movement. Poses move from home to their target and back. A separate video shows startup from rest to home.
+Each video shows side and front views, the item name, starting pose, return anchor and elapsed time. The camera encloses the lamp throughout the movement. Poses move from home to their target and back. A separate video shows startup from rest to home. The Hands video also shows desk search, hand loss and return.
 
-The [intent table](../../motion/config/v2/movement-intents.yaml) selects preview contexts from the runtime's ownership rules. Hands return starts at `desk_work` and targets the saved previous anchor. Arrival, pet and object-peek clips use their command-time planners. Other clips use their authored targets around the selected held anchor.
+The [intent table](../../motion/config/v2/movement-intents.yaml) selects preview contexts from the runtime's ownership rules. The Hands preview starts from home and follows scripted desk points through head-only reach and bounded arm fallback. Arrival, pet and object-peek clips use their command-time planners. Other clips use their authored targets around the selected held anchor.
 
 A disposable adapter compiles the unchanged runtime sources outside the repository. This gives the tool access to runtime planners without adding development commands to the app. The adapter uses the runtime Cargo lockfile.
 
-The index lists non-adjacent contacts, clamps, joint-limit margins, peak joint speeds and final anchor errors. Each clip also shows head height change, gaze pitch change and its largest joint movement. Head height uses `v21_face`. Gaze pitch uses the forward axis of `light_frame`. Positive gaze change means looking up. Problems appear first.
+The index lists non-adjacent contacts, clamps, joint-limit margins, peak joint speeds and final anchor errors. Hands checks also show the largest arm offset. Each clip also shows head height change, gaze pitch change and its largest joint movement. Head height uses `v21_face`. Gaze pitch uses the forward axis of `light_frame`. Positive gaze change means looking up. Problems appear first.
 
 The script excludes joined links and rest-to-rest no-op clips from problems. MuJoCo uses convex hulls for mesh contacts. The V2 base stays anchored. Kinematic tracking cannot check servo loads or base tipping.
 

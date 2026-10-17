@@ -27,11 +27,13 @@ pub enum SpeechCue {
     Thinking,
     Surprised,
     Sympathy,
+    Sorry,
+    Shy,
     Unsure,
     Laugh,
 }
 impl SpeechCue {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Agree,
         Self::Disagree,
         Self::Happy,
@@ -39,6 +41,8 @@ impl SpeechCue {
         Self::Thinking,
         Self::Surprised,
         Self::Sympathy,
+        Self::Sorry,
+        Self::Shy,
         Self::Unsure,
         Self::Laugh,
     ];
@@ -51,6 +55,8 @@ impl SpeechCue {
             Self::Thinking => "thinking",
             Self::Surprised => "surprised",
             Self::Sympathy => "sympathy",
+            Self::Sorry => "sorry",
+            Self::Shy => "shy",
             Self::Unsure => "unsure",
             Self::Laugh => "laugh",
         }
@@ -64,6 +70,8 @@ impl SpeechCue {
             Self::Thinking => "speak_react_thinking",
             Self::Surprised => "speak_react_surprised",
             Self::Sympathy => "speak_react_sympathy",
+            Self::Sorry => "speak_react_sorry",
+            Self::Shy => "speak_react_shy",
             Self::Unsure => "speak_react_unsure",
             Self::Laugh => "speak_react_laugh",
         }
@@ -738,6 +746,8 @@ mod tests {
                 "thinking",
                 "surprised",
                 "sympathy",
+                "sorry",
+                "shy",
                 "unsure",
                 "laugh"
             ]
@@ -752,6 +762,8 @@ mod tests {
                 "speak_react_thinking",
                 "speak_react_surprised",
                 "speak_react_sympathy",
+                "speak_react_sorry",
+                "speak_react_shy",
                 "speak_react_unsure",
                 "speak_react_laugh"
             ]

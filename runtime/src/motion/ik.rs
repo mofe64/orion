@@ -890,8 +890,8 @@ mod tests {
     }
 
     #[test]
-    fn powered_hull_excludes_rest_preview_and_the_unsafe_hands_elbow() {
-        let (model, poses, limits, comfort) = setup();
+    fn powered_hull_excludes_rest_directional_poses_and_folded_contact() {
+        let (_, poses, limits, comfort) = setup();
         let config = HardwareVersion::V2.profile().comfort_box.as_ref().unwrap();
         for excluded in [
             "rest",
@@ -907,19 +907,8 @@ mod tests {
                 "{excluded}"
             );
         }
-        let pose = solve_lean(
-            &model,
-            &comfort,
-            poses.pose("home").unwrap(),
-            poses.pose("desk_work").unwrap(),
-            [0.14, -0.32, 0.],
-            0.35,
-        )
-        .unwrap()
-        .positions
-        .unwrap();
+        let pose = poses.pose("lean_reach_low").unwrap().clone();
         assert!(comfort.contains(&pose));
-        assert!(pose[ELBOW] < -1.1620389530342436, "{pose:?}");
         let mut contact_side = pose.clone();
         contact_side.insert(SHOULDER.into(), 1.2183010452146022);
         contact_side.insert(ELBOW.into(), -0.8900389530342436);

@@ -881,7 +881,7 @@ class HomeOperationTests(unittest.TestCase):
 class StreamingSpeechGatewayTests(unittest.TestCase):
     def test_cue_vocabulary_validation_and_exact_command_forwarding(self):
         from gateway import SPEECH_CUES
-        self.assertEqual(SPEECH_CUES, frozenset({"agree", "disagree", "happy", "curious", "thinking", "surprised", "sympathy", "unsure", "laugh"}))
+        self.assertEqual(SPEECH_CUES, frozenset({"agree", "disagree", "happy", "curious", "thinking", "surprised", "sympathy", "sorry", "shy", "unsure", "laugh"}))
         with tempfile.TemporaryDirectory() as directory:
             client = Mock()
             client.request.return_value = {"ok": True, "run_id": 12}

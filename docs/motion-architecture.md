@@ -96,9 +96,15 @@ Tracking mode differs from Idle/Lamp routine mode. See [camera modes](../vision/
 
 ### Hands following
 
-Hands mode selects palm detection and a work-area anchor. The runtime enters `desk_work` through `hands_entry`. Stable work-area changes can request compiled following movements.
+Hands mode keeps the current pose as its held anchor. The head aims the camera and light toward a hand point on the desk. Hands and Faces share the gaze solver, angular deadband, head steps, speed limit and return settle. Hands keeps base yaw fixed.
 
-Speech and idle motion use the work anchor. Leaving Hands restores the previous character anchor. Hand presence cannot wake a resting lamp or clear Stop.
+Without a hand point, the head tilts down 30 degrees from the held pose. The shoulder, elbow and neck keep their held angles. The lamp holds this search direction while it waits for a hand.
+
+The arm moves only when the head cannot reach the hand point. The planner searches bounded shoulder and elbow offsets for the smallest reachable lean. `--hands-max-arm-degrees` sets the maximum offset of each arm joint, from zero to five degrees. The default is five degrees. This option does not change calibration or joint limits.
+
+The arm returns when the hand enters head-only reach or leaves. After ten seconds without a hand, the head returns to its held angle. A two-second camera timeout or a tracking mode change also requests this return. Idle motion waits while Hands owns tracking.
+
+Hand presence cannot wake a resting lamp or clear Stop. Explicit movement releases the held Hands anchor. A movement failure keeps its diagnostics until a successful return or torque disable.
 
 ### Object aims
 

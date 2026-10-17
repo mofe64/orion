@@ -486,7 +486,7 @@ async fn every_reaction_cue_crosses_streamed_agent_and_tts_boundaries() {
     let response = until(&mut h.observer, "agent.response").await;
     assert_eq!(
         response["text"],
-        "Agree. Disagree. Happy. Curious. Thinking. Surprised. Sympathy. Unsure. Laugh."
+        "Agree. Disagree. Happy. Curious. Thinking. Surprised. Sympathy. Sorry. Shy. Unsure. Laugh."
     );
     let names = orion_agent::ReactionCue::enabled()
         .iter()
@@ -503,7 +503,7 @@ async fn every_reaction_cue_crosses_streamed_agent_and_tts_boundaries() {
     assert_eq!(state.uploads[0].0, "/api/v2/speech/stream");
     assert_eq!(
         state.uploads.last().unwrap().0,
-        "/api/v2/speech/1/chunks/17"
+        "/api/v2/speech/1/chunks/21"
     );
     drop(state);
     h.stop().await;

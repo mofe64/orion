@@ -237,8 +237,6 @@ V2 uses the motions below. [V1 motion files](../motion/motions/v1/) remain separ
 | `attention_left` | A small grounded turn toward the confirmed speaker on the left. | [V2](../motion/motions/v2/attention_left.yaml) |
 | `attention_right` | A small grounded turn toward the confirmed speaker on the right. | [V2](../motion/motions/v2/attention_right.yaml) |
 | `delight_lift` | Lift the head and look up into the delight posture. | [V2](../motion/motions/v2/delight_lift.yaml) |
-| `hands_entry` | Anticipate with the arm, lower the camera toward the desk, and hold. | [V2](../motion/motions/v2/hands_entry.yaml) |
-| `hands_return` | Slow arm-led desk transition with anticipation and a held destination anchor. | [V2](../motion/motions/v2/hands_return.yaml) |
 | `idle_attentive_hold` | Raise the gaze slowly while holding an attentive posture. | [V2](../motion/motions/v2/idle_attentive_hold.yaml) |
 | `idle_breathe` | Raise the head slowly, breathe through the arm, and settle back. | [V2](../motion/motions/v2/idle_breathe.yaml) |
 | `idle_directional_hold` | Raise the gaze slowly while holding a directional or desk anchor. | [V2](../motion/motions/v2/idle_directional_hold.yaml) |
@@ -268,7 +266,9 @@ V2 uses the motions below. [V1 motion files](../motion/motions/v1/) remain separ
 | `speak_react_laugh` | Make three raised head bounces with a light arm lift. | [V2](../motion/motions/v2/speak_react_laugh.yaml) |
 | `speak_react_surprised` | Pull the arm back and raise the head for a surprised pause. | [V2](../motion/motions/v2/speak_react_surprised.yaml) |
 | `speak_react_sympathy` | Lower the head and turn the neck softly for sympathy. | [V2](../motion/motions/v2/speak_react_sympathy.yaml) |
-| `speak_react_thinking` | Look aside and slightly down during a thoughtful pause. | [V2](../motion/motions/v2/speak_react_thinking.yaml) |
+| `speak_react_sorry` | Shrink back and lower the head after a mistake. | [V2](../motion/motions/v2/speak_react_sorry.yaml) |
+| `speak_react_shy` | Turn away and lower the head, peek back, then return. | [V2](../motion/motions/v2/speak_react_shy.yaml) |
+| `speak_react_thinking` | Look aside and slightly up during a thoughtful pause. | [V2](../motion/motions/v2/speak_react_thinking.yaml) |
 | `speak_react_unsure` | Look slightly down while turning the neck from side to side. | [V2](../motion/motions/v2/speak_react_unsure.yaml) |
 | `speak_reflective_tilt` | Turn the neck aside and lower the gaze, then return quietly. | [V2](../motion/motions/v2/speak_reflective_tilt.yaml) |
 
@@ -278,7 +278,7 @@ Positive V2 head pitch lowers the gaze. Positive neck swivel turns the head righ
 
 The [intent table](../motion/config/v2/movement-intents.yaml) defines movement direction, main keyframes, drawing sizes, speed limits and preview contexts. A preview context identifies the starting pose and the anchor used for the return.
 
-Hands entry moves from the held pose to `desk_work`. Hands return starts from the desk pose and restores the previous anchor. Arrival, pet and object-peek previews call their runtime planners with representative observation targets.
+The Hands preview starts from home and follows scripted desk points. It includes arm fallback, hand loss and the held-pose return. Arrival, pet and object-peek previews call their runtime planners with representative observation targets.
 
 The preview reports head height and gaze pitch relative to the starting pose. Positive gaze change means looking up. Operating targets retain a three-degree joint-limit margin. Rest and startup use the intentional mechanical-rest boundary.
 

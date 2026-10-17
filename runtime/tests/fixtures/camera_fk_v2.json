@@ -1422,7 +1422,7 @@
   "seed": 2101,
   "source_sha256": {
     "description/urdf/orion-v2.urdf": "2f3981c8f4be63e9fea3f362361c6e63a2d6b266e793f32bc3e529b6fd6bc22e",
-    "motion/config/v2/poses.yaml": "5f5fb66ac3a6ac1b59930f77a79fdcacf8eb7b03e93deba9becc3f2dc601c095",
+    "motion/config/v2/poses.yaml": "89463d92fb2bfb60661ca277fc805cc93a667ce1f1bda3a226820d22900a2208",
     "simulation/mujoco/v2/robot.xml": "dc4c7aadb1e30195dbfff91640e694b908c8492415f165470a575ff8b2cb505e",
     "simulation/mujoco/v2/scene.xml": "ad973cb845e6e1450e05dbc594623a39965be6845774571eb02cf44328a9edbe"
   }

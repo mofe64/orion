@@ -1303,8 +1303,11 @@ mod tests {
             SpeechCue::ALL
         );
         write_test_wav(&h._spool.path().join("plain.wav"));
-        h.ok(&format!("speech append {run} 9 plain"));
-        h.ok(&format!("speech end {run} 10"));
+        h.ok(&format!(
+            "speech append {run} {} plain",
+            SpeechCue::ALL.len()
+        ));
+        h.ok(&format!("speech end {run} {}", SpeechCue::ALL.len() + 1));
         h.ok("speech stop");
         write_test_wav(&h._spool.path().join("plain.wav"));
         h.ok("speech stream plain");

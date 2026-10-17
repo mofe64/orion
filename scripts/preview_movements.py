@@ -146,6 +146,10 @@ def inspect(item, document, model):
             entry = contacts.setdefault(pair, {'bodies': pair, 'first_time': sample['time'], 'depth_m': 0.0, 'samples': 0})
             entry['depth_m'] = max(entry['depth_m'], -float(contact.dist)); entry['samples'] += 1
         previous = sample
+    for observation in item.get('hand_points', []):
+        if observation['point'] is not None:
+            bounds[0] = np.minimum(bounds[0], np.array(observation['point']) - 0.01)
+            bounds[1] = np.maximum(bounds[1], np.array(observation['point']) + 0.01)
     final = item['samples'][-1]['positions']
     end_error = max(abs(final[name] - item['expected_end'][name]) for name in names)
     speed_limit = document['maximum_velocity_rad_s']
@@ -169,6 +173,9 @@ def inspect(item, document, model):
     if spec:
         apex = item['keyframes'][spec['main_keyframe']]
         main = apex['positions']; apex_time = apex['time']
+    elif item['kind'] == 'tracking':
+        apex = max(item['samples'], key=lambda s: max(abs(s['positions'][n] - start[n]) for n in names))
+        main, apex_time = apex['positions'], apex['time']
     else:
         # Pose items are round trips. Measure the held target, not their final home.
         poses = yaml.safe_load((ROOT / 'motion/config/v2/poses.yaml').read_text())['poses']
@@ -192,7 +199,10 @@ def inspect(item, document, model):
             problems.append('Intent requires a sideways head turn')
     no_op = max(abs(sample['positions'][name] - start[name]) for sample in item['samples'] for name in names) < 1e-9
     if no_op and item['start_pose'] == 'rest': problems = []
-    return {'problems': problems, 'contacts': list(contacts.values()), 'clamped_samples': clamps,
+    arm_movement = max(np.degrees(abs(s['positions'][n] - start[n])) for s in item['samples'] for n in ('shoulder_pitch_joint', 'elbow_pitch_joint'))
+    if item['kind'] == 'tracking' and arm_movement > item['maximum_arm_degrees'] + 1e-6:
+        problems.append(f'Arm fallback exceeds {item["maximum_arm_degrees"]} degrees')
+    return {'largest_arm_movement_deg': float(arm_movement), 'problems': problems, 'contacts': list(contacts.values()), 'clamped_samples': clamps,
             'limit_boundary_samples': dict(boundary), 'minimum_margin_degrees': float(minimum_margin),
             'outside_limits': sorted(outside), 'peak_speed': peaks, 'peak_speed_degrees_s': {n: float(np.degrees(v)) for n, v in peaks.items()},
             'servo_speed_limit': speed_limit, 'end_anchor_error_rad': end_error,
@@ -237,6 +247,15 @@ def record(item, document, model, output, fps):
                 frame = Image.new('RGB', (width, height), '#eef1ed')
                 for column, camera in enumerate(cameras):
                     renderer.update_scene(data, camera=camera)
+                    # A green sphere marks the scripted hand point on the desk.
+                    observations = item.get('hand_points', [])
+                    observation = next((o for o in reversed(observations) if o['time'] <= sample['time']), None)
+                    if observation and observation['point'] is not None:
+                        scene = renderer.scene
+                        mujoco.mjv_initGeom(scene.geoms[scene.ngeom], mujoco.mjtGeom.mjGEOM_SPHERE,
+                            np.array([0.009] * 3), np.array(observation['point']), np.eye(3).ravel(),
+                            np.array([0.15, 0.9, 0.3, 1.]))
+                        scene.ngeom += 1
                     frame.paste(Image.fromarray(renderer.render()), (column * 480, 60))
                 pen = ImageDraw.Draw(frame)
                 pen.text((12, 5), f'{item["kind"]}: {item["name"]} · start {item["start_pose"]} · anchor {item["anchor"]}', font=font, fill='#17251b')

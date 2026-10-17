@@ -121,7 +121,6 @@ mod movement_review {
             ))
         };
         let mut definition = match request["planner"].as_str().unwrap_or("authored") {
-            "hands" => core.prepare_hands_motion(name, &anchor, None)?,
             "arrival" => {
                 let (a, e) = bearing("attentive")?;
                 core.prepare_arrival_motion(&anchor, a, e)?
@@ -169,12 +168,55 @@ mod movement_review {
             json!({"kind":"motion","name":name,"start_pose":start_name,"anchor":anchor_name,"planner":request["planner"],"anchor_source":request["source"],"samples":samples,"keyframes":keyframes,"expected_end":targets.last().unwrap(),"clamped_samples":[],"amplitude_scale":scale}),
         )
     }
+    fn hands(root: &Path, assets: &Path) -> Result<Value> {
+        let poses = PoseLibrary::load(assets.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)?;
+        let motions = MotionLibrary::load(assets.join("motion/motions/v2"), &poses)?;
+        let anchor = poses.pose("home")?.clone();
+        let limits = HardwareVersion::V2.load_calibration(root.join("hardware/profiles/v2-joints.json"))?
+            .iter().map(|c| { let (lower_rad, upper_rad)=c.safe_range_radians(); JointLimit{name:c.name.clone(),lower_rad,upper_rad} }).collect();
+        let mut core=RuntimeCore::new(Driver{positions:anchor.clone(),limits},poses,motions)?;
+        core.configure_camera_geometry(root.join("description/urdf/orion-v2.urdf"), Box::new(crate::control::camera_rays::SystemBoottimeClock::new()?))?;
+        let mut character=crate::expression::character::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);character.start(0.,&mut core)?;
+        // Finish the regular startup before recording the held home pose.
+        for tick in 1..=200 {let now=tick as f64*0.02;core.tick(now)?;character.tick(now,&mut core,false,None,false,None,None)?;}
+        character.set_curiosity_available(true);
+        let mut samples=Vec::new();
+        let mut observations=Vec::new();
+        for tick in 0..=1000 {
+            let time=tick as f64*0.02;let now=4.+time;
+            core.tick(now)?;
+            if tick%5==0 && time<16. {
+                let point = if time<2. || time>=12. {None}
+                    else if time<5. {Some([-0.10+0.20*(time-2.)/3.,-0.35,0.])}
+                    else if time<9. {Some([0.35,-0.001,0.])}
+                    else {Some([0.10-0.20*(time-9.)/3.,-0.35,0.])};
+                let value=serde_json::from_value(json!({"capture_boottime_ns":core.camera_boottime_ns().unwrap(),
+                    "camera_on":true,"tracking_mode":"hands","settings":{},"objects":[],"faces":[],
+                    "looking_away":null,"hand_count":u8::from(point.is_some()),"hand_point":point}))
+                    .map_err(|e|Error::Runtime(e.to_string()))?;
+                character.observe_surroundings(value,now,&mut core)?;
+                observations.push(json!({"time":time,"point":point}));
+            }
+            if tick==800 {character.leave_hands(now,&mut core)?;}
+            character.tick(now,&mut core,false,None,false,None,None)?;
+            if let Some(failure)=&character.status().hands_failure {return Err(Error::Runtime(failure.message.clone()));}
+            let velocities=core.snapshot().motion.as_ref().and_then(|m|core.character_commanded_state(m.run_id,now))
+                .map(|s|s.velocities).unwrap_or_else(||anchor.keys().map(|n|(n.clone(),0.)).collect());
+            samples.push(json!({"time":time,"positions":core.driver().positions,"velocities":velocities}));
+        }
+        Ok(json!({"kind":"tracking","name":"hands_desk","start_pose":"home","anchor":"home",
+            "anchor_source":"runtime/src/expression/hands.rs: current pose with head-first tracking",
+            "samples":samples,"keyframes":[],"expected_end":anchor,"clamped_samples":[],"amplitude_scale":1.,
+            "hand_points":observations,"maximum_arm_degrees":5.}))
+    }
     pub fn run() -> Result<()> {
         let args: Vec<_> = std::env::args().collect();
         let root = Path::new(&args[1]);
         let assets = Path::new(&args[2]);
         let requests: Value = serde_json::from_slice(&std::fs::read(&args[3])?)?;
-        let items:Vec<_>=requests.as_array().unwrap().iter().map(|r|match item(root,assets,r){Ok(v)=>v,Err(e)=>json!({"kind":"motion","name":r["name"],"start_pose":r["start"],"anchor":r["anchor"],"error":e.to_string()})}).collect();
+        let mut items:Vec<_>=requests.as_array().unwrap().iter().map(|r|match item(root,assets,r){Ok(v)=>v,Err(e)=>json!({"kind":"motion","name":r["name"],"start_pose":r["start"],"anchor":r["anchor"],"error":e.to_string()})}).collect();
+        items.push(match hands(root, assets) {Ok(v)=>v,Err(e)=>json!({"kind":"tracking","name":"hands_desk","start_pose":"home","anchor":"home","error":e.to_string()})});
         println!("{}", json!(items));
         Ok(())
     }

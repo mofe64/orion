@@ -1,5 +1,6 @@
-//! Exclusive Hands-mode ownership. Observations plan; ticks only track ownership.
+//! Hands keeps the current anchor. Camera observations plan; ticks sample splines.
 use super::*;
+use crate::expression::gaze::{self, GAZE_DEADBAND_RAD, GAZE_UPDATE_SECONDS};
 
 /// A latched tracking failure, independent of camera/detector health.
 #[derive(Clone, Debug, Serialize)]
@@ -12,28 +13,44 @@ pub struct HandsFailure {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MoveKind {
-    Enter,
     Follow,
     Return,
 }
 #[derive(Debug)]
 struct HandsRun {
     id: u64,
-    target: JointPositions,
-    point: Option<[f64; 3]>,
     kind: MoveKind,
 }
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct HandsState {
     wanted: bool,
     blocked: bool,
     previous: Option<JointPositions>,
-    entered: bool,
     received: Option<f64>,
     last_seen: Option<f64>,
     point: Option<[f64; 3]>,
-    return_attempt_at: Option<f64>,
+    goal: Option<JointPositions>,
+    timed_out: bool,
+    last_update: f64,
+    maximum_arm_rad: f64,
     run: Option<HandsRun>,
+}
+impl Default for HandsState {
+    fn default() -> Self {
+        Self {
+            wanted: false,
+            blocked: false,
+            previous: None,
+            received: None,
+            last_seen: None,
+            point: None,
+            goal: None,
+            timed_out: false,
+            last_update: f64::NEG_INFINITY,
+            maximum_arm_rad: 5_f64.to_radians(),
+            run: None,
+        }
+    }
 }
 impl HandsState {
     pub(super) fn owns_anchor(&self) -> bool {
@@ -46,16 +63,23 @@ impl HandsState {
         self.received
             .is_some_and(|at| (0.0..=2.0).contains(&(now - at)))
     }
-    pub(super) fn suppress_idle(&self, now: f64) -> bool {
-        self.blocks_gaze() && (!self.fresh(now) || self.last_seen.is_none_or(|at| now - at >= 10.0))
+    pub(super) fn suppress_idle(&self, _now: f64) -> bool {
+        self.blocks_gaze()
     }
 }
-/// Hand-point changes smaller than this are palm jitter, not a work shift.
 const HANDS_DEADBAND_M: f64 = 0.03;
-fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
-}
+const HANDS_LOST_SECONDS: f64 = 10.;
 impl CharacterCoordinator {
+    /// Independent behavior configuration; calibration and physical limits stay unchanged.
+    pub fn set_hands_maximum_arm_degrees(&mut self, degrees: f64) -> Result<()> {
+        if !degrees.is_finite() || !(0.0..=5.0).contains(&degrees) {
+            return Err(Error::InvalidArgument(
+                "Hands arm maximum must be between 0 and 5 degrees".into(),
+            ));
+        }
+        self.hands.maximum_arm_rad = degrees.to_radians();
+        Ok(())
+    }
     fn hands_available<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
         self.surroundings.runtime_allowed
             && self.status.enabled
@@ -76,14 +100,10 @@ impl CharacterCoordinator {
                 CharacterState::HomeIdle | CharacterState::PoseIdle
             )
             && (core.mode() == RuntimeMode::Holding
-                || core.snapshot().motion.as_ref().is_some_and(|motion| {
-                    Some(motion.run_id) == self.active_idle_run_id
-                        || Some(motion.run_id) == self.gaze.status().run_id
-                        || self
-                            .hands
-                            .run
-                            .as_ref()
-                            .is_some_and(|run| run.id == motion.run_id)
+                || core.snapshot().motion.as_ref().is_some_and(|m| {
+                    Some(m.run_id) == self.active_idle_run_id
+                        || Some(m.run_id) == self.gaze.status().run_id
+                        || self.hands.run.as_ref().is_some_and(|r| r.id == m.run_id)
                 }))
     }
     pub(super) fn observe_hands<D: RuntimeDriver>(
@@ -95,81 +115,180 @@ impl CharacterCoordinator {
     ) -> Result<()> {
         if !self.hands.wanted {
             self.hands.blocked = false;
+            self.hands.timed_out = false;
+            self.hands.last_seen = None;
         }
         self.hands.wanted = true;
         self.hands.received = Some(now);
         if count > 0 {
             self.hands.last_seen = Some(now);
+            self.hands.timed_out = false;
         }
         self.finish_hands(now, core);
         if let Some(failure) = &self.status.hands_failure {
             return Err(Error::InvalidState(failure.message.clone()));
         }
-        if !self.hands_available(core) {
+        if !self.hands_available(core) || self.hands.timed_out {
             return Ok(());
         }
-        if !self.hands.entered {
-            if self.hands.run.is_some() {
-                return Ok(());
-            }
-            // Entering is the one authored gesture: anticipation, arm lead and
-            // a settle at the desk-facing pose.
-            let target = core.poses().pose("desk_work")?.clone();
-            let point = core
-                .camera_kinematics()
-                .ok_or_else(|| Error::InvalidState("Hands needs V2 geometry".into()))?
-                .fk(&target)?
-                .light
-                .table_point([0., 0., 1.], 0.)?;
-            let definition = core.prepare_hands_motion("hands_entry", &target, None)?;
+        if self.hands.previous.is_none() {
             self.preempt_idle_or_thinking(now, core)?;
-            if self.hands.previous.is_none() {
-                self.hands.previous = self.status.active_anchor.clone();
-            }
-            let id = core.play_generated_anchored_relative(definition, target.clone(), now)?;
-            self.hands.run = Some(HandsRun {
-                id,
-                target,
-                point,
-                kind: MoveKind::Enter,
-            });
-            self.status.active_clip = Some("hands_entry".into());
-            self.reset_timers(now);
-            return Ok(());
+            // The held character pose remains the anchor during all hand aims.
+            let held = core
+                .snapshot()
+                .joints
+                .iter()
+                .map(|j| (j.name.clone(), j.position))
+                .collect::<JointPositions>();
+            self.status.active_anchor = Some(held.clone());
+            self.hands.previous = Some(held);
         }
-        // After entry the light follows continuously, like face gaze: each
-        // fresh hand point redirects the running step from its commanded state.
-        let Some(point) = point.filter(|_| count > 0) else {
+        let Some(anchor) = self.hands.previous.as_ref() else {
             return Ok(());
         };
-        let pursued = self
+        let point = point.filter(|_| count > 0);
+        let changed = match (point, self.hands.point) {
+            (Some(a), Some(b)) => (a[0] - b[0]).hypot(a[1] - b[1]) > HANDS_DEADBAND_M,
+            (None, None) => self.hands.goal.is_none(),
+            _ => true,
+        };
+        if changed {
+            let goal = if let Some(point) = point {
+                core.hands_light_target(anchor, point, self.hands.maximum_arm_rad)?
+            } else {
+                // Keep the neck direction and arms. Positive V2 head pitch looks down.
+                let mut goal = anchor.clone();
+                let limits = core.driver().joint_limits()?;
+                let limit = limits
+                    .iter()
+                    .find(|l| l.name == "head_pitch_joint")
+                    .unwrap();
+                goal.insert(
+                    "head_pitch_joint".into(),
+                    (anchor["head_pitch_joint"] + 30_f64.to_radians()).clamp(
+                        limit.lower_rad + 3_f64.to_radians(),
+                        limit.upper_rad - 3_f64.to_radians(),
+                    ),
+                );
+                goal
+            };
+            self.hands.goal = Some(goal);
+            self.hands.point = point;
+        }
+        self.update_hands(now, core, false)
+    }
+    fn update_hands<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        returning: bool,
+    ) -> Result<()> {
+        let result = self.plan_hand_step(now, core, returning);
+        if let Err(error) = &result {
+            let stage = if returning { "return" } else { "follow" };
+            let movement = self
+                .status
+                .hands_failure
+                .as_ref()
+                .and_then(|f| f.movement.clone());
+            self.fail_hands(
+                stage,
+                format!("Hand tracking paused: {error}. Go to rest, then resume Orion."),
+                movement,
+            );
+        }
+        result
+    }
+    fn plan_hand_step<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        returning: bool,
+    ) -> Result<()> {
+        if !self.hands_available(core)
+            || (!returning && now - self.hands.last_update + 1e-9 < GAZE_UPDATE_SECONDS)
+        {
+            return Ok(());
+        }
+        if self
             .hands
             .run
             .as_ref()
-            .map_or(self.hands.point, |run| run.point);
-        if pursued.is_some_and(|last| distance(last, point) <= HANDS_DEADBAND_M) {
+            .is_some_and(|r| r.kind == MoveKind::Return)
+        {
             return Ok(());
         }
-        let replacing = match &self.hands.run {
-            None => None,
-            Some(run)
-                if run.kind == MoveKind::Follow
-                    && core.snapshot().motion.as_ref().is_some_and(|motion| {
-                        motion.run_id == run.id && motion.state == MovementPhase::Executing
-                    }) =>
-            {
-                Some(run.id)
-            }
-            // Entry, return and measured settling finish before following.
-            Some(_) => return Ok(()),
+        let Some(goal) = (if returning {
+            self.hands.previous.clone()
+        } else {
+            self.hands.goal.clone()
+        }) else {
+            return Ok(());
         };
-        let anchor = self
-            .status
-            .active_anchor
-            .clone()
-            .ok_or_else(|| Error::InvalidState("Hands has no anchor".into()))?;
-        let target = core.hands_light_target(&anchor, point)?;
-        let definition = core.prepare_hands_track(&target, replacing.map(|id| (id, now)))?;
+        let replacing = self.hands.run.as_ref().map(|r| r.id);
+        let state = if let Some(id) = replacing {
+            let Some(state) = core.character_commanded_state(id, now) else {
+                return Ok(());
+            };
+            state
+        } else if let Some(state) = core.completed_hands_command()? {
+            state
+        } else {
+            let snapshot = core.snapshot();
+            crate::TrajectorySample {
+                positions: snapshot
+                    .joints
+                    .iter()
+                    .map(|j| (j.name.clone(), j.position))
+                    .collect(),
+                velocities: snapshot
+                    .joints
+                    .iter()
+                    .map(|j| (j.name.clone(), j.velocity))
+                    .collect(),
+                accelerations: snapshot
+                    .joints
+                    .iter()
+                    .map(|j| (j.name.clone(), 0.))
+                    .collect(),
+            }
+        };
+        let mut target = goal.clone();
+        if !returning {
+            gaze::smooth_head(&state.positions, &goal, &mut target);
+            // Use the same angular deadband as face gaze, including tilted neck FK.
+            let model = core
+                .camera_kinematics()
+                .ok_or_else(|| Error::InvalidState("Hands needs V2 geometry".into()))?;
+            let current = model
+                .fk(&state.positions)?
+                .camera
+                .rotate_vector([0., 0., 1.]);
+            let desired = model.fk(&goal)?.camera.rotate_vector([0., 0., 1.]);
+            let error = current
+                .iter()
+                .zip(desired)
+                .map(|(a, b)| a * b)
+                .sum::<f64>()
+                .clamp(-1., 1.)
+                .acos();
+            if error <= GAZE_DEADBAND_RAD {
+                for name in ["head_roll_joint", "head_pitch_joint"] {
+                    target.insert(name.into(), state.positions[name]);
+                }
+            }
+            if target
+                .iter()
+                .all(|(n, q)| (q - state.positions[n]).abs() < 1e-6)
+            {
+                return Ok(());
+            }
+        }
+        let Some(definition) =
+            gaze::hand_step(&state, &target, &core.driver().joint_limits()?, returning)?
+        else {
+            return Ok(());
+        };
         let id = if let Some(id) = replacing {
             core.extend_character_performance(id, definition, target.clone(), now)?
         } else {
@@ -178,10 +297,13 @@ impl CharacterCoordinator {
         };
         self.hands.run = Some(HandsRun {
             id,
-            target,
-            point: Some(point),
-            kind: MoveKind::Follow,
+            kind: if returning {
+                MoveKind::Return
+            } else {
+                MoveKind::Follow
+            },
         });
+        self.hands.last_update = now;
         self.status.active_clip = Some("hands_track".into());
         self.reset_timers(now);
         Ok(())
@@ -198,73 +320,22 @@ impl CharacterCoordinator {
         {
             return Err(Error::InvalidState(failure.message.clone()));
         }
-        let Some(previous) = self.hands.previous.clone() else {
-            return Ok(());
-        };
-        if self
-            .hands
-            .run
-            .as_ref()
-            .is_some_and(|run| run.kind == MoveKind::Return)
-            || !self.hands_available(core)
-        {
+        if self.hands.previous.is_none() {
             return Ok(());
         }
-        let owned = self.hands.run.as_ref().and_then(|run| {
-            core.snapshot()
-                .motion
+        if let Err(error) = self.update_hands(now, core, true) {
+            let movement = self
+                .status
+                .hands_failure
                 .as_ref()
-                .filter(|motion| {
-                    motion.run_id == run.id && motion.state == MovementPhase::Executing
-                })
-                .map(|_| run.id)
-        });
-        // Settling must finish before replacing a run. A later off-mode heartbeat
-        // retries this recovery even if there are no camera frames at all.
-        if self.hands.run.is_some() && owned.is_none() {
-            return Ok(());
+                .and_then(|f| f.movement.clone());
+            self.fail_hands(
+                "return",
+                format!("Hands return was rejected: {error}. Go to rest, then resume Orion."),
+                movement,
+            );
+            return Err(error);
         }
-        if self
-            .hands
-            .return_attempt_at
-            .is_some_and(|at| now - at < 0.5)
-        {
-            return Ok(());
-        }
-        self.hands.return_attempt_at = Some(now);
-        let recovery = (|| {
-            let definition =
-                core.prepare_hands_motion("hands_return", &previous, owned.map(|id| (id, now)))?;
-            if let Some(id) = owned {
-                core.extend_character_performance(id, definition, previous.clone(), now)
-            } else {
-                self.preempt_idle_or_thinking(now, core)?;
-                core.play_generated_anchored_relative(definition, previous.clone(), now)
-            }
-        })();
-        let id = match recovery {
-            Ok(id) => id,
-            Err(error) => {
-                let movement = self
-                    .status
-                    .hands_failure
-                    .as_ref()
-                    .and_then(|failure| failure.movement.clone());
-                self.fail_hands(
-                    "return",
-                    format!("Hands return was rejected: {error}. Go to rest, then resume Orion."),
-                    movement,
-                );
-                return Err(error);
-            }
-        };
-        self.hands.run = Some(HandsRun {
-            id,
-            target: previous,
-            point: None,
-            kind: MoveKind::Return,
-        });
-        self.status.active_clip = Some("hands_return".into());
         Ok(())
     }
     pub(super) fn preempt_hands<D: RuntimeDriver>(
@@ -292,14 +363,12 @@ impl CharacterCoordinator {
             let run = self.hands.run.take().unwrap();
             if phase == MovementPhase::Completed {
                 self.status.hands_failure = None;
-                self.status.active_anchor = Some(run.target);
                 self.status.state = self.idle_state();
-                self.hands.entered = run.kind != MoveKind::Return;
-                self.hands.point = run.point;
                 if run.kind == MoveKind::Return {
                     self.hands.previous = None;
+                    self.hands.goal = None;
+                    self.hands.point = None;
                 }
-                core.set_character_comfort(self.hands.entered);
             } else {
                 let movement = [
                     core.snapshot().motion.as_ref(),
@@ -307,35 +376,29 @@ impl CharacterCoordinator {
                 ]
                 .into_iter()
                 .flatten()
-                .find(|motion| motion.run_id == run.id)
+                .find(|m| m.run_id == run.id)
                 .cloned();
                 let detail = movement
                     .as_ref()
-                    .and_then(|motion| motion.error.as_deref())
+                    .and_then(|m| m.error.as_deref())
                     .unwrap_or(phase.as_str());
-                let stage = match run.kind {
-                    MoveKind::Enter => "entry",
-                    MoveKind::Follow => "follow",
-                    MoveKind::Return => "return",
-                };
-                let recovery = if run.kind == MoveKind::Return {
-                    "Go to rest, then resume Orion."
+                let stage = if run.kind == MoveKind::Return {
+                    "return"
                 } else {
-                    "Choose Idle, Faces or Off to request a return; if recovery fails, go to rest."
+                    "follow"
                 };
-                self.fail_hands(
-                    stage,
-                    format!("Hand tracking paused: {detail}. {recovery}"),
-                    movement,
-                );
+                self.fail_hands(stage, format!("Hand tracking paused: {detail}. Choose Idle, Faces or Off to return; if recovery fails, go to rest."), movement);
             }
             self.status.active_clip = None;
             self.reset_timers(now);
         }
         if !self.status.enabled || !core.mode().torque_is_enabled() {
-            self.hands = HandsState::default();
+            let maximum_arm_rad = self.hands.maximum_arm_rad;
+            self.hands = HandsState {
+                maximum_arm_rad,
+                ..HandsState::default()
+            };
             self.status.hands_failure = None;
-            core.set_character_comfort(false);
         }
     }
     fn fail_hands(
@@ -362,15 +425,12 @@ impl CharacterCoordinator {
     }
     pub(super) fn hands_foreground_override<D: RuntimeDriver>(
         &mut self,
-        core: &mut RuntimeCore<D>,
+        _core: &mut RuntimeCore<D>,
     ) {
-        // Explicit motion replaces the user's work anchor; stale camera evidence
-        // must not undo it. A mode change is required to enter Hands again.
         self.hands.blocked = self.hands.wanted;
         self.hands.previous = None;
-        self.hands.entered = false;
+        self.hands.goal = None;
         self.status.hands_failure = None;
-        core.set_character_comfort(false);
     }
     pub(super) fn expire_hands<D: RuntimeDriver>(
         &mut self,
@@ -378,14 +438,29 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         if self.hands.owns_anchor()
-            && !self.hands.fresh(now)
-            && self
+            && (!self.hands.fresh(now)
+                || !self.hands.wanted
+                || self
+                    .hands
+                    .last_seen
+                    .is_some_and(|at| now - at >= HANDS_LOST_SECONDS))
+        {
+            let wanted = self.hands.wanted;
+            if self
                 .status
                 .hands_failure
                 .as_ref()
-                .is_none_or(|failure| failure.stage != "return")
+                .is_none_or(|f| f.stage != "return")
+            {
+                self.leave_hands(now, core)?;
+            }
+            self.hands.wanted = wanted;
+            self.hands.timed_out = true;
+        } else if self.hands.owns_anchor()
+            && !self.hands.timed_out
+            && self.status.hands_failure.is_none()
         {
-            self.leave_hands(now, core)?;
+            self.update_hands(now, core, false)?;
         }
         Ok(())
     }
@@ -408,390 +483,272 @@ mod tests {
         Arc<AtomicU64>,
     ) {
         let (mut core, _, boot) = following();
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        let profile: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(root.join("hardware/profiles/v2.json")).unwrap(),
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
         )
         .unwrap();
-        core.configure_comfort_box(serde_json::from_value(profile["comfort_box"].clone()).unwrap())
-            .unwrap();
         let mut character = CharacterCoordinator::new(1);
         character.set_gaze_enabled(true);
         character.start(0., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 0., 5., false);
+        advance(&mut core, &mut character, &boot, 0., 5., None);
         character.set_curiosity_available(true);
         (core, character, boot)
     }
     fn advance(
         core: &mut RuntimeCore<FollowingDriver>,
-        character: &mut CharacterCoordinator,
+        c: &mut CharacterCoordinator,
         boot: &AtomicU64,
         from: f64,
         to: f64,
-        present: bool,
+        observation: Option<(u8, Option<[f64; 3]>)>,
     ) {
         for step in (from * 50.) as u64 + 1..=(to * 50.) as u64 {
             let now = step as f64 * 0.02;
             boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
             core.tick(now).unwrap();
-            if character.hands.wanted && step % 25 == 0 {
-                character
-                    .observe_hands(u8::from(present), None, now, core)
-                    .unwrap();
+            if let Some(anchor) = &c.hands.previous {
+                for name in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+                    assert!(
+                        (core.driver().positions[name] - anchor[name]).abs()
+                            <= c.hands.maximum_arm_rad + 1e-8,
+                        "arm bound at {now}: {name}"
+                    );
+                }
             }
-            character
-                .tick(now, core, false, None, false, None, None)
-                .unwrap();
+            if step % 25 == 0
+                && let Some((count, point)) = observation
+            {
+                c.observe_hands(count, point, now, core).unwrap();
+            }
+            c.tick(now, core, false, None, false, None, None).unwrap();
+        }
+    }
+    fn assert_held_arm(core: &RuntimeCore<FollowingDriver>, anchor: &JointPositions) {
+        for name in [
+            "base_yaw_joint",
+            "shoulder_pitch_joint",
+            "elbow_pitch_joint",
+        ] {
+            assert!(
+                (core.driver().positions[name] - anchor[name]).abs() < 1e-9,
+                "{name}"
+            );
         }
     }
     #[test]
-    fn hands_enters_desk_anchor_and_returns_only_when_higher_priority_releases() {
-        let (mut core, mut character, boot) = fixture();
-        let original = character.status.active_anchor.clone().unwrap();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        assert_eq!(character.status.active_clip.as_deref(), Some("hands_entry"));
-        assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
-        advance(&mut core, &mut character, &boot, 5., 12., true);
-        let desk = core.poses().pose("desk_work").unwrap().clone();
-        assert_eq!(character.status.active_anchor.as_ref(), Some(&desk));
-        assert!(character.hands.entered);
-        assert!(
-            character.can_auto_rest(&core),
-            "Hands alone must not defer automatic rest"
-        );
-        let point = core
-            .camera_kinematics()
-            .unwrap()
-            .fk(&desk)
-            .unwrap()
-            .camera
-            .table_point([0., 0., 1.], 0.)
-            .unwrap()
+    fn head_only_hand_target_keeps_the_current_arm_and_anchor() {
+        let (mut core, mut c, boot) = fixture();
+        let anchor = c.status.active_anchor.clone().unwrap();
+        let point = [0.08, -0.35, 0.];
+        let target = core
+            .hands_light_target(&anchor, point, c.hands.maximum_arm_rad)
             .unwrap();
-        assert!((0.25..0.4).contains(&-point[1]));
-        character.set_curiosity_available(false);
-        character.leave_hands(12., &mut core).unwrap();
-        assert!(character.hands.run.is_none());
-        character.set_curiosity_available(true);
-        character.leave_hands(13., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 13., 21., false);
-        assert!(!character.hands.owns_anchor());
-        assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
+        for name in [
+            "base_yaw_joint",
+            "shoulder_pitch_joint",
+            "elbow_pitch_joint",
+        ] {
+            assert_eq!(target[name], anchor[name]);
+        }
+        c.observe_hands(1, Some(point), 5., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 5., 10., Some((1, Some(point))));
+        assert_held_arm(&core, &anchor);
+        assert_eq!(c.status.active_anchor.as_ref(), Some(&anchor));
+        assert_ne!(
+            core.driver().positions["head_pitch_joint"],
+            anchor["head_pitch_joint"]
+        );
+        assert!(c.can_auto_rest(&core));
     }
     #[test]
-    fn hands_follows_continuously_and_redirects_the_running_step() {
-        let (mut core, mut character, boot) = fixture();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 5., 12., true);
-        let desk = character.status.active_anchor.clone().unwrap();
-        let near = character.hands.point.unwrap();
-        // Palm jitter inside the deadband does not move the light.
-        character
-            .observe_hands(1, Some([near[0] + 0.02, near[1], 0.]), 13., &mut core)
-            .unwrap();
-        assert!(character.hands.run.is_none());
-        // A real shift starts following at once; no dwell or budget.
-        character
-            .observe_hands(1, Some([0.08, -0.32, 0.]), 13.2, &mut core)
-            .unwrap();
-        let first = character.hands.run.as_ref().unwrap();
-        let (id, first_target) = (first.id, first.target.clone());
-        assert_eq!(character.status.active_clip.as_deref(), Some("hands_track"));
-        // The next point redirects the same run from its commanded state.
-        advance(&mut core, &mut character, &boot, 13.2, 13.4, true);
-        let shifted = [0.14, -0.32, 0.];
-        character
-            .observe_hands(1, Some(shifted), 13.4, &mut core)
-            .unwrap();
-        let run = character.hands.run.as_ref().unwrap();
-        assert_eq!(run.id, id);
-        assert_ne!(run.target, first_target);
-        assert_eq!(run.point, Some(shifted));
-        assert_eq!(character.status.active_anchor.as_ref(), Some(&desk));
-        advance(&mut core, &mut character, &boot, 13.4, 20., true);
-        assert_ne!(character.status.active_anchor.as_ref(), Some(&desk));
-        assert_eq!(character.hands.point, Some(shifted));
-        let held = character.status.active_anchor.clone();
-        advance(&mut core, &mut character, &boot, 20., 36., false);
-        assert_eq!(character.status.active_anchor, held);
-        assert!(character.hands.suppress_idle(36.));
-        assert_eq!(core.mode(), RuntimeMode::Holding);
+    fn no_hand_search_tilts_only_the_head_and_holds() {
+        let (mut core, mut c, boot) = fixture();
+        let anchor = c.status.active_anchor.clone().unwrap();
+        c.observe_hands(0, None, 5., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 5., 20., Some((0, None)));
+        assert_held_arm(&core, &anchor);
+        assert_eq!(
+            core.driver().positions["head_roll_joint"],
+            anchor["head_roll_joint"]
+        );
+        assert!(
+            core.driver().positions["head_pitch_joint"]
+                > anchor["head_pitch_joint"] + 20_f64.to_radians()
+        );
+        assert_eq!(c.status.active_anchor.as_ref(), Some(&anchor));
+        assert!(c.status.hands_failure.is_none());
+    }
+    #[test]
+    fn fallback_search_is_bounded_and_returns_when_head_reach_resumes() {
+        let (mut core, mut c, boot) = fixture();
+        let anchor = c.status.active_anchor.clone().unwrap();
+        let mut found = None;
+        'outer: for x in [0.35, 0.45, 0.55, -0.35, -0.45, -0.55] {
+            for y in [-0.02, -0.01, -0.005, -0.001, -0.05] {
+                let point = [x, y, 0.];
+                let target = core
+                    .hands_light_target(&anchor, point, c.hands.maximum_arm_rad)
+                    .unwrap();
+                let amount = ["shoulder_pitch_joint", "elbow_pitch_joint"]
+                    .into_iter()
+                    .map(|n| (target[n] - anchor[n]).abs())
+                    .fold(0_f64, f64::max);
+                assert!(amount <= c.hands.maximum_arm_rad + 1e-9);
+                if amount > 0.005 {
+                    found = Some(point);
+                    break 'outer;
+                }
+            }
+        }
+        let point = found.expect("desk point must exercise the bounded fallback");
+        eprintln!("Hands fallback fixture: {point:?}");
+        c.observe_hands(1, Some(point), 5., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 5., 10., Some((1, Some(point))));
+        for name in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
+            assert!(
+                (core.driver().positions[name] - anchor[name]).abs()
+                    <= c.hands.maximum_arm_rad + 1e-6
+            );
+        }
+        let near = [0., -0.35, 0.];
+        c.observe_hands(1, Some(near), 10., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 10., 14., Some((1, Some(near))));
+        assert_held_arm(&core, &anchor);
+        c.observe_hands(1, Some(point), 14., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 14., 18., Some((1, Some(point))));
+        c.observe_hands(0, None, 18., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 18., 22., Some((0, None)));
+        assert_held_arm(&core, &anchor);
+    }
+    #[test]
+    fn hand_loss_timeout_and_mode_exit_restore_the_held_pose() {
+        for stale_camera in [false, true] {
+            let (mut core, mut c, boot) = fixture();
+            let anchor = c.status.active_anchor.clone().unwrap();
+            let point = [0.08, -0.35, 0.];
+            c.observe_hands(1, Some(point), 5., &mut core).unwrap();
+            advance(&mut core, &mut c, &boot, 5., 9., Some((1, Some(point))));
+            advance(
+                &mut core,
+                &mut c,
+                &boot,
+                9.,
+                24.,
+                if stale_camera { None } else { Some((0, None)) },
+            );
+            for (n, q) in &anchor {
+                assert!((core.driver().positions[n] - q).abs() < 1e-9, "{n}");
+            }
+            assert!(!c.hands.owns_anchor());
+            assert!(c.hands.timed_out);
+            c.observe_hands(1, Some(point), 24., &mut core).unwrap();
+            advance(&mut core, &mut c, &boot, 24., 28., Some((1, Some(point))));
+            c.leave_hands(28., &mut core).unwrap();
+            advance(&mut core, &mut c, &boot, 28., 32., None);
+            assert!(!c.hands.blocks_gaze());
+            assert_eq!(c.status.active_anchor.as_ref(), Some(&anchor));
+            for (n, q) in &anchor {
+                assert!((core.driver().positions[n] - q).abs() < 1e-9);
+            }
+            c.observe_hands(0, None, 32., &mut core).unwrap();
+            advance(&mut core, &mut c, &boot, 32., 44., Some((0, None)));
+            assert!(!c.hands.timed_out);
+            assert!(
+                core.driver().positions["head_pitch_joint"]
+                    > anchor["head_pitch_joint"] + 20_f64.to_radians()
+            );
+        }
     }
     #[test]
     fn stop_and_foreground_cannot_be_overridden_by_hands_metadata() {
-        let (mut core, mut character, boot) = fixture();
-        character.forget_gaze_for_external_stop(crate::expression::gaze::GazeStopCommand::Stop);
-        character
-            .observe_hands(1, Some([0., -0.3, 0.]), 5., &mut core)
+        let (mut core, mut c, boot) = fixture();
+        c.forget_gaze_for_external_stop(gaze::GazeStopCommand::Stop);
+        c.observe_hands(1, Some([0., -0.3, 0.]), 5., &mut core)
             .unwrap();
-        assert!(character.hands.run.is_none());
-        character.resume_gaze(&core).unwrap();
-        character.observe_hands(1, None, 6., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 6., 13., true);
-        character.preempt_for_foreground(13., &mut core).unwrap();
-        character
-            .observe_hands(1, Some([0.15, -0.3, 0.]), 70., &mut core)
+        assert!(c.hands.run.is_none());
+        c.resume_gaze(&core).unwrap();
+        c.observe_hands(0, None, 6., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 6., 10., Some((0, None)));
+        c.preempt_for_foreground(10., &mut core).unwrap();
+        c.observe_hands(1, Some([0.15, -0.3, 0.]), 11., &mut core)
             .unwrap();
-        assert!(character.hands.run.is_none());
-        assert!(character.hands.blocked);
-        assert!(!character.hands.owns_anchor());
+        assert!(c.hands.run.is_none());
+        assert!(c.hands.blocked);
+        assert!(!c.hands.owns_anchor());
     }
     #[test]
-    fn stale_inference_during_entry_returns_the_original_anchor_without_a_jump() {
-        let (mut core, mut character, boot) = fixture();
-        let original = character.status.active_anchor.clone().unwrap();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        let mut previous = core
-            .snapshot()
-            .joints
-            .iter()
-            .map(|j| (j.name.clone(), j.position))
-            .collect::<JointPositions>();
-        for step in 251..=850 {
-            let now = step as f64 * 0.02;
-            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
-            core.tick(now).unwrap();
-            character
-                .tick(now, &mut core, false, None, false, None, None)
-                .unwrap();
-            for joint in &core.snapshot().joints {
-                assert!((joint.position - previous[&joint.name]).abs() < 0.04);
-                previous.insert(joint.name.clone(), joint.position);
-            }
-        }
-        assert!(!character.hands.owns_anchor());
-        assert_eq!(character.status.active_anchor.as_ref(), Some(&original));
-        for joint in &core.snapshot().joints {
-            assert!((joint.position - original[&joint.name]).abs() < 0.01);
-        }
-    }
-    #[test]
-    fn generated_expression_at_a_work_anchor_stays_in_the_coupled_envelope() {
-        let (mut core, mut character, boot) = fixture();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 5., 12., true);
-        let anchor = character.status.active_anchor.clone().unwrap();
-        let config = crate::HardwareVersion::V2
-            .profile()
-            .comfort_box
-            .as_ref()
-            .unwrap()
-            .clone();
-        let comfort = crate::motion::ik::ComfortBox::from_config(
-            &config,
-            core.poses(),
-            &core.driver().joint_limits().unwrap(),
-        )
-        .unwrap();
-        let mut definition = core.motions().motion("idle_micro_glance").unwrap().clone();
-        definition.keyframes[0]
-            .target
-            .insert("shoulder_pitch_joint".into(), 1.5);
-        definition.keyframes[0]
-            .target
-            .insert("elbow_pitch_joint".into(), 1.5);
-        definition.keyframes[0]
-            .target
-            .insert("head_pitch_joint".into(), 1.5);
-        let run = core
-            .play_generated_anchored_relative(definition, anchor.clone(), 12.)
-            .unwrap();
-        for step in 601..=1100 {
-            let now = step as f64 * 0.02;
-            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
-            core.tick(now).unwrap();
-            let positions = core
-                .snapshot()
-                .joints
-                .iter()
-                .map(|j| (j.name.clone(), j.position))
-                .collect();
-            assert!(comfort.contains(&positions));
-        }
-        assert_eq!(terminal_phase(&core, run), Some(MovementPhase::Completed));
-        for joint in &core.snapshot().joints {
-            assert!((joint.position - anchor[&joint.name]).abs() < 0.01);
-        }
-    }
-
-    #[test]
-    fn hands_reach_does_not_compound_after_completed_targets() {
-        let (core, _, _) = fixture();
-        let reference = core.poses().pose("desk_work").unwrap();
-        let first = core
-            .hands_light_target(reference, [0.08, -0.32, 0.])
-            .unwrap();
-        let other = core.hands_light_target(&first, [-0.08, -0.32, 0.]).unwrap();
-        let repeated = core.hands_light_target(&other, [0.08, -0.32, 0.]).unwrap();
-        for joint in ["shoulder_pitch_joint", "elbow_pitch_joint"] {
-            assert!(
-                (first[joint] - repeated[joint]).abs() < 1e-8,
-                "same work point compounded {joint}: {} -> {}",
-                first[joint],
-                repeated[joint]
-            );
-        }
-    }
-
-    #[test]
-    fn completed_hands_steps_keep_command_continuity_despite_bounded_feedback_bias() {
-        let (mut core, mut character, boot) = fixture();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 5., 12., true);
-        character
-            .observe_hands(1, Some([0.08, -0.32, 0.]), 13., &mut core)
-            .unwrap();
-        advance(&mut core, &mut character, &boot, 13., 18., true);
-        let previous = character.status.active_anchor.clone().unwrap();
-        // Hardware completed with a small positive shoulder/elbow offset.
-        // Starting the next command at that feedback would briefly command
-        // the offset itself, even though the servo still holds `previous`.
-        core.driver().offset_feedback(0.04, 0.03);
-        core.tick(18.02).unwrap();
-        character
-            .observe_hands(1, Some([-0.08, -0.32, 0.]), 18.02, &mut core)
-            .unwrap();
-        let run = character.hands.run.as_ref().unwrap().id;
-        let start = core.character_commanded_state(run, 18.02).unwrap();
-        for (joint, q) in &previous {
-            assert!(
-                (start.positions[joint] - q).abs() < 1e-9,
-                "completed Hands command jumped at {joint}: {} -> {}",
-                q,
-                start.positions[joint]
-            );
-        }
-        advance(&mut core, &mut character, &boot, 18.02, 23., true);
-        let previous = character.status.active_anchor.clone().unwrap();
-        character
-            .observe_hands(1, Some([0.08, -0.32, 0.]), 23., &mut core)
-            .unwrap();
-        let run = character.hands.run.as_ref().unwrap().id;
-        let start = core.character_commanded_state(run, 23.).unwrap();
-        for (joint, q) in &previous {
-            assert!((start.positions[joint] - q).abs() < 1e-9);
-        }
-    }
-
-    #[test]
-    fn completed_hands_command_does_not_hide_subsequent_feedback_drift() {
-        let (mut core, mut character, boot) = fixture();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 5., 12., true);
-        // A completed command can be reused only while the measured arm is
-        // still within the original completion limits, even inside comfort.
-        core.driver().offset_feedback(-0.06, 0.);
-        core.tick(12.02).unwrap();
-        let result = character.observe_hands(1, Some([0.08, -0.32, 0.]), 12.02, &mut core);
-        assert!(result.is_err());
-        assert!(core.snapshot().motion.is_none());
-    }
-
-    #[test]
-    fn timed_out_follow_latches_diagnostics_and_recovers_only_after_a_valid_return() {
-        let (mut core, mut character, boot) = fixture();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 5., 12., true);
-        let committed = character.status.active_anchor.clone();
-        character
-            .observe_hands(1, Some([0.08, -0.32, 0.]), 13., &mut core)
-            .unwrap();
-        let run = character.hands.run.as_ref().unwrap().id;
-        // Unlike the perfect following fixture, emulate a servo that stops
-        // 0.07 rad away from every commanded shoulder goal.
+    fn failed_follow_latches_diagnostics_until_a_valid_return() {
+        let (mut core, mut c, boot) = fixture();
+        let anchor = c.status.active_anchor.clone();
+        c.observe_hands(0, None, 5., &mut core).unwrap();
         core.driver().offset_feedback(0.07, 0.);
-        for step in 651..=1000 {
+        for step in 251..=700 {
             let now = step as f64 * 0.02;
             boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
             core.tick(now).unwrap();
             if step % 25 == 0 {
-                let result = character.observe_hands(1, None, now, &mut core);
-                if result.is_err() {
-                    assert!(character.status.hands_failure.is_some());
-                }
+                let _ = c.observe_hands(0, None, now, &mut core);
             }
-            character
-                .tick(now, &mut core, false, None, false, None, None)
+            c.tick(now, &mut core, false, None, false, None, None)
                 .unwrap();
         }
-        let failure = character.status.hands_failure.as_ref().unwrap();
+        let failure = c.status.hands_failure.as_ref().unwrap();
         assert_eq!(failure.stage, "follow");
-        let failed = failure.movement.as_ref().unwrap();
-        assert_eq!(failed.run_id, run);
-        assert_eq!(failed.state, MovementPhase::TimedOut);
-        let shoulder = failed
-            .completion_diagnostic
-            .as_ref()
-            .unwrap()
-            .joints
-            .iter()
-            .find(|j| j.name == "shoulder_pitch_joint")
-            .unwrap();
-        assert!((shoulder.position_error_rad + 0.07).abs() < 1e-9);
-        assert_eq!(character.status.active_anchor, committed);
-        assert!(character.hands.run.is_none());
-        assert!(core.snapshot().motion.is_none());
-        assert!(
-            character
-                .observe_hands(1, Some([0.14, -0.32, 0.]), 20., &mut core)
-                .is_err()
+        assert_eq!(
+            failure.movement.as_ref().unwrap().state,
+            MovementPhase::TimedOut
         );
-        // A later healthy measurement permits the ordinary validated return;
-        // the timeout itself never commits a new anchor or resets Stop.
-        core.driver().offset_feedback(0., 0.);
-        core.tick(20.02).unwrap();
-        character.leave_hands(20.02, &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 20.02, 28., false);
-        assert!(character.status.hands_failure.is_none());
-        assert!(!character.hands.blocks_gaze());
         assert!(
-            character
-                .queue_gaze_target(
-                    crate::expression::gaze::GazeTarget {
-                        track_id: 1,
-                        capture_boottime_ns: boot.load(Ordering::Relaxed),
-                        azimuth: 0.,
-                        elevation: 0.,
-                        confidence: 0.95,
-                        category: Some("face".into()),
-                        range: None,
-                    },
-                    28.,
-                    &mut core
-                )
+            failure
+                .movement
+                .as_ref()
                 .unwrap()
+                .completion_diagnostic
+                .is_some()
         );
+        assert_eq!(c.status.active_anchor, anchor);
+        core.driver().offset_feedback(0., 0.);
+        core.tick(14.02).unwrap();
+        c.leave_hands(14.02, &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 14.02, 19., None);
+        assert!(c.status.hands_failure.is_none());
+        assert!(!c.hands.blocks_gaze());
     }
-
     #[test]
-    fn captured_frozen_pose_reports_failed_return_and_refuses_face_targets() {
-        let (mut core, mut character, boot) = fixture();
-        character.observe_hands(1, None, 5., &mut core).unwrap();
-        advance(&mut core, &mut character, &boot, 5., 12., true);
+    fn completed_steps_keep_command_continuity_and_reject_later_drift() {
+        let (mut core, mut c, boot) = fixture();
+        c.observe_hands(0, None, 5., &mut core).unwrap();
+        advance(&mut core, &mut c, &boot, 5., 9., Some((0, None)));
         let held = core.driver().positions.clone();
-        // Captured feedback, shifted by the recorded R into mechanical-rest coordinates.
-        core.driver().offset_feedback(
-            1.7671458676442584 - held["shoulder_pitch_joint"],
-            -1.2379224958237124 - held["elbow_pitch_joint"],
+        core.driver().offset_feedback(0.02, 0.02);
+        core.tick(9.02).unwrap();
+        c.observe_hands(1, Some([0.08, -0.35, 0.]), 9.02, &mut core)
+            .unwrap();
+        let id = c.hands.run.as_ref().unwrap().id;
+        let state = core.character_commanded_state(id, 9.02).unwrap();
+        for (name, q) in &held {
+            assert!((state.positions[name] - q).abs() < 1e-9);
+        }
+        core.driver().offset_feedback(0., 0.);
+        advance(
+            &mut core,
+            &mut c,
+            &boot,
+            9.02,
+            14.,
+            Some((1, Some([0.08, -0.35, 0.]))),
         );
-        core.tick(12.02).unwrap();
-        let error = character.leave_hands(12.02, &mut core).unwrap_err();
+        core.driver().offset_feedback(0.07, 0.);
+        core.tick(14.02).unwrap();
+        assert!(c.leave_hands(14.02, &mut core).is_err());
+        assert_eq!(c.status.hands_failure.as_ref().unwrap().stage, "return");
+        assert!(c.hands.owns_anchor());
         assert!(
-            error
-                .to_string()
-                .contains("Measured pose exceeds comfort recovery tolerance")
-        );
-        let failure = character.status.hands_failure.as_ref().unwrap();
-        assert_eq!(failure.stage, "return");
-        assert!(failure.recovery_required);
-        assert!(failure.message.contains("Go to rest"));
-        assert!(character.hands.owns_anchor());
-        assert!(core.snapshot().motion.is_none());
-        // Faces must receive an explicit rejection, never a false success.
-        let error = character
-            .queue_gaze_target(
+            c.queue_gaze_target(
                 crate::expression::gaze::GazeTarget {
                     track_id: 1,
                     capture_boottime_ns: boot.load(Ordering::Relaxed),
@@ -799,29 +756,59 @@ mod tests {
                     elevation: 0.,
                     confidence: 0.95,
                     category: Some("face".into()),
-                    range: None,
+                    range: None
                 },
-                12.02,
-                &mut core,
+                14.02,
+                &mut core
             )
-            .unwrap_err();
-        assert!(error.to_string().contains("Hands return was rejected"));
-        assert!(character.gaze_status().track_id.is_none());
-        assert!(character.can_auto_rest(&core));
-        // A failed return is latched. Off-mode heartbeats must not schedule
-        // repeated recovery moves even if feedback later becomes admissible.
-        core.driver().offset_feedback(0., 0.);
-        core.tick(13.02).unwrap();
-        character.expire_hands(13.02, &mut core).unwrap();
-        assert!(character.leave_hands(13.02, &mut core).is_err());
-        assert!(core.snapshot().motion.is_none());
-        assert_eq!(
-            character.status.hands_failure.as_ref().unwrap().stage,
-            "return"
+            .is_err()
         );
-        checked(core.handle_command("disable", 13.1)).unwrap();
-        character.finish_hands(13.1, &mut core);
-        assert!(character.status.hands_failure.is_none());
-        assert!(!character.hands.blocks_gaze());
+        core.driver().offset_feedback(0., 0.);
+        core.tick(15.).unwrap();
+        assert!(c.leave_hands(15., &mut core).is_err());
+        checked(core.handle_command("disable", 15.1)).unwrap();
+        c.finish_hands(15.1, &mut core);
+        assert!(c.status.hands_failure.is_none());
+        assert!(!c.hands.blocks_gaze());
+    }
+    #[test]
+    fn hands_captures_the_current_pose_including_an_existing_turn() {
+        let (mut core, mut c, _) = fixture();
+        checked(core.handle_command("goto look_left 1", 5.)).unwrap();
+        for tick in 251..=400 {
+            core.tick(tick as f64 * 0.02).unwrap();
+        }
+        let held = core.driver().positions.clone();
+        c.observe_hands(0, None, 8., &mut core).unwrap();
+        assert_eq!(c.hands.previous.as_ref(), Some(&held));
+        assert_eq!(c.status.active_anchor.as_ref(), Some(&held));
+        let goal = c.hands.goal.as_ref().unwrap();
+        assert_eq!(goal["base_yaw_joint"], held["base_yaw_joint"]);
+        assert_eq!(goal["shoulder_pitch_joint"], held["shoulder_pitch_joint"]);
+        assert_eq!(goal["elbow_pitch_joint"], held["elbow_pitch_joint"]);
+    }
+    #[test]
+    fn rapid_hand_redirections_keep_every_sample_inside_the_configured_arm_bound() {
+        let (mut core, mut c, boot) = fixture();
+        c.set_hands_maximum_arm_degrees(1.).unwrap();
+        for segment in 0..40 {
+            let from = 5. + segment as f64 * 0.16;
+            let point = match segment % 3 {
+                0 => [0.35, -0.001, 0.],
+                1 => [-0.35, -0.001, 0.],
+                _ => [0., -0.35, 0.],
+            };
+            c.observe_hands(1, Some(point), from, &mut core).unwrap();
+            advance(&mut core, &mut c, &boot, from, from + 0.16, None);
+        }
+    }
+    #[test]
+    fn configured_fallback_maximum_rejects_invalid_values() {
+        let mut c = CharacterCoordinator::new(1);
+        for degrees in [-1., 5.1, f64::NAN, f64::INFINITY] {
+            assert!(c.set_hands_maximum_arm_degrees(degrees).is_err());
+        }
+        c.set_hands_maximum_arm_degrees(0.).unwrap();
+        assert_eq!(c.hands.maximum_arm_rad, 0.);
     }
 }

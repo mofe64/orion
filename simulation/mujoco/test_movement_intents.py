@@ -48,12 +48,14 @@ def test_every_compiled_item_matches_its_fk_intent_size_speed_and_clearance(cata
 
 
 def test_runtime_transitions_use_their_real_start_and_destination_anchors(catalogue):
-    item = next(i for i in catalogue['items'] if i['name'] == 'hands_return' and i['kind'] == 'motion')
+    item = next(i for i in catalogue['items'] if i['kind'] == 'tracking')
     poses = yaml.safe_load((ROOT / 'motion/config/v2/poses.yaml').read_text())['poses']
-    assert item['planner'] == 'hands'
-    assert item['samples'][0]['positions'] == poses['desk_work']['positions']
-    assert item['expected_end'] == poses[item['anchor']]['positions']
+    assert item['samples'][0]['positions'] == poses['home']['positions']
+    assert item['expected_end'] == poses['home']['positions']
     assert item['anchor_source'].startswith('runtime/src/expression/hands.rs')
+    arm = max(abs(s['positions'][n] - poses['home']['positions'][n]) for s in item['samples'] for n in ('shoulder_pitch_joint', 'elbow_pitch_joint'))
+    assert np.radians(0.1) < arm <= np.radians(item['maximum_arm_degrees']) + 1e-9
+    assert all(s['positions']['base_yaw_joint'] == poses['home']['positions']['base_yaw_joint'] for s in item['samples'])
     startup = next(i for i in catalogue['items'] if i['kind'] == 'startup')
     assert startup['start_pose'] == 'rest' and startup['anchor'] == 'home'
     assert startup['samples'][0]['positions'] == poses['rest']['positions']

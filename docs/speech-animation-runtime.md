@@ -48,7 +48,7 @@ The compiler can stretch a segment to respect motor speed. The planner uses comp
 
 ## Reaction cues
 
-Supported cues are `agree`, `disagree`, `happy`, `curious`, `thinking`, `surprised`, `sympathy`, `unsure` and `laugh`.
+Supported cues are `agree`, `disagree`, `happy`, `curious`, `thinking`, `surprised`, `sympathy`, `sorry`, `shy`, `unsure` and `laugh`.
 
 A reaction motion uses `anchor_relative`, returns to its anchor and has one apex marker. An apex marker identifies the gesture's main stroke. The runtime validates this contract when loading motions.
 
