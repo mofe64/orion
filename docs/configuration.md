@@ -148,24 +148,22 @@ key, Studio asks you to pair again. **Disconnect** stops retries for that sessio
 
 ## Deployment
 
-When deploying we can use the folloing env vars or flags, when deploying to the onboard computer.  Command-line options take priority over environment variables.
+`scripts/deploy_pi.sh --host USER@HOST` invokes the release installer over SSH.
+`ORION_PI_HOST` supplies the host when `--host` is omitted; there is no default
+user or hostname. `--version vX.Y.Z` selects a published release; omitting it
+selects the latest stable release. `--from FILE` uploads a local tarball and
+its adjacent `.sha256` file instead.
 
+Build local development changes with `scripts/build_release.sh vX.Y.Z`.
+The installer verifies the archive, prepares offline environments and shared
+models, then switches service files and built-in YAML together. It preserves
+user assets, pairing, credentials, preferences and custom service tuning.
+V2 uses the tracked rest-relative joint profile. First installations and
+transitions from the old V2 frame stay stopped for commissioning; ordinary
+updates resume after the direct hardware check passes.
 
-| Variable            | What it chooses                                                 | Default                    | Command-line option                |
-| ------------------- | --------------------------------------------------------------- | -------------------------- | ---------------------------------- |
-| `ORION_PI_HOST`     | The onboard computer to connect to, including its user account. | `mofe@ariadne-robot.local` | `--host USER@HOST`                 |
-| `ORION_PI_ROOT`     | Orion’s project folder on the onboard computer.                 | `/home/mofe/orion`         | `--root PATH`                      |
-| `ORION_PI_BRANCH`   | The Git branch containing the software to install.              | `main`                     | `--branch BRANCH`                  |
-| `ORION_PI_HARDWARE` | The robot’s hardware version.                                   | Required                   | `--hardware v1` or `--hardware v2` |
-
-
-Commit and push any of your runtime changes  before deploying. 
-
-The script builds and tests the latest pushed commit from the selected branch locally using Docker, then installs it on Orion’s onboard computer.
-
-deployment replaces assets (built-in poses, movements and scenes) with the latest version on the deploy branch. It also preserve user authored assets, saved settings, calibration, access key and custom startup settings.
-
-The deployment process moves Orion to check its movements, lights and sound, and finishes in the calibrated rest position with the lights off and motors unpowered.
+See [quickstart](quickstart.md#install-or-update) for installation, commissioning
+and rollback, and [release packaging](release-packaging.md) for the build layout.
 
 ## Customising the oriond runtime
 

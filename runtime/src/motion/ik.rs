@@ -921,10 +921,10 @@ mod tests {
         .positions
         .unwrap();
         assert!(comfort.contains(&pose));
-        assert!(pose[ELBOW] < -0.28, "{pose:?}");
+        assert!(pose[ELBOW] < -1.1620389530342436, "{pose:?}");
         let mut contact_side = pose.clone();
-        contact_side.insert(SHOULDER.into(), 0.663);
-        contact_side.insert(ELBOW.into(), -0.008);
+        contact_side.insert(SHOULDER.into(), 1.2183010452146022);
+        contact_side.insert(ELBOW.into(), -0.8900389530342436);
         assert!(!comfort.contains(&contact_side));
     }
 

@@ -300,7 +300,8 @@ impl CharacterCoordinator {
         let limits = core.driver().joint_limits()?;
         // Preserve the authored glance envelope. A distant object supplies a
         // direction, never permission to enlarge or speed up the idle clip.
-        let delta = object.azimuth - anchor["base_yaw_joint"];
+        let delta =
+            object.azimuth + model.joint_reference("base_yaw_joint")? - anchor["base_yaw_joint"];
         let yaw = delta.sin().atan2(delta.cos()).clamp(-0.11, 0.11);
         let mut facing = anchor.clone();
         *facing.get_mut("base_yaw_joint").unwrap() += yaw;
@@ -427,13 +428,17 @@ mod tests {
     use std::sync::atomic::Ordering;
     #[test]
     fn object_glances_preserve_clip_envelope_budget_anchor_and_stop() {
-        check_object_glances("faces");
+        check_object_glances("faces", false);
     }
     #[test]
     fn idle_observations_allow_object_glances_with_the_same_safety_gates() {
-        check_object_glances("idle");
+        check_object_glances("idle", false);
     }
-    fn check_object_glances(mode: &str) {
+    #[test]
+    fn forward_object_does_not_add_a_turn_from_the_rest_frame_shift() {
+        check_object_glances("idle", true);
+    }
+    fn check_object_glances(mode: &str, forward: bool) {
         let (mut core, _, boot) = crate::expression::gaze::tests::following();
         let mut character = CharacterCoordinator::new(1);
         character.set_gaze_enabled(true);
@@ -448,11 +453,21 @@ mod tests {
         }
         character.set_curiosity_available(true);
         let anchor = character.status.active_anchor.clone().unwrap();
+        let azimuth = if forward {
+            anchor["base_yaw_joint"]
+                - core
+                    .camera_kinematics()
+                    .unwrap()
+                    .joint_reference("base_yaw_joint")
+                    .unwrap()
+        } else {
+            0.4
+        };
         let message = |stamp: u64| {
             serde_json::from_value(serde_json::json!({
                 "capture_boottime_ns":stamp, "camera_on":true, "tracking_mode":mode,
                 "settings":{"object_glances":true}, "looking_away":null,
-                "objects":[{"id":"object:1","category":"book","azimuth":0.4,"elevation":-0.3,
+                "objects":[{"id":"object:1","category":"book","azimuth":azimuth,"elevation":-0.3,
                     "capture_boottime_ns":stamp.to_string(),"point":null},
                     {"id":"object:2","category":"cup","azimuth":-0.4,"elevation":-0.3,
                     "capture_boottime_ns":stamp.to_string(),"point":null}]
@@ -478,6 +493,9 @@ mod tests {
         assert_eq!(clip.name, "idle_micro_glance");
         for frame in &clip.keyframes {
             assert!(frame.target.get("base_yaw_joint").unwrap_or(&0.).abs() <= 0.11);
+            if forward {
+                assert!(frame.target.get("base_yaw_joint").unwrap_or(&0.).abs() < 1e-12);
+            }
             assert!(frame.target.get("head_roll_joint").unwrap_or(&0.).abs() <= 0.07);
         }
         assert!(

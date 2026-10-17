@@ -109,10 +109,10 @@ To diagnose live acoustic-verifier rejection, set this in
 `~/.config/orion/voice.env`, then restart the listener after deploying the change:
 
 ```bash
-ORION_WAKE_DEBUG_DIR=/home/mofe/orion-wake-debug
+ORION_WAKE_DEBUG_DIR=/home/USER/orion-wake-debug
 ```
 
-The variable defaults unset: no diagnostic writer, audio files or additional
+Replace `USER` with the Pi login name. The variable defaults unset: no diagnostic writer, audio files or additional
 score buffer are created. When enabled, each accepted or rejected acoustic verdict
 saves a `<UTC timestamp>-accepted/` or `-rejected/` folder containing `audio.wav` and
 `meta.json`. The WAV holds up to four seconds of exact mono verifier input at

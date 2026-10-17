@@ -390,6 +390,9 @@ pub struct CharacterCoordinator {
     /// Adopted facing offset, retained when a reaction starts a replacement tail.
     speech_previous_yaw: f64,
 
+    /// Joint coordinate of forward, from V2 geometry; V1 keeps its zero centre.
+    speech_yaw_reference: f64,
+
     /// Bookmarks pairing a body-follow keyframe index with its future speech history.
     /// Adopt that history only after movement passes the keyframe and its hold,
     /// so replanning does not treat unfinished gestures as already performed.
@@ -449,6 +452,7 @@ impl CharacterCoordinator {
             speech_cue_frame_offset: 0,
             speech_reaction_finish_at: None,
             speech_previous_yaw: 0.0,
+            speech_yaw_reference: 0.0,
             speech_checkpoints: Vec::new(),
             attention: None,
         }
@@ -679,7 +683,7 @@ impl CharacterCoordinator {
             .clone()
             .ok_or_else(|| Error::InvalidState("Attention needs an anchor.".into()))?;
         // calculate the target yaw based on the side we're facing.
-        let target_yaw = if side == "left" { -0.35 } else { 0.35 };
+        let target_yaw = core.poses().pose(&format!("attention_{side}"))?["base_yaw_joint"];
 
         // using our runtime, we read the latest joint feedback
         // find the base_yaw_joint and read its position.
@@ -1360,6 +1364,11 @@ impl CharacterCoordinator {
         speech_analysis: Option<&SpeechAnalysis>,
         speech_frame: Option<usize>,
     ) -> Result<()> {
+        self.speech_yaw_reference = core
+            .camera_kinematics()
+            .map(|model| model.joint_reference("base_yaw_joint"))
+            .transpose()?
+            .unwrap_or(0.0);
         if (scene_active || speech_active || !self.status.enabled) && self.work.is_some() {
             self.preempt_for_foreground(now, core)?;
         }
@@ -2490,7 +2499,8 @@ impl CharacterCoordinator {
                     .and_then(|d| d.head_target.get("base_yaw_joint"))
                     .copied()
                     .unwrap_or(self.speech_previous_yaw);
-                let anchor_yaw = anchor.get("base_yaw_joint").copied().unwrap_or(0.0);
+                let anchor_yaw = anchor.get("base_yaw_joint").copied().unwrap_or(0.0)
+                    - self.speech_yaw_reference;
                 let mut yaw_scale: f64 = 1.0;
                 for k in &keyframes {
                     let yaw = k.target.get("base_yaw_joint").copied().unwrap_or(0.0);
@@ -2686,7 +2696,8 @@ impl CharacterCoordinator {
             });
             head_target.insert("head_pitch_joint".into(), head_pitch * head_scale);
 
-            let anchor_yaw = anchor.get("base_yaw_joint").copied().unwrap_or(0.0);
+            let anchor_yaw =
+                anchor.get("base_yaw_joint").copied().unwrap_or(0.0) - self.speech_yaw_reference;
             let turn_direction =
                 self.choose_speech_turn_direction(anchor_yaw, last_turn_direction, emphasis);
             last_turn_direction = turn_direction;
@@ -3902,20 +3913,23 @@ mod tests {
                 &anchor,
             )
             .unwrap();
-        let limits: Vec<_> = [
-            ("base_yaw_joint", -938.0, 1004.0),
-            ("shoulder_pitch_joint", -362.0, 818.0),
-            ("elbow_pitch_joint", -1024.0, 697.0),
-            ("head_roll_joint", -1159.0, 1051.0),
-            ("head_pitch_joint", -438.0, 877.0),
-        ]
-        .into_iter()
-        .map(|(name, lower, upper)| JointLimit {
-            name: name.into(),
-            lower_rad: lower * std::f64::consts::TAU / 4096.0,
-            upper_rad: upper * std::f64::consts::TAU / 4096.0,
-        })
-        .collect();
+        let limits: Vec<_> = crate::HardwareVersion::V2
+            .load_calibration(
+                crate::hardware::resource_root()
+                    .unwrap()
+                    .join("hardware/profiles/v2-joints.json"),
+            )
+            .unwrap()
+            .iter()
+            .map(|joint| {
+                let (lower_rad, upper_rad) = joint.safe_range_radians();
+                JointLimit {
+                    name: joint.name.clone(),
+                    lower_rad,
+                    upper_rad,
+                }
+            })
+            .collect();
         let scale = motion.uniform_amplitude_scale(&anchor, &limits).unwrap();
         let zero_velocity = anchor.keys().map(|joint| (joint.clone(), 0.0)).collect();
         let sequence = MotionSequence::compile_scaled_calibrated(
@@ -4515,6 +4529,42 @@ mod tests {
             loud.keyframes[1].target["base_yaw_joint"] > 0.0,
             "scale preserves the outward counterstroke"
         );
+    }
+
+    #[test]
+    fn shifted_yaw_reference_preserves_relative_speech_plan() {
+        let core = reaction_core();
+        let analysis = cue_analysis(6.0, vec![(0, SpeechCue::Disagree)]);
+        let mut anchor = core.poses().pose("home").unwrap().clone();
+        anchor.insert("base_yaw_joint".into(), 0.72);
+        let mut original = CharacterCoordinator::new(42);
+        let before = original
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        let reference = crate::motion::kinematics::Kinematics::from_urdf(
+            crate::hardware::resource_root()
+                .unwrap()
+                .join("description/urdf/orion-v2.urdf"),
+        )
+        .unwrap()
+        .joint_reference("base_yaw_joint")
+        .unwrap();
+        *anchor.get_mut("base_yaw_joint").unwrap() += reference;
+        let mut shifted = CharacterCoordinator::new(42);
+        shifted.speech_yaw_reference = reference;
+        let after = shifted
+            .compose_speech_performance(&analysis, core.motions(), &anchor)
+            .unwrap();
+        assert_eq!(before.keyframes.len(), after.keyframes.len());
+        for (before, after) in before.keyframes.iter().zip(&after.keyframes) {
+            assert_eq!(
+                before.target.keys().collect::<Vec<_>>(),
+                after.target.keys().collect::<Vec<_>>()
+            );
+            for (joint, value) in &before.target {
+                assert!((value - after.target[joint]).abs() < 1e-12, "{joint}");
+            }
+        }
     }
 
     struct FollowingDriver {

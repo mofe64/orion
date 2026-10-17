@@ -153,7 +153,7 @@ def pack():
     sums = ''.join(f'{sha256(p)}  {p.relative_to(payload).as_posix()}\n'
                    for p in sorted(payload.rglob('*')) if p.is_file() and p.name != 'SHA256SUMS')
     (payload / 'SHA256SUMS').write_text(sums)
-    archive = OUT / f'orion-{os.environ["ORION_RELEASE_VERSION"].removeprefix("v")}-arm64.tar.gz'
+    archive = Path(os.environ.get('ORION_ARTIFACT_DIR', str(OUT))) / f'orion-{os.environ["ORION_RELEASE_VERSION"].removeprefix("v")}-arm64.tar.gz'
     temporary = archive.with_name(archive.name + '.partial')
     pack_bundle(payload, temporary)
     temporary.replace(archive)

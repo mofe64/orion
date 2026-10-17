@@ -778,6 +778,11 @@ V2 uses `hardware/profiles/v2-joints.json`, with angles measured from rest:
 its IDs and limits. Servo offsets belong in EEPROM, not a per-lamp file.
 See [V2 setup](../docs/hardware-versions.md#calibrate-v2-first) for the rest image.
 
+V2 joint zero is mechanical rest. World bearings still use forward as zero:
+gaze, object glances and reaction turns add the URDF joint reference when
+forming joint targets. Speech's yaw envelope uses that same forward reference;
+authored relative offsets retain their values.
+
 V2 is the default hardware selection. Starting character mode from rest lifts
 to `home` over at least four seconds; ordinary resumes retain their shorter
 startup. Pass `--hardware v1` when using a commissioned V1 calibration.

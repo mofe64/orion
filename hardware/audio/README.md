@@ -51,7 +51,7 @@ Install Orion's persistent boot configuration:
 ```bash
 cd ~/dev/orion
 sudo hardware/audio/install-persistent.sh \
-  /home/mofe/dev/seeed-linux-dtoverlays
+  "$HOME/dev/seeed-linux-dtoverlays"
 sudo reboot
 ```
 

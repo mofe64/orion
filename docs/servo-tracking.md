@@ -53,12 +53,13 @@ derivatives also have encoder and timing quantization.
 
 On the Pi, stop the existing daemon with its normal safe-stop mechanism before
 starting another process on the same socket or serial device. From the project
-root, using a telemetry-enabled binary:
+root, using a telemetry-enabled binary. This example selects V1; V2 uses
+`--hardware v2` and `hardware/profiles/v2-joints.json`:
 
 ```bash
-runtime/target/release/oriond --serve --backend hardware \
+runtime/target/release/oriond --serve --backend hardware --hardware v1 \
   --port /dev/ttyACM0 --baud-rate 1000000 \
-  --calibration /home/mofe/.config/orion/servo_calibration.json \
+  --calibration "$HOME/.config/orion/servo_calibration.json" \
   --tracking-log /tmp/orion-tracking-hardware.jsonl
 ```
 
@@ -70,7 +71,7 @@ Terminate cleanly after returning to mechanical rest so the summary is flushed.
 The analysis uses only Python's standard library:
 
 ```bash
-python3 runtime/scripts/analyze_tracking.py /tmp/orion-tracking-hardware.jsonl \
+/opt/orion/python/bin/python3.12 runtime/scripts/analyze_tracking.py /tmp/orion-tracking-hardware.jsonl \
   --trials /tmp/orion-tracking-trials/trials.jsonl \
   --json /tmp/orion-tracking-analysis.json \
   --markdown /tmp/orion-tracking-analysis.md
@@ -83,12 +84,12 @@ with the hardware daemon already awake at home. Pause microphone capture if
 accidental wake-ups would interfere, and restore it after the trial.
 
 ```bash
-python3 runtime/scripts/run_tracking_experiment.py \
+/opt/orion/python/bin/python3.12 runtime/scripts/run_tracking_experiment.py \
   --motions motion/motions/v1/idle --repeats 3 \
   --output /tmp/orion-tracking-trials \
   --speech-python /path/to/active-release/speech/.venv/bin/python \
   --speech-root /path/to/active-release/speech \
-  --piper-model /home/mofe/.local/share/orion/voice-stack/models/piper-alba-medium
+  --piper-model "$HOME/.local/share/orion/voice-stack/models/piper-alba-medium"
 ```
 
 The runner stops automatic character motion for explicit idle trials, requests
@@ -222,7 +223,7 @@ apex-minus-peak offset, movement run ID and trajectory start on the runtime
 clock. Save stderr or the service journal alongside the tracking JSONL.
 
 ```bash
-python3 runtime/scripts/analyze_speech_apices.py hardware.jsonl daemon.log \
+/opt/orion/python/bin/python3.12 runtime/scripts/analyze_speech_apices.py hardware.jsonl daemon.log \
   --json speech-apices.json
 ```
 

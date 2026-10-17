@@ -771,10 +771,10 @@ mod tests {
         character.observe_hands(1, None, 5., &mut core).unwrap();
         advance(&mut core, &mut character, &boot, 5., 12., true);
         let held = core.driver().positions.clone();
-        // Exact Ariadne shoulder/elbow feedback from the frozen session.
+        // Captured feedback, shifted by the recorded R into mechanical-rest coordinates.
         core.driver().offset_feedback(
-            1.2118448224296563 - held["shoulder_pitch_joint"],
-            -0.35588354278946877 - held["elbow_pitch_joint"],
+            1.7671458676442584 - held["shoulder_pitch_joint"],
+            -1.2379224958237124 - held["elbow_pitch_joint"],
         );
         core.tick(12.02).unwrap();
         let error = character.leave_hands(12.02, &mut core).unwrap_err();

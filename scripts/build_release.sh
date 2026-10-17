@@ -14,7 +14,11 @@ for codename in bookworm trixie; do
     -f "$checkout/scripts/Release.Dockerfile" -t "orion-release:$codename" "$checkout/scripts"
 done
 build_stage=$(mktemp -d)
-trap 'rm -rf "$build_stage"' EXIT
+payload_volume=
+trap 'rm -rf "$build_stage"; if [[ -n $payload_volume ]]; then docker volume rm "$payload_volume" >/dev/null; fi' EXIT
+# Linux distributions contain case-distinct names (including Python terminfo).
+# Keep the payload on Linux; export only the final archive to the host.
+payload_volume=$(docker volume create)
 # Include tracked files and non-ignored working changes for local development.
 # Git's inventory keeps ignored credentials, recordings and caches out of Docker.
 git -C "$checkout" ls-files --cached --others --exclude-standard -z > "$build_stage/inventory"
@@ -29,12 +33,13 @@ if [[ -n $(git -C "$checkout" status --porcelain) ]]; then dirty=true; fi
 for codename in bookworm trixie; do
   docker run --rm --platform linux/arm64 \
     --mount "type=bind,source=$build_stage,target=/src" \
-    --mount "type=bind,source=$output,target=/out" \
+    --mount "type=volume,source=$payload_volume,target=/out" \
     --mount type=volume,source=orion-release-build-cache,target=/cache \
     -e "ORION_RELEASE_VERSION=$version" -e "ORION_BUILD_REVISION=$commit" -e "ORION_SOURCE_DIRTY=$dirty" \
     "orion-release:$codename" python /src/scripts/release_build.py --codename "$codename"
 done
 # Packaging runs in Bookworm as well; no host Python is needed.
 docker run --rm --platform linux/arm64 --mount "type=bind,source=$build_stage,target=/src" \
-  --mount "type=bind,source=$output,target=/out" -e "ORION_RELEASE_VERSION=$version" \
+  --mount "type=volume,source=$payload_volume,target=/out" \
+  --mount "type=bind,source=$output,target=/artifacts" -e ORION_ARTIFACT_DIR=/artifacts -e "ORION_RELEASE_VERSION=$version" \
   -e "ORION_BUILD_REVISION=$commit" orion-release:bookworm python /src/scripts/release_build.py --pack

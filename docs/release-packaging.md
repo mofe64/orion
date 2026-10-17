@@ -45,6 +45,9 @@ Local development builds record `source_dirty` in `release.json`; tag builds
 use the clean tagged tree. Git’s file inventory excludes ignored credentials and
 recordings from the temporary Docker source. Compiler output uses a Linux Docker
 volume rather than the source bind mount.
+The unpacked payload also stays in a temporary Linux volume: Python contains
+case-distinct terminfo names that some host filesystems merge. Only the final
+tarball and checksum cross onto the host, and the temporary volume is removed.
 
 The installer retains `~/.local/share/orion/voice-stack/releases/` and the
 existing transaction snapshot/rollback layout. It installs services and command

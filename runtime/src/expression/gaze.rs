@@ -1163,7 +1163,13 @@ pub(crate) mod tests {
         )
         .unwrap();
         let early = compiled.sample(0.2).unwrap();
-        assert!(early["head_roll_joint"].abs() > early["base_yaw_joint"].abs() + 0.01);
+        let model = core.camera_kinematics().unwrap();
+        assert!(
+            (early["head_roll_joint"] - model.joint_reference("head_roll_joint").unwrap()).abs()
+                > (early["base_yaw_joint"] - model.joint_reference("base_yaw_joint").unwrap())
+                    .abs()
+                    + 0.01
+        );
         assert!(compiled.peak_velocity_rad_s() <= GAZE_COMPILED_PEAK_RAD_S * (1.0 + 1e-9));
         character
             .attend_bearing(Some((0.4, 0.1)), 3.0, &mut core)

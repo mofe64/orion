@@ -122,7 +122,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             COMPLETION_POSITION_TOLERANCE_RAD,
         )?;
         let mut target = self.poses.pose("attentive")?.clone();
-        let delta = azimuth - centre["base_yaw_joint"];
+        let delta = azimuth + model.joint_reference("base_yaw_joint")? - centre["base_yaw_joint"];
         target.insert(
             "base_yaw_joint".into(),
             centre["base_yaw_joint"] + delta.sin().atan2(delta.cos()).clamp(-0.35, 0.35),
@@ -249,7 +249,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             }
         };
         let mut facing = lift.clone();
-        let delta = azimuth - lift["base_yaw_joint"];
+        let delta = azimuth + model.joint_reference("base_yaw_joint")? - lift["base_yaw_joint"];
         *facing.get_mut("base_yaw_joint").unwrap() +=
             delta.sin().atan2(delta.cos()).clamp(-0.10, 0.10);
         let solved = crate::expression::gaze::solve_aim(

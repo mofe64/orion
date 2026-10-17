@@ -36,12 +36,12 @@ The fixed joints use roll/pitch/yaw `(-π/2, 0, π)`.
 MuJoCo's `camera_optical_frame` camera has the same origin and view direction,
 but its native axes are +X right, +Y up and −Z forward. Convert its rotation to
 ROS optical axes by negating its Y and Z columns. The `light_frame` site
-already uses the URDF optical axes. Both models accept calibrated angles
-directly. The three pitch-origin rotations in the URDF and the MJCF joint
-`ref` values bake in the measured 2026-10-11 alignment recorded in
+already uses the URDF optical axes. Both models accept V2 rest-relative angles
+directly. URDF origin rotations and MJCF joint `ref` values encode the same
+references recorded in
 [`model_reference-v2.json`](../simulation/mujoco/config/model_reference-v2.json).
-Their joint limits match the tracked V2 servo calibration exactly; motion
-still uses the Pi calibration and runtime checks. Mesh and child translations
+Their limits match the tracked [V2 joint profile](../hardware/profiles/v2-joints.json),
+which also supplies runtime and compiler limits. Mesh and child translations
 remain in their original local frames.
 
 ### Rust forward kinematics
@@ -61,11 +61,11 @@ input and moves nothing. It does not apply the URDF's ranges as servo
 calibration; motion still requires the runtime's trajectory and calibration
 checks.
 
-At the repository's V2 `home`, the measured model has the upper arm leaning
-back about 46°, the forearm leaning forward about 25°, and the camera looking
-forward about 13° down. All-zero calibrated angles give a bent posture, not
-the upright CAD reference. Studio, MuJoCo and Rust FK use these same angles
-without a V2 offset conversion. These CAD mounts do not establish physical
+All-zero V2 angles are the folded mechanical rest shown in the
+[builder reference](../docs/hardware-versions.md#calibrate-v2-first).
+`home` is the powered pose in the V2 pose library. Studio, MuJoCo and Rust FK
+use these same rest-relative angles without another offset conversion.
+These CAD mounts do not establish physical
 camera-to-head alignment. Vision uses [built-in wide-lens intrinsics](../vision/README.md#face-tracking);
 validate the mount and capture-time alignment on the lamp.
 
