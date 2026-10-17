@@ -83,9 +83,9 @@ An installed gateway reads poses and scenes from the asset catalog. It finds `or
    uv run --project orion_studio --locked --managed-python python -m unittest discover -s orion_studio/tests -v
    ```
 
-## Home
+## Orion
 
-Home shows mode, listening, lamp controls, expressions and active alerts. Disconnected Studio keeps local scene editing available.
+Orion shows mode, listening, lamp controls, expressions and active alerts. Disconnected Studio keeps local scene editing available.
 
 **Idle mode** permits automatic rest. **Lamp mode** keeps Orion awake. **Pause mode** stops automatic movement without changing the selected mode. **Go to rest** starts the runtime's rest sequence.
 
@@ -95,7 +95,7 @@ Lamp controls apply released slider values. A scene, speech or rest can override
 
 ### Camera feed
 
-Home and Debug can show the V2 camera feed. **Turn camera off** changes the Pi privacy setting for every viewer. **Save snapshot** saves one image on the Studio computer only after selection.
+Orion and Debug can show the V2 camera feed. **Turn camera off** changes the Pi privacy setting for every viewer. **Save snapshot** saves one image on the Studio computer only after selection.
 
 The gateway sends the bearer token in an Authorization header. It does not put credentials in image URLs. Detection boxes require exact capture timestamp matches and expire after 300 ms. Leaving the view ends its stream.
 
@@ -143,3 +143,14 @@ Open **System** to see CPU use, temperature, memory, disks, services and process
 The gateway samples Linux counters every two seconds. It keeps 15 minutes of readings in memory.
 The page pauses requests when hidden. Warning messages identify throttling, CPU temperatures above 75 °C and disks above 90% use.
 Unavailable counters show no value. CPU percentages for services and processes can exceed 100% across multiple cores.
+
+## Home
+
+The **Orion** tab contains Orion's own controls. The **Home** tab contains household devices and setup.
+Follow the [Home setup procedure](../docs/quickstart.md#home-assistant) to install Home Assistant and create its owner account.
+
+Home groups device entities by room. Simple devices have on and off controls.
+**Orion can control** changes the Home Assistant assistant exposure setting for that entity.
+**Discovered** lists devices that need setup. **Add device** searches available integrations.
+Studio displays supported Home Assistant configuration forms. Unsupported forms provide **Continue in Home Assistant**.
+**Open Home Assistant** opens the full interface on port 8123.

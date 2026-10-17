@@ -138,3 +138,22 @@ A cgroup is a Linux resource group for a service or container. The gateway reads
 It checks Raspberry Pi throttling flags at most once every ten seconds. Unavailable counters return null.
 The authenticated `/api/v2/system/metrics` endpoint returns the latest sample and 15-minute history arrays.
 The sampler stores no readings on disk. Studio polls every two seconds while the System page is visible.
+
+## Household devices
+
+Home Assistant runs as an independent Docker container. Orion deployment transactions do not manage its container or configuration.
+The dedicated `orion-home-assistant-install.service` runs the Home Assistant installer as root.
+A polkit rule permits the gateway user to start only this installer service. Polkit controls permission for system services.
+The gateway keeps its existing service restrictions and receives no Docker socket access.
+The installer uses the release image manifest. Only an explicit Home Assistant update selects a different image for an existing container.
+
+Studio uses authenticated `/api/v2/home/*` routes. The gateway uses Pi-local Home Assistant REST and WebSocket interfaces.
+It creates the owner account, completes onboarding and stores a private access token. The interface never receives this token.
+Device, entity and area registries join current states into room groups. Configuration flow schemas pass through to Studio.
+Unsupported flow controls link to the full Home Assistant interface.
+
+Agent home tools send a robot operation through the coordinator to the gateway.
+The gateway reads Home Assistant assistant exposure on every voice request. There is no separate Orion allowlist.
+Name matches require one exposed entity. Ambiguous matches request a room.
+Control permits supported lights, switches, fans, climate devices, covers, media players, scenes and scripts.
+The gateway refuses locks, alarm panels and garage doors. Each service call targets one entity.

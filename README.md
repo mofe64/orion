@@ -68,3 +68,8 @@ WARNING: Powered joints can pinch fingers. Keep a physical power disconnect acce
 ## System readings
 
 Studio provides a System page for Pi resource use and service state. See the [Studio guide](orion_studio/README.md#system-readings).
+
+## Connected home
+
+Studio Home connects household devices through Home Assistant Container on the Pi.
+Use the [Home setup procedure](docs/quickstart.md#home-assistant) to install it and select devices for Orion.

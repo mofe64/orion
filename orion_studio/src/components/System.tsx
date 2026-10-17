@@ -51,5 +51,5 @@ export function System({ connection }: { connection: GatewayConnection | null })
       catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : "System readings unavailable."); }
     });
   }, [connection]);
-  return <section className="settings-page system-page"><header className="settings-heading"><p className="eyebrow">PI HEALTH</p><h1>System</h1><p>{connection ? "Live readings · every 2 seconds · 15 minutes in memory" : "Connect Orion to view system readings."}</p></header>{error && <p role="alert" className="settings-error">{error}</p>}{metrics ? <SystemReadings metrics={metrics} /> : connection && !error && <p role="status">Loading system readings…</p>}</section>;
+  return <section className="settings-page system-page" id="workspace"><header className="settings-heading"><p className="eyebrow">PI HEALTH</p><h1>System</h1><p>{connection ? "Live readings · every 2 seconds · 15 minutes in memory" : "Connect Orion to view system readings."}</p></header>{error && <p role="alert" className="settings-error">{error}</p>}{metrics ? <SystemReadings metrics={metrics} /> : connection && !error && <p role="status">Loading system readings…</p>}</section>;
 }

@@ -32,12 +32,14 @@ class Fixture(unittest.TestCase):
         self.units = self.base / 'units'; self.units.mkdir()
         self.project = self.home / 'dev/orion'; self.project.mkdir(parents=True)
         shutil.copytree(SCRIPTS / 'systemd', self.release / 'scripts/systemd')
+        for name in ('home_assistant_install.py', 'release-home-assistant.json'):
+            shutil.copy2(SCRIPTS / name, self.release / 'scripts' / name)
         shutil.copytree(SCRIPTS.parent / 'hardware/profiles', self.release / 'hardware/profiles')
         (self.release / 'release.json').write_text('{"revision":"new"}')
         self.env = self.home / '.config/orion/voice-stack.env'; self.env.parent.mkdir(parents=True)
 
     def plan(self):
-        return render_plan(self.release, self.root, self.project, self.home, 'pi', self.units)
+        return render_plan(self.release, self.root, self.project, self.home, 'pi', self.units, system_root=self.base / 'system')
 
     def write(self, path, text):
         path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
@@ -57,12 +59,12 @@ class ConfigurationTests(Fixture):
                 project = root.parent / 'assets'; project.mkdir(exist_ok=True)
                 units = root.parent / 'systemd'; units.mkdir(exist_ok=True)
                 first = root / 'releases/first'; shutil.copytree(template, first)
-                first_plan = render_plan(first, root, project, home, 'pi', units)
+                first_plan = render_plan(first, root, project, home, 'pi', units, system_root=self.base / 'system')
                 for path, text in first_plan.items():
                     self.write(path, text)
                 second = root / 'releases/second'; shutil.copytree(template, second)
                 (second / 'release.json').write_text('{"revision":"second"}')
-                plan = render_plan(second, root, project, home, 'pi', units)
+                plan = render_plan(second, root, project, home, 'pi', units, system_root=self.base / 'system')
                 unit = plan[units / 'orion-voice-stack.service']
                 self.assertIn('ExecStart=' + str(second / 'orion-service/target/release/orion-service') + ' serve', unit)
                 self.assertIn('WorkingDirectory=' + str(second), unit)
@@ -116,7 +118,8 @@ class ConfigurationTests(Fixture):
         (self.project / 'scenes/v2').mkdir(parents=True)
         gateway_file = self.release / 'orion_studio/gateway.py'
         gateway_file.parent.mkdir(parents=True)
-        shutil.copy2(SCRIPTS.parent / 'orion_studio/gateway.py', gateway_file)
+        for name in ('gateway.py', 'system_metrics.py', 'home_assistant.py'):
+            shutil.copy2(SCRIPTS.parent / 'orion_studio' / name, gateway_file.parent / name)
         compiler = self.release / 'runtime/target/release/orion-trajectory'
         self.write(compiler, '#!/bin/sh\nexit 0\n'); compiler.chmod(0o755)
         token = self.home / '.config/orion/studio-token'
@@ -124,7 +127,9 @@ class ConfigurationTests(Fixture):
         self.assertFalse((self.project / 'AGENTS.md').exists())
         self.assertFalse((self.project / 'runtime').exists())
         spec = importlib.util.spec_from_file_location('release_gateway', gateway_file)
-        gateway = importlib.util.module_from_spec(spec); spec.loader.exec_module(gateway)
+        gateway = importlib.util.module_from_spec(spec)
+        with patch.object(sys, 'path', [str(gateway_file.parent), *sys.path]):
+            spec.loader.exec_module(gateway)
         start = effective_start([(p, text) for p, text in self.plan().items()
                                  if p.name == 'orion-studio-gateway.service'])
         arguments = shlex.split(start)[1:]
@@ -926,6 +931,19 @@ class TransactionTests(Fixture):
         self.assertNotIn(('stop', 'oriond'), self.system.calls)
         self.assert_restored()
 
+    def test_home_container_and_settings_are_outside_install_update_and_rollback(self):
+        config = self.home / '.local/share/orion/home-assistant/configuration.yaml'
+        token = self.home / '.config/orion/home-assistant.json'
+        metadata = self.home / '.local/share/orion/home-assistant-install.json'
+        for path in (config, token, metadata):
+            self.write(path, 'independent home state')
+        self.activate()
+        installer.rollback(self.root, self.system)
+        for path in (config, token, metadata):
+            self.assertEqual(path.read_text(), 'independent home state')
+        for call in self.system.calls:
+            self.assertFalse(any(value in ('docker', 'orion-home-assistant', 'orion-home-assistant-install') for value in call))
+
     def test_success_saves_one_recent_update_and_manual_rollback_is_one_level(self):
         first = self.activate()
         # Operator adjusts tuning after first deployment; the next rollback must capture it.
@@ -965,6 +983,9 @@ class TransactionTests(Fixture):
         first = self.activate()
         previous_manifest = self.manifest.read_bytes()
         self.release = self.root / 'releases/failed'; self.release.mkdir()
+        (self.release / 'scripts').mkdir()
+        for name in ('home_assistant_install.py', 'release-home-assistant.json'):
+            shutil.copy2(SCRIPTS / name, self.release / 'scripts' / name)
         shutil.copytree(SCRIPTS.parent / 'hardware/profiles', self.release / 'hardware/profiles')
         (self.release / 'release.json').write_text('{"revision":"failed"}')
         self.system.failure = 'ready'

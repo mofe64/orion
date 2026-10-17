@@ -156,7 +156,7 @@ def change_effective_start(contents, transform):
             return
     raise ValueError('Service has no effective ExecStart')
 
-def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/systemd/system')):
+def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/systemd/system'), system_root=Path('/')):
     for path in [release, root, runtime_project, home]:
         if not re.fullmatch(r'/[A-Za-z0-9._/-]+', str(path)) or '..' in path.parts:
             raise ValueError(f'Unsupported service path: {path}')
@@ -283,6 +283,20 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         'ORION_PIPER_MODEL_DIR': str(root / 'models/piper-alba-medium'),
     }
     files[environment_path] = merge_env(text, defaults, REMOVED_VOICE_ENV | {'ORION_LLAMA_SERVER'})
+    helper = system_root / 'usr/local/libexec/orion-home-assistant.py'
+    manifest = system_root / 'usr/local/share/orion/home-assistant.json'
+    files[helper] = (release / 'scripts/home_assistant_install.py').read_text()
+    files[manifest] = (release / 'scripts/release-home-assistant.json').read_text()
+    files[unit_dir / 'orion-home-assistant-install.service'] = (
+        '[Unit]\nDescription=Install independent Orion Home Assistant container\nAfter=network-online.target\nWants=network-online.target\n'
+        '[Service]\nType=oneshot\nTimeoutStartSec=900\nUMask=0077\n'
+        f'ExecStart=/usr/bin/python3 {helper} --user {user} --manifest {manifest}\n')
+    files[system_root / 'etc/polkit-1/rules.d/60-orion-home-assistant.rules'] = (
+        'polkit.addRule(function(action, subject) {\n'
+        '  if (action.id === "org.freedesktop.systemd1.manage-units" &&\n'
+        '      action.lookup("unit") === "orion-home-assistant-install.service" &&\n'
+        f'      action.lookup("verb") === "start" && subject.user === "{user}") {{\n'
+        '    return polkit.Result.YES;\n  }\n});\n')
     files[home / '.config/orion/hardware'] = hardware + '\n'
     files[home / '.local/share/orion/studio-service/installed'] = str(release) + '\n'
     return files

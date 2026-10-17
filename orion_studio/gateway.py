@@ -31,7 +31,8 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 
-from system_metrics import SystemMetrics
+from system_metrics import SystemMetrics, SystemdProperties
+from home_assistant import HomeAssistant, HomeError
 
 API_VERSION = 2
 # Resolve once so a running gateway stays with its release if a launcher symlink changes.
@@ -320,6 +321,7 @@ class OrionGateway:
         if hardware not in ("v1", "v2"):
             raise ValueError("Hardware must be v1 or v2")
         self.system_metrics = SystemMetrics()
+        self.home = HomeAssistant()
         self.hardware = hardware
         self.client = client
         self.project_root = project_root
@@ -334,6 +336,71 @@ class OrionGateway:
         self.behaviours_file = self.camera_preference_file.with_name('behaviours.json')
         self.behaviours_lock = threading.Lock()
         self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
+
+    def home_request(self, method, path, payload=None):
+        try:
+            if path == 'status' and method == 'GET':
+                result = self.home.status()
+                properties = SystemdProperties()
+                try:
+                    state = properties('orion-home-assistant-install.service').get('ActiveState')
+                    result['installing'] = state == 'activating'
+                    result['install_failed'] = state == 'failed'
+                finally:
+                    properties.close()
+            elif path == 'install' and method == 'POST':
+                try:
+                    subprocess.run(['systemctl', '--no-ask-password', 'start', '--no-block', 'orion-home-assistant-install.service'],
+                        check=True, capture_output=True, timeout=5)
+                except (OSError, subprocess.SubprocessError):
+                    raise HomeError('Home installation could not start. Update Orion to install the Home service.', 503) from None
+                result = {'installing': True}
+            elif path == 'onboarding' and method == 'POST':
+                result = self.home.onboarding(payload)
+            elif path == 'devices' and method == 'GET':
+                result = self.home.devices()
+            elif path == 'discovered' and method == 'GET':
+                result = self.home.discovered()
+            elif path == 'integrations' and method == 'GET':
+                result = self.home.rest('/api/config/config_entries/flow_handlers')
+            elif path == 'access' and method == 'GET':
+                result = self.home.ws('homeassistant/expose_entity/list')
+            elif path == 'access' and method == 'POST':
+                result = self.home.expose(payload)
+            elif path == 'control' and method == 'POST':
+                if not isinstance(payload, dict):
+                    raise HomeError('Choose a home entity.', 400)
+                entities = [entity for area in self.home.devices()['areas'] for entity in area['entities']]
+                entity = next((entity for entity in entities if entity['entity_id'] == payload.get('entity_id')), None)
+                if entity is None:
+                    raise HomeError('That home entity is unavailable.', 404)
+                result = self.home.control(entity, payload)
+            elif path == 'flows' and method == 'POST':
+                result = self.home.flow(method, payload=payload)
+            elif path.startswith('flows/') and method in ('GET', 'POST', 'DELETE'):
+                result = self.home.flow(method, path.removeprefix('flows/'), payload)
+            else:
+                raise HomeError('Unknown Home endpoint.', 404)
+            return self._home_public(result)
+        except HomeError as error:
+            raise GatewayError(HTTPStatus(error.status), 'home_unavailable', str(error)) from None
+        except (OSError, ValueError, KeyError, TypeError):
+            raise GatewayError(HTTPStatus.BAD_GATEWAY, 'home_unavailable', 'Home Assistant could not complete this request.') from None
+
+    def _home_public(self, value):
+        credentials = self.home.credentials()
+        secrets_to_remove = [secret for secret in credentials.values() if isinstance(secret, str) and secret]
+        def clean(item):
+            if isinstance(item, str):
+                for secret in secrets_to_remove:
+                    item = item.replace(secret, '[private]')
+                return item
+            if isinstance(item, dict):
+                return {clean(key): clean(child) for key, child in item.items()}
+            if isinstance(item, list):
+                return [clean(child) for child in item]
+            return item
+        return clean(value)
 
     def require_camera_awake(self):
         try:
@@ -854,6 +921,15 @@ class OrionGateway:
                     "Speech must be one line and no more than 2000 UTF-8 bytes.",
                 )
             response = self._checked(f"speech start {text}")
+        elif operation == "home":
+            if set(payload) != {'operation', 'request'} or not isinstance(payload['request'], dict):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_home', 'Expected a home request.')
+            try:
+                response = self._home_public(self.home.voice(payload['request']))
+            except HomeError as error:
+                raise GatewayError(HTTPStatus(error.status), 'home_refused', str(error)) from None
+            except (OSError, ValueError, KeyError, TypeError):
+                raise GatewayError(HTTPStatus.BAD_GATEWAY, 'home_unavailable', 'Home Assistant could not complete this request.') from None
         elif operation == "routines":
             if set(payload) != {"operation", "request"} or not isinstance(payload["request"], dict):
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_routines", "Expected a routines request object.")
@@ -2011,6 +2087,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _delete(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path.startswith('/api/v2/home/'):
+                return HTTPStatus.OK, gateway.home_request('DELETE', path.removeprefix('/api/v2/home/'))
             if not path.startswith("/api/v2/scenes/"):
                 raise GatewayError(HTTPStatus.NOT_FOUND, "not_found", "Unknown Orion Studio endpoint.")
             return gateway.delete_user_scene(path.removeprefix("/api/v2/scenes/"), self._read_json())
@@ -2020,6 +2098,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
+            if path.startswith('/api/v2/home/'):
+                return HTTPStatus.OK, gateway.home_request('GET', path.removeprefix('/api/v2/home/'))
             if path == '/api/v2/system/metrics':
                 return HTTPStatus.OK, gateway.system_metrics.snapshot()
             if path == '/api/v2/behaviours':
@@ -2063,6 +2143,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path.startswith('/api/v2/home/'):
+                return HTTPStatus.OK, gateway.home_request('POST', path.removeprefix('/api/v2/home/'), self._read_json())
             if path == '/api/v2/behaviours':
                 return HTTPStatus.OK, gateway.set_behaviours(self._read_json())
             if path == '/api/v2/tracking/mode':

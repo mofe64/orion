@@ -527,7 +527,7 @@ def activate(root, release, home, files, system, commissioning=False, before_res
             else:
                 mode = (path.stat().st_mode & 0o777 if path.exists() else
                         0o755 if str(path).startswith('/usr/local/bin/') else
-                        0o644 if str(path).startswith('/etc/') or path.suffix in ('.yaml', '.yml') else 0o600)
+                        0o644 if str(path).startswith(('/etc/', '/usr/local/libexec/', '/usr/local/share/orion/')) or path.suffix in ('.yaml', '.yml') else 0o600)
                 system.write(path, value if isinstance(value, bytes) else value.encode(), mode)
         system.reload()
         for name in MANAGED_SERVICES:

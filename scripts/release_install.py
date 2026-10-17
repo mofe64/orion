@@ -52,7 +52,7 @@ def has_hailo():
 
 
 def system_packages(codename, hailo, pins):
-    common = ['alsa-utils', 'libdbus-1-3', 'libusb-1.0-0', 'libcap2', 'libgomp1', 'libarchive13' if codename == 'bookworm' else 'libarchive13t64',
+    common = ['polkitd', 'alsa-utils', 'libdbus-1-3', 'libusb-1.0-0', 'libcap2', 'libgomp1', 'libarchive13' if codename == 'bookworm' else 'libarchive13t64',
               'raspi-utils', 'dkms', 'device-tree-compiler', 'linux-image-rpi-2712', 'linux-headers-rpi-2712',
               'libssl3' if codename == 'bookworm' else 'libssl3t64']
     return common + pinned_packages(pins, hailo)
@@ -294,7 +294,20 @@ def install_assets(root, version=None):
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--payload', type=Path); parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--codename', choices=('bookworm', 'trixie')); parser.add_argument('--rollback', action='store_true'); parser.add_argument('--check', action='store_true'); parser.add_argument('--assets', action='store_true'); parser.add_argument('--version')
+    parser.add_argument('--home-assistant', action='store_true')
+    parser.add_argument('--update', action='store_true')
     args = parser.parse_args()
+    if args.update and not args.home_assistant:
+        parser.error('--update requires --home-assistant')
+    if args.home_assistant:
+        if args.rollback or args.check or args.assets or args.payload:
+            parser.error('--home-assistant is an independent installer step')
+        source = Path(__file__).resolve().parent
+        user = pwd.getpwuid(os.getuid()).pw_name
+        run('sudo', '-n', '/usr/bin/python3', source / 'home_assistant_install.py',
+            '--user', user, '--manifest', source / 'release-home-assistant.json',
+            *(['--update'] if args.update else []))
+        return
     if args.assets:
         install_assets(args.root.resolve(), args.version)
     elif args.rollback:

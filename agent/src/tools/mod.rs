@@ -3,6 +3,7 @@ mod lighting;
 mod lists;
 pub mod look;
 mod routines;
+mod home;
 use crate::{AgentConfig, memory};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,6 +43,7 @@ pub(crate) fn schemas() -> Value {
         {"type":"function","name":"set_lighting","description":"Adjust Orion's lamp only when requested. Changes are refused during a scene or speech. A manual light is cleared when the character starts. Choose published moods, colors, effects and brightness; the handler translates them to RGBW. Read get_lighting before relative changes. Confirm only after success.","inputSchema":lighting::schema()}
     ]);
     schemas.as_array_mut().unwrap().extend(routines::schemas());
+    schemas.as_array_mut().unwrap().extend(home::schemas());
     schemas.as_array_mut().unwrap().extend(lists::schemas());
     schemas.as_array_mut().unwrap().push(aim_light::schema());
     schemas.as_array_mut().unwrap().push(look::schema());
@@ -127,6 +129,14 @@ pub(crate) async fn execute(
                 .await
                 .map_err(|_| "Lighting request timed out")?
                 .map_err(|_| "Lighting request cancelled")?
+        }
+        "home_list_devices" | "home_control" | "home_state" => {
+            let parameters = home::resolve(name, arguments)?;
+            let events = events.ok_or("No home coordinator is attached")?;
+            let (reply, result) = oneshot::channel();
+            events.send(AgentEvent::RobotOperation { parameters, reply }).await.map_err(|_| "Coordinator stopped")?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), result).await
+                .map_err(|_| "Home request timed out")?.map_err(|_| "Home request cancelled")?
         }
         "get_lighting"
         | "set_mode"
@@ -235,6 +245,23 @@ fn timezone_label(zone: Option<&str>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn home_tools_wait_for_coordinator_and_preserve_refusals() {
+        for response in [Ok(json!({"ok":true,"devices":[]})), Err("That device is not exposed to Orion".to_string())] {
+            let (send, mut receive) = mpsc::channel(1);
+            let config = AgentConfig::default();
+            let call = execute(&config, "home_list_devices", json!({}), Some(&send));
+            let expected = response.clone();
+            let peer = async {
+                let AgentEvent::RobotOperation { parameters, reply } = receive.recv().await.unwrap() else { panic!("Expected home robot operation") };
+                assert_eq!(parameters, json!({"operation":"home","request":{"action":"list"}}));
+                reply.send(response).unwrap();
+            };
+            let (result, ()) = tokio::join!(call, peer);
+            assert_eq!(result, expected);
+        }
+    }
+
     #[tokio::test]
     async fn aim_light_preserves_every_result_state_without_optimistic_success() {
         for value in [

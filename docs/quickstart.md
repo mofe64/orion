@@ -109,3 +109,31 @@ The installer checks the pack checksum, asset format and joint-profile checksum 
    ```
 
 See [release packaging](release-packaging.md) for local archives and SSH deployment. See [networking](networking.md) for the optional fallback hotspot.
+
+## Home Assistant
+
+Home Assistant Container runs on Raspberry Pi OS ARM64. Install Orion first.
+
+1. Select **Home** in Studio.
+2. Select **Install Home Assistant**.
+3. Wait for Home Assistant to start.
+4. Complete **Set up Home** with your name, username and password.
+5. Select **Add** beside a discovered device, or select **Add device**.
+6. Enable **Orion can control** for each entity that Orion can use.
+
+The installer installs Docker and starts the container. It requires no Docker group change or reboot.
+The command below runs the same installation step from the Pi terminal.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --home-assistant
+```
+
+Orion installs, updates and rollbacks leave the Home Assistant container unchanged.
+The command below updates Home Assistant to the image selected by the installed Orion release.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --home-assistant --update
+```
+
+Home Assistant uses port 8123 on the Pi. **Open Home Assistant** opens its full interface.
+USB Zigbee and Thread radios require a Docker `--device` mapping. Orion does not configure these radios automatically.

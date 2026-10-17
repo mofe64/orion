@@ -81,6 +81,7 @@ class SystemdProperties:
             self.lib.sd_bus_get_property_trivial.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
                 ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_char, ctypes.c_void_p]
             self.lib.sd_bus_unref.argtypes = [ctypes.c_void_p]
+            self.lib.sd_bus_set_method_call_timeout.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
             self.libc = ctypes.CDLL(None)
             self.libc.free.argtypes = [ctypes.c_void_p]
         except (OSError, AttributeError):
@@ -96,6 +97,7 @@ class SystemdProperties:
             return {}
         if not self.bus.value and self.lib.sd_bus_open_system(ctypes.byref(self.bus)) < 0:
             return {}
+        self.lib.sd_bus_set_method_call_timeout(self.bus, 100_000)
         escaped = ''.join(char if char.isascii() and char.isalnum() else f'_{ord(char):02x}' for char in unit)
         path = ('/org/freedesktop/systemd1/unit/' + escaped).encode()
         result = {}
@@ -220,7 +222,8 @@ class SystemMetrics:
             container = json.loads(read(metadata))
             identifier = container['container_id']
             if len(identifier) == 64 and all(char in '0123456789abcdef' for char in identifier):
-                path = self.sys / f'fs/cgroup/system.slice/docker-{identifier}.scope'
+                paths = [self.sys / f'fs/cgroup/system.slice/docker-{identifier}.scope', self.sys / f'fs/cgroup/docker/{identifier}']
+                path = next((candidate for candidate in paths if candidate.exists()), paths[0])
                 services.append(self._service('orion-home-assistant', 'active' if path.exists() else 'inactive', None, path, elapsed, unit_usage))
         except (ValueError, KeyError, TypeError):
             pass

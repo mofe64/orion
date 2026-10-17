@@ -13,4 +13,4 @@ export interface SystemMetrics {
   history: Record<string, [number, number | null][]>;
 }
 export const metricValue = (value: number | null | undefined, unit = "%") => value == null ? "Unavailable" : `${value.toFixed(1)}${unit}`;
-export const bytes = (value: number | null) => value == null ? "Unavailable" : `${(value / 1024 ** 3).toFixed(2)} GB`;
+export const bytes = (value: number | null) => value == null ? "Unavailable" : `${(value / 1024 ** 3).toFixed(2)} GiB`;

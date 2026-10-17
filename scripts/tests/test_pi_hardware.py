@@ -31,6 +31,8 @@ class HardwareDeploymentTests(unittest.TestCase):
             project = base / 'project'; project.mkdir()
             units = base / 'units'; units.mkdir()
             shutil.copytree(SCRIPTS / 'systemd', release / 'scripts/systemd')
+            for name in ('home_assistant_install.py', 'release-home-assistant.json'):
+                shutil.copy2(SCRIPTS / name, release / 'scripts' / name)
             (release / 'release.json').write_text('{"revision":"test","hardware":"v2"}')
             override = units / 'oriond.service.d/99-local.conf'; override.parent.mkdir()
             override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234 --character-on-start off\n')

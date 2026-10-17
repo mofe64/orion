@@ -72,3 +72,14 @@ Next-conversation reminders remain pending until completed playback acknowledges
    ```
 
 The handshake reads account and model information without submitting a model turn. Other ignored model tests can use account inference.
+
+## Household tools
+
+`home_list_devices` returns exposed household entities with their names, rooms, domains and states. A domain identifies the device type.
+`home_state` reads one exposed entity by ID or name. An optional room resolves duplicate names.
+`home_control` changes one exposed entity. It accepts an action and optional brightness, colour, temperature or cover position.
+Brightness and cover position use percentages. Colour uses a colour name. Climate temperature uses Home Assistant's configured units. Light colour temperature uses Kelvin.
+
+The tools use the existing coordinator operation path. The gateway enforces Home Assistant's assistant exposure setting on every request.
+Locks, alarm panels and garage doors cannot use home control. Orion asks which device when names match several entities.
+Orion confirms an action only after the service call succeeds. Configure devices in [Studio Home](../orion_studio/README.md#home).

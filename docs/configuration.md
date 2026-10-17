@@ -187,3 +187,19 @@ See [alert behavior](system-architecture.md#timers-and-alarms) and [release inst
 System metrics use the gateway process and require no configuration. Linux provides CPU, memory, disk, service and process counters.
 Raspberry Pi temperature uses `/sys/class/thermal/thermal_zone0/temp`. Throttling flags require `vcgencmd`.
 The gateway returns null for unavailable counters. Hailo temperature returns null when no inexpensive health counter is available.
+
+## Home Assistant
+
+`scripts/release-home-assistant.json` selects the container image version, digest and ARM64 platform. A digest identifies fixed image contents.
+The container name is `orion-home-assistant`. Its host network permits local device discovery.
+It uses a 1 GiB memory limit and CPU shares of 256. CPU shares give relative CPU priority during contention.
+The container restarts unless stopped. It mounts `/run/dbus` read-only for Bluetooth.
+
+Home Assistant stores its configuration in `~/.local/share/orion/home-assistant`. Installation metadata uses `~/.local/share/orion/home-assistant-install.json`.
+The gateway saves its Home Assistant access token in `~/.config/orion/home-assistant.json` with mode `0600`.
+Studio receives no Home Assistant token. Onboarding uses the Pi timezone and the location from `~/.local/share/orion/weather.json`, when set.
+Home Assistant analytics remain off during Studio onboarding.
+
+**Orion can control** changes Home Assistant's `conversation` assistant exposure setting.
+New entities require explicit exposure after Studio onboarding. Existing Home Assistant exposure settings also apply to Orion.
+USB Zigbee and Thread radios require a Docker `--device` mapping. Orion does not configure these mappings.

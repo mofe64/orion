@@ -4,15 +4,19 @@ set -euo pipefail
 version=latest
 bundle=
 action=install
+home_assistant=false
+ha_update=false
 root=${ORION_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/orion/voice-stack}
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version=${2:?--version requires vVERSION}; shift 2 ;;
     --from) bundle=${2:?--from requires a tarball}; shift 2 ;;
+    --home-assistant) home_assistant=true; shift ;;
+    --update) ha_update=true; shift ;;
     --assets) action=assets; shift ;;
     --rollback) action=rollback; shift ;;
     --check) action=check; shift ;;
-    --help|-h) echo 'Usage: install.sh [--assets] [--version TAG | --from FILE | --rollback | --check]'; exit 0 ;;
+    --help|-h) echo 'Usage: install.sh [--assets] [--version TAG | --from FILE | --rollback | --check] | --home-assistant [--update]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -30,6 +34,22 @@ if [[ $(uname -m) != aarch64 || ${ID:-} != debian && ${ID:-} != raspbian \
   echo "Unsupported OS: ${PRETTY_NAME:-unknown}, $(uname -m). Requires Raspberry Pi OS Bookworm/Trixie ARM64." >&2; exit 1
 fi
 python=/opt/orion/python/bin/python3.12
+if [[ $home_assistant == true ]]; then
+  [[ $action == install && -z $bundle ]] || { echo '--home-assistant must run as a separate step.' >&2; exit 2; }
+  source_dir=$(cd "$(dirname "${BASH_SOURCE[0]:-./install.sh}")" 2>/dev/null && pwd)
+  if [[ -x $python && -f $root/installation.json ]]; then
+    release=$($python -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$root/installation.json")
+    source_dir=$release/scripts
+  elif [[ -f $source_dir/release_install.py ]]; then
+    python=/usr/bin/python3
+  else
+    echo 'Install Orion first, or run this step from its scripts directory.' >&2; exit 1
+  fi
+  args=(--home-assistant --root "$root")
+  if [[ $ha_update == true ]]; then args+=(--update); fi
+  exec "$python" "$source_dir/release_install.py" "${args[@]}"
+fi
+[[ $ha_update == false ]] || { echo '--update requires --home-assistant.' >&2; exit 2; }
 if [[ $action != install ]]; then
   [[ -x $python && -f $root/installation.json ]] || { echo 'No installed Orion release to check or roll back.' >&2; exit 1; }
   release=$($python -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$root/installation.json")

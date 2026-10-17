@@ -472,3 +472,11 @@ export const setBehaviours = (connection: GatewayConnection, changes: Partial<Be
 export function getSystemMetrics(connection: GatewayConnection, signal?: AbortSignal): Promise<import("./systemMetrics").SystemMetrics> {
   return request(connection, "/api/v2/system/metrics", { signal });
 }
+
+export function homeRequest<T>(connection: GatewayConnection, path: string, body?: unknown, signal?: AbortSignal, method?: string): Promise<T> {
+  return request(connection, `/api/v2/home/${path}`, {
+    method: method ?? (body === undefined ? "GET" : "POST"),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: signal ?? AbortSignal.timeout(path === "onboarding" ? 120000 : 20000),
+  });
+}

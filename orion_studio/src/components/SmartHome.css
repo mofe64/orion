@@ -1,0 +1,18 @@
+.smart-home { display: grid; gap: 1.5rem; }
+.smart-home a, .home-flow a { color: var(--accent); }
+.smart-home .settings-heading a { display: inline-block; margin-top: 1rem; }
+.home-status, .home-actions, .home-discovery header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
+.home-status { color: var(--muted); font-size: .85rem; }
+.smart-home .settings-card > p { margin-block: .75rem 1rem; color: var(--muted); line-height: 1.6; }
+.smart-home fieldset { display: grid; gap: 1rem; padding: 0; margin: 1rem 0; border: 0; max-width: 32rem; min-width: 0; }
+.home-check { display: flex; align-items: center; gap: .6rem; min-height: 2.75rem; }
+.home-rooms { display: grid; gap: 1.5rem; }
+.home-entities, .home-discovery ul, .home-integrations { list-style: none; padding: 0; margin: 1rem 0 0; }
+.home-entities li, .home-discovery li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--line); }
+.home-entities strong { font-size: .95rem; overflow-wrap: anywhere; }
+.home-entities p { color: var(--muted); font-size: .8rem; margin-top: .4rem; }
+.home-entity-controls { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 1rem; }
+.home-integrations { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .5rem; max-height: 24rem; overflow-y: auto; }
+.home-integrations button { width: 100%; justify-content: flex-start; text-transform: capitalize; }
+.home-discovery > p { color: var(--muted); margin-top: 1rem; }
+@media (max-width: 640px) { .home-entities li { align-items: flex-start; flex-direction: column; } .home-entity-controls { justify-content: flex-start; } }

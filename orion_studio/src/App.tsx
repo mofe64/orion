@@ -16,6 +16,7 @@ const RobotViewport = lazy(() => import("./components/RobotViewport").then(modul
 import { deleteMovementComponent, moveMovementComponent } from "./lib/movementComponents";
 import { Timeline, type TrackSelection } from "./components/Timeline";
 import { Settings } from "./components/Settings";
+import { SmartHome } from "./components/SmartHome";
 import { System } from "./components/System";
 import { Debug } from "./components/Debug";
 import { VoiceHistory } from "./components/VoiceHistory";
@@ -58,7 +59,7 @@ export default function App() {
   const [runPending, setRunPending] = useState(false);
   const [poseEdit, setPoseEdit] = useState<{ value: PoseDefinition; eventId: string; index: number; baseScene?: SceneDefinition } | null>(null);
 
-  const [destination, setDestination] = useState<"home" | "animation" | "create" | "settings" | "debug" | "history" | "system">("home");
+  const [destination, setDestination] = useState<"home" | "animation" | "create" | "settings" | "debug" | "history" | "system" | "household">("home");
   const [settingsVisited, setSettingsVisited] = useState(false);
   const [homeTheme, setHomeTheme] = useState<"dark" | "light">(() => { try { return localStorage.getItem("orion-studio:theme") === "light" ? "light" : "dark"; } catch { return "dark"; } });
   const [scene, setScene] = useState(() => readDraft("scene", initialScene));
@@ -370,7 +371,7 @@ export default function App() {
       <a className="skip-link" href="#workspace">Skip to workspace</a>
       <header className="topbar">
         <button className="brand-lockup" onClick={() => navigate("home")} aria-label="Open Orion Studio home"><span className="brand-mark" aria-hidden="true" /><span><strong>ORION</strong><small>CHARACTER STUDIO</small></span></button>
-        <nav className="mode-tabs" aria-label="Studio">{(["home", "animation", "history", "system", "settings", ...(preferences.debugMode ? ["debug"] : [])] as const).map(item => <button key={item} aria-current={(destination === item || (item === "animation" && destination === "create")) ? "page" : undefined} className={(destination === item || (item === "animation" && destination === "create")) ? "active" : ""} onClick={() => navigate(item as typeof destination)}>{item[0].toUpperCase()+item.slice(1)}</button>)}</nav>
+        <nav className="mode-tabs" aria-label="Studio">{(["home", "household", "animation", "history", "system", "settings", ...(preferences.debugMode ? ["debug"] : [])] as const).map(item => <button key={item} aria-current={(destination === item || (item === "animation" && destination === "create")) ? "page" : undefined} className={(destination === item || (item === "animation" && destination === "create")) ? "active" : ""} onClick={() => navigate(item as typeof destination)}>{item === "home" ? "Orion" : item === "household" ? "Home" : item[0].toUpperCase()+item.slice(1)}</button>)}</nav>
         <div className="topbar-actions">{destination === "home" && !connection ? <span className="connection-button" role="status">{["unpaired", "disconnected"].includes(pairingState.phase) ? "Orion disconnected" : connectionLabel}</span> : <button className={connection ? "connection-button connected" : "connection-button"} aria-label={connectionLabel} title={connectionLabel} aria-expanded={connectionOpen} aria-controls="orion-pairing" onClick={() => setConnectionOpen((open) => !open)}>{connection ? <Radio size={15} /> : <Link2 size={15} />}{connectionLabel}</button>}</div>
         {connectionOpen && <PairingPanel controller={pairing} state={pairingState} onClose={() => setConnectionOpen(false)} />}
       </header>
@@ -379,6 +380,7 @@ export default function App() {
       {destination === "animation" && <AnimationLibrary previewAudio={preferences.previewAudio} catalog={catalog} theme={homeTheme} connection={connection} status={status} onEdit={editScene} onDelete={deleteScene} onRun={setTrackedRun} />}
       {(settingsVisited || destination === "settings") && <div hidden={destination !== "settings"}><Settings active={destination === "settings"} connection={connection} connectionScope={connection} notice={typeof preferencesNotice === "string" ? preferencesNotice : ""} voice={voice} preferences={preferences} onPreferences={value => { try { savePreferences(value); setPreferences(value); return true; } catch { setNotice("Settings could not be saved on this computer.", "preferences"); return false; } }} theme={homeTheme} onTheme={value => { try { localStorage.setItem("orion-studio:theme", value); setHomeTheme(value); return true; } catch { setNotice("Appearance could not be saved on this computer.", "preferences"); return false; } }} status={status} connected={!!connection} onConnect={() => setConnectionOpen(true)} onHome={() => navigate("home")} onSound={async (kind, sound) => { if (!connection) throw new Error("Connect Orion to change its sounds."); await setAlertSound(connection, kind, sound); await pairing.refresh(); }} /></div>}
       {destination === "debug" && preferences.debugMode && <Debug onRefresh={() => pairing.refresh()} onHistory={() => navigate("history")} voice={voice} connection={connection} status={status} />}
+      {destination === "household" && <SmartHome connection={connection} />}
       {destination === "system" && <System connection={connection} />}
       {destination === "history" && <VoiceHistory connected={!!connection} connectionScope={connection} />}
       {destination === "create" && <>

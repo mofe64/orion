@@ -405,6 +405,18 @@ mod tests {
         (gateway, task)
     }
     #[tokio::test]
+    async fn home_operations_preserve_gateway_success_and_allowlist_refusal() {
+        let (gateway, task) = peer("200 OK", r#"{"accepted":true,"result":{"ok":true,"devices":[{"entity_id":"light.desk"}]}}"#).await;
+        let result = gateway.robot_operation(json!({"operation":"home","request":{"action":"list"}}), "home-test").await.unwrap();
+        assert_eq!(result["devices"][0]["entity_id"], "light.desk");
+        task.await.unwrap();
+        let (gateway, task) = peer("403 Forbidden", r#"{"error":{"message":"That device is not exposed to Orion"}}"#).await;
+        let error = gateway.robot_operation(json!({"operation":"home","request":{"action":"control","entity":"switch.private","command":"on"}}), "home-test").await.unwrap_err();
+        assert!(error.contains("not exposed"));
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn http_rejections_preserve_reasons_with_a_status_fallback() {
         for (body, expected) in [
             (
