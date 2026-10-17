@@ -240,7 +240,40 @@ pub struct Routines {
     pub error: Option<String>,
 }
 impl Routines {
+    /// Loads saved routines. A damaged save, for example one cut short by a
+    /// power loss, is moved aside so the runtime still starts.
     pub fn load(path: Option<PathBuf>, wall: f64, now: f64) -> Result<Self, String> {
+        let error = match Self::load_saved(path.clone(), wall, now) {
+            Ok(routines) => return Ok(routines),
+            Err(error) => error,
+        };
+        let Some(file) = path.as_ref() else {
+            return Err(error);
+        };
+        // Damaged sound settings only reset the sounds; other damage resets both files.
+        let sources = if error.starts_with("Invalid alarm sound settings") {
+            vec![file.with_extension("sounds.json")]
+        } else {
+            vec![file.clone(), file.with_extension("sounds.json")]
+        };
+        let mut damaged = false;
+        for source in sources {
+            if source.exists() {
+                let mut target = source.clone().into_os_string();
+                target.push(".damaged");
+                fs::rename(&source, &target).map_err(|e| format!("{error}; {e}"))?;
+                damaged = true;
+            }
+        }
+        if !damaged {
+            return Err(error);
+        }
+        eprintln!("oriond: saved routines reset: {error}");
+        let mut routines = Self::load_saved(path, wall, now)?;
+        routines.error = Some(format!("Saved alarms and timers were reset: {error}"));
+        Ok(routines)
+    }
+    fn load_saved(path: Option<PathBuf>, wall: f64, now: f64) -> Result<Self, String> {
         let mut saved: Saved = match path.as_ref().map(fs::read) {
             Some(Ok(bytes)) => {
                 serde_json::from_slice(&bytes).map_err(|e| format!("Invalid routines file: {e}"))?
@@ -1220,6 +1253,29 @@ fn write_saved(path: &std::path::Path, value: &impl Serialize) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn damaged_saves_are_moved_aside_and_the_runtime_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routines.json");
+        fs::write(
+            &path,
+            r#"{"mode":"lamp","next_id":1,"alerts":[],"ring_until_unix":null}"#,
+        )
+        .unwrap();
+        fs::write(path.with_extension("sounds.json"), "").unwrap();
+        let r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
+        assert_eq!(r.mode(), UserMode::Lamp);
+        assert!(r.error.as_deref().unwrap().contains("alarm sound settings"));
+        assert!(path.exists());
+        assert!(dir.path().join("routines.sounds.json.damaged").exists());
+        fs::write(&path, "").unwrap();
+        let r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
+        assert_eq!(r.mode(), UserMode::Idle);
+        assert!(r.error.is_some());
+        assert!(!path.exists());
+        assert!(dir.path().join("routines.json.damaged").exists());
+    }
     use crate::RecordingAudioDevice;
     fn at(text: &str) -> f64 {
         chrono::DateTime::parse_from_rfc3339(text)
