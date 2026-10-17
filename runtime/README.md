@@ -5,6 +5,11 @@
 The runtime owns the [shared mind state](../docs/motion-architecture.md#shared-mind-state). The `status` command includes `mind`.
 A separate worker saves hardware state. MuJoCo keeps its mind state in memory.
 
+The same worker reads saved character switches. Camera observations do not control these act settings.
+The character coordinator owns listening, thinking and posture acts. The rest coordinator owns act preparation before descent and after home arrival.
+`preparing_rest` reports the home return or sleep act. It does not permit torque release.
+See [shared mind state](../docs/motion-architecture.md#shared-mind-state) for ownership and interruption rules.
+
 ## Build and test
 
 Run these steps from the repository root. Simulation also requires the [MuJoCo Python environment](../simulation/mujoco/README.md#python-environment).

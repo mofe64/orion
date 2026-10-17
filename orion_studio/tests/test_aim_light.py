@@ -65,6 +65,8 @@ class AimGatewayTests(unittest.TestCase):
         self.assertEqual(commands[0], f'voice {"a"*32} vision_begin')
         self.assertEqual(commands[-1], f'voice {"a"*32} vision_end')
         self.assertIn('routines {"action": "set_mode", "mode": "lamp"}', commands)
+        target = next(json.loads(command[10:]) for command in commands if command.startswith('aim-light ') and json.loads(command[10:])['action'] == 'target')
+        self.assertEqual(target['class'], 'book')
 
     def test_no_match_checks_three_authored_stops_then_restores_and_reports_no_match(self):
         gateway, commands = self.gateway([{'status': 'not_found', 'candidates': []}] * 4)

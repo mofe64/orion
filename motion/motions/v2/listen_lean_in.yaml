@@ -1,0 +1,19 @@
+format_version: 2
+motion:
+  name: listen_lean_in
+  description: Lean slightly toward the speaker, hold, and return.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      shoulder_pitch_joint: 0.035
+      elbow_pitch_joint: -0.02
+      head_pitch_joint: -0.04
+    duration: 2.0
+    arrival: settle
+    marker: listen_hold
+    hold: 0.5
+  - offsets: {}
+    duration: 1.2
+    arrival: settle

@@ -7,7 +7,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
@@ -194,12 +194,13 @@ enum Update {
     Shutdown(MindState),
 }
 pub(crate) struct MindStore {
+    settings: Arc<Mutex<super::settings::ActSettings>>,
     sender: mpsc::SyncSender<Update>,
     worker: Option<thread::JoinHandle<()>>,
     hour: Arc<AtomicU64>,
 }
 impl MindStore {
-    pub fn start(path: Option<PathBuf>) -> (Self, MindState) {
+    pub fn start(path: Option<PathBuf>, settings_path: Option<PathBuf>) -> (Self, MindState) {
         let clock = Local::now();
         let hour_value = clock.hour() as f64 + clock.minute() as f64 / 60.;
         let wall = clock.timestamp_millis() as f64 / 1000.;
@@ -213,12 +214,22 @@ impl MindStore {
             });
         let hour = Arc::new(AtomicU64::new(hour_value.to_bits()));
         let worker_hour = Arc::clone(&hour);
+        let settings = Arc::new(Mutex::new(
+            settings_path
+                .as_ref()
+                .map(|p| super::settings::ActSettings::load(p))
+                .unwrap_or_default(),
+        ));
+        let worker_settings = Arc::clone(&settings);
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             let mut latest = None;
             let mut saved = Instant::now() - Duration::from_secs(10);
             loop {
                 let clock = Local::now();
+                if let Some(path) = &settings_path {
+                    *worker_settings.lock().unwrap() = super::settings::ActSettings::load(path);
+                }
                 worker_hour.store(
                     (clock.hour() as f64 + clock.minute() as f64 / 60.).to_bits(),
                     Ordering::Relaxed,
@@ -250,6 +261,7 @@ impl MindStore {
         });
         (
             Self {
+                settings,
                 sender,
                 worker: Some(worker),
                 hour,
@@ -259,6 +271,12 @@ impl MindStore {
     }
     pub fn hour(&self) -> f64 {
         f64::from_bits(self.hour.load(Ordering::Relaxed))
+    }
+    pub fn settings(&self) -> Option<super::settings::ActSettings> {
+        self.settings
+            .try_lock()
+            .ok()
+            .map(|settings| settings.clone())
     }
     pub fn snapshot(&self, state: &MindState) {
         let _ = self.sender.try_send(Update::Snapshot(state.clone()));

@@ -19,6 +19,7 @@ pub enum RestState {
     #[default]
     Disabled,
     Awake,
+    PreparingRest,
     GoingToRest,
     Resting,
     Waking,
@@ -54,6 +55,9 @@ enum AttentionTarget {
 }
 
 pub struct RestCoordinator {
+    prelude: Option<(u64, bool)>,
+    wake_act: Option<u64>,
+    wake_act_attempted: bool,
     mode: super::routines::UserMode,
     sleep_session: Option<String>,
     state: RestState,
@@ -73,6 +77,9 @@ pub struct RestCoordinator {
 impl RestCoordinator {
     pub fn new(timeout: f64) -> Self {
         Self {
+            prelude: None,
+            wake_act: None,
+            wake_act_attempted: false,
             mode: super::routines::UserMode::Idle,
             sleep_session: None,
             state: RestState::Disabled,
@@ -132,6 +139,9 @@ impl RestCoordinator {
     }
 
     pub fn disable(&mut self) {
+        self.prelude = None;
+        self.wake_act = None;
+        self.wake_act_attempted = false;
         self.sleep_session = None;
         self.state = RestState::Disabled;
         self.presence_deferred = false;
@@ -197,6 +207,9 @@ impl RestCoordinator {
             .as_u64()
             .ok_or_else(|| Error::Runtime("Rest movement has no run ID.".into()))?;
         self.transition_session_id = self.sleep_session.take();
+        self.prelude = None;
+        self.wake_act = None;
+        self.wake_act_attempted = false;
         self.transition_reason = Some(
             if self.transition_session_id.is_some() {
                 "requested"
@@ -241,8 +254,61 @@ impl RestCoordinator {
     pub fn transitioning(&self) -> bool {
         matches!(
             self.state,
-            RestState::GoingToRest | RestState::Resting | RestState::Waking | RestState::Fault
+            RestState::PreparingRest
+                | RestState::GoingToRest
+                | RestState::Resting
+                | RestState::Waking
+                | RestState::Fault
         )
+    }
+
+    pub(crate) fn begin_rest<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        character: &mut CharacterCoordinator,
+    ) -> Result<serde_json::Value> {
+        if self.state == RestState::PreparingRest {
+            return Ok(serde_json::json!({"ok":true,"state":"preparing_rest"}));
+        }
+        if character.drifted() {
+            let run = character.return_home_before_rest(now, core)?;
+            self.prelude = Some((run, true));
+        } else if character.status().enabled && character.wake_sleep_acts_enabled(core) {
+            if let Ok(run) = character.play_lifecycle_act("sleep_settle", now, core) {
+                self.prelude = Some((run, false));
+            }
+        }
+        if self.prelude.is_some() {
+            self.state = RestState::PreparingRest;
+            self.attention = None;
+            self.transition_reason = Some(
+                if self.sleep_session.is_some() {
+                    "requested"
+                } else {
+                    "inactivity"
+                }
+                .into(),
+            );
+            return Ok(serde_json::json!({"ok":true,"state":"preparing_rest"}));
+        }
+        let response = character.rest(now, core)?;
+        self.track_rest(&response)?;
+        Ok(response)
+    }
+
+    fn descend<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        character: &mut CharacterCoordinator,
+    ) -> Result<()> {
+        let wake = self.wake_session.clone();
+        character.finish_lifecycle_act();
+        let response = character.rest(now, core)?;
+        self.track_rest(&response)?;
+        self.wake_session = wake;
+        Ok(())
     }
 
     pub fn tick<D: RuntimeDriver>(
@@ -285,6 +351,37 @@ impl RestCoordinator {
             self.wake_session = None;
         }
         match self.state {
+            RestState::PreparingRest => {
+                let (run, home) = self.prelude.expect("prelude owns a movement");
+                if core
+                    .snapshot()
+                    .motion
+                    .as_ref()
+                    .is_some_and(|m| m.run_id == run)
+                {
+                    return Ok(());
+                }
+                let completed = core
+                    .snapshot()
+                    .last_motion
+                    .as_ref()
+                    .is_some_and(|m| m.run_id == run && m.state == MovementPhase::Completed);
+                if home {
+                    if !completed {
+                        return Err(Error::Runtime(
+                            "Home return did not complete before rest.".into(),
+                        ));
+                    }
+                    character.commit_rest_home(core);
+                    if character.wake_sleep_acts_enabled(core)
+                        && let Ok(run) = character.play_lifecycle_act("sleep_settle", now, core)
+                    {
+                        self.prelude = Some((run, false));
+                        return Ok(());
+                    }
+                }
+                self.descend(now, core, character)?;
+            }
             RestState::GoingToRest => {
                 let run = self.rest_run.expect("rest transition owns its run");
                 if core
@@ -322,6 +419,18 @@ impl RestCoordinator {
                 self.transition_session_id = self.wake_session.clone();
             }
             RestState::Waking => {
+                if let Some(run) = self.wake_act {
+                    if core
+                        .snapshot()
+                        .motion
+                        .as_ref()
+                        .is_some_and(|m| m.run_id == run)
+                    {
+                        return Ok(());
+                    }
+                    character.finish_lifecycle_act();
+                    self.wake_act = None;
+                }
                 if !character.status().enabled {
                     return Err(Error::Runtime(
                         "Home startup did not complete; voice movement remains disabled.".into(),
@@ -332,6 +441,16 @@ impl RestCoordinator {
                 }
                 if core.mode() != RuntimeMode::Holding {
                     return Ok(());
+                }
+                if !self.wake_act_attempted
+                    && self.wake_session.is_some()
+                    && character.wake_sleep_acts_enabled(core)
+                {
+                    self.wake_act_attempted = true;
+                    if let Ok(run) = character.play_lifecycle_act("wake_stretch", now, core) {
+                        self.wake_act = Some(run);
+                        return Ok(());
+                    }
                 }
                 self.state = RestState::Awake;
                 self.deadline.get_or_insert(now + self.timeout);
@@ -354,8 +473,7 @@ impl RestCoordinator {
                     && !feedback.confirmed_activity()
                     && character.can_auto_rest(core)
                 {
-                    let response = character.rest(now, core)?;
-                    self.track_rest(&response)?;
+                    self.begin_rest(now, core, character)?;
                     if self.transition_session_id.is_none() {
                         self.transition_reason = Some("inactivity".into());
                     }

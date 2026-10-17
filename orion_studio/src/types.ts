@@ -271,7 +271,7 @@ export interface GatewayStatus {
   rest?: {
     mode?: "idle" | "lamp";
     sleep_requested?: boolean;
-    state: "disabled" | "awake" | "going_to_rest" | "resting" | "waking" | "fault";
+    state: "disabled" | "awake" | "preparing_rest" | "going_to_rest" | "resting" | "waking" | "fault";
     timeout_seconds: number;
     last_confirmed_at: number | null;
     remaining_seconds: number | null;

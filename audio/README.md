@@ -18,6 +18,10 @@ Run these steps from the repository root. The generator uses Python's standard l
 
 The cue vocabulary includes `notice_warm`, `acknowledge_warm`, `curious_rise`, `agree_soft`, `delight_warm`, `settle_soft` and `error_muted`. `voice_wake` and `voice_processing` provide voice-entry feedback. `VOICE_CUE_GAIN` controls their generator level.
 
+`wake_chirp`, `sleep_sigh` and `yawn_hum` accompany rare character acts at their motion markers.
+These sounds use a lower generator gain than `voice_wake`. `act_sounds` controls these sounds.
+See [character behaviors](../docs/configuration.md#character-behaviors) for switches and [sound ownership](../docs/motion-architecture.md#shared-mind-state) for suppression rules.
+
 ## Alarm audio
 
 `audio/alarms/` contains MP3 sources and embedded PCM files. The runtime offers Two-tone, Club alarm and Funny alarm. Studio stores separate alarm and timer choices.

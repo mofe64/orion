@@ -55,6 +55,27 @@ Attention uses existing speaker, person, Hands and object targets. Its timestamp
 A worker reads the local clock and saves state. The control loop uses arithmetic and a bounded message queue.
 See [saved files](configuration.md#saved-files) for storage and reader rules.
 
+Energy adjusts both idle delays, head movement variation, tempo and background light. Low energy gives a warmer background light.
+Hands and held aim anchors retain their existing rhythm and light behavior. Motion remains intermittent.
+
+Listening can hold `listen_lean_in` around the current anchor. Processing releases the lean. Speech replaces its remaining path through commanded-state continuation.
+After three seconds of thinking, small beats alternate at intervals of three to five seconds. Speech takes priority over these beats.
+
+Posture drift selects `home_low`, `home_attentive`, `home` or `home_window` from the shared state.
+It requires an awake idle character without conversation, foreground work, Hands, held aim or pending rest.
+Each move takes at least three seconds and uses calibrated compilation and comfort checks. Successful measured arrival commits the new anchor.
+Stop, explicit movement and Hands can cancel drift. The behavior journal records each started move and its outcome.
+
+Automatic rest returns a drifted posture to home before descent. The return requires successful measured arrival.
+`sleep_settle` then lowers the head with a dimming light before the existing rest descent. A failed act still permits that descent.
+After confirmed wake reaches home, `wake_stretch` lifts and settles. A failed stretch still permits the existing wake sequence.
+Only successful measured completion of the rest descent permits torque release.
+
+Low energy can select `yawn` when automatic rest is less than two minutes away.
+Wake, sleep and yawn markers can play short sounds. Routine idles, posture drift, listening and thinking remain silent.
+Speech, active alerts, light routines and local quiet hours suppress these sounds. Quiet hours run from 22:00 to 07:00.
+Sound failure does not control motion or rest. See [character switches](configuration.md#character-behaviors).
+
 ### Startup and anchors
 
 Character startup applies configuration, enables torque and moves to `home`. Successful measured arrival establishes the idle anchor. Failed or cancelled startup leaves character mode off.

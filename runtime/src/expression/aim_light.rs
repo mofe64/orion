@@ -20,6 +20,8 @@ pub(crate) enum WorkRequest {
         token: String,
         point: [f64; 3],
         lean: f64,
+        #[serde(default)]
+        class: Option<String>,
     },
     End {
         token: String,
@@ -31,6 +33,7 @@ pub(crate) enum WorkRequest {
 
 #[derive(Debug)]
 pub(super) struct WorkState {
+    category: Option<String>,
     token: String,
     previous: JointPositions,
     previous_work_anchor: bool,
@@ -43,6 +46,13 @@ pub(super) struct WorkState {
 }
 
 impl CharacterCoordinator {
+    pub(super) fn work_attention_class(&self) -> String {
+        self.work
+            .as_ref()
+            .and_then(|work| work.category.clone())
+            .or_else(|| self.work_category.clone())
+            .unwrap_or_else(|| "object".into())
+    }
     pub(crate) fn release_work_anchor(&mut self) {
         self.work_anchor = false;
         // Idle releases gaze ownership, but the reach remains the character's
@@ -114,6 +124,7 @@ impl CharacterCoordinator {
             }
             self.attention = None;
             self.work = Some(WorkState {
+                category: None,
                 token,
                 previous,
                 previous_work_anchor,
@@ -153,7 +164,18 @@ impl CharacterCoordinator {
             ));
         }
         match request {
-            WorkRequest::Target { point, lean, .. } => {
+            WorkRequest::Target {
+                point, lean, class, ..
+            } => {
+                if class.as_ref().is_some_and(|class| {
+                    class.is_empty()
+                        || class.len() > 32
+                        || !class
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '_')
+                }) {
+                    return Err(Error::InvalidArgument("Invalid aim class".into()));
+                }
                 let (solution, prepared) =
                     core.prepare_light_target(&work.previous, point, lean)?;
                 let Some(prepared) = prepared else {
@@ -162,6 +184,7 @@ impl CharacterCoordinator {
                 let run = core.install_work_motion(prepared, now)?;
                 work.run = Some(run);
                 work.aimed = solution.positions;
+                work.category = class;
                 Ok(
                     json!({"ok":true,"status":solution.status,"aim_error_rad":solution.aim_error_rad,"lean_limited":solution.lean_limited,"run_id":run}),
                 )
@@ -204,6 +227,7 @@ impl CharacterCoordinator {
                 if !work.failed {
                     if let Some(target) = work.aimed.take() {
                         self.status.active_anchor = Some(target);
+                        self.work_category = work.category.clone();
                         work.committed = true;
                         self.work_anchor = true;
                         core.set_character_comfort(true);
@@ -344,6 +368,7 @@ mod tests {
                         token: token.clone(),
                         point: [0., -0.28, 0.],
                         lean: 0.8,
+                        class: Some("book".into()),
                     },
                     5.,
                     &mut core,

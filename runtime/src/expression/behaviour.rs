@@ -80,7 +80,11 @@ impl BehaviourLog {
             return;
         }
         let mut event = state.event(
-            if behaviour.starts_with("idle_") {
+            if behaviour.starts_with("idle_")
+                || behaviour == "posture_drift"
+                || behaviour == "posture_home"
+                || behaviour == "yawn"
+            {
                 "idle"
             } else {
                 "attention"
@@ -97,6 +101,10 @@ impl BehaviourLog {
                 "object_peek" | "pet_notice" => "object passed the novelty and persistence checks",
                 "mutual_gaze" => "sustained frontal face",
                 "arrival_notice" => "person present after prolonged observed absence",
+                "posture_drift" => "shared state selected a held posture",
+                "posture_home" => "return home before rest",
+                "wake_stretch" => "confirmed wake reached home",
+                "sleep_settle" => "prepare for rest",
                 _ => "idle animation selection",
             }
             .into(),
@@ -252,6 +260,7 @@ impl BehaviourLog {
                 state.emit(event);
             }
             let (behaviour, phase) = match rest.state {
+                PreparingRest => ("sleep_prepare", "started"),
                 GoingToRest => ("sleep", "started"),
                 Resting => ("sleep", "completed"),
                 Waking => ("wake", "started"),

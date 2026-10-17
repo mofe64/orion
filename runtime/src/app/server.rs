@@ -256,7 +256,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         .then(|| std::env::var_os("HOME"))
         .flatten()
         .map(|home| PathBuf::from(home).join(".local/share/orion/mind.json"));
-    let (mind_store, mind) = crate::expression::mind::MindStore::start(mind_path);
+    let settings_path = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".config/orion/behaviours.json"));
+    let (mind_store, mind) = crate::expression::mind::MindStore::start(mind_path, settings_path);
     character.mind = mind;
     let mut mind_snapshot_at = 0.;
     let mut mind_speech_run = None;
@@ -270,6 +272,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         character.set_gaze_unavailable(error);
     }
     let mut feedback = crate::voice_feedback::VoiceFeedback::default();
+    let mut act_sounds = crate::expression::act_sound::ActSounds::default();
     let mut playing_run = None;
     let mut voice_speech_run: Option<(u64, String)> = None;
     let mut feedback_was_lit = false;
@@ -425,6 +428,21 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             speaking_light_intensity = 0.0;
         }
         let character_was_enabled = character.status().enabled;
+        if let Some(settings) = mind_store.settings() {
+            character.set_act_settings(settings);
+        }
+        let rest_status = rest.status(now_seconds);
+        character.set_act_context(
+            rest_status.state == crate::expression::rest::RestState::Awake
+                && !rest_status.sleep_requested
+                && !feedback.session_active()
+                && !speech.is_active()
+                && !scenes.is_active()
+                && !routines.curiosity_quiet(),
+            rest_status
+                .remaining_seconds
+                .map(|remaining| now_seconds + remaining),
+        );
         character.set_curiosity_available(
             rest.reactions_ready()
                 && !feedback.session_active()
@@ -449,6 +467,17 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             &mut character,
             &feedback,
             routines.ringing() || scenes.is_active() || speech.is_active(),
+        );
+        act_sounds.tick(
+            &core.snapshot(),
+            crate::expression::act_sound::SoundContext {
+                enabled: character.act_sounds_enabled(),
+                speech: speech.is_active(),
+                alert: routines.ringing(),
+                quiet_routine: routines.curiosity_quiet(),
+                hour: mind_store.hour(),
+            },
+            audio.as_mut(),
         );
         if let Some(log) = &behaviour_log {
             log.observe_state(
@@ -476,16 +505,26 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             && manual_light.is_none()
             && let Some(effect) = character.background_lighting_effect(&core)
         {
-            lighting.render_effect(
+            let frame = character.background_frame(
                 &effect,
                 now_seconds,
+                lighting.pixel_count(),
                 character.curiosity_light_intensity(now_seconds),
+                &core,
             )?;
+            lighting.render(&frame)?;
         }
         if !scenes.is_active() && !speech.is_active() {
             if let Some(program) = &manual_light {
-                lighting
-                    .render(&program.render_for_pixels(now_seconds, lighting.pixel_count())?)?;
+                let mut frame = program.render_for_pixels(now_seconds, lighting.pixel_count())?;
+                let gain = character.sleep_light_gain(&core);
+                for color in &mut frame {
+                    color.red = (color.red as f64 * gain) as u8;
+                    color.green = (color.green as f64 * gain) as u8;
+                    color.blue = (color.blue as f64 * gain) as u8;
+                    color.white = (color.white as f64 * gain) as u8;
+                }
+                lighting.render(&frame)?;
             }
         }
         if feedback_was_lit

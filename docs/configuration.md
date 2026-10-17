@@ -39,7 +39,24 @@ The default asset project is `~/.local/share/orion/voice-stack/catalog/`. User a
 Saved timestamps preserve activity and mood decay across restarts. A missing or invalid file selects default state.
 The agent omits state older than ten minutes. Studio Debug shows the state through `/api/v2/status`.
 
-`behaviours.json` accepts boolean keys: `object_glances`, `mutual_gaze`, `arrival_notice`, `new_object_peek` and `presence_defers_rest`. Missing keys select false. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
+`behaviours.json` accepts the boolean keys in this table. Missing keys use the listed defaults.
+
+| Key | Default | Function |
+| --- | --- | --- |
+| `object_glances` | false | Look briefly at mapped desk objects |
+| `mutual_gaze` | false | Respond to a sustained look |
+| `arrival_notice` | false | Welcome a person after prolonged absence |
+| `new_object_peek` | false | Look at a new object or pet |
+| `presence_defers_rest` | false | Delay automatic rest while people or hands remain visible |
+| `mind_idle_rhythm` | true | Adjust idle rhythm and background light with energy |
+| `listen_lean_in` | true | Hold a small lean while listening |
+| `thinking_beats` | true | Add alternating gestures during longer thoughts |
+| `wake_sleep_acts` | true | Stretch after confirmed wake and settle before rest |
+| `posture_drift` | false | Change the held posture during quiet idle periods |
+| `act_sounds` | true | Play sounds at wake, sleep and yawn markers |
+
+Studio provides these switches under **Character behaviours**. The runtime reads act settings independently of camera observations.
+The new act clips require the V2 catalogue. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
 
 ## Camera privacy and tracking profile
 

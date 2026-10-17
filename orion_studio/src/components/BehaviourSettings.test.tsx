@@ -8,7 +8,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
   useEffect: (effect: () => (() => void) | void) => { lifecycle.effects.push(effect); },
 }));
 vi.mock("../lib/gateway", async original => ({ ...await original<typeof import("../lib/gateway")>(),
-  getBehaviours: vi.fn().mockResolvedValue({ behaviours: { object_glances: false, mutual_gaze: false,
+  getBehaviours: vi.fn().mockResolvedValue({ behaviours: { mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, object_glances: false, mutual_gaze: false,
     arrival_notice: false, new_object_peek: false, presence_defers_rest: false } }),
 }));
 import { BehaviourSettings } from "./BehaviourSettings";
@@ -38,4 +38,9 @@ it("starts reads only for visible Settings and cancels them when leaving", async
   await vi.advanceTimersByTimeAsync(0);
   expect(getBehaviours).toHaveBeenCalledTimes(3);
   unmount();
+});
+
+it("offers shared-state behaviours and rare sounds", () => {
+  const html = renderToStaticMarkup(<BehaviourSettings connection={{url:"http://orion",token:"test"}} supported />);
+  for (const text of ["Follow shared energy", "Listening lean", "Thinking beats", "Wake and sleep gestures", "Posture changes", "Rare gesture sounds"]) expect(html).toContain(text);
 });

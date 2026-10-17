@@ -1,0 +1,17 @@
+format_version: 2
+motion:
+  name: think_beat_b
+  description: Lower the head slightly and return.
+  space: anchor_relative
+  style: thinking
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      head_pitch_joint: 0.07
+    duration: 0.8
+    arrival: settle
+    marker: think_settle
+    hold: 0.15
+  - offsets: {}
+    duration: 0.9
+    arrival: settle

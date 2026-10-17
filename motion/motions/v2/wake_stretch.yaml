@@ -1,0 +1,19 @@
+format_version: 2
+motion:
+  name: wake_stretch
+  description: Lift the head and arm gently, then settle.
+  space: anchor_relative
+  style: living_idle
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      shoulder_pitch_joint: -0.035
+      elbow_pitch_joint: -0.02
+      head_pitch_joint: -0.09
+    duration: 0.9
+    arrival: settle
+    marker: wake_stretch
+    hold: 0.15
+  - offsets: {}
+    duration: 1.1
+    arrival: settle

@@ -1,0 +1,18 @@
+format_version: 2
+motion:
+  name: think_beat_a
+  description: Turn the head slightly to one side and return.
+  space: anchor_relative
+  style: thinking
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      head_roll_joint: 0.09
+      head_pitch_joint: -0.025
+    duration: 0.8
+    arrival: settle
+    marker: think_glance
+    hold: 0.15
+  - offsets: {}
+    duration: 0.9
+    arrival: settle

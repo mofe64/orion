@@ -14,7 +14,8 @@ SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH_BYTES = 2
 PEAK = 0.32
-VOICE_CUE_GAIN = {"voice_wake": 0.12, "voice_processing": 0.08}
+VOICE_CUE_GAIN = {"voice_wake": 0.12, "voice_processing": 0.08,
+                  "wake_chirp": 0.07, "sleep_sigh": 0.05, "yawn_hum": 0.04}
 
 
 def envelope(position: float, duration: float) -> float:
@@ -72,6 +73,9 @@ def main() -> None:
         "error_muted": [(392.000, 0.17), (349.228, 0.25)],
     }
     cues.update({"voice_wake": [(220.0, 0.20)], "voice_processing": [(180.0, 0.18)]})
+    cues.update({"wake_chirp": [(220.0, 0.15), (330.0, 0.16)],
+                 "sleep_sigh": [(220.0, 0.22), (140.0, 0.32)],
+                 "yawn_hum": [(130.0, 0.20), (170.0, 0.30), (130.0, 0.30)]})
     directory = Path(__file__).resolve().parent / "cues"
     for name, notes in cues.items():
         output = directory / f"{name}.wav"

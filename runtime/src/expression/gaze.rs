@@ -99,6 +99,30 @@ impl Default for GazeCoordinator {
 }
 
 impl GazeCoordinator {
+    pub(crate) fn current_bearing(&self) -> Option<(f64, f64)> {
+        self.target
+            .as_ref()
+            .map(|target| (target.azimuth, target.elevation))
+    }
+    pub(crate) fn mind_target(&self) -> super::mind::AttentionTarget {
+        use super::mind::AttentionTarget;
+        match self.target.as_ref() {
+            Some(target)
+                if target
+                    .category
+                    .as_deref()
+                    .is_some_and(|class| !matches!(class, "person" | "face")) =>
+            {
+                AttentionTarget::Object {
+                    class: target.category.clone().unwrap(),
+                }
+            }
+            Some(target) => AttentionTarget::Person {
+                track_id: target.track_id,
+            },
+            None => AttentionTarget::None,
+        }
+    }
     pub fn set_enabled(&mut self, enabled: bool) {
         self.availability = if enabled {
             GazeAvailability::Ready

@@ -88,6 +88,7 @@ enum Stage {
 }
 #[derive(Debug)]
 pub(super) struct Reaction {
+    category: Option<String>,
     kind: ReactionKind,
     track: u64,
     started: f64,
@@ -99,6 +100,20 @@ pub(super) struct Reaction {
 }
 
 impl CharacterCoordinator {
+    pub(super) fn reaction_attention(&self) -> Option<crate::expression::mind::AttentionTarget> {
+        use crate::expression::mind::AttentionTarget;
+        self.surroundings.reaction.as_ref().map(|reaction| {
+            if reaction.track > 0 {
+                AttentionTarget::Person {
+                    track_id: reaction.track,
+                }
+            } else {
+                AttentionTarget::Object {
+                    class: reaction.category.clone().unwrap_or_else(|| "object".into()),
+                }
+            }
+        })
+    }
     pub(crate) fn held_gaze_track(&self) -> Option<u64> {
         self.surroundings
             .reaction
@@ -248,6 +263,7 @@ impl CharacterCoordinator {
         let run = core.play_generated_anchored_relative(definition, anchor, now)?;
         self.surroundings.reaction = Some(Reaction {
             kind: ReactionKind::Mutual,
+            category: None,
             track,
             started: now,
             deadline: now + 8.0,
@@ -316,6 +332,7 @@ impl CharacterCoordinator {
         let run = core.play_generated_anchored_relative(definition, anchor.clone(), now)?;
         self.surroundings.reaction = Some(Reaction {
             kind: ReactionKind::Arrival,
+            category: None,
             track: face.track_id,
             started: now,
             deadline: now + 8.0,
@@ -457,6 +474,7 @@ impl CharacterCoordinator {
             } else {
                 ReactionKind::Peek
             },
+            category: Some(object.category.clone()),
             track: 0,
             started: now,
             deadline: now + 12.0,

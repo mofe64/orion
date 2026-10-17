@@ -375,19 +375,22 @@ class OrionGateway:
                 temporary.unlink(missing_ok=True)
         return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
 
-    BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest')
+    BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest',
+                  'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds')
+    BEHAVIOUR_DEFAULTS = dict.fromkeys(BEHAVIOURS, False) | dict.fromkeys(
+        ('mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'act_sounds'), True)
 
     def get_behaviours(self):
         if self.hardware != 'v2':
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
-        off = dict.fromkeys(self.BEHAVIOURS, False)
+        off = self.BEHAVIOUR_DEFAULTS.copy()
         try:
             value = json.loads(self.behaviours_file.read_text())
             if not isinstance(value, dict) or any(type(item) is not bool for item in value.values()):
                 value = off
         except (OSError, ValueError):
             value = off
-        return {'api_version': API_VERSION, 'behaviours': {key: value.get(key, False) for key in self.BEHAVIOURS}}
+        return {'api_version': API_VERSION, 'behaviours': {key: value.get(key, self.BEHAVIOUR_DEFAULTS[key]) for key in self.BEHAVIOURS}}
 
     def set_behaviours(self, payload):
         if (not isinstance(payload, dict) or not payload or any(
@@ -608,7 +611,7 @@ class OrionGateway:
             if (not isinstance(point, list) or len(point) != 3
                     or any(type(v) not in (int, float) or not math.isfinite(v) for v in point)):
                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'invalid_find', 'Invalid desk point.')
-            result = work('target', point=point, lean=.8)
+            result = work('target', point=point, lean=.8, **{'class': payload['category']})
             if result['status'] == 'unreachable':
                 return {'ok': True, 'status': 'clamped', 'moved': False, 'reason': 'The desk point is unreachable.'}
             wait_movement(result)

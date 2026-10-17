@@ -680,7 +680,7 @@ mod tests {
             // Explicit sleep bypasses fresh presence; otherwise expiry does it.
             let at = if explicit { 6.1 } else { 8.01 };
             rest.tick(at, &mut core, &mut character, &feedback, false);
-            assert_eq!(rest.status(at).state, RestState::GoingToRest);
+            assert_eq!(rest.status(at).state, RestState::PreparingRest);
             assert!(!rest.status(at).presence_deferred);
             for step in 1..=600 {
                 let now = at + step as f64 * 0.02;

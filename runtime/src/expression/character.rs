@@ -10,6 +10,8 @@ use crate::motion::library::{
 };
 use crate::motion::pose::JointPositions;
 use crate::motion::style::MotionStyle;
+#[path = "acts.rs"]
+mod acts;
 #[path = "aim_light.rs"]
 mod aim_light;
 #[path = "hands.rs"]
@@ -279,6 +281,7 @@ struct Attention {
 #[derive(Debug)]
 pub struct CharacterCoordinator {
     pub mind: super::mind::MindState,
+    acts: acts::Acts,
     pub(crate) behaviour_log: Option<super::behaviour::BehaviourLog>,
     surroundings: surroundings::SurroundingsState,
     hands: hands::HandsState,
@@ -318,6 +321,7 @@ pub struct CharacterCoordinator {
     foreground_pending: bool,
     work: Option<aim_light::WorkState>,
     work_anchor: bool,
+    work_category: Option<String>,
 
     /// The foreground scene whose result Orion is waiting for.
     /// Only successful completion of this scene replaces the character's anchor.
@@ -410,6 +414,7 @@ impl CharacterCoordinator {
     pub fn new(seed: u64) -> Self {
         Self {
             mind: super::mind::MindState::default(),
+            acts: acts::Acts::default(),
             behaviour_log: None,
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
@@ -433,6 +438,7 @@ impl CharacterCoordinator {
             foreground_pending: false,
             work: None,
             work_anchor: false,
+            work_category: None,
             foreground_scene_run_id: None,
             thinking_run: None,
             speech_motion_run_id: None,
@@ -887,18 +893,22 @@ impl CharacterCoordinator {
         }
         if self.work_anchor || self.work.is_some() {
             return Target::Object {
-                class: "object".into(),
+                class: self.work_attention_class(),
             };
         }
         if let Some(track_id) = self.attention.as_ref().and_then(|a| a.speaker_track_id) {
             return Target::Speaker { track_id };
         }
-        if let Some(track_id) = self.held_gaze_track().or(self.gaze.status().track_id) {
+        if let Some(track_id) = self.held_gaze_track() {
             return Target::Person { track_id };
         }
-        self.object_attention()
-            .map(|class| Target::Object { class })
-            .unwrap_or_default()
+        if let Some(target) = self.reaction_attention() {
+            return target;
+        }
+        if let Some(class) = self.object_attention() {
+            return Target::Object { class };
+        }
+        self.gaze.mind_target()
     }
 
     /// Automatic rest may interrupt background idles, but never foreground work
@@ -1020,6 +1030,8 @@ impl CharacterCoordinator {
         self.status.enabled = true;
         self.status.state = CharacterState::Starting;
         self.status.active_clip = Some("return_home".into());
+
+        self.schedule_drift(now);
 
         // in our tick method, the coordinator will check the execution of this movement using the starting_run_id
         // If startup completed successfully, it captures the measured posture as the anchor, enters HomeIdle, clears the clip label, and resets the idle timers again.
@@ -1143,6 +1155,12 @@ impl CharacterCoordinator {
             }
             return Ok(self.status.clone());
         }
+        if reaction == "listening" && self.status.state == CharacterState::Listening {
+            return Ok(self.status.clone());
+        }
+        if self.release_listening(reaction, now, core) {
+            return Ok(self.status.clone());
+        }
         // Interrupt any idle or thinking movement and reset timers for idle movement.
         self.preempt_idle_or_thinking(now, core)?;
         self.reset_timers(now);
@@ -1167,8 +1185,14 @@ impl CharacterCoordinator {
         // return error if the reaction is not valid
         match reaction {
             "neutral" => self.status.state = self.idle_state(),
-            "listening" => self.status.state = CharacterState::Listening,
-            "thinking" => self.status.state = CharacterState::Thinking,
+            "listening" => {
+                self.status.state = CharacterState::Listening;
+                self.begin_attention_state(false, now);
+            }
+            "thinking" => {
+                self.status.state = CharacterState::Thinking;
+                self.begin_attention_state(true, now);
+            }
             _ => {
                 return Err(Error::InvalidArgument(
                     "Character state must be neutral, listening, or thinking.".into(),
@@ -1187,6 +1211,7 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
+        self.cancel_acts(now, core)?;
         self.preempt_hands(now, core)?;
         self.preempt_reaction(now, core)?;
         self.gaze.yield_to_priority(now, core);
@@ -1396,6 +1421,12 @@ impl CharacterCoordinator {
             self.preempt_for_foreground(now, core)?;
         }
         self.finish_hands(now, core);
+        if self.acts.lifecycle.is_some() {
+            return Ok(());
+        }
+        if (scene_active || speech_active) && self.acts.drift.is_some() {
+            self.cancel_acts(now, core)?;
+        }
         self.expire_hands(now, core)?;
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)?;
@@ -1690,6 +1721,16 @@ impl CharacterCoordinator {
             // their existing priority paths above this point.
             return Ok(());
         }
+        if self.tick_posture(now, core)? {
+            return Ok(());
+        }
+        if self.status.state == CharacterState::Listening {
+            self.tick_listening(now, core);
+            return Ok(());
+        }
+        if self.status.state == CharacterState::Thinking && self.tick_thinking_beats(now, core) {
+            return Ok(());
+        }
         if !self.hands.blocks_gaze()
             && !self.foreground_pending
             && self.attention.is_none()
@@ -1800,7 +1841,11 @@ impl CharacterCoordinator {
             return Ok(());
         }
         // choose an idle clip based on the idle category
-        let clip = self.choose_idle(category, core);
+        let clip = if self.sleepy_idle(now, core) {
+            "yawn".into()
+        } else {
+            self.choose_idle(category, core)
+        };
         // we check for our anchor to play the idle clip relative to
         let anchor =
             self.status.active_anchor.clone().ok_or_else(|| {
@@ -1894,8 +1939,9 @@ impl CharacterCoordinator {
         random_direction: bool,
     ) -> Result<MotionDefinition> {
         let requested_mirror = self.rng.index(2) == 0 && random_direction;
-        let amplitude = self.rng.range(0.85, 1.15);
-        let tempo = self.rng.range(0.9, 1.1);
+        let (_, amplitude_centre, tempo_centre) = self.idle_factors();
+        let amplitude = amplitude_centre + self.rng.range(-0.15, 0.15);
+        let tempo = tempo_centre + self.rng.range(-0.1, 0.1);
         let safe_side = |mirror: bool| {
             let sign = if mirror { -1.0 } else { 1.0 };
             motion.keyframes.iter().all(|keyframe| {
@@ -3146,30 +3192,36 @@ impl CharacterCoordinator {
     }
 
     fn reset_timers(&mut self, now: f64) {
+        let (interval, _, _) = self.idle_factors();
         self.next_micro_at = now
             + self
                 .rng
-                .range(MICRO_IDLE_MIN_SECONDS, MICRO_IDLE_MAX_SECONDS);
+                .range(MICRO_IDLE_MIN_SECONDS, MICRO_IDLE_MAX_SECONDS)
+                * interval;
         self.next_large_at = now
             + self
                 .rng
-                .range(LARGE_IDLE_MIN_SECONDS, LARGE_IDLE_MAX_SECONDS);
+                .range(LARGE_IDLE_MIN_SECONDS, LARGE_IDLE_MAX_SECONDS)
+                * interval;
         self.update_next_idle_category();
     }
 
     fn reschedule_idle(&mut self, category: NextIdleCategory, now: f64) {
+        let (interval, _, _) = self.idle_factors();
         match category {
             NextIdleCategory::Micro => {
                 self.next_micro_at = now
                     + self
                         .rng
-                        .range(MICRO_IDLE_MIN_SECONDS, MICRO_IDLE_MAX_SECONDS);
+                        .range(MICRO_IDLE_MIN_SECONDS, MICRO_IDLE_MAX_SECONDS)
+                        * interval;
             }
             NextIdleCategory::Large => {
                 self.next_large_at = now
                     + self
                         .rng
-                        .range(LARGE_IDLE_MIN_SECONDS, LARGE_IDLE_MAX_SECONDS);
+                        .range(LARGE_IDLE_MIN_SECONDS, LARGE_IDLE_MAX_SECONDS)
+                        * interval;
             }
         }
         self.update_next_idle_category();
@@ -3185,6 +3237,10 @@ impl CharacterCoordinator {
     }
 
     fn finish_stop(&mut self) {
+        self.work_category = None;
+        self.acts.lifecycle = None;
+        self.acts.drift = None;
+        self.acts.drifted = false;
         self.work_anchor = false;
         self.thinking_run = None;
         self.clear_attention();

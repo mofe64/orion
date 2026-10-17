@@ -5,6 +5,12 @@ import { FailureNotice } from "./FailureNotice";
 import { SettingToggle } from "./Settings";
 
 const controls: Array<[BehaviourKey, string, string]> = [
+  ["mind_idle_rhythm", "Follow shared energy", "Adjust idle timing, movement and background light with Orion’s energy."],
+  ["listen_lean_in", "Listening lean", "Lean gently toward the speaker and release when processing starts."],
+  ["thinking_beats", "Thinking beats", "Use occasional small gestures during a longer thought."],
+  ["wake_sleep_acts", "Wake and sleep gestures", "Stretch after waking and settle before resting."],
+  ["posture_drift", "Posture changes", "Occasionally change the held posture while idle."],
+  ["act_sounds", "Rare gesture sounds", "Add quiet wake, sleep and yawn sounds outside quiet hours."],
   ["object_glances", "Object glances", "Occasionally direct an idle glance toward an object on the desk."],
   ["mutual_gaze", "Mutual gaze", "Acknowledge a sustained look with a small, silent response."],
   ["arrival_notice", "Arrival notice", "Give a silent welcome after the room has been empty for ten minutes."],
@@ -17,7 +23,7 @@ export function BehaviourSettings({ connection, supported, active = true }: { ac
   const preference = useMemo(() => connection && supported ? new BehaviourPreference(connection) : null, [connection, supported]);
   const state = useSyncExternalStore(preference?.subscribe ?? noSubscription, preference?.snapshot ?? emptySnapshot, preference?.snapshot ?? emptySnapshot);
   useEffect(() => { if (active) preference?.start(); return () => preference?.stop(); }, [preference, active]);
-  return <section className="settings-card"><header><div><h2>Character behaviours</h2><p>Optional reactions to Orion’s surroundings. Camera and tracking must be on.</p></div></header>
+  return <section className="settings-card"><header><div><h2>Character behaviours</h2><p>Choose how Orion moves and responds. Visual behaviours also need the camera and tracking.</p></div></header>
     {!connection ? <p className="settings-help">Connect Orion to change its behaviours.</p> : !supported ? <p className="settings-help">These behaviours need Orion’s V2 camera.</p> : <>
       {controls.map(([key, label, help]) => <SettingToggle key={key} label={label} help={help} checked={state.values?.[key] ?? false}
         disabled={!state.values || state.pending} onChange={value => void preference?.choose(key, value)} />)}

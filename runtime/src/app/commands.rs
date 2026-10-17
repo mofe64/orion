@@ -927,6 +927,21 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
         };
     }
+    if command == "character rest" {
+        let result = (|| -> crate::Result<serde_json::Value> {
+            if scenes.is_active() {
+                scenes.cancel(now_seconds, core, audio)?;
+            }
+            if speech.is_active() {
+                speech.cancel(audio)?;
+            }
+            rest.begin_rest(now_seconds, core, character)
+        })();
+        return match result {
+            Ok(value) => value.to_string(),
+            Err(error) => serde_json::json!({"ok":false,"error":error.to_string()}).to_string(),
+        };
+    }
     let (speech_command, cue_value) = speech_cue_argument(command);
     let fields: Vec<_> = speech_command.split_whitespace().collect();
     let scoped_speech =

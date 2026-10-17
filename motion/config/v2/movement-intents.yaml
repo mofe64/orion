@@ -10,6 +10,9 @@ scene_speed_degrees_s:
     other: 180
 poses:
   home: home
+  home_low: down
+  home_attentive: up
+  home_window: redistribute
   rest: rest
   attentive: up
   delight: up
@@ -427,3 +430,51 @@ motions:
     speed_degrees_s:
       base_yaw_joint: 150
       other: 180
+  listen_lean_in:
+    intent: Lean slightly toward the speaker, hold, and return.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: runtime/src/expression/acts.rs uses the held character anchor
+  think_beat_a:
+    intent: Turn the head slightly to one side and return.
+    direction: lateral
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: runtime/src/expression/acts.rs uses the held character anchor
+  think_beat_b:
+    intent: Lower the head slightly and return.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: runtime/src/expression/acts.rs uses the held character anchor
+  wake_stretch:
+    intent: Lift the head and arm gently, then settle.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: runtime/src/expression/acts.rs uses the held character anchor
+  sleep_settle:
+    intent: Sink the head and arm slowly, then return.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: runtime/src/expression/acts.rs uses the held character anchor
+  yawn:
+    intent: Raise the head, hold briefly, then sink back.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: runtime/src/expression/acts.rs uses the held character anchor

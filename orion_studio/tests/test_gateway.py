@@ -84,6 +84,7 @@ class FakeOrionClient:
         self.commands: list[str] = []
         self.motion = self.scene = self.speech = None
         self.reject_reload = False
+        self.mind = None
         self.mode, self.torque_enabled = "holding", True
         self.character = {"enabled": False, "state": "off", "active_anchor": None,
                           "active_clip": None, "next_idle_category": None}
@@ -96,7 +97,7 @@ class FakeOrionClient:
         if command == "status":
             return {"schema_version": 3, "robot": "orion", "build_revision": "test-revision",
                     "mode": self.mode, "torque_enabled": self.torque_enabled,
-                    "motion": self.motion, "last_motion": None, "joints": []}
+                    "motion": self.motion, "last_motion": None, "joints": [], "mind": self.mind}
         if command == "scene status": return {"ok": True, "scene": self.scene, "last_scene": None}
         if command == "speech status": return {"ok": True, "speech": self.speech, "last_speech": None}
         if command == "character status": return {"ok": True, "character": self.character}
@@ -1045,7 +1046,7 @@ class BehaviourPreferenceTests(unittest.TestCase):
     def test_defaults_partial_updates_corruption_and_atomic_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             gateway = OrionGateway(Mock(), hardware='v2', camera_preference_file=Path(directory) / 'camera.json')
-            off = dict.fromkeys(gateway.BEHAVIOURS, False)
+            off = gateway.BEHAVIOUR_DEFAULTS.copy()
             self.assertEqual(gateway.get_behaviours()['behaviours'], off)
             gateway.set_behaviours({'object_glances': True})
             gateway.set_behaviours({'mutual_gaze': True})
@@ -1061,3 +1062,12 @@ class BehaviourPreferenceTests(unittest.TestCase):
                 self.assertEqual(gateway.get_behaviours()['behaviours'], off)
             for value in ({}, None, {'object_glances': 1}, {'surprise': True}):
                 with self.assertRaises(GatewayError): gateway.set_behaviours(value)
+
+class MindStatusTests(unittest.TestCase):
+    def test_gateway_forwards_runtime_mind_and_accepts_older_runtime(self):
+        client = FakeOrionClient()
+        gateway = OrionGateway(client)
+        self.assertIsNone(gateway.status()['mind'])
+        client.mind = {'energy': .25, 'mood': .1, 'label': 'sleepy',
+                       'attention': {'kind': 'hands', 'since': 100}, 'updated_at': 110}
+        self.assertEqual(gateway.status()['mind'], client.mind)

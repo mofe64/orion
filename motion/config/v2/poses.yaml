@@ -265,3 +265,36 @@ poses:
       elbow_pitch_joint: -1.1530389530342435
       head_roll_joint: 0.24434609527920614
       head_pitch_joint: -0.45935925266764666
+  home_low:
+    description: Hold the head and arm slightly lower.
+    tags: [powered, idle_anchor]
+    default_lighting: warm_idle_breathe
+    idle_profile: home
+    positions:
+      base_yaw_joint: 0.01091261478765948
+      shoulder_pitch_joint: 0.8233010452146021
+      elbow_pitch_joint: -1.1280389530342436
+      head_roll_joint: -0.007194172909029231
+      head_pitch_joint: -0.27935925266764666
+  home_attentive:
+    description: Hold a slightly raised head and arm.
+    tags: [powered, idle_anchor]
+    default_lighting: warm_idle_breathe
+    idle_profile: attentive
+    positions:
+      base_yaw_joint: 0.01091261478765948
+      shoulder_pitch_joint: 0.8383010452146021
+      elbow_pitch_joint: -1.1480389530342436
+      head_roll_joint: -0.007194172909029231
+      head_pitch_joint: -0.4193592526676467
+  home_window:
+    description: Turn mildly to one side.
+    tags: [powered, idle_anchor]
+    default_lighting: warm_idle_breathe
+    idle_profile: directional
+    positions:
+      base_yaw_joint: 0.5345113903859583
+      shoulder_pitch_joint: 0.8633010452146022
+      elbow_pitch_joint: -1.1380389530342436
+      head_roll_joint: -0.007194172909029231
+      head_pitch_joint: -0.3593592526676467
