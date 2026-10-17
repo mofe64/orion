@@ -34,7 +34,7 @@ The login user needs sudo access. Models share storage across releases. Allow sp
 4. Sign in to Codex.
 
    ```bash
-   codex login
+   codex login --device-auth
    ```
 
 5. Complete [servo setup](hardware-versions.md#calibrate-v2-first).

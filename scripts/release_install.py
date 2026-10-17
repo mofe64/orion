@@ -208,7 +208,7 @@ def install(payload, root, codename):
         activate(root, release, home, files, System(), commissioning=True,
                  before_restore=lambda folder, data: restore_native_packages(root, codename, folder, data))
         (release / '.orion-preparing').unlink()
-    print('Release installed. Reboot for lighting, Hailo and group permissions. Run codex login, fold into rest, then oriond servo zero and oriond --check.')
+    print('Release installed. Reboot for lighting, Hailo and group permissions. Run codex login --device-auth, fold into rest, then oriond servo zero and oriond --check.')
     print('Start Orion: sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision')
 
 
