@@ -1,111 +1,89 @@
 # Orion quickstart
 
-The Pi runs Orion’s servos, camera, microphone, local speech workers and Codex
-coordinator. Studio connects from your computer for pairing and authoring.
+Orion requires a Raspberry Pi 5 with Raspberry Pi OS Lite 64-bit Bookworm or Trixie. Studio runs on your computer.
 
-## Prepare a new Pi
+## Prepare the Pi
 
-1. In Raspberry Pi Imager, flash **Raspberry Pi OS Lite 64-bit**, Bookworm or
-   Trixie, for a Raspberry Pi 5. Configure the hostname, login user, SSH public
-   key, Wi-Fi and country before writing the image.
-2. Boot the Pi and connect with `ssh USER@HOST.local`.
-3. Install Orion with the command below. The user needs sudo. Models download
-   once into `~/.local/share/orion/voice-stack/models/` and are verified before
-   reuse. Keep enough space for the active release, one rollback and models.
+1. Select the operating system in Raspberry Pi Imager.
+2. Configure the hostname, login user, SSH public key, Wi-Fi and country.
+3. Write the image to the boot drive.
+4. Boot the Pi.
+5. Connect through SSH with your configured user and hostname.
 
-## Install or update
+   ```bash
+   ssh USER@HOST.local
+   ```
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash
-```
+## Install Orion
 
-The installer accepts Raspberry Pi OS Bookworm/Trixie ARM64. It installs the
-system packages, verifies a GitHub release archive and its file manifest,
-installs release-supplied Python 3.12 at `/opt/orion/python`, and creates isolated
-venvs offline. It never uses the OS Python for Orion components.
+The login user needs sudo access. Models share storage across releases. Allow space for models, the active release and one previous release.
 
-For a specific release or a local Docker build:
+1. Run the installer as the login user.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --version vX.Y.Z
-bash scripts/install.sh --from artifacts/orion-X.Y.Z-arm64.tar.gz
-```
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash
+   ```
 
-The local tarball needs its adjacent `.sha256` file. Build one with
-`scripts/build_release.sh vX.Y.Z`; Docker runs ARM64 Debian Bookworm for shared
-binaries and Bookworm/Trixie separately for native camera/Hailo bindings.
-See [release packaging](release-packaging.md) for development and verification.
+2. Reboot for kernel changes and device permissions.
 
-Reboot after the first install for kernel modules and group permissions.
-Then sign in as the Pi login user:
+   ```bash
+   sudo reboot
+   ```
 
-```bash
-codex login
-```
+3. Reconnect through SSH.
+4. Sign in to Codex.
 
-For new servos, assign IDs one at a time; then fold the assembled lamp into
-[mechanical rest](hardware-versions.md#calibrate-v2-first) and run:
+   ```bash
+   codex login
+   ```
 
-```bash
-oriond servo zero
-oriond --check
-sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision
-```
+5. Complete [servo setup](hardware-versions.md#calibrate-v2-first).
 
-Keep the area clear: Orion rises slowly to home. The installer enables the
-units but leaves motion stopped when the direct hardware check fails. The
-first install and a transition from the old V2 coordinate frame stay stopped
-even if that check passes; complete the commissioning steps above. The
-runtime also checks its joint profile before enabling torque. Updates reuse the
-same command and preserve pairing, credentials, preferences and user assets.
+The installer enables the services. First installation leaves them stopped for servo setup. Orion rises slowly to `home` when the services start.
 
 ## Connect Studio
 
-On your computer, follow [Studio development](../orion_studio/README.md#development)
-to install Node.js, pnpm, Rust and the Tauri prerequisites. From the source root:
+1. Follow [Studio development](../orion_studio/README.md#development) on your computer.
+2. Select **Pair Orion**.
+3. Enter the Pi address, such as `http://HOST.local:7447`.
+4. Request a pairing code.
+5. Enter the code spoken by Orion.
+6. Select **Pair**.
 
-```bash
-pnpm --dir orion_studio install
-scripts/studio-dev.sh
-```
+**Use a token instead** accepts the Pi's `~/.config/orion/studio-token` file. See [gateway configuration](configuration.md#studio-gateway).
 
-Choose **Pair Orion**, enter `http://HOST.local:7447`, and request a code. Type
-the code spoken by the lamp and choose **Pair**. Studio saves the verified
-connection. **Use a token instead** accepts `~/.config/orion/studio-token` from
-the Pi. See [pairing details](configuration.md#studio-gateway).
+## Update or restore a release
 
-## Deploy to the Pi
+1. Install a selected release with its tag.
 
-Install a published release over SSH with
-`scripts/deploy_pi.sh --host USER@HOST --version vX.Y.Z`. For development, build
-locally and pass `--from FILE` instead. SSH must already trust the Pi’s host key.
-The same installer handles both paths.
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --version vX.Y.Z
+   ```
 
-The optional [Wi-Fi fallback hotspot](networking.md) works with the
-NetworkManager configuration supplied by Raspberry Pi OS Imager.
+2. Run the installation checks.
 
-## Logs and recovery
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --check
+   ```
 
-```bash
-systemctl status oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision
-journalctl -u oriond -u orion-voice-stack -u orion-vision -n 60 --no-pager
-```
+The check prints servo readings, service status and the Hailo result. A failed check returns an error.
 
-Studio’s Debug page reports model and service readiness. A running unit alone
-does not prove microphone, camera or inference health.
+CAUTION: Software rollback cannot reverse servo EEPROM zeroing. Use a release with the same V2 rest coordinates after zeroing.
 
-Restore the immediately previous release with:
+1. Restore the previous release when an update needs reversal.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --rollback
-```
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --rollback
+   ```
 
-Release directories and transaction snapshots stay under
-`~/.local/share/orion/voice-stack/`. Rollback restores service files and built-in
-assets together; shared models remain available. A failed activation attempts
-that restoration automatically. Do not restore a release using the old V2
-calibration coordinate frame after writing mechanical-rest servo offsets.
+Rollback restores service configuration and package versions. It cannot reverse servo EEPROM changes. The installer refuses rollback into the old V2 joint coordinates.
 
-The explicit AI HAT+ check is `orion-check-hailo` on the Pi. It
-identifies Hailo-8/8L, opens the device through the vision venv, and runs a pinned
-stock model. See [Hailo setup](../vision/README.md#ai-hat-hailo-setup).
+## Logs and local builds
+
+1. Read recent service messages on the Pi.
+
+   ```bash
+   journalctl -u oriond -u orion-voice-stack -u orion-vision -n 60 --no-pager
+   ```
+
+See [release packaging](release-packaging.md) for local archives and SSH deployment. See [networking](networking.md) for the optional fallback hotspot.

@@ -1,432 +1,136 @@
 # Orion Studio
 
-Studio is Orion's desktop app for controls, animation authoring, previews,
-settings and diagnostics. It connects to the Pi gateway over authenticated HTTP.
-The Pi runs the voice pipeline and owns hardware execution.
-
-Editing changes a local draft or preview. **Publish to Orion**, **Play on Orion**
-and the Home controls send explicit requests to Orion. Static previews show
-pose and light settings; measured joint telemetry is available in Debug.
-Debug's Voice card opens conversation history stored on the Pi. The history
-shows recognized requests, replies, tool actions and timing in date order.
-
-The top-bar pill reports the connection. Orion activity shows playback progress
-and **Cancel**, without internal run IDs. Control feedback appears beside the
-control that requested it and clears when you leave the page or the connection
-changes. Studio has no global status bar.
+Studio edits scenes and controls a connected Orion. The desktop application uses Tauri and React. Its Pi gateway forwards authenticated requests to local services.
 
 ## Development
 
-Use Node.js 20.19 or later in the 20.x line, or Node.js 22.12 or later, pnpm,
-Rust and the Tauri 2 prerequisites for your platform. Run from the repository root:
+Install Rust, Node.js, pnpm and the Tauri system prerequisites for your operating system. `package.json` specifies the pnpm version. Run these steps from the repository root.
 
-```bash
-pnpm --dir orion_studio install
-pnpm --dir orion_studio test
-pnpm --dir orion_studio build
-pnpm --dir orion_studio tauri dev
-```
+1. Install desktop dependencies.
 
-`pnpm --dir orion_studio dev` starts the browser frontend at
-`http://localhost:1420`. Desktop pairing persistence and native commands require
-Tauri. Build and sign desktop packages on their target operating systems.
-Browser development supports previews and tab-local pairing. Voice, agent,
-personality and memory settings require the desktop app and a connected Orion;
-Settings explains this prerequisite without offering native-command retries.
+   ```bash
+   pnpm --dir orion_studio install --frozen-lockfile
+   ```
 
-The Pi installation is described in the [quickstart](../docs/quickstart.md).
-Studio uses the Pi's speech service, so opening the desktop app requires no local
-speech-model setup. Closing it leaves Orion's services running.
+2. Run interface tests.
+
+   ```bash
+   pnpm --dir orion_studio test
+   ```
+
+3. Build the interface.
+
+   ```bash
+   pnpm --dir orion_studio build
+   ```
+
+4. Start the desktop application.
+
+   ```bash
+   scripts/studio-dev.sh
+   ```
 
 ## Connect Studio to the Pi
 
-Install the [Pi services](../docs/quickstart.md#prepare-a-new-pi), then
-select **Connect Orion** in Studio. Enter the gateway address, normally
-`http://orion.local:7447`, choose **Get code**, enter the code spoken by Orion
-and choose **Pair**. Studio verifies the connection and saves the desktop
-credential. **Use a token instead** opens manual token entry. See
-[Studio gateway](../docs/configuration.md#studio-gateway) for code limits and the
-journal fallback.
+1. Install Orion with the [quickstart](../docs/quickstart.md).
+2. Select **Pair Orion** in Studio.
+3. Enter the Pi gateway address.
+4. Request a spoken code.
+5. Enter the code.
+6. Select **Pair**.
 
-Studio reconnects after startup or network loss. **Disconnect** pauses retries
-for that session; **Forget this Orion on this computer** removes the saved pairing.
-**Change address** reuses the saved token and verifies the new address before
-replacing the saved connection. A failed check keeps the previous pairing.
-Background connection attempts leave address editing, pairing and saved-lamp
-switching available. **Cancel connection** stops the current attempt without
-forgetting saved lamps. **Cancel request** stops waiting for a spoken code and
-keeps an already connected lamp active.
-The panel distinguishes code verification, checking Orion and saving the
-connection. Credential-store access can wait for a system permission dialog.
-On macOS, find the **orion-studio** Keychain dialog, enter your login Keychain
-password and choose **Allow** to continue. Check other displays if the dialog
-is hidden. This password is entered in the macOS dialog, never in Studio.
-Browser development keeps the connection in memory for the current tab.
-See [saved pairing](../docs/configuration.md#saved-pairing) for storage and limits.
+The default gateway port is 7447. **Use a token instead** accepts the Pi's Studio token. The [configuration reference](../docs/configuration.md#studio-gateway) defines credentials and saved pairing.
 
 ### Hostname discovery
 
-`orion.local` is discovered through mDNS (Bonjour on macOS, Avahi on the Pi).
-The gateway listener and hostname discovery are separate: a running gateway
-cannot help a client whose hostname lookup times out.
+A `.local` hostname uses multicast DNS on the local network. The Pi and computer must share a network that permits this traffic. An IPv4 address can replace the hostname.
 
-If the Mac discovers Orion's IPv6 address but not its IPv4 address, lookup can
-stall beyond Studio's five-second request timeout. On the Pi, enable
-`publish-a-on-ipv6=yes` under `[publish]` in `/etc/avahi/avahi-daemon.conf`, then
-run `sudo systemctl restart avahi-daemon`. This publishes the Pi's IPv4 address
-over IPv6 mDNS as well; it does not pin an IP address. Keep `use-ipv4=yes` and
-`use-ipv6=yes` under `[server]`.
+1. Check gateway connectivity without sending a token.
 
-Check from the Mac:
+   ```bash
+   curl --noproxy '*' --max-time 5 -i http://HOST.local:7447/api/v2/status
+   ```
 
-```bash
-curl --noproxy '*' --max-time 5 -i http://orion.local:7447/api/v2/status
-```
-
-A `401` response without a token confirms
-hostname lookup and HTTP connectivity; Studio's pairing token is still required
-for authenticated status. The gateway must also support the returned address
-family, as configured below.
+An HTTP 401 response means authentication is required. It also shows that the gateway answered the request.
 
 ### Gateway source development
 
-For gateway source development on the Pi, stop its installed service before
-starting a second listener on the same port. Supply the existing catalog,
-joint profile and the trajectory compiler built from the source under test:
+The gateway defaults to loopback access. `--bind ::` accepts IPv4 and IPv6 when the operating system supports a dual-stack socket.
 
-```bash
-uv run --project orion_studio --managed-python python orion_studio/gateway.py serve \
-  --bind :: --port 7447 \
-  --socket /tmp/oriond.sock \
-  --token-file ~/.config/orion/studio-token \
-  --project-root "$PWD" \
-  --hardware v2 \
-  --calibration "$PWD/hardware/profiles/v2-joints.json" \
-  --trajectory-compiler "$PWD/runtime/target/release/orion-trajectory"
-```
+1. Stop the installed gateway before using its port.
 
-`--bind ::` listens on IPv4 and IPv6 using a dual-stack socket, so either address
-returned for `orion.local` can connect. It requires OS IPv6 support. An explicit
-IPv4 bind remains IPv4-only; omitting `--bind` listens only on `127.0.0.1`.
-Existing Pi deployments preserve installed command arguments: change their
-gateway `ExecStart` bind argument to `::` after installing a gateway version
-that supports it, then reload systemd and restart the gateway.
+   ```bash
+   sudo systemctl stop orion-studio-gateway
+   ```
 
-The gateway validates supported operations and forwards hardware commands through
-the private runtime socket. The [system architecture](../docs/system-architecture.md)
-describes its asset and voice-service connections.
+2. Build the trajectory compiler required by the gateway.
+
+   ```bash
+   cargo build --release --manifest-path runtime/Cargo.toml --locked
+   ```
+
+3. Run the source gateway with the V2 catalogue and compiled trajectory program.
+
+   ```bash
+   uv run --project orion_studio --locked --managed-python python orion_studio/gateway.py serve      --bind :: --port 7447 --socket /tmp/oriond.sock      --token-file ~/.config/orion/studio-token --project-root "$PWD"      --hardware v2 --calibration "$PWD/hardware/profiles/v2-joints.json"      --trajectory-compiler "$PWD/runtime/target/release/orion-trajectory"
+   ```
+
+4. Run the gateway tests in its managed environment.
+
+   ```bash
+   uv run --project orion_studio --locked --managed-python python -m unittest discover -s orion_studio/tests -v
+   ```
 
 ## Home
 
-Home shows Orion’s mode, listening, Expressions and lamp controls after connecting.
-When disconnected, it shows one **Connect Orion** action and a compact placeholder;
-Animation remains available for scenes and previews.
+Home shows mode, listening, lamp controls, expressions and active alerts. Disconnected Studio keeps local scene editing available.
 
-On V2, **Tracking: Off / Idle / Faces / Hands** sits beside Listening. It loads the saved Pi
-mode and allows one selection at a time. Saving shows a notice; a failed save
-restores the previous choice and displays an error. Camera-off and disconnected
-states disable it with an explanation. Off hides boxes while the plain feed
-continues. Tracking Idle allows enabled autonomous behaviours and conversation
-gaze without continuous ambient following. This selection is separate from the
-Idle/Lamp routine mode. See [camera and tracking behaviour](../docs/system-architecture.md#camera-and-vision)
-for detector, work-following, gaze and wake-turn effects.
+**Idle mode** permits automatic rest. **Lamp mode** keeps Orion awake. **Pause mode** stops automatic movement without changing the selected mode. **Go to rest** starts the runtime's rest sequence.
 
-Choose **Idle mode** for autonomous movement with timed rest, or **Lamp mode** to
-stay on with animations. **Pause mode** and **Resume mode** control automatic
-movement without changing the chosen mode. Settings shows the same mode label and
-links to Home. **Go to rest** is a separate action: it cancels foreground work and
-follows the calibrated descent. Measured arrival allows torque release and keeps
-the light off until confirmed waking. Microphone mute is controlled separately
-through **Listening**. Timers show time remaining and the local clock time.
+The V2 tracking selector offers Off, Idle, Faces and Hands. This setting differs from the lamp's Idle/Lamp mode. Camera privacy and microphone mute remain independent.
 
-Lamp brightness and color apply on release; changes within 150 ms combine into
-one command. Sliders retain keyboard focus while a request is running; the latest
-released setting applies after that request finishes. Choosing a mood also applies
-it. These changes turn the lamp on;
-rest keeps its light off. Navigation or a connection change cancels pending
-commits. The switch applies immediately and uses runtime light power when reported.
-Orion does not report brightness, so the brightness dial shows **Not set in this
-session** until the owner chooses or successfully sets a value. Speech, scenes and
-rest can override visible output. The 3D model shows the hardware's `home` pose,
-supports rotation at fixed zoom and uses a neutral light until a lamp setting is
-accepted. It is a preview, not live joint telemetry.
-
-New alarms and reminders open from collapsed rows in the timers card. Lists and,
-on V2, the camera share the row below Expressions.
-
-Expressions shows up to six built-in gestures and published owner scenes. When
-both collections are large, three places go to each; **See all** opens Animation.
-Scene, speech and foreground movement gates still apply.
-
-Appearance in Settings is the single light/dark theme control. The theme is shared
-across Home, Animation, the editor and Settings and saved on this computer. Debug
-mode adds a Diagnostics shortcut on Home.
+Lamp controls apply released slider values. A scene, speech or rest can override visible output. The home model is a pose preview; it does not display live joint feedback.
 
 ### Camera feed
 
-On V2, Home's Camera card shows the live feed. Camera capture is a saved Pi
-privacy setting, independent of microphone mute. Turning it off stops capture
-for every viewer and clears the image. If the feed cannot connect, **Turn
-camera off** remains available. **Save snapshot** downloads one JPEG to the
-Studio device only when clicked; live frames are not saved automatically.
+Home and Debug can show the V2 camera feed. **Turn camera off** changes the Pi privacy setting for every viewer. **Save snapshot** saves one image on the Studio computer only after selection.
 
-A steady, full-brightness cyan band at the top centre of the V2 ring indicates
-viewing. It occupies three adjacent LEDs; the other 21 retain lamp, scene,
-speech and alarm lighting. The band remains steady while streaming and for
-at least three seconds after a snapshot. Rest states suppress it along with
-viewing. See the [runtime indicator contract](../runtime/README.md#camera-viewer-indicator).
+The gateway sends the bearer token in an Authorization header. It does not put credentials in image URLs. Detection boxes require exact capture timestamp matches and expire after 300 ms. Leaving the view ends its stream.
 
-Home draws face boxes on a separate canvas over the live feed, with track IDs
-and a yellow highlight for the chosen target. Debug's **Show face boxes** toggle
-controls the same overlay. Boxes require an exact match between the detection
-batch and JPEG capture timestamp; timestamps remain decimal strings to preserve
-nanosecond precision. Studio includes request time in the reported capture age
-and clears boxes at 300 ms, even when frames or detection requests stall. A new
-frame, reconnect, camera-off or lost viewer lease clears mismatched evidence.
-Boxes stay in memory and are never saved or logged; saved snapshots contain only
-the camera JPEG.
-Leaving Home or Debug cancels the stream and releases its viewer indication.
-Dropped streams reconnect automatically; `camera_off` waits for an explicit
-privacy change, and invalid credentials require reconnecting Orion.
-The last stream error stays visible while retrying and clears when frames resume.
-
-The gateway protects all camera routes with the existing bearer token:
-
-| Route | Behaviour |
-| --- | --- |
-| `GET /api/v2/camera/stream` | Proxy the multipart JPEG feed |
-| `GET /api/v2/camera/snapshot` | Proxy one 640×360 JPEG |
-| `GET /api/v2/camera/observations` | Proxy observation JSON |
-| `GET /api/v2/camera/detections` | Proxy fresh preview boxes while an existing healthy viewer holds the lease |
-| `POST /api/v2/camera/enabled` | Save `{"camera_enabled": true}` or `false` |
-| `GET /api/v2/tracking/mode` | Read saved `tracking_mode` and camera privacy state |
-| `POST /api/v2/tracking/mode` | Atomically save `{"tracking_mode": "off"}`, `"idle"`, `"faces"` or `"hands"`; reject unknown modes |
-
-Streams and snapshots return HTTP 503 with `error.code: camera_resting` while
-rest is `going_to_rest`, `resting`, `waking` or `fault`. Open streams end when
-rest starts; automatic reconnect resumes the feed after waking. Missing or
-unavailable rest telemetry also prevents viewing. Camera-off responses retain
-HTTP 503 and `error.code: camera_off`. Studio uses
-`fetch` with an Authorization header and incrementally parses parts by their
-Content-Length; it never places a token in an image URL. The gateway serves
-`multipart/mixed` with the vision service's JPEG boundaries unchanged:
-WebKit cancels `multipart/x-mixed-replace` responses fetched as raw data.
-Studio also accepts the older type for other browser engines. Updating a Mac
-Studio frontend requires the matching gateway update on the Pi for live viewing.
-JPEG decoding and rendering keep the latest complete frame, and disconnecting aborts pending
-network work. The gateway accepts at most eight concurrent stream and snapshot
-requests.
-
-`--vision-socket` defaults to `/tmp/orion-vision.sock` and
-`--camera-preference-file` defaults to `~/.config/orion/camera.json`. The gateway
-and vision service must use the same preference path. Streams and snapshots
-are delivered only after `oriond` accepts the viewer-marker lease. The gateway
-checks rest every 100 ms and renews one shared lease once a second while
-viewers remain; failed renewal ends the feed. A snapshot renews the lease
-after delivery, retaining the indication for at least three seconds. The last
-viewer clears the marker only after that snapshot hold has elapsed; otherwise
-the runtime lease expires naturally. See the [runtime marker contract](../runtime/README.md#camera-viewer-indicator)
-and [vision setup](../vision/README.md#service-setup-and-development).
-Detection requests use the existing viewer lease and check it before and after
-the vision response. Polling boxes cannot start viewing or extend the indication.
-`--tracking-preference-file` overrides the independent tracking preference;
-gateway and Vision must use the same path. See [saved settings](../docs/configuration.md#camera-privacy-and-profile).
+The runtime shows a cyan ring band while viewing permission remains active. Rest blocks camera viewing. See the [runtime indicator](../runtime/README.md#camera-viewer-indicator).
 
 ## Animation library and scene editor
 
-Animation separates the built-in Orion collection from user scenes and poses.
-Asset names use sentence case throughout Studio. Selecting an asset opens its preview.
-The Poses list and create dialog omit calibration references, shutdown-only poses
-and built-in transition sub-poses. Those assets remain available to movement
-compilation and in-scene editing. Built-ins use owner descriptions supplied by
-Studio; unknown built-ins show no description. User descriptions remain visible.
-The YAML descriptions remain engineering records. **Preview** and **Preview pose** affect
-the model; **Play on Orion** and **Go to pose on Orion** request hardware execution.
-Movement preview compilation requires a connected runtime and its calibration.
-Static pose browsing works offline. **Movement only** plays movement without light
-or sound. **Return to home pose** is the single return-home playback action; the
-built-in return-home scene is omitted from the browsing list.
+A pose contains five joint positions. A motion describes travel between positions. A scene combines motion, light and audio. Built-in assets remain read-only.
 
-A pose defines all five joint positions. A motion describes the journey between
-positions, including travel, holds and arrival behavior. A scene combines motion,
-lighting and sound. For example, a left-facing pose supplies the destination, a
-look motion adds anticipation and settling, and a scene adds a light or cue.
-See the [asset reference](../docs/motion-reference.md) and [scene format](../scenes/README.md).
+Local drafts save on the Studio computer. **Publish to Orion** sends a scene and its owned poses and motions to the Pi. Publication requires completed trajectory compilation.
 
-**Create scene** starts from a scene copy or pose and opens the editor. Drafts save
-automatically on this computer and survive restarts. The visible save state
-reports **Saving…**, **Saved on this computer** or **Couldn't save**. Scene names
-use raw draft text while focused and sentence case after editing. They commit on
-blur or Enter: a name is required, must be unique and cannot replace a
-built-in scene. **Publish to Orion** sends the scene and its owned dependencies
-to the Pi. Its disabled state explains whether Orion is disconnected or still
-calculating timing. Published custom content must be updated before changed poses
-can run on Orion. Storage errors remain visible and
-prevent leaving an unsaved draft. Publishing remains available to preserve the
-scene on Orion when local storage fails.
+1. Select **Create scene**.
+2. Choose a scene copy or starting pose.
+3. Edit the Movement, Light and Sound tracks.
+4. Select **Preview** to inspect the local model.
+5. Select **Publish to Orion** to save the scene on the Pi.
 
-Preview preparation, publication and playback failures show a plain sentence
-beside their controls. **Technical details** keeps the gateway diagnostics
-collapsed until opened.
+WARNING: Hardware playback moves powered joints. Keep the movement area clear before playback.
 
-The scene editor fits the desktop viewport. Its Movement, Light and Sound summaries
-stay visible at 1440×900 and 1280×800, including while timing is calculated.
-Expanding a track keeps all three summaries visible above its detailed items.
-The details scroll in a separate area below that opaque overview without hiding
-Light or Sound. The 3D preview retains at least 10rem of height when tracks expand.
-The selection inspector has one scroll area. Drag the playhead to scrub, or use
-its arrow-key controls. Short clips use ellipses; select a clip to read its full
-name above the tracks. **Preview from** changes only the model's starting pose;
-Orion starts from wherever it is. All model views use **Drag to rotate** guidance.
-The editor authors scenes, including scene-owned poses and movements; standalone
-pose and movement authoring is unavailable. Movement clips follow the preceding
-movement by default. Reordering compiles a
-continuous sequence; existing explicit gaps remain until reordering. Playback
-and publication wait for compilation to finish.
+6. Select **Play on Orion** to run the published scene.
 
-Light and sound can use elapsed time or a movement marker. The editor resolves
-these against compiled timing. The selected movement or pose offers **Add delay**
-in the inspector. Light and sound use **Delay before**. Choose a delay in the
-track to change its duration.
-Sound durations come from WAV metadata, and sound clips queue within their track.
+**Preview from** changes the model's starting pose. Physical playback starts at Orion's measured position. **Split into poses** exposes motion components for editing.
 
-Choose **Split into poses** in the movement inspector, or use the right-click
-menu, to expose its poses and nonzero delays. Components retain their shared
-movement compilation and smooth transitions. Edit or delete them in the
-inspector; deleting a pose also removes
-its attached delay. Split metadata stays in the local draft and is omitted from
-published scenes. Shift+F10 opens the same menu for keyboard users.
+Light and sound events use elapsed time or motion markers. **Edit pose** creates a pose owned by the scene. Standalone pose and motion creation is outside this editor's workflow.
 
-**Edit pose** opens calibrated joint controls for the preview. **Complete edit**
-stores a pose owned by that scene. These poses stay outside the standalone pose
-library. Relative components are converted to absolute poses from their compiled
-positions when edited. Renaming a scene updates its owned references.
-
-Lighting offers Orion presets and custom Constant, Pulse, Breathe and Fade effects.
-Each custom stage selects warm white or a hue and its own brightness.
-**Overall brightness** scales every stage together without changing their
-relative levels. Choosing a preset clears custom stage overrides. The browser
-and runtime use the same stage curves;
-physical brightness and clearance still require checks on Orion.
-
-**Delete scene** asks for confirmation and shows **Scene deleted** beside the
-library after success. A failed deletion keeps the dialog open with a plain
-message and collapsed **Technical details**. Deleting a draft removes its local copy.
-Deleting a published user scene checks its content revision and removes its owned
-poses and movements through the gateway. Standalone poses and sounds remain
-available. A rejected catalog reload restores the previous files. Built-in scenes
-remain read-only.
+Deleting published user scenes checks the loaded revision. It removes scene-owned dependencies. A rejected runtime reload restores previous files. See [scene schema](../scenes/README.md).
 
 ## Voice observation
 
-The Pi coordinator runs Qwen, Codex and Piper Alba Medium,
-uploads response audio to the local gateway and waits for `oriond` playback
-completion. Studio polls the gateway for
-voice status, transcripts, models and timing.
+Studio reads voice state, transcripts and timing through the gateway. The Pi owns recognition, agent requests, synthesis and playback.
 
-A voice preset change applies to the next reply without restarting the agent or
-ASR. Other model changes restart the coordinator and speech workers. An idle
-restart can preserve the provider thread; restarting the whole service recovers
-the active logical conversation in a replacement provider.
-See [voice settings](../docs/configuration.md#voice-settings).
-
-**Debug → Voice → View conversation history** offers **Conversations** and
-**Behaviours**. Conversations groups accepted turns into one entry for 24 hours
-from the first turn, with reply/delivery outcomes and expandable activity.
-Rejected or empty wakes produce no entries. Behaviours shows dated runtime
-attention, idle and rest events with category filters and pagination. Settings
-shows conversation provenance on extracted memories. See the
-[history policy](../docs/voice-architecture.md#agent-conversation-and-memory).
-
-The [voice architecture](../docs/voice-architecture.md) explains wake verification,
-continued command capture, response buffering and the follow-up window. A generated
-first chunk does not establish audible response time; the coordinator may buffer
-the full response when synthesis is slower than playback.
+History shows saved conversations and behavior events. Camera images and microphone audio do not enter those records. See [conversation storage](../history/README.md).
 
 ## Settings and Debug
 
-Settings has one ordered column: **Orion**, **Personality and memory**,
-**Character behaviours**, **Location**, **Voice**, **Studio**, then **Developer tools**. Orion contains mode, listening and alert sounds.
-Appearance, preview sound, reduced UI motion and debug visibility save on this
-computer with inline **Saved** feedback. Listening and alert sounds apply on the Pi
-immediately; each sound choice applies when its next alert starts. An alert already
-ringing keeps its sound. Sound choices come from the connected runtime; an older
-runtime requires an update before these selectors become available.
+Settings controls personality, memory, character behaviors, location, voice and desktop appearance. Most choices save automatically. Voice settings use **Save** and restart the voice coordinator.
 
-Personality choices save automatically after a short pause, preserving newer
-choices made during a save. Pending saves finish when you leave Settings;
-a connection change clears the old profile and cancels deferred changes. Valid
-memory text saves when leaving its field; **Cancel**
-discards an unsaved memory draft. Deletion still requires confirmation. Changes
-refresh provider context on Orion’s next request while preserving the history
-group, and failures preserve the draft.
-Relevant memories are sent to Codex when used; editing or deleting does not erase
-information already sent to Codex.
+Memory and personality changes refresh agent context on the next request. Removing local memory does not erase information already sent to Codex.
 
-**Voice** is the only section with a Save button. Codex model and effort choices
-come from the active runtime’s advertised catalog, using friendly names while
-preserving model IDs. Saving turns listening off and restarts the voice coordinator;
-turn listening on when Orion is ready. Saving while voice status reports an error
-first attempts to mute, then retries startup. Alba is the fixed British English voice.
-
-Until saved voice settings or the profile loads, their controls show a loading
-message or a plain failure with collapsed **Technical details**. Settings never
-offers local Mac model folders. Browser development shows the desktop-app and
-connection prerequisite. See [voice settings](../docs/configuration.md#voice-settings).
-
-**History** is visible in navigation without debug mode and shows saved conversations,
-voice steps and times. It requires the desktop app and a connected Orion. Tool
-request and result JSON stays collapsed. Debug retains its history link.
-
-Debug shows voice activity reported by Orion's Pi, transcripts, model details
-and stage timings. It
-shows plain labels beside raw runtime, character, clip, idle-category and playback
-state tokens. It also displays joint position, velocity, current, voltage and temperature when
-reported by the runtime. `/api/v2/debug/logs` returns up to 200 journal entries
-from `oriond`, `orion-studio-gateway` and `orion-listener`. The gateway account
-needs journal access. For voice-host startup and model errors, inspect
-`journalctl -u orion-voice-stack` on the Pi.
-
-Debug's **Turn torque off** requests `release_movement` and refreshes status.
-The UI blocks it during character mode or active motion; the gateway also rejects
-active motion or scenes. Releasing torque stops the joints holding position.
-Support Orion before using this control.
-
-## Pi deployment
-
-Use [Pi deployment](../docs/quickstart.md#deploy-to-the-pi) to build and activate the
-matching runtime, gateway, listener and voice host. The deployment preserves saved
-settings and the existing asset catalog and checks readiness before accepting the
-release. The [motion architecture](../docs/motion-architecture.md)
-describes the runtime contracts used by previews and hardware execution.
-
-Home shows pending reminders, repeat weekdays and time, and missed reminders for
-24 hours. **New reminder** saves through the runtime `routines` operation. A
-one-time date/time uses the Studio device timezone; repeating times use Orion’s
-local timezone. Gateway validation rejects unknown fields and multiple triggers.
-
-Home’s **Lists** card reads and edits shopping and to-do lists on Orion. Tick an
-item to remove it, confirm before clearing all items, and use **Copy list** for
-plain text. **Refresh list** picks up edits made by voice. The gateway’s private
-service bridge forwards `lists`; stale snapshots cannot erase newer items.
-
-Settings → Location searches Open-Meteo through the Pi service and asks you to select a match. The selected name, coordinates and IANA timezone save on the Pi, beside memory in `weather.json`. Temperature units can follow memory (otherwise Celsius) or an explicit Settings preference. Home’s alarm form supports recurring days and a morning briefing after dismissal.
-
-Home’s alarm form includes sunrise light (5–60 minutes before the alarm). Structured lamp operations accept `transition_seconds` (0–3600). Gateway validation rejects invalid fade durations, sunrise values and light routine durations before forwarding the runtime request.
-
-Recurring alerts on Home offer **Cancel occurrence** and **Cancel series**. Cancelling a snooze preserves the original recurring alarm.
-
-Settings reports unreadable next-conversation reminder storage with error details and Refresh. Agent replies continue while that storage needs repair.
-
-### Character behaviour preferences
-
-On V2, Settings includes **Character behaviours** with **Object glances**,
-**Mutual gaze** and **Arrival notice** switches. It reads the saved Pi preference and saves changes immediately through
-the authenticated gateway. A failed save reverts the switch and retains an
-explanatory notice; older polling responses cannot overwrite a save. Camera
-privacy and Tracking Off suppress the behaviour without changing its saved
-preference. See [configuration](../docs/configuration.md#character-behaviours).
-
-Character behaviour preferences refresh while Settings is visible. Leaving
-Settings cancels its polling and pending reads; returning refreshes the saved
-values. Settings form drafts remain mounted across navigation.
+Debug shows service errors, camera controls and technical details. The desktop app requires a connected Pi for remote status and saved history.

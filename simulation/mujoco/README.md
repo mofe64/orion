@@ -1,78 +1,79 @@
 # Orion MuJoCo tools
 
-MuJoCo implements Orion's simulation `RuntimeDriver`. It receives the same
-Rust-compiled joint targets, 50 Hz lifecycle, markers, cancellation, and
-measured-settling logic as the hardware runtime. V1 adds physics and diagnostic
-reporting. V2's fixed-base CAD model uses kinematic tracking and reports its
-unvalidated dynamic scope explicitly. Both consume the Rust trajectory.
+MuJoCo provides the runtime's simulation driver. It receives the same compiled joint targets, markers, cancellation requests and completion checks as hardware.
 
-Read the [how Orion moves](../../docs/motion-architecture.md)
-and [motion reference](../../docs/motion-reference.md)
-before changing the backend or motion-player contract.
+V1 uses physical simulation. V2 uses a fixed-base CAD model with kinematic joint tracking. Kinematic tracking follows requested joint positions without simulating full lamp dynamics.
 
 ## Python environment
 
-From the Orion repository root, create the simulator environment and install
-its dependencies:
+Run these steps from the repository root.
 
-```bash
-uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python \
-  -r simulation/mujoco/requirements.txt pytest
-```
+1. Create the simulator environment with managed Python 3.12.
 
-The runtime uses `.venv/bin/python` for the MuJoCo bridge by default.
+   ```bash
+   uv venv --managed-python --python 3.12 .venv
+   ```
 
-## V2.1 model
+2. Install simulator and test dependencies.
 
-Run `oriond --serve --backend mujoco --hardware v2` from the repository root
-after building the runtime. The model, portable meshes, provenance and estimated
-mass properties live in `simulation/mujoco/v2/`. Use the
-[hardware-version guide](../../docs/hardware-versions.md#cad-urdf-and-mujoco)
-for playback, CAD import and PLA mass overrides. The v1 calibrated editors below
-do not establish v2's physical zeros or travel limits.
+   ```bash
+   uv pip install --python .venv/bin/python -r simulation/mujoco/requirements.txt pytest
+   ```
+
+The Rust bridge uses `.venv/bin/python` by default.
+
+## Run V2
+
+1. Build the runtime.
+
+   ```bash
+   cargo build --manifest-path runtime/Cargo.toml --locked
+   ```
+
+2. Start the V2 simulator daemon.
+
+   ```bash
+   runtime/target/debug/oriond --serve --backend mujoco --hardware v2 --start-pose home
+   ```
+
+3. Use the [runtime controls](../../runtime/README.md#control-the-daemon) from another terminal.
+
+The V2 model files live in `simulation/mujoco/v2/`. Its joint configuration uses `hardware/profiles/v2-joints.json`.
 
 ## Calibrated pose editor
 
-`pose_editor.py` is the visual editor for Orion's existing named poses. It is
-separate from `pose_tuner.py`: the editor browses and saves the canonical pose
-library, while the tuner remains a non-writing numeric development tool.
+The pose editor edits V1's named pose library. The separate pose tuner provides numeric adjustment without writing the library.
 
-Prepare the [Python environment](#python-environment), then run the commands
-below from the Orion repository root. Validate the model,
-calibration, and every pose without opening windows:
+1. Check the V1 model and pose library without opening a window.
 
-```bash
-.venv/bin/python simulation/mujoco/pose_editor.py \
-  --check
-```
+   ```bash
+   .venv/bin/python simulation/mujoco/pose_editor.py --check
+   ```
 
-Open the editor and MuJoCo viewer:
+2. Open the pose editor and MuJoCo viewer.
 
-```bash
-.venv/bin/python simulation/mujoco/pose_editor.py
-```
+   ```bash
+   .venv/bin/python simulation/mujoco/pose_editor.py
+   ```
 
-The default editable library is
-`motion/config/v1/poses.yaml`. Use Previous/Next or the pose
-selector to browse, move the five sliders for live preview, and choose Save
-pose (or press Ctrl+S) to update the selected pose. Alt+Left and Alt+Right also
-cycle through poses. Unsaved edits trigger a save/discard prompt when changing
-poses.
+3. Select a pose.
+4. Adjust its joint sliders.
+5. Select **Save pose**.
 
-The default calibration is the V1 snapshot in
-`simulation/mujoco/config/servo_calibration.json`. Slider endpoints are computed
-from each joint's `safe_min_delta_raw`,
-`safe_max_delta_raw`, `encoder_direction`, and the 4096-count encoder
-resolution in the selected physical calibration file. Exact-value entries are
-checked against those same bounds. The editor validates all poses at startup
-and writes only the five numeric lines belonging to the selected pose.
+The default library is `motion/config/v1/poses.yaml`. The default calibration is `simulation/mujoco/config/servo_calibration.json`. Slider limits follow that calibration.
 
-Pass `--calibration` only when deliberately testing a different capture. If you
-accept a different physical zero, regenerate the MJCF joint references;
-changing the editor's calibration alone updates limits but not model geometry.
+Changing calibration limits does not change model geometry. URDF origins and MJCF references define that geometry. See the [robot description](../../description/README.md).
 
-Servo encoder indices do not encode the absolute angle between a mounted horn
-and its CAD mesh. `config/model_reference.json` records the visual alignment
-that supplies this missing correspondence while the calibration snapshot
-continues to define physical zero and safe travel.
+## Model checks and renders
+
+1. Run geometry checks in the prepared environment.
+
+   ```bash
+   .venv/bin/python -m pytest tests simulation/mujoco/test_v2_model.py
+   ```
+
+2. Regenerate the V2 rest reference images.
+
+   ```bash
+   .venv/bin/python scripts/render_v2_rest.py
+   ```

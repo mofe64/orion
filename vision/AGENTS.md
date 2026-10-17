@@ -1,12 +1,7 @@
 # Vision constraints
 
-Captured frames stay in memory: never write them to disk. Replay fixtures are
-synthetic input images, not captured camera frames. Only explicitly authorised
-interfaces may send frames off the Pi (the authenticated Studio feed).
+Captured camera frames stay in memory. Never write them to disk. Synthetic replay fixtures can use image files. Only explicitly authorized interfaces can send frames outside the Pi. The authenticated Studio feed is one such interface.
 
-The service never moves the robot except through runtime `gaze` commands.
-Never write servo goals or bypass the trajectory compiler and calibration.
+Send movement requests through runtime gaze commands. Never write servo goals directly. Keep the trajectory compiler and joint-limit checks in the movement path.
 
-Inference is bounded. Keep the latest frame and drop older frames instead of
-queuing work. Camera callbacks only copy buffers and metadata; JPEG encoding,
-file access and model work run outside them and outside the runtime tick.
+Keep only the latest frame for inference. Drop older frames instead of queuing them. Camera callbacks copy buffers and metadata only. Run JPEG encoding, file access and model work outside callbacks and the runtime tick.

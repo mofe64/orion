@@ -1,181 +1,92 @@
 # Wi-Fi fallback hotspot
 
-Orion can expose a password-protected Wi-Fi hotspot when its normal Wi-Fi
-connection fails. A laptop on that network reaches SSH at `10.42.0.1` and the
-Studio gateway at `http://10.42.0.1:7447`. Codex replies and web search still
-need an internet connection. Existing runtime timers, scenes and local robot
-controls do not depend on an internet connection.
+The optional helper starts a password-protected hotspot when normal Wi-Fi fails. Clients reach SSH at `10.42.0.1` and Studio at `http://10.42.0.1:7447`.
 
-The fallback requires NetworkManager to own the Wi-Fi interface. Ethernet can
-remain under `systemd-networkd`; NetworkManager does not need to own both.
-Installing the helper does not migrate an interface between network managers.
+NetworkManager must own the Wi-Fi interface. Installing the helper does not change network managers. Codex replies and web search still require internet access.
 
 ## Install on the Pi
 
-Run from the Orion source root on a Raspberry Pi OS Bookworm/Trixie Pi with NetworkManager,
-`dnsmasq-base`, `iw` and Orion’s managed Python 3.12 installed. Normal Wi-Fi must already
-be connected and configured to autoconnect. Verify the radio supports AP mode
-and its configured country matches the robot's location:
+Normal Wi-Fi must already connect automatically. The radio must support access-point mode. Run these steps from the repository root after installing Orion.
 
-```bash
-sudo apt install dnsmasq-base iw
-systemctl is-active NetworkManager
-nmcli -f DEVICE,TYPE,STATE,CONNECTION device status
-nmcli -g WIFI-PROPERTIES.AP device show wlan0
-iw reg get
-sudo /opt/orion/python/bin/python3.12 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Ariadne --plan
-sudo /opt/orion/python/bin/python3.12 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Ariadne
-```
+1. Install the network tools.
 
-Use the actual country, interface (`--interface`) and unique SSID. The installer
-prints the password only when it creates the profile. Repeat installs preserve
-it. Existing profiles or files without matching installation metadata cause the
-installer to stop. The installer snapshots managed files before replacing them
-and restores them if activation fails. It does not activate the hotspot or
-replace the current Wi-Fi connection during installation.
+   ```bash
+   sudo apt-get install -y dnsmasq-base iw
+   ```
 
-Installed paths:
+2. Check access-point support for the selected interface.
 
-| Path | Responsibility |
-| --- | --- |
-| `/usr/local/sbin/orion-wifi-fallback` | Read device state and request connection activation |
-| `/etc/orion/wifi-fallback.env` | Root-owned interface, home UUID and hotspot UUID; contains no Wi-Fi passwords |
-| `/etc/systemd/system/orion-wifi-fallback.service` | Root oneshot with a 50-second timeout; ordered after NetworkManager |
-| `/etc/systemd/system/orion-wifi-fallback.timer` | First check at 45 seconds after boot, then 20 seconds after each run finishes, with 5-second timer accuracy |
-| `/run/orion-wifi-fallback/home-attempt` | Pending home attempt across timer runs; cleared on connection success or reboot |
-| `/var/lib/orion/wifi-fallback-backups/` | Installer snapshots of previously managed files |
+   ```bash
+   nmcli -g WIFI-PROPERTIES.AP device show wlan0
+   ```
 
-The NetworkManager profile is named `orion-fallback-hotspot`. It uses 2.4 GHz,
-WPA2/CCMP, `ipv4.method shared`, `10.42.0.1/24`, and `ipv6.method ignore`.
-NetworkManager supplies DHCP through `dnsmasq-base`; no independent `dnsmasq`
-or `hostapd` service is configured. The profile's autoconnect is disabled when
-it is created. Only the helper activates it.
+3. Preview installation with your country's code and a unique network name.
+
+   ```bash
+   sudo /opt/orion/python/bin/python3.12 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Lamp --plan
+   ```
+
+4. Install the helper with the same settings.
+
+   ```bash
+   sudo /opt/orion/python/bin/python3.12 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Lamp
+   ```
+
+5. Save the printed hotspot password securely.
+
+`--interface` selects another interface. Repeated installation preserves the password. The installer keeps the active Wi-Fi connection unchanged.
 
 ## Connection behavior
 
-Connected devices, including an active hotspot, are left alone. Connecting and
-disconnecting devices are also left alone. For a disconnected or failed device,
-the helper retries the saved home UUID with a 20-second `nmcli` wait. If that
-fails, it reads the device state again. It starts the hotspot only if the device
-remains disconnected or failed, using another 20-second wait. A client timeout
-does not prove NetworkManager has finished connecting. The helper remembers
-that pending attempt across timer runs: once it fails and the device becomes
-idle, the next run starts the hotspot instead of retrying home indefinitely.
-Unavailable, unmanaged
-or unreadable device states produce a diagnostic without changing connections.
+The helper leaves connected, connecting and disconnecting interfaces alone. For a disconnected interface, it first retries the saved home connection. It starts the hotspot if that attempt fails.
 
-Once active, the hotspot stays active until an explicit connection change or
-reboot. It does not switch away from a connected Wi-Fi network merely because
-that network has lost internet access. The 45-second timer is the first check,
-not a guarantee of hotspot or application readiness; existing connection
-attempts and boot synchronization can delay both.
+The hotspot stays active until an explicit connection change or reboot. Loss of internet alone does not trigger it. Local controls, timers and scenes can continue without internet.
 
-The helper does not wait for `network-online.target`, stop or restart Orion's
-application services, or change servo state. Services that wait for that target
-retain their existing behavior. Gateway access requires its installed listener
-to accept the hotspot's IPv4 address; the supplied `--bind ::` template does.
+| Path | Function |
+| --- | --- |
+| `/etc/orion/wifi-fallback.env` | Interface and connection IDs |
+| `/usr/local/sbin/orion-wifi-fallback` | Recovery helper |
+| `/etc/systemd/system/orion-wifi-fallback.timer` | Periodic checks |
+| `/var/lib/orion/wifi-fallback-backups/` | Configuration backups |
+
+NetworkManager provides address assignment through `dnsmasq-base`. The helper does not stop Orion services or change servo state.
 
 ## Connect and return home
 
-Join the hotspot from the laptop and keep the connection when the laptop warns
-that it has no internet. Use `ssh USER@10.42.0.1`. In Studio, choose **Change
-address** and enter `http://10.42.0.1:7447`; the saved token is verified and
-reused. An unpaired computer can use the existing spoken-code pairing flow.
-The hotspot password and Studio token are separate credentials.
+1. Join the configured hotspot from your computer.
+2. Connect to the Pi through SSH.
 
-To return home, make home Wi-Fi available and explicitly activate the saved
-home profile. The connection change drops hotspot SSH, so keep the lamp at rest
-and expect to reconnect through its normal hostname:
+   ```bash
+   ssh USER@10.42.0.1
+   ```
 
-```bash
-sudo sh -c '. /etc/orion/wifi-fallback.env; nmcli --wait 20 connection up uuid "$ORION_WIFI_HOME_UUID" ifname "$ORION_WIFI_INTERFACE"'
-```
+3. Set Studio's address to `http://10.42.0.1:7447`.
+4. Restore the home connection when it becomes available.
 
-Change Studio's address back to its normal hostname. Test `.local` discovery
-on each network before depending on the hostname for both connections. Check
-that `10.42.0.0/24` does not conflict with the laptop's VPN or other routes.
+   ```bash
+   sudo sh -c '. /etc/orion/wifi-fallback.env; nmcli --wait 20 connection up uuid "$ORION_WIFI_HOME_UUID" ifname "$ORION_WIFI_INTERFACE"'
+   ```
 
-To disable future checks:
+The connection change closes hotspot SSH. Reconnect through the normal hostname afterward. The hotspot password and Studio token are separate credentials.
 
-```bash
-sudo systemctl disable --now orion-wifi-fallback.timer
-```
+## Troubleshooting
 
-This does not deactivate a hotspot that is already running; explicitly reconnect
-home to leave it. To retrieve its password again:
+1. Read network recovery messages.
 
-```bash
-sudo nmcli --show-secrets -g 802-11-wireless-security.psk connection show id orion-fallback-hotspot
-```
+   ```bash
+   journalctl -u orion-wifi-fallback -u NetworkManager -n 40 --no-pager
+   ```
 
-## Verify and diagnose
+2. Read the saved hotspot password when needed.
 
-```bash
-systemctl list-timers orion-wifi-fallback.timer --no-pager
-journalctl -u orion-wifi-fallback -u NetworkManager -n 40 --no-pager
-nmcli -f connection.autoconnect,802-11-wireless.mode,ipv4.method,ipv4.addresses connection show id orion-fallback-hotspot
-nmcli -t -f NAME,DEVICE connection show --active
-systemctl is-active oriond orion-studio-gateway orion-listener orion-voice-stack
-```
+   ```bash
+   sudo nmcli --show-secrets -g 802-11-wireless-security.psk connection show id orion-fallback-hotspot
+   ```
 
-Test home boot, offline boot, loss of home Wi-Fi while running, laptop DHCP,
-SSH, authenticated Studio access, and explicit return home. Keep the lamp at
-rest for connection switching and reboot tests. A successful connected-state
-service run confirms it leaves home Wi-Fi alone; it does not prove the laptop
-can associate with the hotspot.
+3. Disable future recovery checks when needed.
 
-Ariadne's live test on 9 October 2026 temporarily made the saved home access
-point unavailable in NetworkManager's in-memory profile. The fallback timer
-activated `Orion-Ariadne` in about 71 seconds. The laptop received
-`10.42.0.18` from the Pi, connected through SSH, and received HTTP 200 from the
-authenticated Studio status endpoint. An independent Pi recovery timer and a
-pre-started laptop checker protected the test during the internet interruption.
-Both devices returned to home Wi-Fi; saved Pi profile files were unchanged and
-all four Orion application processes kept their original PIDs. The Wi-Fi radio
-stayed enabled because it also supplies the hotspot. Offline boot and wired
-DHCP with a physical Ethernet connection remain unverified.
+   ```bash
+   sudo systemctl disable --now orion-wifi-fallback.timer
+   ```
 
-For Ethernet, distinguish configuration from physical carrier. DHCP disabled
-with a static camera subnet limits which wired network works; `NO-CARRIER`
-also requires a working cable and link partner. Check the effective generated
-network configuration and `networkctl status eth0` before changing managers.
-
-## Studio name lookup
-
-Studio's desktop service looks the paired hostname up once, with a 10-second
-budget separate from each request's 3-second timeout, and reuses the
-addresses that answered (IPv4 first). It looks the name up again only when a
-cached address stops answering, such as after a DHCP change. Studio's window
-connects through the system web stack, so Home can keep working while a slow
-lookup fails the desktop service's voice, personality and memory requests.
-
-Measured on 11 October 2026 with Ariadne on home Wi-Fi: the Mac received no
-IPv4 mDNS answer for `ariadne-robot.local`, and its IPv6 link-local answer
-arrived after about 5 seconds. The Pi's `wlan0` had Wi-Fi power saving on,
-which commonly drops Raspberry Pi multicast. Check and disable it:
-
-```bash
-iw dev wlan0 get power_save
-sudo nmcli connection modify "$(nmcli -t -f NAME,DEVICE connection show --active | grep ':wlan0$' | cut -d: -f1)" 802-11-wireless.powersave 2
-sudo nmcli connection up "$(nmcli -t -f NAME,DEVICE connection show --active | grep ':wlan0$' | cut -d: -f1)"
-```
-
-Reconnecting drops SSH briefly; keep the lamp at rest. From the Mac, an IPv4
-lookup should then answer within a second:
-
-```bash
-curl -4 -s -m 3 -o /dev/null -w '%{http_code} %{time_namelookup}s\n' http://ariadne-robot.local:7447/api/v2/voice/status
-```
-
-`401` means the gateway answered and needs Studio's token. The Pi advertises
-only its hostname; `orion.local` resolves only on networks that add it.
-
-## Development validation
-
-```bash
-python3 -m unittest discover -s scripts/tests -v
-```
-
-Fallback tests simulate device transitions and client timeouts. Installer tests
-cover profile collisions, preserved credentials and failure recovery without
-accessing the workstation's network interfaces.
+Disabling the timer does not close an active hotspot. An explicit connection change closes it.

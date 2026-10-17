@@ -1,41 +1,40 @@
 # Orion motion assets
 
-Orion loads built-in and user-authored pose and motion files from this
-directory. The Rust runtime parses those assets and compiles their trajectories.
+The Rust runtime loads pose and motion YAML files. It compiles joint trajectories for hardware and simulation. Python code consumes the exported samples.
 
-## Ownership
+## Files and coordinates
 
-- `config/v1/poses.yaml` and `config/v2/poses.yaml` contain each hardware version's built-in complete five-joint poses.
-- `user/poses/v1/` and `user/poses/v2/` contain Studio-authored poses.
-- `motions/v1/` and `motions/v2/` contain each version's absolute actions and anchor-relative character clips.
-- `motions/v1/user/` and `motions/v2/user/` contain Studio-authored motions.
-- `config/stability_limits.yaml` contains MuJoCo reporting policy; it is not a
-  physical command limit.
+| Path | Content |
+| --- | --- |
+| `config/v1/poses.yaml` | V1 built-in poses |
+| `config/v2/poses.yaml` | V2 built-in poses |
+| `user/poses/<version>/` | User poses |
+| `motions/<version>/` | Built-in motions |
+| `motions/<version>/user/` | User motions |
+| `config/stability_limits.yaml` | Simulator reporting settings |
 
-The active Pi calibration is the hardware position authority. The tracked
-`simulation/mujoco/config/servo_calibration.json` is its offline validation
-counterpart. Rust is the only trajectory compiler; Python code validates and
-consumes the exported 50 Hz sample document.
+V2 angles are radians from mechanical rest. `hardware/profiles/v2-joints.json` supplies its shared limits. V1 uses its servo calibration. Stability reporting settings do not define hardware command limits.
 
-Pi deployment updates built-in pose and motion YAML from the selected Git commit,
-including replacing local edits to built-ins. It preserves user-authored assets
-and calibration and backs up replaced or retired built-ins for rollback. See
-[Pi deployment](../docs/quickstart.md#deploy-to-the-pi) for the physical smoke test
-and release-switch sequence.
+Absolute poses contain joint angles. Anchor-relative motions contain differences from a selected pose. Changing a joint's zero does not change relative offsets.
 
-## Documentation
+The [motion reference](../docs/motion-reference.md) defines schemas, styles and compiler behavior. The [motion architecture](../docs/motion-architecture.md) explains request ownership.
 
-- [How Orion moves](../docs/motion-architecture.md): how a request becomes servo movement.
-- [Motion reference](../docs/motion-reference.md): schemas, styles, catalogue,
-  trajectory compiler and servo control, including how to export a trajectory.
+## Python development
 
-V2 joint angles are radians from mechanical rest. The Python limit reader and
-Rust compiler both accept `hardware/profiles/v2-joints.json`; Studio reads that
-same profile. Absolute poses use the rest frame. Anchor-relative motion offsets
-are differences between angles and do not change when the zero frame changes.
+Run these steps from the repository root.
 
-Installed Python wheels locate resources in their enclosing release, or the
-current checkout for a separate diagnostic venv. `ORION_PROJECT_ROOT` and
-`ORION_TRAJECTORY_COMPILER` select explicit locations. `compile_trajectory(...,
-hardware="v2")` selects the shared rest profile and V2 catalogue; the existing
-V1 diagnostic default is retained.
+1. Install locked dependencies with managed Python.
+
+   ```bash
+   uv sync --project motion --locked --managed-python
+   ```
+
+2. Run the motion tests with pytest.
+
+   ```bash
+   uv run --project motion --locked --managed-python --with pytest python -m pytest motion/test
+   ```
+
+`ORION_PROJECT_ROOT` selects resource files. `ORION_TRAJECTORY_COMPILER` selects the Rust compiler executable. Installed wheels find resources in their enclosing release.
+
+The Python `compile_trajectory` function retains a V1 default. Its `hardware="v2"` argument selects the V2 profile and catalogue.

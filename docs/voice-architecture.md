@@ -1,772 +1,130 @@
 # Orion voice architecture
 
-Orion's Pi runs microphone capture, wake detection, speech recognition, speech
-synthesis and the agent coordinator. Rustpotter detects a possible wake phrase,
-an openWakeWord phrase verifier confirms it acoustically, Silero finds the end of speech, Qwen3-ASR transcribes, and Piper Alba Medium
-produces the reply. Codex App Server runs on the Pi
-and uses online model inference. Studio provides settings and observation through
-the gateway.
+The listener captures speech. The coordinator runs recognition, agent requests and synthesis. The runtime plays audio and moves the lamp. Studio observes and configures the Pi through the gateway.
 
 ## Audio and control flow
 
 ```text
-ReSpeaker stereo capture
-  -> direction observation and mono downmix
-  -> Rustpotter wake candidate -> acoustic phrase verification
-  -> accepted: chime, three-color light pulse and wake confirmation
-  -> Silero endpoint -> Qwen transcription and wake-phrase check of the complete recording
-  -> confirmed command -> Rust agent -> Codex App Server
-  -> final answer sentences -> Piper Alba TTS -> coordinator audio buffer
-  -> local gateway -> oriond playback and speech animation
-  -> playback completion -> echo guard -> follow-up listening window
+microphone
+  → Rustpotter candidate
+  → acoustic phrase check
+  → Silero speech boundary
+  → Qwen complete-command transcription
+  → Codex agent
+  → Piper synthesis
+  → coordinator audio buffer
+  → gateway upload
+  → runtime playback and animation
+  → quiet guard
+  → follow-up window
 ```
 
-The [system architecture](system-architecture.md#system-boundary) shows the
-processes and connections. The listener owns capture and voice-session state.
-The coordinator owns inference jobs, command validation, agent calls, response
-buffering and playback acknowledgement. Python workers execute ASR or TTS jobs.
-`oriond` owns physical playback, animation and the rest/wake sequence.
+Speech recognition and synthesis run locally. Codex App Server uses online inference. See [system boundaries](system-architecture.md#system-boundary).
 
 ## Capture ownership and session lifecycle
 
-The listener opens capture on startup unless the saved microphone preference
-is muted. It runs independently of the motor loop and keeps recording during
-mechanical rest. Muting closes capture, clears buffered audio and saves the
-preference. One authenticated loopback WebSocket owns processing; separate
-control connections can read or change mute.
+The listener opens capture unless microphone mute is saved. One authenticated local connection owns processing. Separate control connections can change mute.
 
-Capture arrives as 20 ms stereo frames at 16 kHz. The listener estimates direction
-before downmixing to mono and retains three seconds of audio in memory. On V2,
-processed channel 0 supplies mono capture, and confirmed wakes request visual
-speaker evidence from the local vision service. The optional XVF3800 direction
-poller remains available for diagnostics; V2 wake attention uses vision. V1
-retains stereo left/right evidence. When
-Rustpotter detects a candidate, the listener assigns a random session ID and
-notifies the coordinator. With acoustic verification, runtime wake feedback
-starts only after acceptance.
+V1 uses stereo frames for direction and a mono downmix for recognition. V2 uses the XVF3800 processed channel. The listener retains three seconds of pre-roll in memory. Pre-roll preserves speech from before wake detection.
+
+Each candidate receives a fresh session ID. Cancellation, mute, disconnect and expiry discard its command buffers. Rejected candidates do not reach the agent.
 
 ### Acoustic wake verification
 
-The packaged verifier in `voice/models/verifier/` scores every captured frame
-with openWakeWord's frozen melspectrogram and embedding models and a small
-“Hey Orion” classifier. It streams 80 ms chunks and ignores its first 26
-chunks after capture opens. [The packaged configuration](../voice/models/verifier/config.json)
-holds the decision rule. A candidate is accepted when a score reaches the
-configured threshold between 0.8 seconds before and 1 second
-after the Rustpotter candidate; otherwise the verifier rejects it at the
-1-second deadline. A score from before the candidate accepts at the candidate,
-so a typical acceptance adds no delay.
+Rustpotter proposes “Hey Orion” candidates. The acoustic verifier checks nearby audio for the phrase. Acceptance permits the wake cue, light pulse and confirmed-wake sequence.
 
-Acceptance sends `wake.verified` with `source: "acoustic"` to the coordinator
-and replaces the Qwen prefix pass. Rejection sends the same message with
-`accepted: false` and ends the candidate session immediately. The listener
-discards the candidate recording, any held endpoint and follow-up speech,
-then returns to listening. It preserves three seconds of rolling pre-roll,
-Rustpotter state and the verifier's continuous score history, so another wake
-can start a fresh session without a capture restart or cooldown.
+Rejection discards candidate audio while preserving rolling pre-roll and detector history. It does not restart capture. The verifier remains authoritative for ordinary wakes when loaded.
 
-The listener sends `voice SESSION cancel` to the runtime using the rejected ID.
-The coordinator publishes `wake.rejected`, clears its session and sends
-`session.cancel` for that ID. The listener ignores this late control after
-rearming, including when a fresh session has already started. Rejected audio
-never reaches Qwen. For accepted candidates, Qwen still checks the wake phrase
-in the complete recording before dispatching a command. An endpoint that
-arrives before the verdict is held and released only on acceptance.
+A slow verifier disables playback interruption. If no verifier is loaded, Qwen can check a short prefix while full command capture continues.
 
-A loaded verifier remains authoritative for ordinary wakes even when more
-than a tenth of its recent chunks take over 40 ms. This unhealthy state disables
-playback barge-in. The ready message reports the loaded verifier as `active`
-and reports its speed status separately as `healthy`. The Qwen prefix path
-applies only when no verifier is loaded, such as with `--no-verifier`.
+### Complete command checks
 
-### ASR prefix fallback
+Qwen transcribes the complete utterance before dispatch. Prefix confirmation alone cannot supply agent command text. A wake-only utterance opens another capture opportunity.
 
-With the negotiated `wakePrefix` capability and no loaded verifier, the
-listener sends up to two seconds before detection plus 200 ms afterward for
-Qwen verification. Capture continues
-into the same complete recording while that job runs. Prefix text can confirm
-the wake phrase; the agent command always comes from a complete utterance. An
-inconclusive prefix falls back to confirmation using the full recording.
-
-If Silero detects the end before prefix verification finishes, the listener holds
-the complete utterance until the prefix result arrives. One ASR job owns the
-session at a time. If the complete transcript contains only the wake phrase, the
-coordinator requests a follow-up command. The listener can retain one completed
-follow-up spoken during verification, which preserves speech across that
-transition.
-
-The capture limit is 30 seconds after wake detection, or 33 seconds including
-pre-roll. A recording that reaches the limit carries `max_duration`. The
-coordinator rejects it and reports an error asking for a shorter request. Empty
-commands and rejected wakes also stop before the agent call. Mute, cancellation,
-disconnect and session expiry discard the audio.
+Capture permits 30 seconds after wake detection, or 33 seconds including pre-roll. A recording that reaches the limit is rejected. Empty commands also stop before agent dispatch.
 
 ### Speech boundaries
 
-The installed listener uses Silero ONNX with recurrent state for each audio
-stream. It accumulates capture frames into 512-sample windows with 64 samples of
-context. This preserves continuous audio across frames. The classifier applies
-2× gain only to its own input; the recorded PCM supplied to Rustpotter and Qwen
-keeps its original level.
+Silero classifies speech with state carried across audio windows. Different enter and leave thresholds reduce repeated switching. The managed listener ends capture after its configured silence interval.
 
-Silero enters speech at probability 0.5 and remains in speech down to 0.35. This
-difference reduces repeated switching near the threshold. Capture ends after
-1.2 seconds without speech and at least 1.2 seconds of recording. The same
-classifier handles follow-up onset and the quiet guard, with fresh recurrent
-state at each boundary. Microphone startup must finish before the listener
-acknowledges unmute or reports processing readiness.
-
-The standalone listener can use an energy detector when no VAD model is supplied.
-The managed installation supplies Silero. Capture gain and wake sensitivity are
-separate settings described in [configuration](configuration.md#microphone-listener).
+The standalone listener can use an energy detector without a VAD model. VAD means voice activity detection. The installed profile supplies Silero.
 
 ## Confirmed waking
 
-With the acoustic verifier loaded, the wake chime and three-color light pulse
-play only after the verifier accepts. The listener then confirms the wake
-itself, which starts the return home at mechanical rest. A candidate the
-verifier rejects stays silent and returns to listening. Without the verifier, the
-candidate plays the chime and pulse and Qwen confirmation starts the return
-home. A rejected wake ends any light feedback without waking the body or
-dispatching a command. Other lighting remains suppressed at rest.
+An accepted confirmation can start the return from rest to home. Confirmation during descent waits for descent to finish. The listener keeps capturing while the body moves.
 
-The coordinator sends `wake.verified` after a successful ASR prefix or
-`wake.confirmed` after confirming the complete utterance. The listener forwards
-`voice SESSION confirmed` through its ordered runtime queue and waits up to five
-seconds for acknowledgement. The runtime accepts one confirmation for the current
-session, after verification or endpointing has begun. Duplicate delivery cannot
-extend the inactivity deadline. An undelivered or rejected confirmation ends the
-connection.
+After home completes, the runtime applies the latest listening or thinking state. It checks speaker selection before an attention turn. Reply audio waits until this movement finishes.
 
-A confirmation received during descent lets that movement finish before home
-begins. Capture continues throughout. After home completes, the runtime applies
-the latest listening or thinking state and checks any direction evidence before
-an attention turn. Explicit Character Stop and maintenance mode require an
-explicit character start to rearm automatic waking. On V2 with gaze available,
-an accepted wake confirmation clears a runtime `stop` latch and rearms attention
-only for an already powered, enabled character with startup complete. Wake
-recovery never enables torque or starts home, and a powered scene or speech run
-retains ownership. Runtime `disable` keeps gaze latched until explicit recovery:
-`character start` restores torque and starts home; scripted `gaze resume` requires
-power to be restored first. Manual `enable` alone does not let wake clear a disable
-latch. Candidate, stale and duplicate wake events cannot perform this recovery.
-See [gaze recovery](../runtime/README.md#bearing-gaze-v2).
-
-A reply uploaded for a voice session remains queued until the runtime recognizes
-an active confirmed conversation and finishes home and any accepted attention
-movement. Cancellation, expiry or a rest fault removes the queued reply. Upload
-timeouts still apply while it waits. See [automatic rest and waking](system-architecture.md#automatic-rest-and-waking).
+Duplicate confirmations cannot extend the same session's inactivity deadline. Stale sessions cannot confirm, renew or move the lamp. Stop, disable and maintenance controls keep their normal recovery requirements.
 
 ## Follow-up conversation
 
-Processing suppresses additional wake triggers; V2 playback accepts only
-acoustically verified wake-phrase barge-in. After successful runtime playback,
-the coordinator acknowledges completion to the
-listener and requests a follow-up window. Failed or cancelled playback returns
-to wake detection.
+After successful playback, the listener discards initial echo and waits for quiet. It then opens a five-second command window without another wake phrase. A teal pulse indicates that window.
 
-The listener discards the first 0.5 seconds after acknowledgement, then requires
-300 ms of consecutive quiet audio. If quiet is not established within two
-seconds, it closes the window. Once ready, Orion displays a soft teal pulse and
-accepts a command without “Hey Orion” for five seconds.
+A follow-up receives a new session ID linked to the completed turn. The coordinator checks that link before recognition. Failed or cancelled playback returns to ordinary wake detection.
 
-Speech onset requires 180 ms of sustained speech. A 300 ms pre-roll preserves the
-beginning of the command, excluding guard audio. Once onset is confirmed, normal
-endpointing applies. The follow-up receives a fresh session ID linked to the
-preceding completed turn. The coordinator validates that link and transcribes the
-recording directly as a command.
+Keepalive messages extend an active processing or playback deadline. They do not repeat phase changes or feedback. An absent owner eventually loses its session.
 
-Processing starts with a 120-second session lease; entering playback grants 180
-seconds. During synthesis and playback, the coordinator sends `session.keepalive`
-every five seconds. The listener extends its deadline and forwards `voice SESSION
-keepalive`; the runtime extends its processing/thinking/speaking deadline without
-changing phase, reaction, cue or history. Stale or expired sessions cannot renew.
-`session.processing` and `session.playing` mark actual phase transitions. The lease expires if the owner disappears.
-Disconnect, mute, cancellation and timeout clear the current session. The
-coordinator reconnects automatically. Protocol capabilities allow older peers to
-confirm the complete utterance or receive a single response without a follow-up
-window.
+## Wake-phrase interruption
 
-V2 hardware echo cancellation supports wake-phrase barge-in during playback. V1
-requires speaking after the teal invitation appears. Sustained noise or delayed
-echo can still trigger an unwanted follow-up, so microphone and speaker behavior require
-physical checks.
+V2 runs wake detection during playback only with a healthy acoustic verifier. Candidate detection does not stop playback. Acceptance cancels the old session and starts a fresh verified session from pre-roll.
 
-## Wake-phrase barge-in
+Rejected candidates leave the reply unchanged. The Qwen-prefix fallback cannot authorize playback interruption. V1 suppresses wake detection during ordinary playback.
 
-On V2, Rustpotter runs during `playing` while a healthy acoustic verifier is
-loaded. The listener keeps three seconds of pre-roll and verifies each candidate
-without stopping playback. Rejection emits nothing. Acceptance emits
-`session.interrupted` with `reason: "barge_in"` for the old session, then
-`wake.candidate` and accepted `wake.verified` for a fresh ID. Capture starts from
-the pre-roll, including speech during verification, and uses normal endpointing
-and full-utterance Qwen validation. The listener sends `voice OLD cancel` before
-new-session feedback and suppresses attention throughout that interruption turn.
-Playback never uses the ASR-prefix fallback to authorize an interruption. Without
-a healthy verifier, and on V1, playback wake detection stays off. Alarm dismissal
-runs first and consumes its wake phrase without starting a command.
-
-The coordinator reads the interruption reason. Barge-in during an active session
-outside the responding phase is logged and ignored, preserving the session and
-Pi connection. Accepted barge-in signals a per-response
-stop token: final TTS, uploads, playback polling and search acknowledgement speech
-stop, and the gateway cancels the active speech run. Remaining speech text is
-consumed without synthesis. The response job keeps its agent reply channel open
-until the turn finishes, outside the active voice session. Its completion cannot
-finish or cancel the replacement session. Later physical tool requests from the
-interrupted turn receive an interruption error. Alarm interruption still aborts
-inference jobs and cancels playback.
-
-`AgentService` dequeues requests one at a time in its dedicated runtime. A new
-voice command can be captured and transcribed immediately, but its agent request
-waits for the interrupted turn's terminal result. Keeping that result receiver
-open preserves the ephemeral Codex conversation; dropping it would cancel the
-turn and replace the provider thread. The next command carries “The previous reply
-was interrupted before it finished.” once, using the agent's pending delivery
-notice. Direct sleep detection still uses the user's original command.
-
-Runtime status and uploaded PCM do not identify the exact spoken text: buffered
-audio may not have played. The notice therefore makes no claim about which words
-were heard. The agent still retains its complete previous reply. Turn timeout,
-protocol failure, mute, disconnect and alarms retain their existing cancellation
-rules; a failed interrupted turn can still reset the conversation. See
-[physical acceptance checks](../voice/README.md#check-v2-barge-in-on-the-lamp).
-
-## Transport and deployment
-
-The onboard coordinator reads the Pi token file and connects to the listener and
-gateway through loopback. `--local-processor` restricts processing ownership to a
-local connection. Private stdin/stdout pipes carry speech jobs and the Codex App
-Server protocol; bounded Rust channels connect the coordinator to the agent.
-
-Release activation keeps the listener, voice host and Studio gateway stopped
-during the physical smoke test so they cannot dispatch competing speech or
-movement. After the test, `character rest` establishes the runtime's `resting`
-state before those companions start. A confirmed wake can then return Orion
-home. Built-in YAML and service paths share the same rollback transaction; see
-[Pi deployment](quickstart.md#deploy-to-the-pi).
-
-Studio stores its pairing credentials on the desktop. It discovers the Pi service
-at `/api/v2/voice/status`, sends allowlisted commands to `/api/v2/voice/request`,
-and polls `/api/v2/voice/events`. Each snapshot contains at most 33 events with a
-coordinator generation and increasing event IDs. The UI ignores duplicates and
-resets its cursor when the generation changes. It receives status, transcripts
-and timings; audio uploads and playback acknowledgement remain on the Pi.
-
-Remote Studio access uses HTTP with a bearer token on a trusted local network.
-The service's private control and observer credentials remain local. See the
-[Pi quickstart](quickstart.md#prepare-a-new-pi) for installation and the
-[speech worker](../speech/README.md#inference-protocol) for inference framing.
-
-## Orion service lifecycle
-
-`orion-voice-stack.service` starts the `orion-service` executable at boot. An OS
-file lock prevents duplicate owners. The service publishes a random loopback
-address and token in a private directory for the gateway to discover.
-
-The host reads saved settings, starts the coordinator and retries a stopped
-coordinator every five seconds. Repeated starts with matching configuration
-reuse the coordinator. Settings changes are serialized with startup. Changing
-speech or agent model settings restarts the coordinator and speech workers. The
-agent executor can survive that restart when its configuration matches and no
-active request is cancelled.
-
-SIGTERM stops the coordinator, cancels its speech run and shuts down the agent
-and workers. A service restart replaces the provider thread and recovers text
-from the active logical conversation. Saved memory, personality and settings
-remain on disk. Studio's desktop backend stores pairing and
-forwards requests to the Pi; an unavailable Pi produces a connection error.
-
-## Agent and physical boundary
-
-Qwen transcribes microphone audio locally. Codex receives confirmed command text
-and any profile or memory context used for the turn. Its built-in search can
-retrieve online information. Orion registers memory, lighting, mode, sleep and
-alert tools. See the [tool reference](../agent/README.md#memory-and-tools).
-
-Lighting calls validate brightness, effects and colors, then use the coordinator
-and gateway's `lamp_effect` operation. The runtime stores that lamp program below
-speech, scene and voice-feedback lighting. Rest darkness suppresses the output
-while preserving the preference. An execution error is returned to the agent.
-Mode and alert calls use the gateway's `routines` operation. Sleep requests attach
-the current confirmed voice session; rest waits until its acknowledgement ends.
-For a clear, immediate sleep phrase, the agent service invokes `go_to_sleep`
-before returning any spoken promise. If the runtime rejects it, Orion says the
-sleep request failed. Longer or conditional requests remain with Codex.
-The agent cannot specify joint targets or bypass the rest lifecycle.
-
-Tool requests must match the active Codex thread and turn. At most 16 distinct
-calls execute per turn; duplicates and excess calls receive error results without
-repeating an action. Unexpected interactive requests fail the turn. Orion disables
-Codex shell, desktop, browser, plugin and multi-agent capabilities for its conversation.
-The provider's protocol checks live in
-[the Codex adapter](../agent/src/providers/codex.rs).
+V2 uses the XVF3800's hardware echo cancellation. It adds no software echo canceller. Interruption sessions suppress speaker attention. Alarm dismissal takes priority over a new conversation.
 
 ## Agent conversation and memory
 
-An accepted, nonempty user command starts a logical conversation: a saved group
-of turns with an ID independent of the Codex provider thread. Its window ends
-exactly 24 hours after the first accepted turn. Follow-ups do not extend that
-deadline. The first accepted turn at or after expiry starts another group.
-Rejected wakes, wake-only utterances and empty commands create no history entry.
-Accepted requests that fail retain their error and delivery outcome.
+The agent service outlives individual speech jobs. Completed turns can reuse Codex provider context. Protocol uncertainty retires that provider. A replacement receives bounded text context.
 
-The agent reuses an ephemeral Codex thread while it is healthy. Transport
-reconnects and idle coordinator reloads can retain it. Model changes, service
-restarts, image-bearing turns, cancellation and protocol uncertainty can replace
-the provider thread without splitting the logical conversation. A replacement
-receives previous user/assistant text, tool outcomes and delivery status from
-the active group; recorded actions are context and are never replayed. Large
-recovery contexts use a cached, temporary text summary plus recent exchanges.
-That summary is separate from long-term memory. Camera images and audio never
-enter persisted history or recovery. Scheduled briefings use separate provider
-threads and do not create user conversations.
+Accepted turns share a logical conversation for 24 hours from its first accepted turn. Follow-ups do not extend that fixed window. Rejected or empty wakes create no turn.
 
-Retirement occurs on a ten-second maintenance interval or admission of a later
-turn. Extraction waits until every old turn has settled generation and a terminal
-delivery outcome. Interrupted replies remain interrupted even if generation
-finishes later. Startup recovery closes unfinished work as interrupted. Retirement
-does not require another user request, and background extraction yields to
-foreground requests, including Settings edits.
+Reply generation and delivery have separate outcomes. A generated reply can still fail or be interrupted during playback. Memory extraction uses retired conversations and independent proposal review.
 
-Memory extraction uses separate, tool-free Codex sessions. One proposes at most
-eight important, enduring facts; another independently reviews them. Candidates
-must cite exact user words in identified turns. Durable constraints, enduring
-goals, important relationships and critical personal facts qualify only when they
-will materially help future interactions. Routine chatter, one-off requests,
-inference, assistant claims, observations and trivial preferences are rejected.
-Every transcript slice is checked for corrections and conflicts. All review
-checks must pass; saving zero memories is normal. This is a conservative model
-review policy, not a guarantee that a model always judges importance correctly.
+Explicit memory edits set a cutoff for recovered context. Automatic receipts prevent duplicate extraction and reintroducing deleted entries. See [agent storage](../agent/README.md#memory-and-profile-storage).
 
-Candidates, review results and retry state are private files. Stable candidate
-IDs and a receipt ledger prevent repeated saves after interruption or restart.
-Saving compares the reviewed memory snapshot and rejects duplicates. Explicit
-memory edits, deletion or clearing prevent extraction from older conversations
-from restoring stale facts. Studio memory changes also exclude earlier active
-conversation text from subsequent provider recovery, while keeping the history
-available to the user. Failed extraction retries with backoff independently of
-live conversation handling. `MEMORY.md` remains the editable memory store; manual
-memory tools and bounded keyword retrieval remain available. See
-[agent storage and tools](../agent/README.md#memory-and-tools).
+The behavior journal stores runtime observations and actions. It excludes camera pixels and microphone audio. It does not identify people across sessions.
 
-The shared [history store](../history/README.md) uses JSON per conversation/turn
-and daily JSONL behaviour journals under
-`~/.local/share/orion/voice-stack/history/`. It requires no database or migration
-framework. On first use of this format, old dated per-turn history directories
-are deleted rather than imported. Personality, memories and settings are kept.
-History saves text and metadata. Opt-in
-[wake diagnostics](../voice/README.md#troubleshooting) save a short verifier-input
-recording outside this history.
+## Direction and speaker selection
 
-Studio reads through the paired gateway from **Debug → Voice → View conversation
-history**. **Conversations** shows one entry per 24-hour group and its accepted
-turns. **Behaviours** shows the runtime journal, with category filters and older
-pages. Extracted memories in Settings show their source conversation and date.
+V1 can use coarse left/right audio direction with configured microphone geometry. V2 confirmed sessions ask vision for one speaker selection. The selection includes a track ID for conversation following.
 
-A search can produce one short acknowledgement while Codex continues working.
-The coordinator synthesizes and plays it in the same voice session, then sends
-`session.processing` to restore thinking feedback. Final speech waits for that
-intermediate playback. Only final playback completion opens the follow-up window.
-Memory tools are silent. Listeners without `toolFeedback` receive the final answer
-without the intermediate acknowledgement.
+Tracking Idle or Faces can supply a speaker. Off, Hands, camera privacy and unavailable vision suppress V2 attention turns. USB direction settings remain diagnostic inputs rather than wake steering.
 
-### Behaviour journal
-
-The runtime records attention observations, new-object peeks, object glances,
-idle clips, reactions, tracking and held-gaze intervals, and sleep/wake
-transitions. Entries include UTC time, runtime time, target category/track ID,
-reason, action ID and duration where available. Known voice transitions include
-their session ID. Starts and measured outcomes are separate events: interrupted
-or failed motion never masquerades as completed motion. An initial rest-state
-observation does not invent a wake event.
-
-Person arrival means an increased observed person count, not recognition of an
-individual. Object novelty comes from short-lived vision track/novelty state;
-the journal records what the runtime did and does not become its focus policy or
-a persistent object-identity database. See
-[autonomous camera metadata](../runtime/README.md#autonomous-camera-metadata).
-Logging queues metadata to a bounded background writer outside the motor tick.
-Queue or disk failures are reported; a later successful write records a gap.
-There is no automatic history retention limit, so operators must monitor disk
-usage during long-running Pi testing.
-
-### Pi acceptance for history and retirement
-
-Local tests cover exact 24-hour expiry with an injected store clock, false-wake
-admission, provider recovery, extraction review/backoff/preemption, receipt
-idempotency, Studio/RPC contracts, and daemon sleep/wake journalling. Fake Codex
-peers verify application rules without testing a real model's judgement.
-Physical Pi acceptance remains separate:
-
-- Verify first startup removes legacy history while preserving memory,
-  personality and settings. Speak multiple turns, restart the voice service,
-  and confirm one history group and recovered context within its window.
-  Reject a false wake and finish a wake-only utterance; neither adds a turn.
-- Exercise object peeks, person arrival, held gaze, automatic and requested sleep,
-  confirmed wake, Stop and interrupted motion. Compare journal starts/outcomes
-  with what the lamp actually does, including target category, duration and
-  voice-session linkage. Monitor control timing and disk usage over a soak.
-- With the installed signed-in Codex runtime, retire controlled conversations
-  containing ordinary chatter, an important enduring fact and a later correction.
-  Expect zero, one and zero automatic memories respectively. Inspect exact user
-  evidence and source metadata; test provider unavailability, interruption,
-  restart retry and an explicit deletion before retry. A live request must take
-  priority over background extraction. Use isolated test storage for an expiry
-  fixture rather than changing the Pi's system clock.
-- Through paired Studio, verify grouped details, behaviour filters/older pages
-  and memory provenance. Switch connections and confirm the previous lamp's
-  history disappears. ARM64 release building and on-device storage/control
-  performance require the normal Pi deployment acceptance procedure.
-
-## Response latency
-
-Response time includes trailing silence, transcription, online agent processing,
-synthesis buffering and speaker startup. Qwen and the selected TTS model stay
-loaded between completed jobs. Cancelling native inference retires only the
-affected worker,
-which reloads for its next job. CPU thread settings are listed in
-[configuration](configuration.md#pi-voice-profile).
-
-Piper Alba generates 22,050 Hz speech. Its worker completes a sentence, resamples
-it to the 24,000 Hz playback protocol, then sends chunks of at most two seconds.
-The coordinator buffers at least six
-seconds of audio, or the complete response when shorter, before uploading it.
-Fast generation releases a reserve between six and twelve seconds. Measured slow
-generation or a decoder pause requiring a larger reserve latches complete-reply
-buffering, so playback cannot outrun synthesis. The coordinator retains that
-reply until its final synthesis end marker, subject to the thirty-minute cap.
-
-A first generated chunk, a first upload and audible speech are different points
-in the turn. Debug exposes separate stage durations. Stages overlap, so adding
-those durations does not give total response time. Runtime player start is a
-software measurement; acoustic timing requires a recording at the speaker.
-
-## Direction evidence
-
-On V1 the listener keeps at most 30 accepted stereo observations. A known side
-requires at least five votes and 75% agreement. Confidence describes agreement
-between those observations; microphone spacing and channel orientation default
-to zero. `attend_left` and `attend_right` retain their existing behavior.
-
-On V2, after the runtime acknowledges `voice SESSION confirmed`, the listener
-asks the user-only vision Unix socket `GET /speaker?since_ns=…`. The window
-begins two seconds before the wake candidate and uses `CLOCK_BOOTTIME`, matching
-camera captures. The request times out after 300 ms and transfers metadata only.
-Capture continues in its own task. Each confirmed voice turn requests visual
-attention once; duplicate confirmations for the same session cannot repeat it.
-A follow-up uses its own session and refreshes the speaker selection. Barge-in
-sessions never request a turn.
-
-Vision keeps at most 32 mouth signatures per track and examines up to three
-seconds. Each signature expresses the mouth corners relative to the eye centre,
-eye separation and eye axis, reducing image translation, scale and rotation.
-It compares median frame-to-frame signature movement with that track's
-pre-window jitter baseline (the 75th percentile, with a 0.05 floor). Fewer than
-four baseline samples use a conservative 0.2 noise floor. At least two samples
-in the window are needed; evidence depends on sampling rate and history length.
-The winning excess must reach 0.05, exceed the runner-up by 0.05 and be at least
-1.5 times its score. Ambiguous or insufficient motion selects the largest frontal face,
-then the largest face as a nearest-face proxy. YuNet mouth corners provide a
-heuristic, not a speech or lip-opening measurement. Speaker selection on the
-lamp remains unverified. See [vision setup and tracking](../vision/README.md#face-tracking).
-
-The listener sends `voice SESSION attend_bearing AZ EL AGE_MS TRACK_ID`, with base
-azimuth/elevation in radians and age computed from the selected capture. Queue
-delay is added before delivery. V2 gaze is enabled by default; `--gaze off` or
-unavailable camera geometry rejects visual attention. An accepted current wake
-confirmation can clear a powered character's Stop latch before this request;
-disable keeps attention blocked until explicit recovery. The runtime ignores
-unconfirmed, retired or non-owning sessions. The rest coordinator checks the
-same three-second expiry again after measured home completion. The gaze FK
-solver creates a neck-first calibrated trajectory and a zero-offset settle at
-an immutable facing anchor. Base yaw travels at most 0.65 radians from the
-measured start, while the neck covers the remaining bearing. A final FK check
-refuses bearings outside calibrated reach. The runtime preempts owned background
-motion and refreshes feedback before compilation and the speed check.
-Only successful measured completion installs that temporary
-anchor; the existing conversation hold and return restore the saved anchor.
-Scenes, speech, Stop and unavailable character states retain priority.
-
-In Tracking Idle and Faces, Vision pins the selected track while the confirmed
-conversation remains active, including its echo guard and follow-up window. A larger bystander cannot replace
-it. The pin expires within three seconds when voice status is absent or cannot
-be verified. While the speaker remains visible, fresh `gaze target` updates for
-that track can adjust the held conversation anchor between replies. Movement
-requires more than the gaze deadband, uses the same neck-first compiler path,
-and commits the anchor only after measured completion. Other face tracks are
-ignored. Each spoken reply freezes its starting anchor. Tracking clear revokes
-the speaker track and smoothly shortens an owned adjustment back to its last
-committed anchor; a later confirmed turn may select the speaker again. This
-continuous conversation behavior is on by default and remains lamp-unverified.
-Idle clears following when the conversation ends or cannot be verified, while
-its autonomous surroundings observations continue. Faces can resume ambient
-following after the speaker pin expires.
-
-A working camera with no recent face sends `voice SESSION attend_scan AGE_MS`.
-Gaze compiles one small neck sweep and settles to the original anchor, then
-gives up for that conversation. Tracking Off returns `503 tracking_off` and
-produces no turn or scan; conversation and speech gestures use the existing
-anchor. Camera-off, a missing detector model, unavailable
-vision and stale responses produce no attention command. V2 does not use
-acoustic direction as a fallback. `--vision-socket` defaults to
-`/tmp/orion-vision.sock`. No wake/verifier thresholds, XVF processing or existing
-motion assets change.
-
-The age of the oldest supporting vote travels with the side after confirmation.
-Time spent waiting in the command queue and homing also counts. The runtime checks
-that the evidence remains younger than three seconds before starting attention.
-Stale evidence leaves Orion facing home and lets the voice turn continue. Physical
-calibration is required before enabling V1 direction estimates. V2 uses built-in
-wide-lens intrinsics and still needs lamp validation of speaker selection.
+The selected speaker can remain the conversation target between replies. Missing speakers do not authorize substitution with a bystander. Speech movement retains priority.
 
 ## Streaming replies and timing
 
-The agent may start a sentence with `[agree]`, `[disagree]`, `[happy]`,
-`[curious]`, `[thinking]`, `[surprised]`, `[sympathy]`, `[unsure]`, or `[laugh]`.
-`[nod]` and `[shake]` remain aliases for the first two cues; the others have no
-aliases. The [motion catalogue](motion-reference.md#animation-catalogue) lists
-their meanings and dedicated V2 motions. The prompt generates one clause per
-enabled cue and permits at most one tag per sentence and three per reply.
-The coordinator removes tags before TTS and before publishing reply text to
-Studio or history. A tag mid-sentence still works, but the coordinator synthesises
-the words on each side separately, so Piper may pause there; this is why the
-prompt asks for tags at the start of a sentence. A retained cue travels on the
-next text piece's first WAV chunk in `X-Orion-Speech-Cues`, including the
-stream-creating chunk, and the runtime records its absolute 20 ms audio frame.
-Onset reactions overlap the first words. Reaction placement, spacing, checkpoint
-replacement, and drop reasons are described in
-[reaction cues](speech-animation-runtime.md#reaction-cues).
+The coordinator splits final text into bounded synthesis jobs. Piper produces ordered PCM chunks and an explicit end marker. The coordinator validates IDs, sequence numbers, audio format and limits.
 
-The Codex adapter streams speech text only from a matching thread, turn and item
-explicitly marked `final_answer`. Complete sentences can reach the selected TTS
-model while Codex finishes. Phase-less messages wait for final completion. They do not participate in
-multiple-final or streamed-item checks. If the turn has no explicit final, the
-last phase-less message is the answer. Two distinct explicit final items replace
-the provider thread. Model
-commentary, citation markers and web addresses are removed from spoken output. The final text
-must preserve any prefix
-already emitted; a mismatch cancels the turn and replaces the provider thread.
-The base prompt requests a short opening sentence and prose for listening, without
-markdown, bullet symbols, tables or headings. There is no output truncation or
-word/sentence quota. The personality's “Keep it brief” habit controls brevity, and
-the 64 KiB streamed-answer bound guards runaway generation.
+Fast synthesis uses a startup reserve. Slow synthesis selects complete buffering for the rest of that reply. Once selected, complete buffering remains active even if later chunks arrive faster.
 
-Successive sentences use one TTS worker and one runtime speech run. The selected
-voice is captured when the response starts. Bounded PCM queues and explicit job IDs,
-chunk sequences and end markers prevent mixed or incomplete responses from being
-accepted. Text delivery queues independently of inference, bounded by the agent's
-64 KiB streamed-answer and 2 MiB event guards, so slow TTS does not hold the Codex
-turn open. Every sentence or unpunctuated tail is divided into pieces of at most
-160 Unicode characters before inference, preferring words and sentence ends. Each
-piece gets its own 240-second deadline. Piper also bounds its native decoder
-inputs, retaining the 120-second per-input audio sanity guard.
+Uploads pause when sufficient audio is queued ahead of playback. Complete buffered replies can continue uploading to deliver their end marker. This prevents an unfinished upload from expiring while queued audio waits.
 
-The service's 135-second RPC read, 130-second dispatch and 140-second remote
-request deadlines cover control/profile requests, not voice playback. The agent's
-45-second inactivity deadline applies between complete Codex events, with a
-ten-minute outer cap for a turn and its tools. Final synthesis and playback
-continue independently after the turn finishes. See [agent conversation](#agent-conversation-and-memory)
-for failure recovery. Every turn includes UTC time, local time with an offset and
-a discovered IANA zone. If no zone is known, both the context and `list_alerts`
-say `unknown; use the local UTC offset above`. Today's offset is known even when
-the zone is not; a future date's offset may require clarification.
+Playback progress is a software position, not an independent acoustic measurement. A first generated chunk does not mean the speaker has started. Runtime stream limits reject oversized replies instead of truncating them.
 
-Gateway validation reasons reach the agent through `error.message` or the
-runtime's `result.error`, with an HTTP status fallback and credential/URL redaction.
-`get_lighting` reads manual brightness in percent, effect and RGBW colors; null
-means no manual override. `set_lighting` explains that scenes/speech reject changes
-and character startup clears a manual light. Alert tool results add local due
-times and remaining seconds at the agent boundary. Calls after final speech
-starts receive a tool error without executing or resetting the conversation.
-Successful direct sleep leaves a notice for the next model turn.
+## Tool feedback and cancellation
 
-The coordinator uploads mono 24 kHz PCM16 WAV through the gateway.
-`POST /api/v2/speech/stream` creates a runtime run,
-`/api/v2/speech/{run}/chunks/{sequence}` appends audio, and
-`/api/v2/speech/{run}/end` declares the final sequence. The complete-WAV endpoint
-also remains available.
+A search acknowledgement uses a separate speech run within the active session. The final reply waits for it. Only final playback opens follow-up listening.
 
-The required startup reserve is the larger of six seconds or twice the longest
-measured generation step plus two seconds. Once six seconds have accumulated,
-generation taking more than 75% of audio duration, or a required reserve above
-twelve seconds, latches complete buffering. That reply uploads only after the
-final synthesis end marker, even if later chunks are faster. Fast generation
-continues to release between six and twelve seconds, with at most one chunk of
-overshoot. Short replies finish generation before upload.
+Robot tools return typed requests through the coordinator and gateway. The runtime decides whether execution is permitted. Failed actions return their reason before the agent confirms a result.
 
-Uploads wait while `buffered_ms` exceeds sixteen seconds, limiting accepted audio
-to about eighteen seconds ahead of playing audio. Bounded synthesis channels
-apply backpressure while the player catches up. A complete buffered reply bypasses
-this wait while the runtime remains `queued`: no playback can drain that reserve,
-and withholding more chunks would eventually hit upload-idle expiry. Its remaining
-chunks and end marker can therefore arrive in a burst before playback readiness.
-A complete reply that begins a queued burst finishes it even if playback starts
-midway: a large accumulated lead could take more than ten seconds to drain to the
-pacing threshold. Replies uploaded to an already-playing runtime retain normal
-sixteen-second pacing. Under normal paced playback each at-most-two-second upload
-renews the runtime's existing ten-second upload-idle guard well before expiry.
-The guard remains active until the end marker; after that marker, upload-idle
-expiry no longer applies. Per-upload WAV bounds and two-second chunk bounds remain.
-
-The runtime computes smoothed 20 ms energy frames incrementally, replacing a
-provisional partial frame when the next chunk arrives. Quiet regions and phrase
-peaks use this compact energy history; raw PCM leaves memory after the player
-accepts it. Stream chunk files are deleted after acceptance, not read by the
-player. Character planning requires absolute frame indices, so analysis history
-remains until completion. Streams accept thirty minutes of audio, then fail with
-an explicit sanity-limit reason. The coordinator cancels playback, publishes the
-failure, and supplies the reason to the next model turn. No extra inference starts
-on failure and no successful completion conceals truncated speech.
-
-At 24 kHz mono PCM16, raw audio costs 2.88 MB per minute. The removed retained
-copy and full decoded-sample allocation cost 2.88 MB and 11.52 MB per minute,
-respectively. Incremental RMS history costs 24 KB per minute plus quiet/peak
-indices; its worst-case logical landmark storage is below 50 KB per minute.
-Fast-path PCM queues and startup reserve have fixed bounds. A complete-buffered
-reply retains 2.88 MB per minute in the coordinator, up to 86.4 MB at thirty
-minutes. The coordinator checks this cap before retaining each chunk and reports
-the same explicit runtime failure reason if another chunk would exceed it. A
-queued complete-reply burst or an unpaced external uploader can also queue up to
-86.4 MB at the runtime. Complete queued bursts finish uploading without pacing;
-other replies retain the sixteen-second upload threshold.
-These figures describe payloads, excluding allocator capacity, in-flight chunks
-and process/library overhead.
-
-The runtime prebuffers two seconds, or a shorter complete reply, and feeds one
-`aplay` process continuously. Each chunk contains at most two seconds of audio.
-Upload completion is followed by actual player completion before the listener is
-acknowledged. Out-of-order chunks, upload stalls, cancellation and buffer
-exhaustion terminate the run. A later generation slowdown can still exhaust a
-buffer chosen from earlier timings. The coordinator replaces a total playback
-deadline with a 20-second stall guard: state changes, accepted chunks and advancing
-software playback position reset it. Waiting for synthesis with an exhausted buffer
-does not consume the stall budget. `buffered_ms` estimates playback position from
-elapsed time rather than measuring ALSA consumption, so a hung player is detected
-after the expected audio end plus the stall interval. Physical audio completion
-still comes from the player.
-
-The runtime analyzes received audio and extends the character's existing motion
-run at gesture boundaries. Extension preserves commanded position and velocity,
-the anchor and performed gesture history. The stream end marker revises the
-remaining plan, and terminal playback starts or continues a final settle. See
-[speech performance policy](motion-reference.md#speech-performance-policy) for the
-motion policy.
-
-Coordinator logs include `speech.buffer_ready` and `speech.chunk`; runtime logs
-include `speech.chunk_received`, `speech.stream_end`, `speech.terminal` and motion
-finalization events. `buffered_ms` estimates received duration minus software
-playback elapsed. It can be negative and does not measure the ALSA hardware
-buffer. These timing logs contain IDs and durations, while Studio's conversation
-history also exposes transcripts and agent actions. Use the [service logs](quickstart.md#logs-and-recovery)
-to investigate a failed turn.
-
-## Local interaction feedback
-
-Wake, verification, endpoint and processing events carry the voice session ID.
-The runtime rejects stale transitions and bounds their lifetime. Its `wake`
-event plays the existing wake chime once and starts amber, teal and purple
-acknowledgement pulses, each lasting 300 ms. The listener gates this event as
-described in [confirmed waking](#confirmed-waking). The body reaction remains
-unchanged until wake confirmation. The pulse clock starts at the runtime `wake`
-event; later confirmation does not replay it.
-Afterward, capture uses the dim listening light and endpointed commands use
-thinking feedback. An unconfirmed endpoint remains silent.
-
-Thinking uses one entry cue, breathing light and a restrained head tilt with
-supporting shoulder and elbow movement. Repeated thinking notifications preserve
-the current gesture and timing. This prevents the transcription-to-agent
-transition from replaying the opening movement. Speech begins from the commanded
-thinking position and velocity when it takes over.
-
-If processing becomes unavailable after confirmation, the listener requests
-`error_muted` once and returns to wake detection. Unconfirmed rejection,
-cancellation and failure clear the candidate light without additional feedback.
-During descent, waking or a rest fault, immediate voice reactions are suppressed.
-Mechanical rest permits only the candidate's chime and brief light pulse. Home
-completion restores the latest eligible reaction. Capture stays
-open through cues, so speaker pickup must be checked on the assembled robot.
-
-## Alert interruption
-
-A ringing timer or alarm takes the speaker from an active voice reply. The
-listener retires that voice session and sends `session.interrupted`, allowing the
-coordinator to cancel inference and playback. Late messages from the retired
-session cannot replace the alert. Rustpotter continues listening during the sound;
-a detection sends a local `routines` stop request and consumes the wake phrase.
-Qwen and Codex do not participate in dismissal. See
-[timer and alarm behavior](system-architecture.md#timers-and-alarms).
+Cancellation retires only the affected speech worker when necessary. It cancels old uploads and playback ownership. Late results cannot revive an expired session.
 
 ## Scheduled announcements
 
-Pi listener protocol 2 adds `announcement { sessionId, id, attempt, purpose,
-text }`, `announcement.start`, `announcement.ready` and
-`announcement.failed { sessionId, id, reason }`. The satellite opens an
-announcement session only when listening is idle. The coordinator also waits
-for response jobs, including interrupted turns, to finish. After start, the
-satellite opens runtime announcement ownership, plays `notice_warm` and reports
-ready. The ordinary `speak_sequence` path owns audio upload, keepalives, echo
-handling and playback completion; late readiness is discarded for a reset session and logged/ignored by the coordinator. Runtime ownership permits audio at rest
-without a confirmed user wake or motor activity.
+The listener admits announcements only when ordinary voice work is idle. The coordinator waits for runtime ownership before synthesis and upload. A wake can interrupt an announcement.
 
-Runtime ownership refusal, daemon errors and daemon timeouts produce
-`announcement.failed` on the existing listener connection. The coordinator
-reports `routines` `announce_failed { id }` before cancelling the reservation;
-the runtime owns bounded retries and backoff. Other pre-completion announcement
-failures use the same reporting path.
+Completed playback is recorded before its separate acknowledgement. Retrying acknowledgement cannot replay delivered speech. Delivery failure leaves the runtime's retry policy in control.
 
-Completed playback is recorded before the coordinator sends `routines`
-`announced { id }`. An acknowledgement failure retries twice, after 100 ms and
-200 ms. Exhausted retries log `voice.announcement_ack_failed` and finish the
-session without reporting a delivery failure or opening a conversation window.
-The coordinator suppresses the same alert/attempt for the life of that listener
-connection, including when wake interrupts acknowledgement retries. A fresh
-listener reservation for already delivered speech receives `session.finish`.
-
-During announcement playback, “Hey Orion” sends the local runtime request
-`dismiss_announcement { id }`, acknowledging only the playing reminder or
-clearing that alarm label/briefing notice, then sends `session.interrupted` with
-reason `announcement`. Ring dismissal leaves unspoken reminders scheduled;
-see the [runtime alert lifecycle](../runtime/README.md).
-The normal speaker-tail guard then restores listening. Timed reminders, retries,
-recurrence and snooze remain in the runtime scheduler. See
-[timers and alarms](system-architecture.md#timers-and-alarms).
-
-Shopping and to-do tool calls use the agent’s `lists.json` store without a robot
-operation. Studio reaches the same store through the private service’s `lists`
-request. File locks and original-item/list comparisons prevent lost writes. List
-text stays outside memory retrieval and cannot authorize further tool actions.
-
-Three seconds after dismissal, an alarm with `briefing: true` can reserve an announcement session with purpose `briefing`. The coordinator waits for user replies to finish, starts a system agent turn with the morning briefing instruction, and acknowledges after successful speech playback. The listener’s announcement authorization permits playback while resting without counting it as user activity. Echo handling and wake dismissal use the existing scoped session.
-
-Light routine commands follow the existing agent → coordinator → gateway → runtime tool path. Wind-down requests deferred sleep from the runtime’s scheduler; it waits for foreground speech and confirmed voice activity to end. It does not fabricate a voice session. Focus rings through the ordinary timer path. Sunrise light during mechanical rest does not authorize motion, speech, or user activity.
-
-Announcement waiting and thinking accept “Hey Orion”: the listener cancels the reservation and starts ordinary command capture, leaving the runtime notice pending for a later idle session. Waiting expires after 60 seconds; an opened reply uses normal processing and playback leases. Interruption preserves the original two-minute snooze window. Late readiness for a reset session is discarded; the coordinator logs and ignores stale or session-less readiness. Playback wake dismissal still acknowledges the notice locally.
-
-Next-conversation reminder snapshots travel with generated agent replies and are acknowledged only in the coordinator’s completed-playback branch (`speech.completed` for user replies). Interrupted or failed playback leaves the snapshot pending. Reminder storage errors are logged without failing speech and exposed in the agent profile for Studio.
+Briefings use a separate agent request after alarm dismissal. They do not create a user transcript or open a conversation window.
 
 ## Look tool contract
 
-`look()` requests one in-memory JPEG only for an explicit visual question, such
-as “what am I holding?” or “read this label.” The coordinator fetches the
-authenticated snapshot endpoint. Its camera light indicator must be healthy
-and remains lit for three seconds after delivery. This is Orion’s only camera-to-model path; ordinary agent inputs
-contain text only.
-Camera off, rest, invalid JPEGs, responses over 1 MiB and interrupted requests
-fail without a visual answer. The agent's instructions forbid background
-snapshots and requests authorized by image, memory or tool content. The model
-decides whether the user's words request visual help; there is no automatic
-capture attached to ordinary context. A request permits at most one attempt,
-before final speech.
+An explicit visual question can request one camera snapshot. The coordinator obtains it through the authenticated gateway and sends it to Codex image input.
 
-The installed Pi Codex `0.157.0` accepts an in-memory `image` data URL through
-`turn/steer`, attached to the active turn while `look` awaits its result. This
-path was verified with a synthetic red image on `gpt-6-luna`. Image-valued tool
-results were accepted by the same server but did not reliably reach the model,
-so Orion uses the ordinary image-input channel. No `localImage` file is created.
-Tool activity contains only success/error metadata. After an image-bearing
-turn, the ephemeral provider thread closes so later turns cannot resend the image.
-The active logical conversation retains text and tool metadata for recovery;
-an in-memory request/answer note also supports operation without persisted
-history. Profile changes clear that note. Other turns retain provider reuse. Physical cue visibility
-and recognition of objects on the lamp remain lamp-unverified.
+Camera privacy, rest and viewing permission still apply. Images stay in memory on the Pi. They do not enter tool text, history or logs. An image access error returns a failure instead of invented visual content.
+
+Autonomous observations do not authorize image upload. General conversation does not capture a snapshot automatically.
+
+See [speech workers](../speech/README.md), [listener setup](../voice/README.md) and [configuration](configuration.md).
