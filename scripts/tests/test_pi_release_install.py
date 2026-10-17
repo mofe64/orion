@@ -1,5 +1,7 @@
 """Configuration preservation and fault-injected release/rollback transactions."""
 import copy
+import importlib.util
+import os
 import json
 import io
 import shlex
@@ -107,6 +109,47 @@ class ConfigurationTests(Fixture):
                             self.assertNotIn(str(self.release / directory), value, str(path))
                 for relative in builtins:
                     self.assertEqual((self.project / relative).read_text(), 'catalog asset')
+
+    def test_rendered_gateway_starts_with_catalog_only_root_and_release_compiler(self):
+        (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        self.write(self.project / 'motion/config/v2/poses.yaml', 'poses: {}')
+        (self.project / 'scenes/v2').mkdir(parents=True)
+        gateway_file = self.release / 'orion_studio/gateway.py'
+        gateway_file.parent.mkdir(parents=True)
+        shutil.copy2(SCRIPTS.parent / 'orion_studio/gateway.py', gateway_file)
+        compiler = self.release / 'runtime/target/release/orion-trajectory'
+        self.write(compiler, '#!/bin/sh\nexit 0\n'); compiler.chmod(0o755)
+        token = self.home / '.config/orion/studio-token'
+        self.write(token, 'test-pairing-secret-' * 3); token.chmod(0o600)
+        self.assertFalse((self.project / 'AGENTS.md').exists())
+        self.assertFalse((self.project / 'runtime').exists())
+        spec = importlib.util.spec_from_file_location('release_gateway', gateway_file)
+        gateway = importlib.util.module_from_spec(spec); spec.loader.exec_module(gateway)
+        start = effective_start([(p, text) for p, text in self.plan().items()
+                                 if p.name == 'orion-studio-gateway.service'])
+        arguments = shlex.split(start)[1:]
+        for explicit_compiler in (True, False):
+            with self.subTest(explicit_compiler=explicit_compiler):
+                argv = arguments.copy()
+                if not explicit_compiler:
+                    index = argv.index('--trajectory-compiler'); del argv[index:index+2]
+                original = gateway.OrionGateway
+                def construct(*args, **kwargs):
+                    instance = original(*args, **kwargs)
+                    self.assertEqual(instance._trajectory_compiler_path().resolve(), compiler.resolve())
+                    return instance
+                with patch.object(sys, 'argv', argv), patch.object(gateway, 'OrionGateway', side_effect=construct), \
+                     patch.object(gateway, 'GatewayHTTPServer') as server, patch.dict(os.environ):
+                    os.environ.pop('ORION_TRAJECTORY_COMPILER', None)
+                    gateway.main()
+                server.return_value.serve_forever.assert_called_once()
+        for missing in (self.project / 'scenes/v2', self.project / 'motion/config/v2/poses.yaml'):
+            hidden = missing.with_name(missing.name + '.hidden'); missing.rename(hidden)
+            try:
+                with patch.object(sys, 'argv', arguments), self.assertRaisesRegex(SystemExit, 'project root'):
+                    gateway.main()
+            finally:
+                hidden.rename(missing)
 
     def test_v2_camera_geometry_and_detector_are_loaded_from_release_including_overrides(self):
         (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')

@@ -1091,10 +1091,11 @@ class OrionGateway:
         return document
 
     def _trajectory_compiler_path(self) -> Path:
+        # The catalog contains assets; the compiler belongs to this app release.
         candidates = [
             self.trajectory_compiler,
-            self.project_root / "runtime/target/release/orion-trajectory" if self.project_root else None,
-            self.project_root / "runtime/target/debug/orion-trajectory" if self.project_root else None,
+            GATEWAY_PROGRAM.parent.parent / "runtime/target/release/orion-trajectory",
+            GATEWAY_PROGRAM.parent.parent / "runtime/target/debug/orion-trajectory",
             Path("/usr/local/bin/orion-trajectory"),
         ]
         configured = os.environ.get("ORION_TRAJECTORY_COMPILER")
@@ -2265,7 +2266,7 @@ def parse_args() -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command", required=True)
     token = commands.add_parser("create-token", help="Create a development bearer token.")
     token.add_argument("--token-file", type=Path, required=True)
-    serve = commands.add_parser("serve", help="Run the source-tree Studio gateway.")
+    serve = commands.add_parser("serve", help="Run the Studio gateway.")
     serve.add_argument("--hardware", choices=("v1", "v2"), default="v1")
     serve.add_argument("--socket", default=DEFAULT_SOCKET)
     serve.add_argument("--vision-socket", default="/tmp/orion-vision.sock")
@@ -2281,7 +2282,7 @@ def parse_args() -> argparse.Namespace:
         "--project-root",
         type=Path,
         default=Path(__file__).resolve().parent.parent,
-        help="Orion source checkout containing scenes/ (default: inferred from gateway.py).",
+        help="Asset catalog containing scenes/<hardware> and motion/config/<hardware>/poses.yaml (default: inferred from gateway.py).",
     )
     serve.add_argument(
         "--allow-origin",
@@ -2300,7 +2301,7 @@ def main() -> None:
         return
     token = read_token(args.token_file)
     project_root = args.project_root.resolve()
-    if not (project_root / "AGENTS.md").is_file() or not (project_root / f"scenes/{args.hardware}").is_dir():
+    if not (project_root / f"motion/config/{args.hardware}/poses.yaml").is_file() or not (project_root / f"scenes/{args.hardware}").is_dir():
         raise SystemExit(f"Not an Orion project root: '{project_root}'.")
     gateway = OrionGateway(
         UnixOrionClient(args.socket),

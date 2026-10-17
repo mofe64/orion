@@ -57,6 +57,8 @@ An HTTP 401 response means authentication is required. It also shows that the ga
 
 The gateway defaults to loopback access. `--bind ::` accepts IPv4 and IPv6 when the operating system supports a dual-stack socket.
 
+An installed gateway reads poses and scenes from the asset catalog. It finds `orion-trajectory` under its own release folder. `--trajectory-compiler` selects a different compiler.
+
 1. Stop the installed gateway before using its port.
 
    ```bash
