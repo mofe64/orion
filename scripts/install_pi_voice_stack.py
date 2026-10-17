@@ -552,6 +552,7 @@ def activate(root, release, home, files, system, commissioning=False, before_res
                 print('First installation or V2 frame migration stays stopped until reboot and servo commissioning.', flush=True)
             else:
                 for name in wanted_services: system.start(name)
+                data['services_started'] = True
         else:
             system.start('oriond')
             # Keep companions quiet until physical smoke playback settles.

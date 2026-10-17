@@ -63,8 +63,12 @@ def read_env(text):
 
 
 def merge_env(text, defaults, removed=()):
-    """Drop retired keys and add missing defaults; preserve tuning and comments."""
-    existing = read_env(text)
+    """Drop retired keys and add missing defaults; preserve tuning and comments.
+
+    A removed key that also has a default is replaced by that default, so a
+    release-specific path moves to the new release instead of disappearing.
+    """
+    existing = {key: value for key, value in read_env(text).items() if key not in removed}
     lines = []
     for line in text.splitlines(keepends=True):
         key = line.strip().partition('=')[0]
