@@ -77,3 +77,24 @@ Changing calibration limits does not change model geometry. URDF origins and MJC
    ```bash
    .venv/bin/python scripts/render_v2_rest.py
    ```
+
+
+## Preview all V2 movements
+
+The preview script requires the simulator environment, Cargo and `ffmpeg`. It uses the Rust runtime compiler and scene scheduler at 50 Hz. V2 follows these samples with kinematic tracking.
+
+1. Generate the movement videos and review index from the repository root.
+
+   ```bash
+   .venv/bin/python scripts/preview_movements.py
+   ```
+
+2. Open `../scratch/motion-previews/index.html` in a browser.
+
+Each video shows side and front views, the item name and elapsed time. Poses move from home to their target and back. Motions use each listed `anchor_poses` entry, or home when no entry exists. Scenes start at home. A separate video shows startup from rest to home.
+
+The index lists lamp-body contacts, runtime clamps, peak joint speeds and final anchor errors. Problems appear first. Speed checks use consecutive 50 Hz command differences. Boundary counts include authored joint-limit positions without classifying them as clamps.
+
+The script enables mesh contacts in memory. MuJoCo uses convex hulls for these meshes. Contacts include connected joint interfaces and can overstate physical collisions. Fixed-base tracking cannot check servo loads or base tipping.
+
+`--output DIRECTORY` selects another directory outside the repository. `--compiler PATH` selects an existing `oriond` with catalog compilation support. Videos use 25 frames per second by default. `--fps 50` records every sample.
