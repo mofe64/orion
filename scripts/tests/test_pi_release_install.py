@@ -745,6 +745,28 @@ class FakeSystem:
 
 
 class TransactionTests(Fixture):
+    def test_manual_rollback_restores_packages_after_stopping_services(self):
+        self.activate()
+        called = []
+        def restore_packages(folder, data):
+            self.assertFalse(any(state['active'] for state in self.system.states.values()))
+            called.append(folder)
+        installer.rollback(self.root, self.system, before_restore=restore_packages)
+        self.assertEqual(len(called), 1)
+        self.assert_restored()
+
+    def test_failed_activation_restores_packages_before_old_services(self):
+        self.system.failure = 'ready'
+        called = []
+        def restore_packages(folder, data):
+            self.assertFalse(any(state['active'] for state in self.system.states.values()))
+            called.append(folder)
+        with self.assertRaisesRegex(RuntimeError, 'readiness'):
+            installer.activate(self.root, self.release, self.home, self.plan(), self.system,
+                               before_restore=restore_packages)
+        self.assertEqual(len(called), 1)
+        self.assert_restored()
+
     def test_camera_activation_failure_removes_new_unit_and_restores_previous_states(self):
         (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
         self.manifest.write_text('{"release":"/old/release","hardware":"v2"}')

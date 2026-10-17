@@ -1,5 +1,6 @@
 """Release boundaries: ABI selection, verified payloads, offline environments and commissioning."""
 import io
+import gzip
 import json
 from pathlib import Path
 import shutil
@@ -15,11 +16,88 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import release_install as receiver
 import check_hailo
+import native_packages
 from pi_release_bundle import inspect_archive, pack_bundle, sha256, verify_payload, write_manifest
 from pi_release_platform import TARGET_PLATFORM, builder_image, check_platform
 
 
 class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.pins = json.loads((SCRIPTS / 'release-native.json').read_text())
+
+    def available(self, pins, hailo=True):
+        return '\n'.join(f'{p.split("=", 1)[0]} | {p.split("=", 1)[1]} | archive' for p in native_packages.pinned_packages(pins, hailo))
+
+    def test_native_packages_are_held_after_install_on_both_os_versions(self):
+        for codename in ('bookworm', 'trixie'):
+            with self.subTest(codename=codename), tempfile.TemporaryDirectory() as folder:
+                pins = self.pins[codename]
+                with patch.object(receiver, 'run', return_value=subprocess.CompletedProcess([], 0, self.available(pins))) as run:
+                    receiver.install_system_packages(Path(folder), codename, True, pins)
+                commands = [call.args for call in run.call_args_list]
+                install = next(c for c in commands if c[:3] == ('sudo', 'apt-get', 'install'))
+                self.assertIn('--allow-change-held-packages', install)
+                self.assertIn('--allow-downgrades', install)
+                expected = tuple(p.split('=', 1)[0] for p in native_packages.pinned_packages(pins))
+                self.assertEqual(commands[-1], ('sudo', 'apt-mark', 'hold', *expected))
+                self.assertEqual(json.loads((Path(folder) / 'native-packages.json').read_text())['packages'], list(expected))
+
+    def test_update_replaces_only_orion_managed_holds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'native-packages.json').write_text(json.dumps({'packages': ['libcamera-old', 'libcamera-ipa']}))
+            pins = self.pins['bookworm']
+            with patch.object(receiver, 'run', return_value=subprocess.CompletedProcess([], 0, self.available(pins, False))) as run:
+                receiver.install_system_packages(root, 'bookworm', False, pins)
+            commands = [call.args for call in run.call_args_list]
+            self.assertIn(('sudo', 'apt-mark', 'unhold', 'libcamera-old'), commands)
+            self.assertFalse(any('hailort' in c for c in commands))
+
+    def test_missing_pin_stops_before_install_or_hold_changes(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(receiver, 'run', return_value=subprocess.CompletedProcess([], 0, '')) as run:
+            with self.assertRaisesRegex(RuntimeError, 'no longer in the Raspberry Pi archive') as error:
+                receiver.install_system_packages(Path(folder), 'bookworm', True, self.pins['bookworm'])
+            self.assertEqual(str(error.exception), native_packages.UNAVAILABLE)
+            self.assertFalse(any('install' in call.args or 'apt-mark' in call.args for call in run.call_args_list))
+
+    def test_rollback_restores_previous_release_package_pins(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); old = root / 'releases/old'; (old / 'scripts').mkdir(parents=True)
+            pins = json.loads(json.dumps(self.pins)); pins['bookworm']['libcamera_version'] = 'older-version'
+            (old / 'scripts/release-native.json').write_text(json.dumps(pins))
+            backup = root / 'backup'; backup.write_text(json.dumps({'release': str(old)}))
+            data = {'files': [{'path': str(root / 'installation.json'), 'backup': str(backup)}]}
+            with patch.object(receiver, 'install_system_packages') as install, patch.object(receiver, 'has_hailo', return_value=True):
+                receiver.restore_native_packages(root, 'bookworm', root, data)
+            install.assert_called_once_with(root, 'bookworm', True, pins['bookworm'])
+
+    def test_checks_show_services_and_hailo_even_when_servo_check_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); release = root / 'release'
+            (root / 'installation.json').write_text(json.dumps({'release': str(release)}))
+            failure = subprocess.CalledProcessError(1, ['oriond', '--check'])
+            with patch.object(receiver, 'run', side_effect=[failure, subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0)]) as run:
+                with self.assertRaisesRegex(RuntimeError, 'Servo positions'):
+                    receiver.check_installation(root)
+            commands = [call.args for call in run.call_args_list]
+            self.assertEqual(commands[0], (release / 'runtime/target/release/oriond', '--check'))
+            self.assertIn('status', commands[1])
+            self.assertTrue(set(receiver.MANAGED_SERVICES).issubset(commands[1]))
+            self.assertEqual(commands[2][1], release / 'scripts/check_hailo.py')
+
+    def test_archive_preflight_covers_build_and_runtime_pins(self):
+        def fetch(url):
+            codename = 'bookworm' if '/bookworm/' in url else 'trixie'
+            paragraphs = [f'Package: {p.split("=", 1)[0]}\nVersion: {p.split("=", 1)[1]}'
+                          for p in native_packages.pinned_packages(self.pins[codename], build=True)]
+            return gzip.compress('\n\n'.join(paragraphs).encode())
+        native_packages.check_archives(self.pins, fetch)
+        for codename in ('bookworm', 'trixie'):
+            with self.subTest(codename=codename):
+                changed = json.loads(json.dumps(self.pins)); changed[codename]['hailo_packages'] += ['missing=1']
+                with self.assertRaisesRegex(RuntimeError, codename + ': missing=1'):
+                    native_packages.check_archives(changed, fetch)
+
     def test_os_selects_abi_while_shared_binaries_target_bookworm(self):
         pins = json.loads((SCRIPTS / 'release-native.json').read_text())
         for osname in ('bookworm', 'trixie'):

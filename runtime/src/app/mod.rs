@@ -37,17 +37,8 @@ fn execute() -> crate::Result<i32> {
     match options.operation {
         Operation::Check => {
             let mut driver = connect_driver(&options)?;
-            let states = driver.read()?;
+            let states = driver.check_startup()?;
             print_states(&states);
-            for (state, joint) in states.iter().zip(driver.calibrations()) {
-                let (low, high) = joint.safe_range_radians();
-                if state.position < low || state.position > high {
-                    return Err(crate::Error::OutOfRange(format!(
-                        "{} is outside the joint profile; fold into rest and run oriond servo zero",
-                        state.name
-                    )));
-                }
-            }
             Ok(0)
         }
         Operation::Serve => serve(options),

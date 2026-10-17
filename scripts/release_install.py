@@ -8,11 +8,12 @@ import shutil
 import subprocess
 import sys
 
-from install_pi_voice_stack import System, activate, deployment_lock, rollback
+from install_pi_voice_stack import System, activate, atomic_json, deployment_lock, rollback
+from native_packages import UNAVAILABLE, pinned_packages
 from pi_catalog import catalog_plan
 from pi_release_bundle import install_wheels, verify_payload
 from pi_release_platform import check_platform, read_platform
-from pi_service_config import render_plan
+from pi_service_config import MANAGED_SERVICES, render_plan
 from prepare_pi_voice_stack import CODEX_VERSION, prepare_assets
 from release_models import prepare_vision_models
 
@@ -49,10 +50,61 @@ def has_hailo():
 
 def system_packages(codename, hailo, pins):
     common = ['alsa-utils', 'libdbus-1-3', 'libusb-1.0-0', 'libcap2', 'libgomp1', 'libarchive13' if codename == 'bookworm' else 'libarchive13t64',
-              'libcamera-ipa=' + pins['libcamera_version'], pins['libcamera_package'] + '=' + pins['libcamera_version'],
-              'libkms++0=' + pins['kms_version'], 'kms++-utils=' + pins['kms_version'], 'raspi-utils', 'dkms', 'device-tree-compiler', 'linux-image-rpi-2712', 'linux-headers-rpi-2712',
+              'raspi-utils', 'dkms', 'device-tree-compiler', 'linux-image-rpi-2712', 'linux-headers-rpi-2712',
               'libssl3' if codename == 'bookworm' else 'libssl3t64']
-    return common + (pins['hailo_packages'] if hailo else [])
+    return common + pinned_packages(pins, hailo)
+
+
+def install_system_packages(root, codename, hailo, pins):
+    packages = pinned_packages(pins, hailo)
+    names = [package.split('=', 1)[0] for package in packages]
+    run('sudo', 'apt-get', 'update')
+    available = run('apt-cache', 'madison', *names, capture_output=True, text=True).stdout
+    versions = set()
+    for line in available.splitlines():
+        fields = [field.strip() for field in line.split('|')]
+        if len(fields) >= 2:
+            versions.add(fields[0].split(':', 1)[0] + '=' + fields[1])
+    if set(packages) - versions:
+        raise RuntimeError(UNAVAILABLE)
+    run('sudo', 'apt-get', 'install', '-y', '--no-install-recommends',
+        '--allow-downgrades', '--allow-change-held-packages', *system_packages(codename, hailo, pins))
+    state = root / 'native-packages.json'
+    previous = json.loads(state.read_text())['packages'] if state.exists() else []
+    retired = sorted(set(previous) - set(names))
+    if retired:
+        run('sudo', 'apt-mark', 'unhold', *retired)
+    run('sudo', 'apt-mark', 'hold', *names)
+    atomic_json(state, {'packages': names})
+
+
+def restore_native_packages(root, codename, folder, data):
+    for entry in data['files']:
+        if entry['path'] == str(root / 'installation.json') and entry['backup']:
+            previous = Path(json.loads(Path(entry['backup']).read_text())['release'])
+            manifest = previous / 'scripts/release-native.json'
+            if manifest.exists():
+                install_system_packages(root, codename, has_hailo(), json.loads(manifest.read_text())[codename])
+            return
+
+
+def check_installation(root):
+    release = Path(json.loads((root / 'installation.json').read_text())['release'])
+    commands = [
+        ('Servo positions', (release / 'runtime/target/release/oriond', '--check')),
+        ('Orion services', ('systemctl', '--no-pager', '--full', 'status', *MANAGED_SERVICES)),
+        ('AI HAT+', (release / 'vision/.venv/bin/python', release / 'scripts/check_hailo.py', '--root', root)),
+    ]
+    failed = []
+    for label, command in commands:
+        print(f'--- {label} ---', flush=True)
+        try:
+            run(*command)
+        except (OSError, subprocess.CalledProcessError) as error:
+            print(f'{label}: {error}', flush=True)
+            failed.append(label)
+    if failed:
+        raise RuntimeError('Checks failed: ' + ', '.join(failed))
 
 
 def configure_hailo(present, boot=Path('/boot/firmware/config.txt')):
@@ -98,10 +150,12 @@ def install(payload, root, codename):
     metadata = json.loads((payload / 'release/release.json').read_text())
     pins = json.loads((payload / 'release/scripts/release-native.json').read_text())[codename]
     present = has_hailo()
-    run('sudo', 'apt-get', 'install', '-y', '--no-install-recommends', *system_packages(codename, present, pins))
-    configure_hailo(present)
     release = root / 'releases' / metadata['release_id']
     with deployment_lock(root):
+        if (root / 'pending-installation.json').exists():
+            raise RuntimeError('An interrupted deployment needs recovery; run this installer with --rollback')
+        install_system_packages(root, codename, present, pins)
+        configure_hailo(present)
         installed = root / 'installation.json'
         active = json.loads(installed.read_text()) if installed.exists() else {}
         if active.get('release') == str(release):
@@ -145,7 +199,8 @@ def install(payload, root, codename):
         files[Path('/usr/local/bin/oriond')] = '#!/bin/sh\ncd ' + str(project) + '\nexec ' + str(release / 'runtime/target/release/oriond') + ' "$@"\n'
         files[Path('/usr/local/bin/orion-check-hailo')] = '#!/bin/sh\nexec ' + str(release / 'vision/.venv/bin/python') + ' ' + str(release / 'scripts/check_hailo.py') + ' --root ' + str(root) + ' "$@"\n'
         files[Path('/usr/local/bin/codex')] = '#!/bin/sh\nexec ' + str(root / f'codex-{CODEX_VERSION}/bin/codex') + ' "$@"\n'
-        activate(root, release, home, files, System(), commissioning=True)
+        activate(root, release, home, files, System(), commissioning=True,
+                 before_restore=lambda folder, data: restore_native_packages(root, codename, folder, data))
         (release / '.orion-preparing').unlink()
     print('Release installed. Reboot for lighting, Hailo and group permissions. Run codex login, fold into rest, then oriond servo zero and oriond --check.')
     print('Start Orion: sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision')
@@ -156,10 +211,11 @@ def main():
     parser.add_argument('--codename', choices=('bookworm', 'trixie')); parser.add_argument('--rollback', action='store_true'); parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     if args.rollback:
-        with deployment_lock(args.root): rollback(args.root, System())
+        codename = read_platform()['version_codename']
+        with deployment_lock(args.root):
+            rollback(args.root, System(), before_restore=lambda folder, data: restore_native_packages(args.root, codename, folder, data))
     elif args.check:
-        release = Path(json.loads((args.root / 'installation.json').read_text())['release'])
-        run(release / 'vision/.venv/bin/python', release / 'scripts/check_hailo.py', '--root', args.root)
+        check_installation(args.root)
     elif args.payload and args.codename: install(args.payload.resolve(), args.root.resolve(), args.codename)
     else: parser.error('Select --payload and --codename, --rollback or --check')
 
@@ -168,4 +224,6 @@ if __name__ == '__main__':
     try:
         main()
     except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        if str(error) == UNAVAILABLE:
+            raise SystemExit(UNAVAILABLE) from None
         raise SystemExit(f'Orion installation failed: {error}. Re-run the installer to resume an incomplete preparation.') from None

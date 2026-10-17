@@ -21,6 +21,8 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: echo "ORION_VERSION=${INPUT_VERSION:-$GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+      - name: Check pinned Raspberry Pi packages
+        run: python3 scripts/native_packages.py --check-archives
       - name: Build and validate in ARM64 Debian containers
         run: scripts/build_release.sh "$ORION_VERSION"
       - name: Attach release artifacts

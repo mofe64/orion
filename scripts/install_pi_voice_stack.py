@@ -448,13 +448,15 @@ def snapshot(root, files, system):
     return folder, data
 
 
-def restore(folder, data, system):
+def restore(folder, data, system, before_restore=None):
     # A new runtime may be holding torque after partial activation.
     stop_order = tuple(name for name in MANAGED_STOP_ORDER if name in data['services'])
     for name in stop_order:
         if name == 'oriond' and system.state(name)['active']:
             system.rest_runtime()
         system.stop(name)
+    if before_restore is not None:
+        before_restore(folder, data)
     # Disable newly-created units while their definitions still exist, removing wants links.
     for name, old in data['services'].items():
         if old['enabled'] == 'not-found' and system.state(name)['enabled'] != 'not-found':
@@ -484,7 +486,7 @@ def restore(folder, data, system):
     atomic_json(folder / 'state.json', data)
 
 
-def activate(root, release, home, files, system, commissioning=False):
+def activate(root, release, home, files, system, commissioning=False, before_restore=None):
     installed = root / 'installation.json'
     pending = root / 'pending-installation.json'
     if pending.exists():
@@ -564,7 +566,7 @@ def activate(root, release, home, files, system, commissioning=False):
         atomic_json(folder / 'state.json', data)
         if switched:
             try:
-                restore(folder, data, system)
+                restore(folder, data, system, before_restore=before_restore)
             except BaseException as recovery_error:
                 data['recovery_error'] = failure_details(recovery_error)
                 data['status'] = 'rollback_failed'; atomic_json(folder / 'state.json', data)
@@ -610,7 +612,7 @@ def prune_releases(active, rollback_release):
                 print(f'Could not remove old release {old}: {error}')
 
 
-def rollback(root, system):
+def rollback(root, system, before_restore=None):
     pending = root / 'pending-installation.json'
     pointer = json.loads((pending if pending.exists() else root / 'installation.json').read_text())
     folder = Path(pointer.get('transaction') or pointer.get('rollback') or '')
@@ -622,7 +624,7 @@ def rollback(root, system):
     already_restored = data['status'] == 'rolled_back'
     if not already_restored:
         atomic_json(pending, {'transaction': str(folder)})
-        restore(folder, data, system)
+        restore(folder, data, system, before_restore=before_restore)
     # A manual rollback consumes this one-level recovery point. An older transaction
     # may have been pruned; never leave an installation pointer to that missing backup.
     installed = root / 'installation.json'

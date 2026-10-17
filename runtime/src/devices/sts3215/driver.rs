@@ -9,6 +9,7 @@ use crate::motion::calibration::{ENCODER_RESOLUTION, JointCalibration};
 use crate::motion::pose::JointPositions;
 
 pub const STS3215_MODEL_NUMBER: i32 = 777;
+const STARTUP_MARGIN_RAW: i32 = 20;
 /// Radians/second per Present Speed count/second on Orion's Phase bit-2=1 servos.
 /// Feetech magnetic-encoder memory table: address 58 is steps/s; address 18
 /// bit 2 selects one step/s (set) or 50 steps/s (clear). One turn is 4096 steps.
@@ -327,27 +328,7 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
         }
         let ids = self.servo_ids();
         let raw_states = self.transport.read_states(&ids)?;
-        let mut initial_goals = BTreeMap::new();
-        for joint in &self.calibrations {
-            let Some(raw) = raw_states.get(&joint.servo_id) else {
-                return Err(Error::Runtime(
-                    "Missing STS3215 state during activation.".into(),
-                ));
-            };
-            if raw.status != 0 {
-                return Err(Error::Runtime(
-                    "STS3215 reported a fault during activation.".into(),
-                ));
-            }
-            let delta = raw.position - joint.neutral_raw;
-            if delta < joint.safe_min_delta_raw || delta > joint.safe_max_delta_raw {
-                return Err(Error::OutOfRange(format!(
-                    "{} reads raw {}, outside its joint profile; fold the lamp into mechanical rest and run oriond servo zero.",
-                    joint.name, raw.position
-                )));
-            }
-            initial_goals.insert(joint.servo_id, raw.position);
-        }
+        let initial_goals = self.initial_goals(&raw_states)?;
         self.transport.write_positions(&initial_goals)?;
         for (&id, &expected_goal) in &initial_goals {
             if self.transport.read_register(id, Register::GoalPosition)? != expected_goal {
@@ -362,6 +343,51 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
         }
         self.active = true;
         self.convert_states(&raw_states)
+    }
+
+    pub fn check_startup(&mut self) -> Result<Vec<JointState>> {
+        if !self.configured {
+            return Err(Error::InvalidState(
+                "STS3215 driver is not configured.".into(),
+            ));
+        }
+        let raw_states = self.transport.read_states(&self.servo_ids())?;
+        self.initial_goals(&raw_states)?;
+        self.convert_states(&raw_states)
+    }
+
+    fn initial_goals(
+        &self,
+        raw_states: &BTreeMap<u8, Sts3215RawState>,
+    ) -> Result<BTreeMap<u8, i32>> {
+        let mut initial_goals = BTreeMap::new();
+        for joint in &self.calibrations {
+            let Some(raw) = raw_states.get(&joint.servo_id) else {
+                return Err(Error::Runtime(
+                    "Missing STS3215 state during activation.".into(),
+                ));
+            };
+            if raw.status != 0 {
+                return Err(Error::Runtime(
+                    "STS3215 reported a fault during activation.".into(),
+                ));
+            }
+            let delta = raw.position - joint.neutral_raw;
+            if !(0..ENCODER_RESOLUTION).contains(&raw.position)
+                || delta < joint.safe_min_delta_raw - STARTUP_MARGIN_RAW
+                || delta > joint.safe_max_delta_raw + STARTUP_MARGIN_RAW
+            {
+                return Err(Error::OutOfRange(format!(
+                    "{} reads raw {}, outside its joint profile; fold the lamp into mechanical rest and run oriond servo zero.",
+                    joint.name, raw.position
+                )));
+            }
+            initial_goals.insert(
+                joint.servo_id,
+                joint.neutral_raw + delta.clamp(joint.safe_min_delta_raw, joint.safe_max_delta_raw),
+            );
+        }
+        Ok(initial_goals)
     }
 
     pub fn deactivate(&mut self) -> Result<()> {
@@ -1181,7 +1207,7 @@ pub(crate) mod tests {
     #[test]
     fn torque_gate_rejects_an_unzeroed_rest_joint_before_writing_goals() {
         let mut t = FakeTransport::default();
-        t.add_servo(2, 2046);
+        t.add_servo(2, 2026);
         let mut driver = Sts3215Driver::new(t);
         driver
             .configure(
@@ -1194,6 +1220,68 @@ pub(crate) mod tests {
         assert!(error.to_string().contains("run oriond servo zero"));
         assert!(driver.transport.position_writes.is_empty());
         assert!(!driver.transport.calls.contains(&"torque_on".into()));
+    }
+
+    #[test]
+    fn settled_shoulder_at_2045_starts_with_an_in_range_goal() {
+        let mut transport = FakeTransport::default();
+        transport.add_servo(2, 2045);
+        let mut driver = Sts3215Driver::new(transport);
+        driver
+            .configure(
+                "/dev/fake",
+                1_000_000,
+                vec![calibration("shoulder_pitch_joint", 2, 2047, 0, 1180)],
+            )
+            .unwrap();
+        let measured = driver.check_startup().unwrap();
+        assert!(measured[0].position < 0.0);
+        assert!(driver.transport.position_writes.is_empty());
+        driver.activate().unwrap();
+        assert_eq!(driver.transport.position_writes[0][&2], 2047);
+        assert!(driver.transport.calls.contains(&"torque_on".into()));
+        assert!(
+            driver
+                .write(&positions(&[("shoulder_pitch_joint", -2.0 * PI / 4096.0)]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn startup_margin_is_inclusive_at_both_limits() {
+        for (reading, goal) in [(2027, 2047), (3247, 3227)] {
+            let mut transport = FakeTransport::default();
+            transport.add_servo(2, reading);
+            let mut driver = Sts3215Driver::new(transport);
+            driver
+                .configure(
+                    "/dev/fake",
+                    1_000_000,
+                    vec![calibration("shoulder_pitch_joint", 2, 2047, 0, 1180)],
+                )
+                .unwrap();
+            driver.activate().unwrap();
+            assert_eq!(driver.transport.position_writes[0][&2], goal);
+        }
+        let mut transport = FakeTransport::default();
+        transport.add_servo(2, 3248);
+        let mut driver = Sts3215Driver::new(transport);
+        driver
+            .configure(
+                "/dev/fake",
+                1_000_000,
+                vec![calibration("shoulder_pitch_joint", 2, 2047, 0, 1180)],
+            )
+            .unwrap();
+        assert!(
+            driver
+                .check_startup()
+                .unwrap_err()
+                .to_string()
+                .contains("run oriond servo zero")
+        );
+        assert!(driver.activate().is_err());
+        assert!(driver.transport.position_writes.is_empty());
     }
 
     #[test]
