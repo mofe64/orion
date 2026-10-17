@@ -91,10 +91,16 @@ The preview script requires the simulator environment, Cargo and `ffmpeg`. It us
 
 2. Open `../scratch/motion-previews/index.html` in a browser.
 
-Each video shows side and front views, the item name and elapsed time. Poses move from home to their target and back. Motions use each listed `anchor_poses` entry, or home when no entry exists. Scenes start at home. A separate video shows startup from rest to home.
+Each video shows side and front views, the item name, starting pose, return anchor and elapsed time. The camera encloses the lamp throughout the movement. Poses move from home to their target and back. A separate video shows startup from rest to home.
 
-The index lists lamp-body contacts, runtime clamps, peak joint speeds and final anchor errors. Problems appear first. Speed checks use consecutive 50 Hz command differences. Boundary counts include authored joint-limit positions without classifying them as clamps.
+The [intent table](../../motion/config/v2/movement-intents.yaml) selects preview contexts from the runtime's ownership rules. Hands return starts at `desk_work` and targets the saved previous anchor. Arrival, pet and object-peek clips use their command-time planners. Other clips use their authored targets around the selected held anchor.
 
-The script enables mesh contacts in memory. MuJoCo uses convex hulls for these meshes. Contacts include connected joint interfaces and can overstate physical collisions. Fixed-base tracking cannot check servo loads or base tipping.
+A disposable adapter compiles the unchanged runtime sources outside the repository. This gives the tool access to runtime planners without adding development commands to the app. The adapter uses the runtime Cargo lockfile.
 
-`--output DIRECTORY` selects another directory outside the repository. `--compiler PATH` selects an existing `oriond` with catalog compilation support. Videos use 25 frames per second by default. `--fps 50` records every sample.
+The index lists non-adjacent contacts, clamps, joint-limit margins, peak joint speeds and final anchor errors. Each clip also shows head height change, gaze pitch change and its largest joint movement. Head height uses `v21_face`. Gaze pitch uses the forward axis of `light_frame`. Positive gaze change means looking up. Problems appear first.
+
+The script excludes joined links and rest-to-rest no-op clips from problems. MuJoCo uses convex hulls for mesh contacts. The V2 base stays anchored. Kinematic tracking cannot check servo loads or base tipping.
+
+`--output DIRECTORY` selects another directory outside the repository. `--compiler PATH` selects an existing `oriond` with catalog compilation support. `--validate-only` runs the checks without recording videos and returns an error for a problem. Videos use 25 frames per second by default. `--fps 50` records every sample.
+
+`--baseline FILE` reads an earlier motion sample export for the comparison table.

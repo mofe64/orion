@@ -940,13 +940,18 @@ mod tests {
         .unwrap();
         let source =
             fs::read_to_string(root.join("motion/motions/v2/speak_react_agree.yaml")).unwrap();
-        for document in [
-            source.replace("      marker: agree\n", ""),
-            source.replace(
-                "      duration: 0.30",
-                "      marker: extra\n      duration: 0.30",
-            ),
-        ] {
+        for extra_marker in [false, true] {
+            let mut document: serde_yaml::Value = serde_yaml::from_str(&source).unwrap();
+            let frames = document["motion"]["keyframes"].as_sequence_mut().unwrap();
+            if extra_marker {
+                frames.last_mut().unwrap()["marker"] = serde_yaml::Value::String("extra".into());
+            } else {
+                frames[0]
+                    .as_mapping_mut()
+                    .unwrap()
+                    .remove(serde_yaml::Value::String("marker".into()));
+            }
+            let document = serde_yaml::to_string(&document).unwrap();
             let temporary = tempfile::tempdir().unwrap();
             fs::write(temporary.path().join("reaction.yaml"), document).unwrap();
             let error = MotionLibrary::load(temporary.path(), &poses).unwrap_err();

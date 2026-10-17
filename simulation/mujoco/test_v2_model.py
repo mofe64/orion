@@ -34,7 +34,7 @@ class V2ModelTests(unittest.TestCase):
         robot = ET.parse(PROJECT / 'description/urdf/orion-v2.urdf').getroot()
         poses = yaml.safe_load((PROJECT / 'motion/config/v2/poses.yaml').read_text())['poses']
         bridge = Bridge(PROJECT / 'simulation/mujoco/v2/scene.xml', poses['home']['positions'], 'v2')
-        for name in ('home', 'look_left', 'look_right', 'zero_reference'):
+        for name in ('home', 'look_left', 'look_right', 'rest'):
             angles = poses[name]['positions']
             bridge.handle({'command': 'write', 'positions': angles})
             transforms = {'v21_base': np.eye(4)}

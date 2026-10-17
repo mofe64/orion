@@ -491,12 +491,19 @@ mod tests {
             .object_idle("idle_micro_glance", 5., &core)
             .unwrap();
         assert_eq!(clip.name, "idle_micro_glance");
-        for frame in &clip.keyframes {
-            assert!(frame.target.get("base_yaw_joint").unwrap_or(&0.).abs() <= 0.11);
+        let authored = core.motions().motion("idle_micro_glance").unwrap();
+        for (frame, source) in clip.keyframes.iter().zip(&authored.keyframes) {
+            assert!(
+                frame.target.get("base_yaw_joint").unwrap_or(&0.).abs()
+                    <= source.target.get("base_yaw_joint").unwrap_or(&0.).abs() + 1e-12
+            );
             if forward {
                 assert!(frame.target.get("base_yaw_joint").unwrap_or(&0.).abs() < 1e-12);
             }
-            assert!(frame.target.get("head_roll_joint").unwrap_or(&0.).abs() <= 0.07);
+            assert!(
+                frame.target.get("head_roll_joint").unwrap_or(&0.).abs()
+                    <= source.target.get("head_roll_joint").unwrap_or(&0.).abs() + 1e-12
+            );
         }
         assert!(
             clip.keyframes

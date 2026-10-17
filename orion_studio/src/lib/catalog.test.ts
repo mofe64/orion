@@ -71,10 +71,12 @@ describe("owner library presentation", () => {
     const names = Object.values(catalog.poses).filter(isOwnerPose).map(pose => pose.name);
     expect(names).toContain("home");
     expect(names).toContain("look_left");
-    for (const name of ["zero_reference", "rest", "look_left_anticipation", "look_left_lean", "look_left_overshoot"]) {
+    for (const name of ["rest", "look_left_anticipation", "look_left_lean", "look_left_overshoot"]) {
       expect(names).not.toContain(name);
       expect(catalog.poses[name]).toBeDefined();
     }
+    if (hardware === "v1") expect(catalog.poses.zero_reference).toBeDefined();
+    else expect(catalog.poses.zero_reference).toBeUndefined();
     expect(isOwnerPose({ ...catalog.poses.home, name: "my_lean", source: "user", tags: [] })).toBe(true);
     expect(isOwnerPose({ ...catalog.poses.home, owner_scene: "my_scene" })).toBe(false);
   });

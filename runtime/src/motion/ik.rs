@@ -895,8 +895,6 @@ mod tests {
         let config = HardwareVersion::V2.profile().comfort_box.as_ref().unwrap();
         for excluded in [
             "rest",
-            "thinking",
-            "curious",
             "look_left",
             "look_right",
             "attention_left",

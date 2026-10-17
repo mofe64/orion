@@ -201,7 +201,7 @@ raw_goal = 2047 + round(angle × 4096 / 2π) × direction
 
 The driver rejects command ranges crossing raw 0/4095. Startup permits readings up to 20 counts outside profile limits. Initial goals clamp into range before torque activation. Later commands remain inside strict limits.
 
-Activation requires valid status, available feedback and verified initial goal writes. It enables torque only after those checks. The zeroing command keeps torque off and restores previous offsets after failed verification.
+Activation requires valid status, available feedback and checked initial goal writes. It enables torque only after those checks. The zeroing command keeps torque off and restores previous offsets after failed verification.
 
 Present speed converts from signed counts per second:
 
@@ -229,56 +229,69 @@ Markers follow adjusted compiler timing. Status includes run identity, current k
 
 ## Animation catalogue
 
-The table links to authored motion files. V1 and V2 motions with the same name use their own hardware assets.
+V2 uses the motions below. [V1 motion files](../motion/motions/v1/) remain separate.
 
-| Motion | Space | Files |
+| Motion | Intent | File |
 | --- | --- | --- |
-| `acknowledge_nod` | `anchor_relative` | [v1](../motion/motions/v1/expressive/acknowledge_nod.yaml), [v2](../motion/motions/v2/acknowledge_nod.yaml) |
-| `arrival_notice` | `anchor_relative` | [v2](../motion/motions/v2/arrival_notice.yaml) |
-| `attention_left` | `absolute` | [v1](../motion/motions/v1/expressive/attention_left.yaml), [v2](../motion/motions/v2/attention_left.yaml) |
-| `attention_right` | `absolute` | [v1](../motion/motions/v1/expressive/attention_right.yaml), [v2](../motion/motions/v2/attention_right.yaml) |
-| `attentive_entry` | `absolute` | [v1](../motion/motions/v1/expressive/attentive_entry.yaml), [v2](../motion/motions/v2/attentive_entry.yaml) |
-| `curious_tilt` | `absolute` | [v1](../motion/motions/v1/expressive/curious_tilt.yaml), [v2](../motion/motions/v2/curious_tilt.yaml) |
-| `delight_lift` | `absolute` | [v1](../motion/motions/v1/expressive/delight_lift.yaml), [v2](../motion/motions/v2/delight_lift.yaml) |
-| `disagree_soft` | `anchor_relative` | [v1](../motion/motions/v1/expressive/disagree_soft.yaml), [v2](../motion/motions/v2/disagree_soft.yaml) |
-| `hands_entry` | `absolute` | [v2](../motion/motions/v2/hands_entry.yaml) |
-| `hands_return` | `anchor_relative` | [v2](../motion/motions/v2/hands_return.yaml) |
-| `idle_attentive_hold` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_attentive_hold.yaml), [v2](../motion/motions/v2/idle_attentive_hold.yaml) |
-| `idle_breathe` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_breathe.yaml), [v2](../motion/motions/v2/idle_breathe.yaml) |
-| `idle_directional_hold` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_directional_hold.yaml), [v2](../motion/motions/v2/idle_directional_hold.yaml) |
-| `idle_head_curiosity` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_head_curiosity.yaml), [v2](../motion/motions/v2/idle_head_curiosity.yaml) |
-| `idle_micro_glance` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_micro_glance.yaml), [v2](../motion/motions/v2/idle_micro_glance.yaml) |
-| `idle_shoulder_adjust` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_shoulder_adjust.yaml), [v2](../motion/motions/v2/idle_shoulder_adjust.yaml) |
-| `idle_soft_head_shake` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_soft_head_shake.yaml), [v2](../motion/motions/v2/idle_soft_head_shake.yaml) |
-| `idle_weight_shift` | `anchor_relative` | [v1](../motion/motions/v1/idle/idle_weight_shift.yaml), [v2](../motion/motions/v2/idle_weight_shift.yaml) |
-| `look_around` | `anchor_relative` | [v2](../motion/motions/v2/look_around.yaml) |
-| `look_at_left` | `absolute` | [v1](../motion/motions/v1/functional/look_at_left.yaml), [v2](../motion/motions/v2/look_at_left.yaml) |
-| `look_at_left_expressive` | `absolute` | [v1](../motion/motions/v1/expressive/look_at_left_expressive.yaml), [v2](../motion/motions/v2/look_at_left_expressive.yaml) |
-| `look_at_right` | `absolute` | [v1](../motion/motions/v1/functional/look_at_right.yaml), [v2](../motion/motions/v2/look_at_right.yaml) |
-| `look_at_right_expressive` | `absolute` | [v1](../motion/motions/v1/expressive/look_at_right_expressive.yaml), [v2](../motion/motions/v2/look_at_right_expressive.yaml) |
-| `mutual_gaze_away` | `anchor_relative` | [v2](../motion/motions/v2/mutual_gaze_away.yaml) |
-| `mutual_gaze_hi` | `anchor_relative` | [v2](../motion/motions/v2/mutual_gaze_hi.yaml) |
-| `mutual_gaze_notice` | `anchor_relative` | [v2](../motion/motions/v2/mutual_gaze_notice.yaml) |
-| `peek_new_object` | `anchor_relative` | [v2](../motion/motions/v2/peek_new_object.yaml) |
-| `pet_notice` | `anchor_relative` | [v2](../motion/motions/v2/pet_notice.yaml) |
-| `return_home` | `absolute` | [v1](../motion/motions/v1/functional/return_home.yaml), [v2](../motion/motions/v2/return_home.yaml) |
-| `speak_calm_sway` | `anchor_relative` | [v1](../motion/motions/v1/speaking/speak_calm_sway.yaml), [v2](../motion/motions/v2/speak_calm_sway.yaml) |
-| `speak_emphasis_nod` | `anchor_relative` | [v1](../motion/motions/v1/speaking/speak_emphasis_nod.yaml), [v2](../motion/motions/v2/speak_emphasis_nod.yaml) |
-| `speak_explanatory_lean` | `anchor_relative` | [v1](../motion/motions/v1/speaking/speak_explanatory_lean.yaml), [v2](../motion/motions/v2/speak_explanatory_lean.yaml) |
-| `speak_react_agree` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_agree.yaml) |
-| `speak_react_curious` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_curious.yaml) |
-| `speak_react_disagree` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_disagree.yaml) |
-| `speak_react_happy` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_happy.yaml) |
-| `speak_react_laugh` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_laugh.yaml) |
-| `speak_react_surprised` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_surprised.yaml) |
-| `speak_react_sympathy` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_sympathy.yaml) |
-| `speak_react_thinking` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_thinking.yaml) |
-| `speak_react_unsure` | `anchor_relative` | [v2](../motion/motions/v2/speak_react_unsure.yaml) |
-| `speak_reflective_tilt` | `anchor_relative` | [v1](../motion/motions/v1/speaking/speak_reflective_tilt.yaml), [v2](../motion/motions/v2/speak_reflective_tilt.yaml) |
-| `thinking_shift` | `absolute` | [v1](../motion/motions/v1/expressive/thinking_shift.yaml), [v2](../motion/motions/v2/thinking_shift.yaml) |
+| `arrival_notice` | Raise the head first, then adopt the attentive posture and return. | [V2](../motion/motions/v2/arrival_notice.yaml) |
+| `attention_left` | A small grounded turn toward the confirmed speaker on the left. | [V2](../motion/motions/v2/attention_left.yaml) |
+| `attention_right` | A small grounded turn toward the confirmed speaker on the right. | [V2](../motion/motions/v2/attention_right.yaml) |
+| `delight_lift` | Lift the head and look up into the delight posture. | [V2](../motion/motions/v2/delight_lift.yaml) |
+| `hands_entry` | Anticipate with the arm, lower the camera toward the desk, and hold. | [V2](../motion/motions/v2/hands_entry.yaml) |
+| `hands_return` | Slow arm-led desk transition with anticipation and a held destination anchor. | [V2](../motion/motions/v2/hands_return.yaml) |
+| `idle_attentive_hold` | Raise the gaze slowly while holding an attentive posture. | [V2](../motion/motions/v2/idle_attentive_hold.yaml) |
+| `idle_breathe` | Raise the head slowly, breathe through the arm, and settle back. | [V2](../motion/motions/v2/idle_breathe.yaml) |
+| `idle_directional_hold` | Raise the gaze slowly while holding a directional or desk anchor. | [V2](../motion/motions/v2/idle_directional_hold.yaml) |
+| `idle_head_curiosity` | Raise the gaze and turn the neck slowly to inspect the surroundings. | [V2](../motion/motions/v2/idle_head_curiosity.yaml) |
+| `idle_micro_glance` | Turn the base slowly for a brief glance with a full return. | [V2](../motion/motions/v2/idle_micro_glance.yaml) |
+| `idle_shoulder_adjust` | Redistribute the shoulder and elbow slowly, then return. | [V2](../motion/motions/v2/idle_shoulder_adjust.yaml) |
+| `idle_soft_head_shake` | Turn the neck slowly left and right with a soft return. | [V2](../motion/motions/v2/idle_soft_head_shake.yaml) |
+| `idle_weight_shift` | Shift the shoulder and elbow slowly, then restore their balance. | [V2](../motion/motions/v2/idle_weight_shift.yaml) |
+| `look_around` | Deliberate three-stop desk search, neck leading the base, then returning to its anchor. | [V2](../motion/motions/v2/look_around.yaml) |
+| `look_at_left` | Turn directly toward the predefined target on Orion's left. | [V2](../motion/motions/v2/look_at_left.yaml) |
+| `look_at_left_expressive` | Notice, lean toward, and settle on the predefined left target. | [V2](../motion/motions/v2/look_at_left_expressive.yaml) |
+| `look_at_right` | Turn directly toward the predefined target on Orion's right. | [V2](../motion/motions/v2/look_at_right.yaml) |
+| `look_at_right_expressive` | Notice, lean toward, and settle on the predefined right target. | [V2](../motion/motions/v2/look_at_right_expressive.yaml) |
+| `mutual_gaze_away` | Turn the neck aside with a raised gaze, then return. | [V2](../motion/motions/v2/mutual_gaze_away.yaml) |
+| `mutual_gaze_hi` | Raise the gaze in a clear head-only greeting and return. | [V2](../motion/motions/v2/mutual_gaze_hi.yaml) |
+| `mutual_gaze_notice` | Raise the gaze, turn the neck with curiosity, and return. | [V2](../motion/motions/v2/mutual_gaze_notice.yaml) |
+| `peek_new_object` | Arm-led desk peek with a curious neck turn and a full anchor return. | [V2](../motion/motions/v2/peek_new_object.yaml) |
+| `pet_notice` | Lift into delight, follow the pet briefly, and return to the held anchor. | [V2](../motion/motions/v2/pet_notice.yaml) |
+| `return_home` | Move from the current joint state to Orion's home pose. | [V2](../motion/motions/v2/return_home.yaml) |
+| `speak_calm_sway` | Sway the neck and arm gently with alternating raised and lowered gaze. | [V2](../motion/motions/v2/speak_calm_sway.yaml) |
+| `speak_emphasis_nod` | Nod down at a phrase boundary, lift back, and settle at the anchor. | [V2](../motion/motions/v2/speak_emphasis_nod.yaml) |
+| `speak_explanatory_lean` | Lean forward with a raised gaze for explanatory emphasis, then return. | [V2](../motion/motions/v2/speak_explanatory_lean.yaml) |
+| `speak_react_agree` | Make two clear downward nods with an upward return between them. | [V2](../motion/motions/v2/speak_react_agree.yaml) |
+| `speak_react_curious` | Raise the gaze and turn the neck with a slight upright lean. | [V2](../motion/motions/v2/speak_react_curious.yaml) |
+| `speak_react_disagree` | A clear three-beat head shake used as a spoken disagreement reaction. | [V2](../motion/motions/v2/speak_react_disagree.yaml) |
+| `speak_react_happy` | Lift the head and gaze with two bright upward bounces. | [V2](../motion/motions/v2/speak_react_happy.yaml) |
+| `speak_react_laugh` | Make three raised head bounces with a light arm lift. | [V2](../motion/motions/v2/speak_react_laugh.yaml) |
+| `speak_react_surprised` | Pull the arm back and raise the head for a surprised pause. | [V2](../motion/motions/v2/speak_react_surprised.yaml) |
+| `speak_react_sympathy` | Lower the head and turn the neck softly for sympathy. | [V2](../motion/motions/v2/speak_react_sympathy.yaml) |
+| `speak_react_thinking` | Look aside and slightly down during a thoughtful pause. | [V2](../motion/motions/v2/speak_react_thinking.yaml) |
+| `speak_react_unsure` | Look slightly down while turning the neck from side to side. | [V2](../motion/motions/v2/speak_react_unsure.yaml) |
+| `speak_reflective_tilt` | Turn the neck aside and lower the gaze, then return quietly. | [V2](../motion/motions/v2/speak_reflective_tilt.yaml) |
 
-V2 poses include operating anchors, rest, direction targets, desk-work poses and low desk reaches. Exact angles remain in [poses.yaml](../motion/config/v2/poses.yaml).
+V2 poses include home, rest, attentive, delight, desk-work and desk-reach postures. Left and right look targets include anticipation, lean and overshoot poses. Exact angles remain in [poses.yaml](../motion/config/v2/poses.yaml).
 
-Generated speaker attention and speech performance are runtime plans rather than standalone authored files. Speech reactions require one apex marker and a return to the anchor.
+Positive V2 head pitch lowers the gaze. Positive neck swivel turns the head right. V2 `head_roll_joint` names the neck swivel; it does not provide a sideways head tilt.
 
-See [motion ownership](motion-architecture.md), [speech animation](speech-animation-runtime.md) and [scene schema](../scenes/README.md).
+The [intent table](../motion/config/v2/movement-intents.yaml) defines movement direction, main keyframes, drawing sizes, speed limits and preview contexts. A preview context identifies the starting pose and the anchor used for the return.
+
+Hands entry moves from the held pose to `desk_work`. Hands return starts from the desk pose and restores the previous anchor. Arrival, pet and object-peek previews call their runtime planners with representative observation targets.
+
+The preview reports head height and gaze pitch relative to the starting pose. Positive gaze change means looking up. Operating targets retain a three-degree joint-limit margin. Rest and startup use the intentional mechanical-rest boundary.
+
+Look targets keep combined base yaw and neck swivel within 90 degrees. Expressive turns and acknowledgement scenes limit base speed to 150 degrees per second. Their other joints stay below 180 degrees per second.
+
+1. Compile the catalogue and run the movement checks without recording videos.
+
+   ```bash
+   .venv/bin/python scripts/preview_movements.py --validate-only --output ../scratch/motion-checks
+   ```
+
+2. Generate the videos and review index when required.
+
+   ```bash
+   .venv/bin/python scripts/preview_movements.py
+   ```
