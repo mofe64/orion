@@ -124,6 +124,14 @@ impl SurroundingsState {
         self.received
             .is_some_and(|at| (0.0..=2.0).contains(&(now - at)))
     }
+    pub(super) fn someone_in_view(&self, now: f64) -> bool {
+        self.fresh(now) && self.present
+    }
+    #[cfg(test)]
+    pub(super) fn mark_present(&mut self, now: f64) {
+        self.received = Some(now);
+        self.present = true;
+    }
 }
 impl CharacterCoordinator {
     pub(super) fn object_attention(&self) -> Option<String> {

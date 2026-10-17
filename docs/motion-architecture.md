@@ -61,7 +61,7 @@ Hands and held aim anchors retain their existing rhythm and light behavior. Moti
 Listening can hold `listen_lean_in` around the current anchor. Processing releases the lean. Speech replaces its remaining path through commanded-state continuation.
 After three seconds of thinking, small beats alternate at intervals of three to five seconds. Speech takes priority over these beats.
 
-Posture drift selects `home_low`, `home_attentive`, `home` or `home_window` from the shared state.
+Posture drift selects `home_low`, `home_attentive`, `home` or `home_window` from the shared state. Drift selects `home_window` only when no person is in view.
 It requires an awake idle character without conversation, foreground work, Hands, held aim or pending rest.
 Each move takes at least three seconds and uses calibrated compilation and comfort checks. Successful measured arrival commits the new anchor.
 Stop, explicit movement and Hands can cancel drift. The behavior journal records each started move and its outcome.

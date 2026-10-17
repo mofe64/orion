@@ -176,11 +176,12 @@ impl CharacterCoordinator {
         if now < self.acts.drift_at || !self.drift_ready(core) {
             return Ok(false);
         }
+        let person_in_view = self.surroundings.someone_in_view(now);
         let name = if self.mind.label == "sleepy" {
             "home_low"
         } else if matches!(self.mind.attention.target, AttentionTarget::Person { .. }) {
             "home_attentive"
-        } else if self.rng.index(2) == 0 {
+        } else if person_in_view || self.rng.index(2) == 0 {
             "home"
         } else {
             "home_window"
@@ -558,6 +559,21 @@ mod tests {
         character.mind.energy = 0.2;
         assert!(character.sleepy_idle(5., &core));
         assert!(!character.sleepy_idle(101., &core));
+    }
+    #[test]
+    fn drift_never_turns_to_the_window_while_a_person_is_in_view() {
+        let mut names = std::collections::BTreeSet::new();
+        for seed in 0..16 {
+            let (mut core, mut character) = fixture();
+            character.rng = SeededRandom::new(seed);
+            character.acts.settings.posture_drift = true;
+            character.acts.allowed = true;
+            character.acts.drift_at = 0.;
+            character.surroundings.mark_present(0.);
+            assert!(character.tick_posture(0., &mut core).unwrap());
+            names.insert(character.acts.drift.clone().unwrap().1);
+        }
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["home"]);
     }
     #[test]
     fn hands_and_rest_pending_block_drift_and_energy_variation() {
