@@ -81,5 +81,5 @@ The handshake reads account and model information without submitting a model tur
 Brightness and cover position use percentages. Colour uses a colour name. Climate temperature uses Home Assistant's configured units. Light colour temperature uses Kelvin.
 
 The tools use the existing coordinator operation path. The gateway enforces Home Assistant's assistant exposure setting on every request.
-Locks, alarm panels and garage doors cannot use home control. Orion asks which device when names match several entities.
+Locks, alarm panels, garage doors, gates, scenes and scripts cannot use home control. Orion asks which device when names match several entities.
 Orion confirms an action only after the service call succeeds. Configure devices in [Studio Home](../orion_studio/README.md#home).

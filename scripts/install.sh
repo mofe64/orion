@@ -40,6 +40,9 @@ if [[ $home_assistant == true ]]; then
   if [[ -x $python && -f $root/installation.json ]]; then
     release=$($python -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$root/installation.json")
     source_dir=$release/scripts
+    if [[ ! -f $source_dir/release-home-assistant.json ]]; then
+      echo 'This Orion release cannot install Home Assistant. Update Orion first, then run this step again.' >&2; exit 1
+    fi
   elif [[ -f $source_dir/release_install.py ]]; then
     python=/usr/bin/python3
   else

@@ -17,7 +17,8 @@ from urllib.parse import quote, urlencode
 LIMIT = 4 * 1024 * 1024
 CLIENT_ID = 'http://127.0.0.1:7447/'
 DISCOVERY = {'zeroconf', 'ssdp', 'dhcp', 'bluetooth', 'homekit', 'homekit_controller'}
-DOMAINS = {'light', 'switch', 'fan', 'climate', 'cover', 'media_player', 'scene', 'script'}
+# Scenes and scripts can run lock, alarm or garage actions, so voice cannot start them.
+DOMAINS = {'light', 'switch', 'fan', 'climate', 'cover', 'media_player'}
 
 
 class HomeError(Exception):
@@ -345,8 +346,8 @@ class HomeAssistant:
 
     def control(self, entity, payload):
         domain = entity['domain']
-        if domain in ('lock', 'alarm_control_panel') or domain == 'cover' and entity.get('attributes', {}).get('device_class') in ('garage', 'garage_door'):
-            raise HomeError('I cannot control locks, alarms or garage doors. Please use Home Assistant.', 403)
+        if domain in ('lock', 'alarm_control_panel') or domain == 'cover' and entity.get('attributes', {}).get('device_class') in ('garage', 'garage_door', 'gate'):
+            raise HomeError('I cannot control locks, alarms, garage doors or gates. Please use Home Assistant.', 403)
         if domain not in DOMAINS:
             raise HomeError('I cannot control that kind of home device.', 400)
         action = payload.get('service') or payload.get('command')
@@ -355,8 +356,7 @@ class HomeAssistant:
                    'fan': {'on': 'turn_on', 'off': 'turn_off', 'toggle': 'toggle'},
                    'climate': {'on': 'turn_on', 'off': 'turn_off', 'temperature': 'set_temperature'},
                    'cover': {'open': 'open_cover', 'close': 'close_cover', 'stop': 'stop_cover', 'position': 'set_cover_position'},
-                   'media_player': {'on': 'turn_on', 'off': 'turn_off', 'play': 'media_play', 'pause': 'media_pause', 'stop': 'media_stop'},
-                   'scene': {'on': 'turn_on', 'activate': 'turn_on'}, 'script': {'on': 'turn_on', 'run': 'turn_on'}}
+                   'media_player': {'on': 'turn_on', 'off': 'turn_off', 'play': 'media_play', 'pause': 'media_pause', 'stop': 'media_stop'}}
         service = actions[domain].get(action)
         if service is None:
             raise HomeError('That action is not supported for this home device.', 400)

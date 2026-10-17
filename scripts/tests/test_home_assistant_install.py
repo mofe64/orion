@@ -77,7 +77,7 @@ class InstallerTests(unittest.TestCase):
             release_install.main()
         install.assert_not_called(); rollback.assert_not_called()
         arguments = run.call_args.args
-        self.assertEqual(arguments[:3], ('sudo', '-n', '/usr/bin/python3'))
+        self.assertEqual(arguments[:2], ('sudo', '/usr/bin/python3'))
         self.assertIn('--update', arguments)
         self.assertTrue(any(str(arg).endswith('home_assistant_install.py') for arg in arguments))
         self.assertNotIn(ha.NAME, MANAGED_SERVICES)

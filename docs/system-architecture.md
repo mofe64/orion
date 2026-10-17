@@ -155,5 +155,5 @@ Unsupported flow controls link to the full Home Assistant interface.
 Agent home tools send a robot operation through the coordinator to the gateway.
 The gateway reads Home Assistant assistant exposure on every voice request. There is no separate Orion allowlist.
 Name matches require one exposed entity. Ambiguous matches request a room.
-Control permits supported lights, switches, fans, climate devices, covers, media players, scenes and scripts.
-The gateway refuses locks, alarm panels and garage doors. Each service call targets one entity.
+Control permits supported lights, switches, fans, climate devices, covers and media players.
+The gateway refuses locks, alarm panels, garage doors and gates. It also refuses scenes and scripts, because they can operate those devices. Each service call targets one entity.

@@ -167,6 +167,11 @@ class HomeTests(unittest.TestCase):
             with self.assertRaises(HomeError): self.home.voice({'action': action, 'entity': 'light.desk', 'command': 'on'})
         for identifier in ('lock.front', 'alarm_control_panel.home', 'cover.garage'):
             with self.assertRaisesRegex(HomeError, 'cannot control locks'): self.home.voice({'action': 'control', 'entity': identifier, 'command': 'on'})
+        with self.assertRaisesRegex(HomeError, 'cannot control locks'):
+            self.home.control({'entity_id': 'cover.drive', 'domain': 'cover', 'attributes': {'device_class': 'gate'}}, {'command': 'open'})
+        for domain in ('script', 'scene'):
+            with self.assertRaisesRegex(HomeError, 'that kind'):
+                self.home.control({'entity_id': f'{domain}.leave_home', 'domain': domain, 'attributes': {}}, {'command': 'on'})
         with self.assertRaises(HomeError): self.home.voice({'action': 'control', 'entity': 'light.second', 'command': 'on', 'brightness': float('nan')})
         self.assertEqual(len(self.fake.services), 1)
     def test_gateway_onboarding_never_returns_or_logs_secrets(self):

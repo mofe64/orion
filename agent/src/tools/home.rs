@@ -15,7 +15,7 @@ pub fn schemas() -> Vec<Value> {
     vec![
         json!({"type":"function","name":"home_list_devices","description":"List household entities exposed to Orion, with names, rooms and current state.","inputSchema":object(json!({}),json!([]))}),
         json!({"type":"function","name":"home_state","description":"Read one exposed household entity by entity ID or name and optional room. Ask which one when several match.","inputSchema":object(target,json!([]))}),
-        json!({"type":"function","name":"home_control","description":"Control one exposed household device by entity ID or name and optional room. Supports lights, switches, fans, climate, covers, media, scenes and scripts. Locks, alarms and garage doors are refused. Brightness and position use percent. Colour is a colour name. Confirm only after success.","inputSchema":object(control,json!(["action"]))}),
+        json!({"type":"function","name":"home_control","description":"Control one exposed household device by entity ID or name and optional room. Supports lights, switches, fans, climate, covers and media. Locks, alarms, garage doors, gates, scenes and scripts are refused. Brightness and position use percent. Colour is a colour name. Confirm only after success.","inputSchema":object(control,json!(["action"]))}),
     ]
 }
 

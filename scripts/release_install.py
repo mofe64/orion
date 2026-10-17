@@ -318,7 +318,7 @@ def main():
             parser.error('--home-assistant is an independent installer step')
         source = Path(__file__).resolve().parent
         user = pwd.getpwuid(os.getuid()).pw_name
-        run('sudo', '-n', '/usr/bin/python3', source / 'home_assistant_install.py',
+        run('sudo', '/usr/bin/python3', source / 'home_assistant_install.py',
             '--user', user, '--manifest', source / 'release-home-assistant.json',
             *(['--update'] if args.update else []))
         return
