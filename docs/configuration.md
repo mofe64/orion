@@ -29,6 +29,8 @@ Paths in this table are relative to the Pi user's home directory.
 | `.local/share/orion/reminders.json` | Next-conversation reminders |
 | `.local/share/orion/voice-stack/` | Releases, transactions, models and catalogue |
 
+If `oriond` cannot read `routines.json` or `routines.sounds.json`, it renames the damaged file with a `.damaged` suffix. It then starts with default values and reports the reset in the routines `error` field. Damage to the sounds file resets only the sounds.
+
 Memory-related files follow a custom `ORION_MEMORY_PATH` location when configured. V2 uses the tracked `hardware/profiles/v2-joints.json` file instead of user calibration.
 
 The default asset project is `~/.local/share/orion/voice-stack/catalog/`. User assets occupy `motion/user/poses/<version>/`, `motion/motions/<version>/user/` and `scenes/<version>/user/` within that project. `ORION_INSTALL_ROOT` changes the installer data root.
