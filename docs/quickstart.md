@@ -102,6 +102,8 @@ The installer checks the pack checksum, asset format and joint-profile checksum 
 
 ## Logs and local builds
 
+The installer keeps service logs across restarts and power loss. The logs use at most 200 MB.
+
 1. Read recent service messages on the Pi.
 
    ```bash

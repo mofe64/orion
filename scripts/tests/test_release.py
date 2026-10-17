@@ -285,6 +285,18 @@ class ReleaseTests(unittest.TestCase):
                 receiver.configure_hailo(True, boot)
             run.assert_not_called()
 
+    def test_journal_is_persistent_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Path(folder) / 'journald.conf.d/orion.conf'
+            with patch.object(receiver, 'run') as run:
+                receiver.configure_journal(settings)
+            self.assertIn('Storage=persistent', run.call_args_list[1].kwargs['input'])
+            self.assertEqual(run.call_args.args, ('sudo', 'systemctl', 'restart', 'systemd-journald'))
+            settings.parent.mkdir(); settings.write_text(receiver.JOURNAL_SETTINGS)
+            with patch.object(receiver, 'run') as run:
+                receiver.configure_journal(settings)
+            run.assert_not_called()
+
     def test_install_summary_names_one_next_action(self):
         running = receiver.install_summary('v0.1.3', True)
         self.assertIn('installed and running', running)

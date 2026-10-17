@@ -131,6 +131,19 @@ def configure_hailo(present, boot=Path('/boot/firmware/config.txt')):
         print('AI HAT+: PCIe Gen 3 already configured.')
 
 
+JOURNAL_SETTINGS = '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n'
+
+
+def configure_journal(path=Path('/etc/systemd/journald.conf.d/orion.conf')):
+    # Raspberry Pi OS keeps logs in memory, so a power cut loses the log of what went wrong.
+    if path.exists() and path.read_text() == JOURNAL_SETTINGS:
+        return
+    run('sudo', 'mkdir', '-p', path.parent)
+    run('sudo', 'tee', path, input=JOURNAL_SETTINGS, text=True, stdout=subprocess.DEVNULL)
+    run('sudo', 'systemctl', 'restart', 'systemd-journald')
+    print('Logs: kept across restarts (at most 200 MB).')
+
+
 def prepare_environments(release, wheels, uv, codename, hailo):
     for component in COMPONENTS:
         environment = release / component / '.venv'
@@ -163,6 +176,7 @@ def install(payload, root, codename):
             raise RuntimeError('An interrupted deployment needs recovery; run this installer with --rollback')
         install_system_packages(root, codename, present, pins)
         configure_hailo(present)
+        configure_journal()
         prepare_hailo_models(root, present, run)
         installed = root / 'installation.json'
         active = json.loads(installed.read_text()) if installed.exists() else {}
