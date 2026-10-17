@@ -139,9 +139,9 @@ Debug shows service errors, camera controls and technical details. The desktop a
 
 ## System readings
 
-Open **System** to see CPU use, temperature, memory, disks, services and processes.
+Open **System** to see processor use, temperature, memory, storage, Orion's parts and the busiest programs.
 The gateway samples Linux counters every two seconds. It keeps 15 minutes of readings in memory.
-The page pauses requests when hidden. Warning messages identify throttling, CPU temperatures above 75 °C and disks above 90% use.
+The page pauses requests when hidden. Warnings show low power, slowdowns, temperatures above 75 °C and storage above 90% use.
 Unavailable counters show no value. CPU percentages for services and processes can exceed 100% across multiple cores.
 
 ## Home
