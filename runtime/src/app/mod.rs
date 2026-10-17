@@ -1,4 +1,5 @@
 mod camera_viewer;
+mod catalog;
 mod client;
 mod commands;
 mod options;
@@ -26,6 +27,12 @@ pub fn run() -> i32 {
 
 fn execute() -> crate::Result<i32> {
     let arguments: Vec<_> = env::args().skip(1).collect();
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--validate-catalog")
+    {
+        return catalog::run(&arguments[1..]);
+    }
     if arguments.first().is_some_and(|arg| arg == "servo") {
         return servo::run(&arguments[1..]);
     }

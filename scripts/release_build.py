@@ -123,12 +123,22 @@ def shared():
             run(env / 'bin/python', '-m', 'unittest', 'discover', '-s', ROOT / component / test_dir, cwd=ROOT)
     run(sys.executable, '-m', 'unittest', 'discover', '-s', ROOT / 'scripts/tests', cwd=ROOT)
     run(ROOT / '.venv/bin/python', '-m', 'pytest', ROOT / 'tests', '-q', cwd=ROOT)
+    from release_assets import build_pack, remove_assets
+    build_pack(ROOT, release, OUT / 'assets')
+    # Built-ins travel once as a first-install fallback, outside application code.
+    shutil.copy2(next((OUT / 'assets').glob('*.tar.gz')), release / 'default-assets.tar.gz')
+    remove_assets(release)
     # Build the GGUF server against glibc 2.36, rather than downloading an Ubuntu binary.
-    source = Path('/tmp/llama.cpp')
-    run('git', 'clone', '--depth', '1', '--branch', LLAMA_VERSION, 'https://github.com/ggml-org/llama.cpp.git', source)
-    run('cmake', '-S', source, '-B', source / 'build', '-DCMAKE_BUILD_TYPE=Release',
-        '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=OFF', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF')
-    run('cmake', '--build', source / 'build', '--target', 'llama-server', '-j', '2')
+    native_key = hashlib.sha256((ROOT / 'scripts/Release.Dockerfile').read_bytes()
+                                + (ROOT / 'scripts/release_build.py').read_bytes()).hexdigest()[:16]
+    source = Path('/cache/llama') / f'{LLAMA_VERSION}-{native_key}'
+    if not (source / 'build/bin/llama-server').is_file():
+        if source.exists(): shutil.rmtree(source)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        run('git', 'clone', '--depth', '1', '--branch', LLAMA_VERSION, 'https://github.com/ggml-org/llama.cpp.git', source)
+        run('cmake', '-S', source, '-B', source / 'build', '-DCMAKE_BUILD_TYPE=Release',
+            '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=OFF', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF')
+        run('cmake', '--build', source / 'build', '--target', 'llama-server', '-j', '2')
     dest = release / 'native'; dest.mkdir()
     run('git', 'clone', '--branch', 'pi5', 'https://github.com/jgarff/rpi_ws281x.git', dest / 'rpi_ws281x')
     run('git', '-C', dest / 'rpi_ws281x', 'checkout', '1396df4f35a86de0f7e5eda91d94d4539eef1727')
@@ -158,6 +168,8 @@ def pack():
     pack_bundle(payload, temporary)
     temporary.replace(archive)
     archive.with_name(archive.name + '.sha256').write_text(sha256(archive) + '  ' + archive.name + '\n')
+    for asset in (OUT / 'assets').iterdir():
+        shutil.copy2(asset, archive.parent / asset.name)
     print(archive)
 
 

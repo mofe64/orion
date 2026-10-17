@@ -25,3 +25,6 @@ artifacts/
 
 # Local agent handover notes
 .scratch/
+
+.release-cache/
+.asset-app/

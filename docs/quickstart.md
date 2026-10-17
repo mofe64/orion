@@ -78,6 +78,24 @@ CAUTION: Software rollback cannot reverse servo EEPROM zeroing. Use a release wi
 
 Rollback restores service configuration and package versions. It cannot reverse servo EEPROM changes. The installer refuses rollback into the old V2 joint coordinates.
 
+## Update built-in assets
+
+An asset pack contains built-in poses, motions, scenes and sound cues. User folders remain unchanged. Full app installation also fetches the latest compatible pack.
+
+1. Install the latest pack compatible with the active app.
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --assets
+   ```
+
+2. Select a particular compatible pack when required.
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --assets --version assets-vX.Y.Z
+   ```
+
+The installer checks the pack checksum, asset format and joint-profile checksum before it changes the catalog. It restarts `oriond` only when it was running. Use `--rollback` to restore the previous catalog.
+
 ## Logs and local builds
 
 1. Read recent service messages on the Pi.

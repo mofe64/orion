@@ -153,6 +153,7 @@ pub(super) fn usage() -> &'static str {
   oriond --configure [--socket PATH]\n\
   oriond --enable    [--socket PATH]\n\
   oriond --disable   [--socket PATH]\n\n\
+  oriond --validate-catalog --catalog DIR [--hardware v1|v2] [--output FILE]\n\n\
   oriond --goto POSE [--duration SECONDS] [--wait] [--socket PATH]\n\n\
   oriond --play MOTION [--wait] [--socket PATH]\n\
   oriond --stop        [--socket PATH]\n\n\

@@ -9,9 +9,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version=${2:?--version requires vVERSION}; shift 2 ;;
     --from) bundle=${2:?--from requires a tarball}; shift 2 ;;
+    --assets) action=assets; shift ;;
     --rollback) action=rollback; shift ;;
     --check) action=check; shift ;;
-    --help|-h) echo 'Usage: install.sh [--version vVERSION | --from FILE | --rollback | --check]'; exit 0 ;;
+    --help|-h) echo 'Usage: install.sh [--assets] [--version TAG | --from FILE | --rollback | --check]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -32,7 +33,9 @@ python=/opt/orion/python/bin/python3.12
 if [[ $action != install ]]; then
   [[ -x $python && -f $root/installation.json ]] || { echo 'No installed Orion release to check or roll back.' >&2; exit 1; }
   release=$($python -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$root/installation.json")
-  exec "$python" "$release/scripts/release_install.py" "--$action" --root "$root"
+  args=("--$action" --root "$root")
+  if [[ $action == assets && $version != latest ]]; then args+=(--version "$version"); fi
+  exec "$python" "$release/scripts/release_install.py" "${args[@]}"
 fi
 if [[ $version != latest && ! $version =~ ^v[0-9][A-Za-z0-9._-]*$ ]]; then
   echo 'Invalid release version. Use vX.Y.Z.' >&2; exit 2
@@ -45,7 +48,7 @@ trap 'rm -rf "$stage"' EXIT
 if [[ -z $bundle ]]; then
   if [[ $version == latest ]]; then
     version=$(curl --fail --silent --show-error --location --retry 3 \
-      https://api.github.com/repos/mofe64/orion/releases/latest | jq -er .tag_name)
+      'https://api.github.com/repos/mofe64/orion/releases?per_page=100' | jq -er '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))][0].tag_name // error("No stable app release")' )
   fi
   [[ $version =~ ^v[0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid release tag returned by GitHub' >&2; exit 1; }
   name="orion-${version#v}-arm64.tar.gz"

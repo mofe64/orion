@@ -283,6 +283,9 @@ struct MotionEntry {
     name: String,
     #[serde(default)]
     description: String,
+    // Optional review metadata; live playback still uses the current anchor.
+    #[serde(default)]
+    anchor_poses: Vec<String>,
     space: MotionSpace,
     #[serde(default)]
     style: String,
@@ -450,6 +453,10 @@ fn load_motion_file(path: &Path, poses: &PoseLibrary) -> Result<MotionDefinition
     let entry = document.motion.ok_or_else(|| {
         OrionRuntimeError::Runtime("Motion file must contain a motion mapping.".into())
     })?;
+
+    for anchor in &entry.anchor_poses {
+        poses.pose(anchor)?;
+    }
 
     // validate the supplied motion details
     // name must be valid and keyframes not empty

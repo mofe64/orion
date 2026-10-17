@@ -7,8 +7,9 @@ import pwd
 import shutil
 import subprocess
 import sys
+import tempfile
 
-from install_pi_voice_stack import System, activate, atomic_json, deployment_lock, rollback
+from install_pi_voice_stack import System, activate, atomic_json, deployment_lock, rollback, snapshot, restore
 from native_packages import UNAVAILABLE, pinned_packages
 from pi_catalog import catalog_plan
 from pi_release_bundle import install_wheels, verify_payload
@@ -16,6 +17,7 @@ from pi_release_platform import check_platform, read_platform
 from pi_service_config import MANAGED_SERVICES, render_plan
 from prepare_pi_voice_stack import CODEX_VERSION, prepare_assets
 from release_models import prepare_vision_models
+from release_assets import prepare_catalog
 
 COMPONENTS = ('speech', 'voice', 'vision', 'motion', 'orion_studio')
 PYTHON = Path('/opt/orion/python/bin/python3.12')
@@ -79,6 +81,8 @@ def install_system_packages(root, codename, hailo, pins):
 
 
 def restore_native_packages(root, codename, folder, data):
+    if data.get('assets_only'):
+        return
     for entry in data['files']:
         if entry['path'] == str(root / 'installation.json') and entry['backup']:
             previous = Path(json.loads(Path(entry['backup']).read_text())['release'])
@@ -194,7 +198,9 @@ def install(payload, root, codename):
             if not (project / name).exists():
                 shutil.copytree(release / name, project / name, ignore=shutil.ignore_patterns('.venv', '__pycache__', '.pytest_cache'))
         files = render_plan(release, root, project, home, user)
-        files.update(catalog_plan(release, project, root))
+        with tempfile.TemporaryDirectory(prefix='orion-assets-') as temporary:
+            source = prepare_catalog(release, Path(temporary) / 'catalog', first_install=not active)
+            files.update(catalog_plan(source, project, root))
         files[home / '.config/orion/servo_calibration-v2.json'] = None
         files[Path('/usr/local/bin/oriond')] = '#!/bin/sh\ncd ' + str(project) + '\nexec ' + str(release / 'runtime/target/release/oriond') + ' "$@"\n'
         files[Path('/usr/local/bin/orion-check-hailo')] = '#!/bin/sh\nexec ' + str(release / 'vision/.venv/bin/python') + ' ' + str(release / 'scripts/check_hailo.py') + ' --root ' + str(root) + ' "$@"\n'
@@ -206,11 +212,79 @@ def install(payload, root, codename):
     print('Start Orion: sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision')
 
 
+
+def apply_assets(root, source, system, expected_release=None):
+    """Reuse catalog planning, snapshots and recovery without activating app code."""
+    with deployment_lock(root):
+        if (root / 'pending-installation.json').exists():
+            raise RuntimeError('An interrupted deployment needs recovery; run --rollback')
+        installed = root / 'installation.json'
+        previous = json.loads(installed.read_text())
+        if expected_release is not None and previous['release'] != str(expected_release):
+            raise RuntimeError('The active app changed during the download; retry the asset update')
+        inventory = json.loads((root / 'catalog-assets.json').read_text())
+        project = Path(inventory['project'])
+        files = catalog_plan(source, project, root)
+        folder, data = snapshot(root, [*files, installed], system)
+        data['assets_only'] = True
+        data['release'] = previous['release']
+        atomic_json(folder / 'state.json', data)
+        pending = root / 'pending-installation.json'
+        atomic_json(pending, {'transaction': str(folder)})
+        switched = False
+        try:
+            running = data['services']['oriond']['active']
+            if running:
+                from pi_service_config import MANAGED_STOP_ORDER
+                for name in MANAGED_STOP_ORDER[:-1]: system.stop(name)
+                system.rest_runtime(force=True)
+                switched = True
+                system.stop('oriond')
+            else:
+                switched = True
+            data['status'] = 'switching'; atomic_json(folder / 'state.json', data)
+            for path, value in files.items():
+                if value is None: system.remove(path)
+                else: system.write(path, value if isinstance(value, bytes) else value.encode(), 0o644)
+            if running:
+                for name, state in data['services'].items():
+                    if state['active']: system.start(name)
+            if running:
+                for name, state in data['services'].items():
+                    if not state['active'] and system.state(name)['active']: system.stop(name)
+            previous['rollback'] = str(folder)
+            atomic_json(installed, previous)
+            data['status'] = 'committed'; atomic_json(folder / 'state.json', data)
+        except BaseException:
+            if switched:
+                restore(folder, data, system)
+            else:
+                # Rest failed before any catalog change. Keep the existing
+                # daemon and restore only companions stopped for the attempt.
+                for name, state in data['services'].items():
+                    if name != 'oriond' and state['active']: system.start(name)
+                data['status'] = 'rolled_back'; atomic_json(folder / 'state.json', data)
+            pending.unlink(missing_ok=True)
+            raise
+        pending.unlink()
+        return folder
+
+
+def install_assets(root, version=None):
+    installed = json.loads((root / 'installation.json').read_text())
+    app = Path(installed['release'])
+    with tempfile.TemporaryDirectory(prefix='orion-assets-') as temporary:
+        source = prepare_catalog(app, Path(temporary) / 'catalog', version=version)
+        apply_assets(root, source, System(), expected_release=app)
+    print('Asset pack installed. The previous catalog remains available through --rollback.')
+
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--payload', type=Path); parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--codename', choices=('bookworm', 'trixie')); parser.add_argument('--rollback', action='store_true'); parser.add_argument('--check', action='store_true')
+    parser.add_argument('--codename', choices=('bookworm', 'trixie')); parser.add_argument('--rollback', action='store_true'); parser.add_argument('--check', action='store_true'); parser.add_argument('--assets', action='store_true'); parser.add_argument('--version')
     args = parser.parse_args()
-    if args.rollback:
+    if args.assets:
+        install_assets(args.root.resolve(), args.version)
+    elif args.rollback:
         codename = read_platform()['version_codename']
         with deployment_lock(args.root):
             rollback(args.root, System(), before_restore=lambda folder, data: restore_native_packages(args.root, codename, folder, data))

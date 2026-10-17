@@ -14,6 +14,9 @@ for codename in bookworm trixie; do
     -f "$checkout/scripts/Release.Dockerfile" -t "orion-release:$codename" "$checkout/scripts"
 done
 build_stage=$(mktemp -d)
+cache=${ORION_RELEASE_CACHE:-$checkout/.release-cache}
+mkdir -p "$cache"
+cache=$(cd "$cache" && pwd)
 payload_volume=
 build_owner="$(id -u):$(id -g)"
 cleanup() {
@@ -50,7 +53,7 @@ for codename in bookworm trixie; do
   docker run --rm --platform linux/arm64 \
     --mount "type=bind,source=$build_stage,target=/src" \
     --mount "type=volume,source=$payload_volume,target=/out" \
-    --mount type=volume,source=orion-release-build-cache,target=/cache \
+    --mount "type=bind,source=$cache,target=/cache" \
     -e "ORION_RELEASE_VERSION=$version" -e "ORION_BUILD_REVISION=$commit" -e "ORION_SOURCE_DIRTY=$dirty" \
     "orion-release:$codename" python /src/scripts/release_build.py --codename "$codename"
 done

@@ -1,37 +1,117 @@
 name: Raspberry Pi release
 on:
+  pull_request:
+    branches: [release]
   push:
-    tags: ['v*']
+    branches: [release]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Test release tag, e.g. v0.1.0-test.1'
+        description: 'Test prerelease tag, e.g. v0.1.0-test.1'
         required: true
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 jobs:
-  release:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        run: python3 scripts/release_plan.py --event "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME" --output "$GITHUB_OUTPUT"
+  build:
+    needs: plan
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Read native build pin
+        if: needs.plan.outputs.kind == 'app'
+        id: pins
+        run: python3 -c "import sys; sys.path.insert(0, 'scripts'); from prepare_pi_voice_stack import LLAMA_VERSION; print('llama=' + LLAMA_VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Cache llama.cpp build
+        if: needs.plan.outputs.kind == 'app'
+        uses: actions/cache@v4
         with:
-          ref: ${{ inputs.version || github.ref }}
-      - name: Select version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: echo "ORION_VERSION=${INPUT_VERSION:-$GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          path: .release-cache/llama
+          key: llama-arm64-${{ steps.pins.outputs.llama }}-${{ hashFiles('scripts/Release.Dockerfile', 'scripts/release_build.py') }}
+      - name: Cache Cargo registry and target
+        if: needs.plan.outputs.kind == 'app'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .release-cache/cargo
+            .release-cache/target
+          key: cargo-arm64-${{ hashFiles('scripts/Release.Dockerfile', '**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          restore-keys: |
+            cargo-arm64-${{ hashFiles('scripts/Release.Dockerfile', '**/Cargo.lock') }}-
       - name: Check pinned Raspberry Pi packages
+        if: needs.plan.outputs.kind == 'app'
         run: python3 scripts/native_packages.py --check-archives
-      - name: Build and validate in ARM64 Debian containers
+      - name: Build and validate app and default assets
+        if: needs.plan.outputs.kind == 'app'
+        env:
+          ORION_VERSION: ${{ needs.plan.outputs.tag }}
         run: scripts/build_release.sh "$ORION_VERSION"
-      - name: Attach release artifacts
+      - name: Download latest app and compile asset catalog
+        if: needs.plan.outputs.kind == 'assets'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$ORION_VERSION" >/dev/null 2>&1; then
-            args=()
-            if [[ $ORION_VERSION == *-* ]]; then args+=(--prerelease); fi
-            gh release create "$ORION_VERSION" --title "Orion $ORION_VERSION" --generate-notes "${args[@]}"
+          python3 scripts/release_assets.py download-app --output .asset-app
+          .asset-app/python/bin/python3.12 scripts/release_assets.py build --app .asset-app/release --output artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: artifacts/*
+          if-no-files-found: error
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: artifacts
+      - name: Create immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_KIND: ${{ needs.plan.outputs.kind }}
+        run: |
+          set -euo pipefail
+          # Creation fails if another run has already published this tag.
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG"; then
+            echo "$RELEASE_TAG already exists; bump the version file" >&2
+            exit 1
           fi
-          gh release upload "$ORION_VERSION" artifacts/orion-*-arm64.tar.gz artifacts/orion-*-arm64.tar.gz.sha256 --clobber
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
+          args=(--latest=false)
+          if [[ $RELEASE_TAG == *-test.* || $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+            args+=(--prerelease)
+          elif [[ $RELEASE_KIND == app ]]; then
+            args=(--latest)
+          fi
+          gh release create "$RELEASE_TAG" --verify-tag --target "$GITHUB_SHA" --title "Orion $RELEASE_TAG" --generate-notes "${args[@]}" artifacts/*
+          if [[ $RELEASE_KIND == app && $GITHUB_EVENT_NAME == push ]]; then
+            asset_tag="assets-v$(cat ASSETS_VERSION)"
+            if ! git ls-remote --exit-code --tags origin "refs/tags/$asset_tag"; then
+              git tag "$asset_tag" "$GITHUB_SHA"
+              git push origin "refs/tags/$asset_tag"
+              gh release create "$asset_tag" --verify-tag --target "$GITHUB_SHA" --title "Orion $asset_tag" --generate-notes --latest=false artifacts/orion-assets-*
+            fi
+          fi

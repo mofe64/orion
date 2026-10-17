@@ -192,7 +192,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                     start = set_option(start, '--poses', runtime_project / selected['poses'])
                     for flag, field in (('--motions', 'motions'), ('--scenes', 'scenes'), ('--user-poses', 'user_poses')):
                         start = set_option(start, flag, runtime_project / selected[field])
-                    start = set_option(start, '--cues', release / 'audio/cues')
+                    start = set_option(start, '--cues', runtime_project / 'audio/cues')
                     start = set_option(start, '--audio-card', selected['audio']['card'])
                     start = set_option(start, '--audio-device', selected['audio']['pcm'])
                     if hardware == 'v2':
