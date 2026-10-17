@@ -17,7 +17,10 @@ pub struct HardwareProfile {
     pub mechanical_revision: String,
     pub lighting: LightingProfile,
     pub audio: AudioProfile,
+    #[serde(default)]
     pub calibration_file: String,
+    #[serde(default)]
+    pub joint_profile: String,
     pub poses: String,
     pub user_poses: String,
     pub motions: String,
@@ -48,6 +51,7 @@ pub struct AudioProfile {
 }
 #[derive(Debug, Deserialize)]
 pub struct JointProfile {
+    #[serde(default)]
     pub servo_id: u8,
     pub physical_joint: String,
 }
@@ -73,7 +77,25 @@ impl HardwareVersion {
             Self::V2 => (&V2, include_str!("../../hardware/profiles/v2.json")),
         };
         slot.get_or_init(|| {
-            serde_json::from_str(source).expect("validated built-in hardware profile")
+            let mut profile: HardwareProfile =
+                serde_json::from_str(source).expect("validated built-in hardware profile");
+            if self == Self::V2 {
+                #[derive(Deserialize)]
+                struct Ids {
+                    joints: std::collections::BTreeMap<String, Id>,
+                }
+                #[derive(Deserialize)]
+                struct Id {
+                    servo_id: u8,
+                }
+                let ids: Ids =
+                    serde_json::from_str(include_str!("../../hardware/profiles/v2-joints.json"))
+                        .expect("validated V2 joint profile");
+                for (name, joint) in &mut profile.joints {
+                    joint.servo_id = ids.joints[name].servo_id;
+                }
+            }
+            profile
         })
     }
     pub fn load_calibration(self, path: impl AsRef<Path>) -> Result<Vec<JointCalibration>> {
@@ -89,7 +111,11 @@ impl HardwareVersion {
                 "Calibration hardware does not match --hardware, or is simulation-only.".into(),
             ));
         }
-        let calibrations = load_calibration_file(path, &ORION_JOINT_NAMES)?;
+        let calibrations = if self == Self::V2 {
+            crate::motion::calibration::load_joint_profile(path)?
+        } else {
+            load_calibration_file(path, &ORION_JOINT_NAMES)?
+        };
         // Each servo ID must drive the mechanism its joint name describes; a
         // calibration taken under another ID map would move the wrong servo.
         for calibration in &calibrations {
@@ -107,6 +133,28 @@ impl HardwareVersion {
     }
 }
 
+/// Find immutable hardware resources beside this executable, including after
+/// installation at a path unrelated to the builder's checkout.
+pub fn resource_root() -> Result<std::path::PathBuf> {
+    let executable = std::env::current_exe()?;
+    if let Some(path) = executable
+        .ancestors()
+        .find(|path| path.join("hardware/profiles/v2.json").is_file())
+    {
+        return Ok(path.to_path_buf());
+    }
+    // Cargo can put test/build executables in a shared target directory outside
+    // the source tree. This fallback is usable only while that source exists;
+    // installed binaries find their own release above, independent of /src.
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    if source.join("hardware/profiles/v2.json").is_file() {
+        return Ok(source.to_path_buf());
+    }
+    Err(Error::Runtime(
+        "Cannot locate Orion release resources beside the executable.".into(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,23 +164,13 @@ mod tests {
             .join("../simulation/mujoco/config/servo_calibration.json");
         assert!(HardwareVersion::V1.load_calibration(&source).is_ok());
         assert!(HardwareVersion::V2.load_calibration(&source).is_err());
-        let mut document: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(source).unwrap()).unwrap();
-        document["hardware"] = serde_json::json!("v2");
-        let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join("calibration.json");
-        // V1 IDs put the neck joint on servo 4; V2 measured it on servo 5.
-        std::fs::write(&path, document.to_string()).unwrap();
-        let error = HardwareVersion::V2.load_calibration(&path).unwrap_err();
-        assert!(error.to_string().contains("maps it to servo 5"), "{error}");
-        document["joints"]["head_roll_joint"]["servo_id"] = serde_json::json!(5);
-        document["joints"]["head_pitch_joint"]["servo_id"] = serde_json::json!(4);
-        std::fs::write(&path, document.to_string()).unwrap();
-        assert!(HardwareVersion::V2.load_calibration(&path).is_ok());
-        document["simulation_only"] = serde_json::json!(true);
-        std::fs::write(&path, document.to_string()).unwrap();
-        assert!(HardwareVersion::V2.load_calibration(&path).is_err());
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../hardware/profiles/v2-joints.json");
+        let profile = HardwareVersion::V2.load_calibration(source).unwrap();
+        assert!(profile.iter().all(|joint| joint.neutral_raw == 2047));
+        assert_eq!(profile[3].servo_id, 5);
     }
+
     #[test]
     fn profiles_preserve_contract_and_name_the_v2_physical_axes() {
         for version in [HardwareVersion::V1, HardwareVersion::V2] {

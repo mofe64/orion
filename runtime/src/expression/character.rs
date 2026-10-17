@@ -971,12 +971,17 @@ impl CharacterCoordinator {
             ));
         }
 
-        // we move to the home position using the goto home command
-        // the runtime build the trajectory to the named home pose, using the requested travel duration of 1.6 seconds
-        // and the runtime also tracks the execution of this movement
-        // now tells the runtime when this movement began on its elapsed-time clock.
-        // we use a goto command here with a provided duration, we aren't using the return_home motion (which is defined in our yaml)
-        let response = checked(core.handle_command("goto home 1.600000", now))?;
+        // Mechanical rest can be at a hard stop. Lift out over four seconds;
+        // ordinary resumes retain the shorter startup path. The zero rest pose
+        // identifies the shared V2 frame without embedding a lamp's angles.
+        let rest_frame = core.poses().pose("rest")?.values().all(|v| v.abs() < 1e-12);
+        let at_rest = core
+            .snapshot()
+            .joints
+            .iter()
+            .all(|joint| joint.position.abs() < 0.05);
+        let duration = if rest_frame && at_rest { 4.0 } else { 1.6 };
+        let response = checked(core.handle_command(&format!("goto home {duration:.6}"), now))?;
         self.work_anchor = false;
         // Do not clear Stop if startup was rejected by a foreground owner or
         // failed to restore torque/home. Explicit --gaze off stays off.
@@ -3703,6 +3708,15 @@ mod tests {
         let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
         RuntimeCore::new(CharacterTestDriver, poses, motions).unwrap()
     }
+    #[test]
+    fn mechanical_rest_startup_takes_at_least_four_seconds() {
+        let mut core = reaction_core();
+        let mut character = CharacterCoordinator::new(7);
+        character.start(0.0, &mut core).unwrap();
+        core.tick(3.999).unwrap();
+        assert!(core.snapshot().motion.as_ref().unwrap().progress < 1.0);
+    }
+
     fn cue_analysis(seconds: f64, cues: Vec<(usize, SpeechCue)>) -> SpeechAnalysis {
         SpeechAnalysis {
             rms_20ms: vec![0.2; (seconds / 0.020) as usize],

@@ -644,8 +644,8 @@ class SystemWriteTests(Fixture):
 
 class DeployHardeningTests(Fixture):
     def calibration(self, **override):
-        joints = {name: {'servo_id': info['servo_id'], 'neutral_raw': 2047,
-                         'safe_min_delta_raw': -500, 'safe_max_delta_raw': 500}
+        joints = {name: {'servo_id': info['servo_id'], 'direction': 1,
+                         'min_radians': -0.5, 'max_radians': 0.5}
                   for name, info in installer.profile('v2')['joints'].items()}
         for name, values in override.items():
             joints[name].update(values)
@@ -655,9 +655,9 @@ class DeployHardeningTests(Fixture):
 
     def test_calibration_crossing_the_encoder_seam_or_wrong_ids_is_refused_before_switching(self):
         installer.check_calibration(self.calibration(), 'v2')
-        with self.assertRaisesRegex(RuntimeError, 'crossing 0/4095.*orion-centre-servos'):
-            installer.check_calibration(self.calibration(base_yaw_joint={'neutral_raw': 4066}), 'v2')
-        with self.assertRaisesRegex(RuntimeError, 'head_roll_joint to servo 4'):
+        with self.assertRaisesRegex(RuntimeError, 'profile crosses 0/4095'):
+            installer.check_calibration(self.calibration(base_yaw_joint={'max_radians': 4.0}), 'v2')
+        with self.assertRaisesRegex(RuntimeError, 'Invalid V2 joint mapping: head_roll_joint'):
             installer.check_calibration(self.calibration(head_roll_joint={'servo_id': 4}), 'v2')
 
     def test_hand_started_runtime_is_found_and_systemds_own_is_ignored(self):
@@ -1039,8 +1039,11 @@ class ReadinessTests(Fixture):
                 with patch.object(system, 'run') as run:
                     with self.assertRaises(RuntimeError) as error:
                         installer.preflight(self.release, self.home, self.plan(), system)
-                expected = installer.calibration_path(self.home, hardware)
-                self.assertEqual(str(error.exception), f'Missing {hardware} servo calibration: {expected}')
+                expected = installer.calibration_path(self.home, hardware, project=self.release)
+                if hardware == 'v1':
+                    self.assertEqual(str(error.exception), f'Missing {hardware} servo calibration: {expected}')
+                else:
+                    self.assertIn('vision/.venv/bin/orion-vision', str(error.exception))
                 run.assert_not_called()
                 self.assertEqual(token.read_text(), 'existing pairing token')
 
@@ -1050,8 +1053,8 @@ class ReadinessTests(Fixture):
                      'orion-service/target/release/orion-service', 'speech/.venv/bin/python',
                      'voice/.venv/bin/orion-listener'):
             self.write(self.release / name, 'fixture')
-        calibration = installer.calibration_path(self.home, 'v2')
-        self.write(calibration, 'existing V2 calibration')
+        calibration = installer.calibration_path(self.home, 'v2', project=self.release)
+        original_profile = calibration.read_text()
         token = self.env.parent / 'studio-token'
         system = installer.System()
         with patch.object(system, 'run') as run:
@@ -1061,9 +1064,39 @@ class ReadinessTests(Fixture):
         self.assertIn(f'create-token --token-file {token}', str(error.exception))
         self.assertNotIn('Missing v2 servo calibration', str(error.exception))
         run.assert_not_called()
-        self.assertEqual(calibration.read_text(), 'existing V2 calibration')
+        self.assertEqual(calibration.read_text(), original_profile)
         self.assertFalse(token.exists())
 
 
 if __name__ == '__main__':
     unittest.main()
+
+class CommissioningTests(Fixture):
+    def test_first_install_stays_stopped_even_if_direct_check_passes(self):
+        (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
+        system = FakeSystem(self.units, existing=False)
+        with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+            installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
+        self.assertTrue((self.root / 'installation.json').is_file())
+        self.assertTrue(all(not state['active'] for state in system.states.values()))
+        self.assertTrue(all(state['enabled'] == 'enabled' for state in system.states.values()))
+
+    def test_failed_direct_check_installs_units_but_never_starts_motion(self):
+        (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
+        system = FakeSystem(self.units, existing=False)
+        with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)) as check:
+            installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
+        self.assertIn('--check', check.call_args.args[0])
+        self.assertNotIn(('start', 'oriond'), system.calls)
+        self.assertTrue((self.root / 'installation.json').is_file())
+        self.assertTrue(all(not state['active'] for state in system.states.values()))
+        self.assertTrue(all(state['enabled'] == 'enabled' for state in system.states.values()))
+
+    def test_manual_rollback_cannot_restart_the_old_coordinate_frame(self):
+        folder = self.root / 'transactions' / ('a' * 32); folder.mkdir(parents=True)
+        (folder / 'state.json').write_text('{"status":"committed","crosses_rest_frame":true}')
+        (self.root / 'installation.json').write_text(json.dumps({'rollback': str(folder)}))
+        system = FakeSystem(self.units, existing=False)
+        with self.assertRaisesRegex(RuntimeError, 'old V2 calibration frame'):
+            installer.rollback(self.root, system)
+        self.assertEqual(system.calls, [])

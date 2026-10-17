@@ -1,4 +1,5 @@
 pub mod driver;
+pub mod setup;
 pub mod transport;
 
 // expose JointLimit from driver directly through sts3215

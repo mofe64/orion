@@ -11,7 +11,7 @@ V1's commissioned light is an Adafruit NeoPixel Shield, product 2864:
 
 V2 selects a 24-pixel RGBW ring with `--hardware v2`, retaining GPIO12, GRBW
 encoding and the persistent Pi 5 driver below. The V1 wiring and matrix layout in
-the next sections do not apply to the ring. See [V2 calibration and rest capture](../../docs/hardware-versions.md).
+the next sections do not apply to the ring. See [V2 mechanical rest zeroing](../../docs/hardware-versions.md).
 
 The assembled robot reports this direct Raspberry Pi 5 wiring:
 
@@ -88,27 +88,12 @@ Raspberry Pi 5 support in `rpi_ws281x` uses the RP1 PWM kernel module from its
 `pi5` branch. Orion keeps the upstream source outside this repository and owns
 the boot installation through `install-persistent.sh`.
 
-Install DKMS, the headers for the running kernel, the headers package that
-follows kernel updates, and the device-tree compiler:
+The [release installer](../../docs/quickstart.md#install-or-update) provisions the
+persistent driver on Raspberry Pi OS Bookworm/Trixie. For a manual source setup,
+install the Pi 5 headers, DKMS, device-tree compiler and pin utility:
 
 ```bash
-sudo apt install dkms linux-headers-$(uname -r) linux-headers-raspi device-tree-compiler
-```
-
-On Raspberry Pi OS, replace `linux-headers-raspi` with the headers package for
-your kernel flavour.
-
-On Raspberry Pi OS, install `raspi-utils` for `/usr/bin/pinctrl`. On Ubuntu 24.04,
-build the [official Raspberry Pi utility](https://github.com/raspberrypi/utils/blob/master/pinctrl/README.md):
-
-```bash
-sudo apt install -y cmake build-essential git
-mkdir -p ~/dev
-git clone --depth 1 https://github.com/raspberrypi/utils.git ~/dev/orion-pi-utils
-cmake -S ~/dev/orion-pi-utils/pinctrl -B ~/dev/orion-pi-utils/build-pinctrl
-cmake --build ~/dev/orion-pi-utils/build-pinctrl -j 2
-sudo install -m 755 ~/dev/orion-pi-utils/build-pinctrl/pinctrl /usr/bin/pinctrl
-sudo groupadd -f gpio
+sudo apt install dkms linux-image-rpi-2712 linux-headers-rpi-2712 device-tree-compiler raspi-utils
 sudo usermod -aG gpio "$USER"
 ```
 
@@ -125,7 +110,7 @@ Install Orion's persistent configuration from the Orion checkout:
 
 ```bash
 cd ~/dev/orion
-sudo hardware/lighting/install-persistent.sh /home/mofe/dev/rpi_ws281x
+sudo hardware/lighting/install-persistent.sh "$HOME/dev/rpi_ws281x"
 sudo reboot
 ```
 
@@ -133,10 +118,12 @@ The installer performs six persistent operations:
 
 1. Registers the driver source with DKMS as `rp1_ws281x_pwm/orion1` under
    `/usr/src/rp1_ws281x_pwm-orion1/`, then builds and installs it for the
-   running kernel. When the package manager installs a new kernel, DKMS
+   installed Pi 5 kernels with available headers. Imager's running kernel may
+   be older than apt's matching kernel/header pair; reboot before starting
+   Orion in that case. When the package manager installs a new kernel, DKMS
    builds the driver for it before that kernel boots. The registered copy
    selects the platform driver's `remove` field by kernel version, because
-   upstream targets kernel 6.11 and later and Ubuntu's 6.8 kernel rejects it.
+   the platform-driver API differs before and after kernel 6.11.
 2. Compiles `rp1_ws281x_pwm.dtbo` from the upstream overlay source, installs it
    into the Pi boot overlay directory, and adds `dtoverlay=rp1_ws281x_pwm` to
    `config.txt`. The overlay targets the RP1 node found in the running device
@@ -172,8 +159,8 @@ still checked as the invoking user. A failed GPIO read prints its diagnostic
 instead of exiting silently.
 
 DKMS needs the new kernel's headers to rebuild the driver, which
-`linux-headers-raspi` installs with each kernel update. On Ubuntu the installer
-refuses to run without that package. To check the driver after a kernel update:
+`linux-headers-rpi-2712` installs with each Pi 5 kernel update. The installer
+checks that this metapackage is installed. To check the driver after a kernel update:
 
 ```bash
 dkms status rp1_ws281x_pwm
@@ -182,10 +169,9 @@ dkms status rp1_ws281x_pwm
 Each installed kernel should be listed as `installed`. If one is missing,
 install its headers and run `sudo dkms autoinstall -k KERNEL`.
 
-Run the installer once per Pi. Pi deployment runs `verify-persistent.sh` but
-not the installer, so a deploy on a Pi without this setup stops with
-`/dev/ws281x_pwm is not a character device`. Run the installer, reboot, and
-deploy again.
+Release installation runs the persistent setup automatically. Reboot after the
+first install, then run the verifier. A successful build does not prove the
+boot overlay, pin state or device permissions on a physical Pi.
 
 ## Orion output checks
 

@@ -39,6 +39,22 @@ def load_calibrated_joint_ranges(path: Path) -> tuple[CalibratedJointRange, ...]
         raise CalibrationError(f"Could not read calibration '{path}': {exc}") from exc
     if not isinstance(root, dict):
         raise CalibrationError("Calibration must be a JSON object.")
+    if root.get("schema_version") == 2:
+        if root.get("hardware") != "v2" or root.get("zero") != "mechanical_rest" or root.get("encoder_resolution") != 4096:
+            raise CalibrationError("Expected the V2 mechanical-rest joint profile.")
+        joints = root.get("joints", {})
+        if set(joints) != set(CANONICAL_JOINT_NAMES): raise CalibrationError("Joint profile must contain all Orion joints.")
+        ranges = []
+        for name in CANONICAL_JOINT_NAMES:
+            entry = joints[name]
+            lo, hi, direction = entry.get("min_radians"), entry.get("max_radians"), entry.get("direction")
+            if (not isinstance(lo, (float, int)) or not isinstance(hi, (float, int))
+                    or not math.isfinite(lo) or not math.isfinite(hi) or not lo <= 0 <= hi or lo >= hi or direction not in (-1, 1)):
+                raise CalibrationError(f"Invalid rest-relative limits for {name}.")
+            raw = [2047 + value * 4096 / math.tau * direction for value in (lo, hi)]
+            if min(raw) < -1e-9 or max(raw) > 4095 + 1e-9: raise CalibrationError(f"{name} profile crosses 0/4095.")
+            ranges.append(CalibratedJointRange(name, float(lo), float(hi)))
+        return tuple(ranges)
     if (
         root.get("schema_version") != 1
         or root.get("robot") != "orion"

@@ -18,10 +18,10 @@ from install_pi_voice_stack import System, activate, validate_catalog
 
 class HardwareDeploymentTests(unittest.TestCase):
     def test_launcher_requires_explicit_hardware_before_attempting_network(self):
-        result = subprocess.run(['bash', str(SCRIPTS / 'deploy_pi.sh'), '--skip-studio-check'],
+        result = subprocess.run(['bash', str(SCRIPTS / 'deploy_pi.sh')],
                                 env={k: v for k, v in os.environ.items() if k != 'ORION_PI_HARDWARE'}, capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
-        self.assertIn('Select the target hardware', result.stderr)
+        self.assertIn('Pass --host', result.stderr)
 
     def test_v2_replaces_effective_hardware_arguments_and_keeps_unrelated_tuning(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -36,7 +36,7 @@ class HardwareDeploymentTests(unittest.TestCase):
             override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234 --character-on-start off\n')
             plan = render_plan(release, base / 'stack', project, home, 'pi', units)
             start = plan[override]
-            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start on', 'servo_calibration-v2.json', 'motion/config/v2/poses.yaml', 'motion/motions/v2'):
+            for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start on', 'v2-joints.json', 'motion/config/v2/poses.yaml', 'motion/motions/v2'):
                 self.assertIn(expected, start)
             self.assertNotIn('--hardware v1', start)
             # Earlier V2 releases wrote maintenance startup into the unit.
@@ -46,9 +46,9 @@ class HardwareDeploymentTests(unittest.TestCase):
             self.assertIn('--hardware v2', listener)
             gateway = plan[units / 'orion-studio-gateway.service']
             self.assertIn('--hardware v2', gateway)
-            self.assertIn('servo_calibration-v2.json', gateway)
+            self.assertIn('v2-joints.json', gateway)
             self.assertIn('Requires=orion-neopixel-pin.service', plan[units / 'oriond.service'])
-            self.assertNotIn('ExecStartPre=', plan[units / 'oriond.service'])
+            self.assertIn('ExecStartPre=', plan[units / 'oriond.service'])
 
     def test_v2_smoke_rests_before_any_scene_because_character_mode_starts_at_boot(self):
         # The runtime rejects scenes while character startup is moving home, so
@@ -77,7 +77,7 @@ class HardwareDeploymentTests(unittest.TestCase):
             poses.write_text('old repository poses')
             motions = project / 'motion/motions/v2'; motions.mkdir(parents=True)
             (motions / 'return_home.yaml').write_text('motion')
-            calibration = base / 'servo_calibration-v2.json'
+            calibration = base / 'v2-joints.json'
             seen = []
             def run(*args, **kwargs):
                 pose_file = Path(args[args.index('--pose-file') + 1])

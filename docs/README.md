@@ -8,12 +8,13 @@ Read these in order when you are new to Orion:
 2. [System architecture](system-architecture.md): the processes on the Pi and how they talk.
 3. [How Orion moves](motion-architecture.md): from a request to servo movement.
 4. [Voice architecture](voice-architecture.md): wake word, transcription, agent and reply.
-5. [Hardware versions](hardware-versions.md): V1 and V2 differences, V2 calibration and centring.
+5. [Hardware versions](hardware-versions.md): V1 and V2 differences, V2 mechanical rest zeroing.
 
 ## Reference
 
 - [Motion reference](motion-reference.md): pose and motion schemas, styles, animation catalogue, trajectory compiler and servo control
 - [Speech animation runtime](speech-animation-runtime.md): how reply audio becomes head and body gestures
+- [Release packaging](release-packaging.md): Bookworm/Trixie builds, installation and rollback
 - [Configuration](configuration.md): settings files, environment variables and deploy options
 - [Runtime commands and lifecycle](../runtime/README.md)
 - [Scene format](../scenes/README.md)
@@ -24,7 +25,7 @@ Read these in order when you are new to Orion:
 
 ## Hardware setup
 
-- [STS3215 servo setup, calibration and centring](../hardware/servo_setup/README.md)
+- [V2 servo IDs and mechanical rest zero](hardware-versions.md#calibrate-v2-first)
 - [V1 ReSpeaker HAT audio](../hardware/audio/README.md); V2 USB audio is in [hardware versions](hardware-versions.md#usb-capture-and-playback)
 - [RGBW light](../hardware/lighting/README.md)
 - [Wi-Fi fallback hotspot](networking.md)

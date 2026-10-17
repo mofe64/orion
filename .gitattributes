@@ -1,0 +1,2 @@
+# Unified diff context lines use one space for otherwise empty lines.
+scripts/native/*.patch whitespace=-blank-at-eol

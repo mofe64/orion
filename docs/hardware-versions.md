@@ -1,7 +1,8 @@
 # Orion hardware versions
 
 Use `--hardware v1` or `--hardware v2` to match your robot. This selects its
-lights, audio devices, calibration file, poses, movements and scenes.
+lights, audio devices, joint mapping, poses, movements and scenes. V2 is the
+`oriond` default; pass `--hardware v1` for an existing V1 lamp.
 
 <a id="select-the-hardware-profile"></a>
 
@@ -16,55 +17,60 @@ The profiles are saved in `hardware/profiles/v1.json` and
 | Light connection | GPIO12 on the Pi 5 | Same GPIO12 driver |
 | Audio | ReSpeaker 2-Mics V2 HAT, `seeed2micvoicec` | XVF3800 USB, `Array` |
 | Camera | No camera service | IMX708 Wide camera, managed by `orion-vision` |
-| Calibration | `servo_calibration.json` | `servo_calibration-v2.json` |
+| Joint mapping and limits | V1 `servo_calibration.json` | Tracked `hardware/profiles/v2-joints.json` |
 | Poses | `motion/config/v1/poses.yaml` | `motion/config/v2/poses.yaml` |
 | Movements | `motion/motions/v1/` | `motion/motions/v2/` |
 | User poses | `motion/user/poses/v1/` | `motion/user/poses/v2/` |
 | Scenes | `scenes/v1/` | `scenes/v2/` |
 | Simulation | `simulation/mujoco/scene.xml` | `simulation/mujoco/v2/scene.xml` |
 
-Calibration files are stored in `~/.config/orion/` on the onboard computer.
-The physical robot, Studio and simulation use the matching pose and movement
-files.
+V2 shares one rest-relative joint profile across the hardware runtime,
+trajectory compiler and Studio. Servo EEPROM stores each motor’s homing offset;
+no V2 calibration file belongs in `~/.config/orion/`.
 
 ## Calibrate V2 first
 
-Run from the Orion checkout on the onboard computer, with the installed runtime
-stopped. Follow the [servo setup safety instructions](../hardware/servo_setup/README.md#safety-requirements)
-and replace `/dev/ttyACM0` with your servo controller's serial port.
-
-The commands below perform these steps in order:
-
-1. **Verify** checks the five servos' settings and health.
-2. **Calibrate** records each joint's zero position and movement limits with the
-   motors unpowered.
-3. **Centre** adjusts each servo's stored position offset so its movement range
-   stays within the positions it can command, from 0 to 4095.
-4. **Capture rest** saves a position Orion can hold with the motors unpowered,
-   without hands or blocks supporting it. The tool checks that it stays still
-   before saving.
+Stop the services before assigning IDs or zeroing:
 
 ```bash
-uv sync --project hardware/servo_setup --locked
-uv run --project hardware/servo_setup orion-verify-servos --hardware v2 \
-  --port /dev/ttyACM0
-uv run --project hardware/servo_setup orion-calibrate-servos --hardware v2 \
-  --port /dev/ttyACM0
-uv run --project hardware/servo_setup orion-centre-servos --hardware v2 \
-  --port /dev/ttyACM0
-uv run --project hardware/servo_setup orion-capture-rest --hardware v2 \
-  --port /dev/ttyACM0
+sudo systemctl stop orion-voice-stack orion-vision orion-studio-gateway orion-listener oriond
 ```
 
-Calibration saves `~/.config/orion/servo_calibration-v2.json`. Rest capture
-updates the `rest` pose in `motion/config/v2/poses.yaml`. Commit and push that
-pose change before deploying an update; deployment replaces the built-in pose
-file. The calibration file stays on the onboard computer.
+1. **New servos only:** connect one servo at a time and assign its joint ID.
+   For example, `oriond servo set-id --joint shoulder_pitch_joint` sets ID 2.
+   The tool scans IDs 1–253 at 1 Mbps and refuses unless exactly one answers.
+2. Connect all five servos. Fold the lamp into the mechanical rest shown below:
+   upper arm back on the base, forearm folded over it, head supported by the
+   shoulder housing and facing ahead, base facing ahead, motors off.
+3. Run `oriond servo zero`. It keeps torque off, requires two seconds without
+   movement greater than 10 counts, then writes, reads back and locks each
+   homing offset. Every joint must read 2047 ±8. On failure it restores the old
+   offsets and reports any incomplete recovery.
+4. Run `oriond --check`. All joints should read near **0 radians**.
+5. Start Orion; it rises slowly to `home`:
 
-`oriond` rejects calibration ranges that cross the servo's 0/4095 position
-boundary. See [servo centring](../hardware/servo_setup/README.md#centre-the-servos-when-a-range-crosses-raw-04095)
-for the detailed procedure. Check other poses and movements on the assembled
-robot before using them.
+   ```bash
+   sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision
+   ```
+
+![V2 mechanical rest from the side](images/v2-rest-side.png)
+![V2 mechanical rest from the front](images/v2-rest-front.png)
+
+Both commands select the single detected USB servo adapter automatically.
+Use `--port /dev/ttyACM0` when more than one adapter is connected. Repeat zeroing
+only after replacing a servo or removing a horn. Zeroing assumes the lamp is
+folded correctly; software cannot identify a mechanically supported pose from
+encoder readings alone.
+
+V2 angles use `(raw - 2047) * direction * 2*pi/4096`. The profile contains IDs,
+directions and limits in radians from rest. The runtime rejects ranges crossing
+0/4095 and refuses torque outside the profile with a `run oriond servo zero`
+message. An un-zeroed lamp can happen to read inside those limits, so the range
+check does not replace the folding and zeroing procedure.
+
+The renders are kinematic builder references. The [model reference](../simulation/mujoco/config/model_reference-v2.json)
+records the FK migration proof, photo landmarks, pitch corrections and ±2°
+projection uncertainty. They do not establish collision clearance or balance.
 
 ## Joint names and directions
 
@@ -80,8 +86,7 @@ Commands and pose files keep the existing software joint names:
 | 5 | `head_roll_joint` | Turns the head at the neck |
 
 On V1, servo 4 controls `head_roll_joint` and servo 5 controls
-`head_pitch_joint`. V2 uses the assignments above. `oriond` rejects a calibration
-whose servo IDs do not match the selected hardware profile.
+`head_pitch_joint`. V2 uses the assignments above. The runtime rejects servo IDs that disagree with the selected hardware profile.
 
 With `encoder_direction: 1`, V2 moves in these directions:
 
@@ -93,9 +98,9 @@ With `encoder_direction: 1`, V2 moves in these directions:
 | `head_pitch_joint` | Tilts the head up | Tilts the head down |
 | `head_roll_joint` | Turns the head to its left | Turns the head to its right |
 
-Calibration defaults to `encoder_direction: 1`. If a fitted joint moves in the
-opposite direction, use `--directions FILE` during calibration to set that
-joint to `-1`. Joint angles are in radians; model distances are in metres.
+The tracked V2 profile fixes `direction: 1` for these mechanisms. Changing a
+mechanical joint direction requires reviewing the profile and model together.
+Joint angles use radians; model distances use metres.
 
 Read calibrated hardware state without enabling the motors:
 
@@ -129,8 +134,7 @@ Microphone direction readings are optional; see [listener settings](configuratio
 To read them, install the [XVF3800 USB access rule](../voice/README.md#measure-the-xvf3800-on-v2),
 add the account running Orion to `plugdev` with `sudo usermod -aG plugdev USER`,
 and restart the listener. Replace `USER` with that account's name. Recording
-can work without this permission even when direction readings fail. Release
-installation does not perform this setup.
+can work without this permission even when direction readings fail. Release installation installs the USB access rule and adds the user to `plugdev`.
 
 `oriond` sets both USB playback volume controls to 0 dB at startup. To set them
 by hand:
@@ -143,7 +147,8 @@ amixer -c Array sset PCM,1 0dB unmute
 ### Camera
 
 V2 runs `orion-vision` to capture camera images and detect faces and objects.
-Set up the camera's libraries before deploying; see [vision setup](../vision/README.md#setup-on-ubuntu-2404--raspberry-pi-5).
+The release installer selects camera libraries and Python bindings for the OS;
+see [vision setup](../vision/README.md#setup-on-raspberry-pi-os).
 The V2 release includes the service. Studio's camera setting controls whether
 it captures images. V1 has no camera service.
 
@@ -170,7 +175,7 @@ For model work:
 
 | File | What it contains |
 | --- | --- |
-| [simulation/mujoco/config/model_reference-v2.json](../simulation/mujoco/config/model_reference-v2.json) | The measured alignment between the model and the robot's calibrated zero positions. |
+| [simulation/mujoco/config/model_reference-v2.json](../simulation/mujoco/config/model_reference-v2.json) | Mechanical-rest alignment, migration evidence and photo measurements. |
 | `simulation/mujoco/v2/mass-properties.json` | Estimated part masses and weight distribution. |
 | `simulation/mujoco/v2/mass-inputs.example.json` | An example file for supplying measured part weights and additional components. |
 
@@ -186,11 +191,9 @@ for model alignment and camera coordinates.
 
 ## Deploy the selected version
 
-After calibration, centring and supervised movement checks, commit and push
-any pose or movement changes. Deploy with `--hardware v2` using the
-[Pi deployment procedure](quickstart.md#deploy-to-the-pi).
-The installer checks calibration and compiles movements against its limits
-before switching services.
+Use the [release installer](quickstart.md#install-or-update) for installation,
+updates and rollback. It preserves user assets and settings. Motion stays off
+when its direct hardware check fails.
 
 Installed V1 and V2 services start Orion's automatic movement and light
 behaviours. When starting `oriond` by hand, V1 defaults to `on` and V2 defaults

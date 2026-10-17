@@ -1278,7 +1278,7 @@ runtime/target/release/orion-trajectory --hardware v2 \
   --motion look_at_left_expressive --start-pose attentive \
   --pose-file motion/config/v2/poses.yaml \
   --motions-directory motion/motions/v2 \
-  --calibration ~/.config/orion/servo_calibration-v2.json
+  --calibration hardware/profiles/v2-joints.json
 ```
 
 For an anchor-relative motion, add `--anchor-pose POSE_NAME`. The output holds

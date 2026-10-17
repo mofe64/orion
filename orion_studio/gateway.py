@@ -308,7 +308,7 @@ class OrionGateway:
         client: Any,
         project_root: Path | None = None,
         speech_spool: Path = DEFAULT_SPEECH_SPOOL,
-        calibration_file: Path = DEFAULT_CALIBRATION,
+        calibration_file: Path | None = None,
         trajectory_compiler: Path | None = None,
         hardware: str = "v1",
         vision_socket: str = "/tmp/orion-vision.sock",
@@ -321,7 +321,8 @@ class OrionGateway:
         self.client = client
         self.project_root = project_root
         self.speech_spool = speech_spool
-        self.calibration_file = calibration_file.expanduser()
+        self.calibration_file = (calibration_file or (GATEWAY_PROGRAM.parent.parent / "hardware/profiles/v2-joints.json"
+                                 if hardware == "v2" else DEFAULT_CALIBRATION)).expanduser()
         self.trajectory_compiler = trajectory_compiler
         self.scene_write_lock = threading.Lock()
         self.vision_socket = vision_socket
@@ -2274,7 +2275,7 @@ def parse_args() -> argparse.Namespace:
     serve.add_argument("--bind", default="127.0.0.1", help="Listen address; :: accepts IPv4 and IPv6 (default: IPv4 loopback).")
     serve.add_argument("--port", type=int, default=7447)
     serve.add_argument("--token-file", type=Path, required=True)
-    serve.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION)
+    serve.add_argument("--calibration", type=Path)
     serve.add_argument("--trajectory-compiler", type=Path)
     serve.add_argument(
         "--project-root",

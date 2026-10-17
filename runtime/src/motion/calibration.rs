@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::error::{OrionRuntimeError as Error, Result};
 
 /// The number of encoder steps per revolution
-/// one full revolution is represented by 4097 counds with raw readings from 0 to 4095
+/// One full revolution has 4096 counts, with raw readings from 0 to 4095.
 pub const ENCODER_RESOLUTION: i32 = 4096;
 
 /// The hardware mapping for one joint
@@ -27,9 +27,6 @@ pub struct JointCalibration {
     pub safe_min_delta_raw: i32,
     /// the highest permitted encoder offset from neutral
     pub safe_max_delta_raw: i32,
-    /// The servo's persistent homing offset (Ofs register) when the raw
-    /// readings were taken; 0 for an uncentred servo.
-    pub homing_offset_raw: i32,
 }
 
 impl JointCalibration {
@@ -38,7 +35,7 @@ impl JointCalibration {
     /// Encoder direction is part of calibration, so reversed installations still
     /// produce an ordered lower/upper range in joint coordinates.
     /// TAU is one full revolution in radians approx 6.28318 radians
-    /// therefore radians per encoder count = 6.28318 / 4096 = 0.01534 radians per count
+    /// therefore radians per encoder count = 6.28318 / 4096 = 0.001534 radians per count
     pub fn safe_range_radians(&self) -> (f64, f64) {
         let radians_per_step = std::f64::consts::TAU / ENCODER_RESOLUTION as f64;
         let first =
@@ -73,8 +70,6 @@ struct CalibrationEntry {
     encoder_direction: i32,
     safe_min_delta_raw: i32,
     safe_max_delta_raw: i32,
-    #[serde(default)]
-    servo_homing_offset_raw: i32,
 }
 
 /// Reads a calibration file from disk and validates it against the expected joint names
@@ -157,11 +152,6 @@ pub fn load_calibration_file(
                 "{name} safe range must contain zero and stay inside one half-turn."
             )));
         }
-        if joint.servo_homing_offset_raw.abs() > 2047 {
-            return Err(Error::Runtime(format!(
-                "{name} servo_homing_offset_raw must be within -2047..2047."
-            )));
-        }
         calibrations.push(JointCalibration {
             name: name.to_owned(),
             servo_id: joint.servo_id as u8,
@@ -169,7 +159,6 @@ pub fn load_calibration_file(
             encoder_direction: joint.encoder_direction,
             safe_min_delta_raw: joint.safe_min_delta_raw,
             safe_max_delta_raw: joint.safe_max_delta_raw,
-            homing_offset_raw: joint.servo_homing_offset_raw,
         });
     }
     Ok(calibrations)
@@ -194,4 +183,81 @@ mod tests {
         assert_eq!(calibrations[4].name, "head_pitch_joint");
         assert_eq!(calibrations[4].servo_id, 5);
     }
+}
+
+/// Builder-independent V2 profile: offsets live only in the servo EEPROM.
+pub fn load_joint_profile(path: impl AsRef<Path>) -> Result<Vec<JointCalibration>> {
+    #[derive(Deserialize)]
+    struct Profile {
+        schema_version: u32,
+        hardware: String,
+        encoder_resolution: i32,
+        zero: String,
+        joints: BTreeMap<String, Entry>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        servo_id: u8,
+        direction: i32,
+        min_radians: f64,
+        max_radians: f64,
+    }
+    let profile: Profile = serde_json::from_slice(&fs::read(path)?)?;
+    if profile.schema_version != 2
+        || profile.hardware != "v2"
+        || profile.zero != "mechanical_rest"
+        || profile.encoder_resolution != ENCODER_RESOLUTION
+    {
+        return Err(Error::InvalidArgument(
+            "Expected the V2 mechanical-rest joint profile (schema 2, 4096 counts).".into(),
+        ));
+    }
+    let names: BTreeSet<_> = crate::ORION_JOINT_NAMES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    if profile.joints.keys().cloned().collect::<BTreeSet<_>>() != names {
+        return Err(Error::InvalidArgument(
+            "Joint profile must contain all five Orion joints.".into(),
+        ));
+    }
+    let mut ids = BTreeSet::new();
+    crate::ORION_JOINT_NAMES
+        .iter()
+        .map(|name| {
+            let entry = &profile.joints[*name];
+            if !(1..=253).contains(&entry.servo_id)
+                || !ids.insert(entry.servo_id)
+                || !matches!(entry.direction, -1 | 1)
+                || !entry.min_radians.is_finite()
+                || !entry.max_radians.is_finite()
+                || entry.min_radians > 0.0
+                || entry.max_radians < 0.0
+                || entry.min_radians >= entry.max_radians
+            {
+                return Err(Error::InvalidArgument(format!(
+                    "Invalid ID, direction or rest-relative limits for {name}"
+                )));
+            }
+            let first = entry.min_radians * ENCODER_RESOLUTION as f64 / std::f64::consts::TAU
+                * entry.direction as f64;
+            let second = entry.max_radians * ENCODER_RESOLUTION as f64 / std::f64::consts::TAU
+                * entry.direction as f64;
+            let low = first.min(second).round() as i32;
+            let high = first.max(second).round() as i32;
+            if 2047 + low < 0 || 2047 + high >= ENCODER_RESOLUTION {
+                return Err(Error::InvalidArgument(format!(
+                    "{name} profile crosses the STS3215 0/4095 boundary"
+                )));
+            }
+            Ok(JointCalibration {
+                name: name.to_string(),
+                servo_id: entry.servo_id,
+                neutral_raw: 2047,
+                encoder_direction: entry.direction,
+                safe_min_delta_raw: low,
+                safe_max_delta_raw: high,
+            })
+        })
+        .collect()
 }

@@ -80,7 +80,12 @@ pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<R
         );
     }
     let mut driver = Sts3215Driver::with_profiles(RustypotTransport::default(), profiles);
-    driver.connect(&options.port, options.baud_rate, calibrations)?;
+    let port = if options.port.is_empty() {
+        crate::devices::sts3215::setup::detect_port()?
+    } else {
+        options.port.clone()
+    };
+    driver.connect(&port, options.baud_rate, calibrations)?;
     Ok(driver)
 }
 

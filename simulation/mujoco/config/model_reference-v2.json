@@ -1,18 +1,124 @@
 {
   "schema_version": 1,
   "hardware": "v2",
-  "alignment_method": "Measured 2026-10-11 from two side-on photos of the lamp holding its powered home pose (motion/config/v2/poses.yaml home: shoulder 0.308, elbow -0.256, head_pitch -0.14). Image vertical checked against the monitor edge (<0.2 deg). Link directions taken through the shoulder, elbow and head-pitch axis centres; head direction from the diffuser rim. Model angles at home: shoulder -0.810, elbow +1.244, head_pitch -0.210 rad; reference = home - model. Uncertainty about +/-1.5 deg per joint. Base yaw and head roll are not observable from a side view and stay 0. The V2 URDF's all-zero pose is an upright arm with the head facing forward.",
+  "alignment_method": "Mechanical-rest side photo: manually mark shoulder, elbow and wrist axis centres, and two diffuser-rim endpoints in the original 650x740 image. atan2(horizontal displacement, upward displacement) gives upper-arm and forearm lean from vertical; the perpendicular to the diffuser rim gives head depression below horizontal. Fit the three pitch refs to those link angles after proving the coordinate migration equivalent. Approximate side projection, uncalibrated lens/perspective; uncertainty +/-2 degrees, intended builder reference only. Front photo checks that base/neck face ahead; camera roll and yaw are not calibrated from this oblique photograph. Private reference images are not distributed.",
   "joint_reference_radians": {
-    "base_yaw_joint": 0.0,
-    "shoulder_pitch_joint": 1.118,
-    "elbow_pitch_joint": -1.5,
-    "head_roll_joint": 0.0,
-    "head_pitch_joint": 0.07
+    "base_yaw_joint": -0.04908738521234052,
+    "shoulder_pitch_joint": 1.5980932991569734,
+    "elbow_pitch_joint": -2.297002562636047,
+    "head_roll_joint": 0.01380582709097077,
+    "head_pitch_joint": -0.08911356580737373
   },
-  "reference_formula": "The measured joint_reference rotations are baked into URDF origins (-reference) and MJCF joint ref values. Calibrated angles enter both models directly; nothing applies these offsets at runtime.",
-  "source_calibration_sha256": "df1fc254f2e3d0b58cc556a8158ba234c86663a4e9007abdd038ce23392771d4",
+  "reference_formula": "MJCF rotation = angle - ref. URDF origins encode -ref along the joint axis. Mechanical rest angles are all zero.",
   "applied_to": [
     "description/urdf/orion-v2.urdf",
     "simulation/mujoco/v2/robot.xml"
-  ]
+  ],
+  "joint_profile": "hardware/profiles/v2-joints.json",
+  "rest_frame_migration": {
+    "baseline_commit": "4452130",
+    "baseline_robot_sha256": "45235535a0a23a716300ba41007e4a6e242352ca7e6d9141ff0044736eb893c2",
+    "rest_shift_radians": {
+      "base_yaw_joint": 0.04908738521234052,
+      "shoulder_pitch_joint": -0.5553010452146021,
+      "elbow_pitch_joint": 0.8820389530342436,
+      "head_roll_joint": -0.01380582709097077,
+      "head_pitch_joint": 0.2193592526676467
+    },
+    "method": "Evaluate mj_forward for every built-in and user pose before editing; subtract R from absolute angles and refs, add R along the joint axis to URDF origins; compare every body origin and rotation matrix before photo alignment. Named motion targets inherit the migrated poses; relative offsets are unchanged.",
+    "pose_count": 29,
+    "maximum_body_position_error_metres": 1.3877787807814457e-17,
+    "maximum_rotation_matrix_element_error": 2.220446049250313e-16,
+    "per_pose_maximum_error_metres": {
+      "lean_reach_low": 0.0,
+      "lean_reach_left": 0.0,
+      "lean_reach_right": 0.0,
+      "home": 2.168404344971009e-19,
+      "attentive": 7.152448122690996e-18,
+      "thinking": 0.0,
+      "curious": 0.0,
+      "delight": 0.0,
+      "desk_anticipation": 0.0,
+      "desk_arm_lead": 0.0,
+      "desk_work": 0.0,
+      "rest": 0.0,
+      "zero_reference": 0.0,
+      "look_left": 0.0,
+      "look_left_anticipation": 0.0,
+      "look_left_lean": 1.3877787807814457e-17,
+      "look_left_overshoot": 6.938893903907228e-18,
+      "attention_left": 0.0,
+      "attention_left_anticipation": 3.469446951953614e-18,
+      "attention_left_lean": 6.2546344413855015e-18,
+      "attention_left_overshoot": 0.0,
+      "look_right": 6.992893892674703e-18,
+      "look_right_anticipation": 8.673617379884035e-19,
+      "look_right_lean": 0.0,
+      "look_right_overshoot": 7.57391076790106e-18,
+      "attention_right": 0.0,
+      "attention_right_anticipation": 0.0,
+      "attention_right_lean": 0.0,
+      "attention_right_overshoot": 0.0
+    }
+  },
+  "photo_alignment": {
+    "method": "Side-image axis-centre and diffuser-normal measurement; approximate orthographic projection. Front view is a qualitative symmetry check, not an independent 3D angle measurement.",
+    "photo_size_pixels": [
+      650,
+      740
+    ],
+    "side_landmarks_pixels": {
+      "shoulder": [
+        354,
+        391
+      ],
+      "elbow": [
+        61,
+        399
+      ],
+      "wrist": [
+        219,
+        211
+      ],
+      "diffuser_rim_top": [
+        608,
+        157
+      ],
+      "diffuser_rim_bottom": [
+        417,
+        347
+      ]
+    },
+    "measured_degrees": {
+      "upper_arm_lean_from_vertical": -91.56400130983225,
+      "forearm_lean_from_vertical": 40.04455105994776,
+      "head_depression_from_horizontal": 45.150382278071596
+    },
+    "uncertainty_degrees": 2,
+    "reference_correction_radians": {
+      "base_yaw_joint": 0.0,
+      "shoulder_pitch_joint": -0.07520774605762881,
+      "elbow_pitch_joint": 0.08503639039819655,
+      "head_roll_joint": 0.0,
+      "head_pitch_joint": 0.06024568686027296
+    },
+    "migration_refs_before_photo_alignment": {
+      "base_yaw_joint": -0.04908738521234052,
+      "shoulder_pitch_joint": 1.6733010452146022,
+      "elbow_pitch_joint": -2.3820389530342436,
+      "head_roll_joint": 0.01380582709097077,
+      "head_pitch_joint": -0.14935925266764669
+    },
+    "render_views": {
+      "side": {
+        "azimuth": 0,
+        "elevation": -7
+      },
+      "front": {
+        "azimuth": 90,
+        "elevation": -16
+      }
+    },
+    "limits": "Projection uncertainty may exceed a few degrees for yaw and swivel; physical clearance remains unverified."
+  }
 }

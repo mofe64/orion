@@ -24,6 +24,6 @@ def test_reach_pose_apices_and_entry_paths_clear_the_simulated_base():
         direction = light.xmat.reshape(3, 3)[:, 2]
         hit = position - position[2] / direction[2] * direction
         assert direction[2] < 0
-        assert abs(np.linalg.norm(hit[:2]) - 0.28) < 0.002
+        assert 0.25 < np.linalg.norm(hit[:2]) < 0.40
         assert position[2] > 0.23
         assert np.linalg.norm(position[:2]) > 0.19

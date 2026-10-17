@@ -3,6 +3,7 @@ mod client;
 mod commands;
 mod options;
 mod server;
+mod servo;
 
 use std::env;
 
@@ -24,7 +25,11 @@ pub fn run() -> i32 {
 }
 
 fn execute() -> crate::Result<i32> {
-    let options = parse_options(env::args().skip(1))?;
+    let arguments: Vec<_> = env::args().skip(1).collect();
+    if arguments.first().is_some_and(|arg| arg == "servo") {
+        return servo::run(&arguments[1..]);
+    }
+    let options = parse_options(arguments.into_iter())?;
     if options.help {
         print!("{}", usage());
         return Ok(0);
@@ -32,7 +37,17 @@ fn execute() -> crate::Result<i32> {
     match options.operation {
         Operation::Check => {
             let mut driver = connect_driver(&options)?;
-            print_states(&driver.read()?);
+            let states = driver.read()?;
+            print_states(&states);
+            for (state, joint) in states.iter().zip(driver.calibrations()) {
+                let (low, high) = joint.safe_range_radians();
+                if state.position < low || state.position > high {
+                    return Err(crate::Error::OutOfRange(format!(
+                        "{} is outside the joint profile; fold into rest and run oriond servo zero",
+                        state.name
+                    )));
+                }
+            }
             Ok(0)
         }
         Operation::Serve => serve(options),
@@ -284,7 +299,7 @@ mod tests {
                 .gaze_on
         );
         for args in [
-            vec!["--serve", "--gaze", "on"],
+            vec!["--serve", "--hardware", "v1", "--gaze", "on"],
             vec!["--status", "--hardware", "v2", "--gaze", "on"],
             vec!["--serve", "--hardware", "v2", "--gaze", "sometimes"],
         ] {
@@ -294,7 +309,7 @@ mod tests {
 
     #[test]
     fn experimental_gains_are_opt_in_and_isolate_one_arm() {
-        let defaults = make_orion_servo_profiles();
+        let defaults = make_orion_v2_servo_profiles();
         let ordinary = parse(&["--serve"]).unwrap();
         assert!(ordinary.servo_gain_override.is_none());
         assert_eq!(servo_profiles(&ordinary), defaults);
@@ -322,7 +337,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(make_orion_servo_profiles(), defaults);
+        assert_eq!(make_orion_v2_servo_profiles(), defaults);
     }
 
     #[test]
@@ -439,7 +454,7 @@ mod tests {
     #[test]
     fn character_startup_defaults_on_and_supports_maintenance_override() {
         assert!(
-            parse(&["--serve", "--backend", "mujoco"])
+            parse(&["--serve", "--backend", "mujoco", "--hardware", "v1"])
                 .unwrap()
                 .character_on_start
         );
@@ -498,7 +513,17 @@ mod tests {
         assert_eq!(options.operation, Operation::Light);
         assert_eq!(options.light_color, Rgbw8::new(1, 2, 3, 4));
 
-        let options = parse(&["--light-pixel", "39", "5", "6", "7", "8"]).unwrap();
+        let options = parse(&[
+            "--hardware",
+            "v1",
+            "--light-pixel",
+            "39",
+            "5",
+            "6",
+            "7",
+            "8",
+        ])
+        .unwrap();
         assert_eq!(options.operation, Operation::LightPixel);
         assert_eq!(options.light_pixel, 39);
         assert_eq!(options.light_color, Rgbw8::new(5, 6, 7, 8));

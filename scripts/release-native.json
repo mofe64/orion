@@ -1,0 +1,34 @@
+{
+  "sources": [
+    "https://www.raspberrypi.com/documentation/computers/ai.html",
+    "https://archive.raspberrypi.com/debian/dists/bookworm/main/binary-arm64/Packages.gz",
+    "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz"
+  ],
+  "verified_on": "2026-10-17",
+  "libcamera_wrapper_revision": "9baf8f6ae7a924dabe7fb066a88b23a49189c4b1",
+  "kms_wrapper_revision": "bc8dee4c73f3811807d73e4c045a36ae3d626d80",
+  "kms_source_revision": "1813adae89203e15fc60344864fc2ca0d3c75e07",
+  "bookworm": {
+    "libcamera_revision": "v0.5.2+rpt20250903",
+    "libcamera_version": "0.5.2+rpt20250903-1~bpo12+1",
+    "libcamera_package": "libcamera0.5",
+    "hailort_version": "4.20.0",
+    "hailo_packages": [
+      "hailo-dkms=4.20.0-1",
+      "hailofw=4.20.0-1",
+      "hailort=4.20.0-1"
+    ],
+    "kms_version": "0~git20250807.1813ada-1~bookworm"
+  },
+  "trixie": {
+    "libcamera_revision": "v0.7.2+rpt20261009",
+    "libcamera_version": "0.7.2+rpt20261009-1",
+    "libcamera_package": "libcamera0.7",
+    "hailort_version": "4.23.0",
+    "hailo_packages": [
+      "hailort-pcie-driver=4.23.0",
+      "hailort=4.23.0"
+    ],
+    "kms_version": "0~git20250807.1813ada-1"
+  }
+}

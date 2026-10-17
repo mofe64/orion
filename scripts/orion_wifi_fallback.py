@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/opt/orion/python/bin/python3.12
 """Recover an idle NetworkManager Wi-Fi device without replacing a live link."""
 import os
 from pathlib import Path

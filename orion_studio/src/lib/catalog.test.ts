@@ -80,7 +80,7 @@ describe("owner library presentation", () => {
   });
   it("keeps engineering records intact and only supplies approved built-in copy", () => {
     const home = catalogs.v2.poses.home;
-    expect(home.description).toContain("calibration zero");
+    expect(home.description).toContain("mechanical rest");
     expect(ownerAssetDescription("pose", home)).toBe("A compact, forward-facing pose.");
     expect(ownerAssetDescription("pose", { ...home, name: "unknown_reference" })).toBe("");
     expect(ownerAssetDescription("pose", { ...home, source: "user", description: "My reading pose." })).toBe("My reading pose.");

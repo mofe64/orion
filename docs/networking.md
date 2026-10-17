@@ -12,18 +12,19 @@ Installing the helper does not migrate an interface between network managers.
 
 ## Install on the Pi
 
-Run from the Orion source root on a Debian/Ubuntu Pi with NetworkManager,
-`dnsmasq-base`, `iw` and system Python 3 installed. Normal Wi-Fi must already
+Run from the Orion source root on a Raspberry Pi OS Bookworm/Trixie Pi with NetworkManager,
+`dnsmasq-base`, `iw` and Orion’s managed Python 3.12 installed. Normal Wi-Fi must already
 be connected and configured to autoconnect. Verify the radio supports AP mode
 and its configured country matches the robot's location:
 
 ```bash
+sudo apt install dnsmasq-base iw
 systemctl is-active NetworkManager
 nmcli -f DEVICE,TYPE,STATE,CONNECTION device status
 nmcli -g WIFI-PROPERTIES.AP device show wlan0
 iw reg get
-sudo python3 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Ariadne --plan
-sudo python3 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Ariadne
+sudo /opt/orion/python/bin/python3.12 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Ariadne --plan
+sudo /opt/orion/python/bin/python3.12 scripts/install_pi_wifi_fallback.py --country GB --ssid Orion-Ariadne
 ```
 
 Use the actual country, interface (`--interface`) and unique SSID. The installer

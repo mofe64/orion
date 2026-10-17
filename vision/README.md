@@ -1,86 +1,70 @@
 # Orion vision
 
-## Setup on Ubuntu 24.04 / Raspberry Pi 5
+## Setup on Raspberry Pi OS
 
-The service owns the V2 IMX708 Wide camera and keeps frames in memory. It
-serves HTTP on `/tmp/orion-vision.sock`. Built-in wide-lens intrinsics and the
-pinned YuNet model let it track faces and send base bearings to runtime gaze
-after deployment, without creating a camera intrinsics file.
+The V2 service owns the IMX708 Wide camera and keeps captured frames in memory.
+Install it with the [Orion installer](../docs/quickstart.md#install-or-update) on
+Raspberry Pi OS Bookworm or Trixie ARM64. No camera applications may hold the
+sensor when Orion starts.
 
-Run from the Orion checkout on the Pi, with camera applications stopped:
+All Python code uses managed Python 3.12. `picamera2` comes from pip into the
+isolated vision venv. The release builds `rpi-libcamera` and `rpi-kms` wheels
+against each OS’s apt libraries and installs only the matching wheel set.
+There are no system Python packages or `.pth` bridges in the vision environment.
+Native ABI pins live in [release-native.json](../scripts/release-native.json).
+Upgrading the OS’s libcamera beyond that version requires a rebuilt release.
 
-```bash
-sudo bash vision/scripts/install-camera-stack.sh "$USER"
-```
+The profile selects camera index 0 on CAM/DISP1, with both flips false and
+`camera_auto_detect=1`. Retain that boot configuration if the sensor is detected.
+A missing sensor needs a ribbon, port or overlay check; a DMA allocation error
+needs a permissions/CMA check. Release installation adds the login user to
+`video`; reboot before testing.
 
-The installer removes installed Ubuntu `libcamera*`, `python3-libcamera` and
-`rpicam-apps*` packages, including packages apt must remove with them. It does
-not run autoremove. It installs build prerequisites through apt, then builds
-these Raspberry Pi releases into `/usr/local`:
+Verify bindings with the installed release’s `vision/.venv/bin/python -c
+'import libcamera, pykms, picamera2'`, then start `orion-vision` and inspect its
+journal and Studio camera feed. A successful import does not prove capture.
 
-| Component | Tag | Commit |
+## AI HAT+ (Hailo) setup
+
+The installer detects Hailo PCIe vendor `1e60`, enables PCIe Gen 3 in
+`/boot/firmware/config.txt`, and reports that a reboot is required. The Gen 3
+setting applies under `[all]`, regardless of earlier board sections. With no
+HAT, it prints one skip message. It installs the minimum driver, firmware and
+HailoRT runtime, without TAPPAS or camera demo stacks:
+
+| OS | Runtime | Driver and firmware |
 | --- | --- | --- |
-| libpisp | `v1.2.0` | `50426319aa1a9ba4672f91977429365ad4e335a2` |
-| libcamera | `v0.5.0+rpt20250429` | `d83ff0a4ae4503bc56b7ed48cd142c3dd423ad3b` |
-| rpicam-apps | `v1.7.0` | `5a3f5965aca96c2d575261e4e4045f0e0481279b` |
-| kms++ / pykms | pinned commit | `b91affd0725f2523e2563da4f6295a2977fd3945` |
+| Bookworm | `hailort=4.20.0-1` | `hailo-dkms=4.20.0-1`, `hailofw=4.20.0-1` |
+| Trixie | `hailort=4.23.0` | `hailort-pcie-driver=4.23.0` includes firmware |
 
-The libcamera build enables only the `rpi/pisp` pipeline and IPA (image
-processing algorithm), with Python bindings. The app build disables display
-backends, video encoders and optional inference integrations. Re-running the
-installer rebuilds the same releases, verifies their commit IDs, and replaces
-the same Python path and udev rule files. Build sources are temporary.
+The package names were checked against the [Raspberry Pi AI guide](https://www.raspberrypi.com/documentation/computers/ai.html)
+and the official per-OS apt indexes; exact pins and verification date are in
+[release-native.json](../scripts/release-native.json). `hailo_platform` wheels
+are built from the corresponding HailoRT tags under Python 3.12. HailoRT requires
+NumPy below 2, so the vision venv uses NumPy 1.26.4.
 
-The Python bindings live under `/usr/local/lib/python3.12/site-packages`.
-`orion-libcamera.pth` in Ubuntu's local `dist-packages` makes them importable
-with system Python. The DMA buffer rule gives group `video` access to
-`/dev/dma_heap/*`; the optional installer argument joins that user to `video`.
-Start a fresh login after the group change.
-
-If the sensor is already detected with automatic camera detection, retain the
-working boot configuration. Otherwise, set the camera overlay in
-`/boot/firmware/config.txt` for the fitted port.
-Use one explicit overlay, in the applicable `[all]` section, and disable
-automatic camera detection when using it:
-
-```ini
-[all]
-camera_auto_detect=0
-# CAM1 (CAM/DISP1):
-dtoverlay=imx708
-# For CAM0 (CAM/DISP0), use dtoverlay=imx708,cam0 instead.
-```
-
-Reboot, then verify as the user who will own the camera:
+After reboot, run:
 
 ```bash
-bash vision/scripts/verify-camera-stack.sh
+orion-check-hailo
 ```
 
-The check requires `imx708_wide` in `rpicam-hello --list-cameras`, an
-importable `libcamera` module, and `rp1_cfe`, `pisp_be` and `imx708` in kernel
-sysfs. Re-run it after kernel updates. A missing sensor usually needs a cable,
-port or overlay check; a DMA allocation error needs a permissions or CMA
-(contiguous memory allocator) check. Do not change the CMA reservation without
-first recording the allocation failure.
+The check runs `hailortcli fw-control identify`, imports `hailo_platform`, opens
+the device, and runs the pinned Model Zoo v2.14 ResNet-18 HEF for that Hailo-8 or
+Hailo-8L. It reports FPS and saves device, FPS, model hash and check time to
+`~/.local/share/orion/voice-stack/hailo-check.json`. Model URLs and SHA-256 hashes
+are in [check_hailo.py](../scripts/check_hailo.py).
+
+Hardware result: **not yet measured on a Pi**. The saved check result is the
+commissioning evidence; no device variant or FPS is assumed. Orion’s face,
+object and palm detectors continue using their existing backends.
 
 ## Service setup and development
 
-Provision the native stack once with camera applications stopped, then create
-an environment that sees Ubuntu's source-built `libcamera` and `pykms`:
-
-```bash
-uv venv --python /usr/bin/python3 --system-site-packages vision/.venv
-uv sync --project vision --locked --python /usr/bin/python3
-uv run --project vision orion-vision --profile hardware/profiles/v2.json \
-  --object-model vision/models/yolo11n_ncnn_model
-```
-
-The Pi release builder performs the environment steps and installs the unit
-only for profiles with `camera.enabled: true`. Provision native libraries
-before deploying; release preparation does not replace shared libraries beneath
-running services. The V2 profile selects camera index 0 on CAM/DISP1 with both
-flips false. Retain the working `camera_auto_detect=1` boot configuration.
+For workstation tests, run `uv sync --project vision --locked --managed-python`.
+For Pi capture, use the release’s native wheels and interpreter; `uv sync` alone
+does not build the OS-specific camera bindings. Start or inspect the installed
+`orion-vision` unit instead.
 
 The service runs as the Pi user with supplementary group `video`, `Nice=10`,
 `CPUQuota=150%`, and one OpenMP/OpenBLAS thread. The quota is a runaway ceiling
@@ -470,7 +454,7 @@ vision-service dependency lockfile:
 
 ```bash
 sudo apt-get install -y --no-install-recommends libcap-dev
-uv venv --python /usr/bin/python3 --system-site-packages \
+uv venv --managed-python --python 3.12 \
   "$HOME/.cache/orion/camera-benchmark"
 uv pip install --python "$HOME/.cache/orion/camera-benchmark/bin/python" \
   picamera2==0.3.25 numpy==2.2.4 \

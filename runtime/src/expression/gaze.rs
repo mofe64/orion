@@ -275,8 +275,9 @@ impl GazeCoordinator {
                 .ok_or_else(|| Error::InvalidState("Gaze kinematics unavailable".into()))?;
             let (lower, upper) = bounds(&limits, "base_yaw_joint")?;
             let base = start["base_yaw_joint"];
-            *end.get_mut("base_yaw_joint").unwrap() =
-                azimuth.clamp((base - 0.65).max(lower), (base + 0.65).min(upper));
+            *end.get_mut("base_yaw_joint").unwrap() = (azimuth
+                + model.joint_reference("base_yaw_joint")?)
+            .clamp((base - 0.65).max(lower), (base + 0.65).min(upper));
             // Bound body travel, then use calibrated neck/pitch reach. Refuse
             // only a solved pose that cannot face the requested bearing.
             let (solved, clamped) = solve_aim(model, &end, azimuth, elevation, &limits)?;
@@ -530,14 +531,17 @@ impl GazeCoordinator {
                 .ok_or_else(|| Error::InvalidState("Gaze kinematics unavailable".into()))?;
             let current =
                 Bearing::from_direction(model.fk(&aim)?.camera.rotate_vector([0.0, 0.0, 1.0]));
-            let centred = start["head_roll_joint"].abs() <= GAZE_DEADBAND_RAD;
+            let centred = (start["head_roll_joint"] - model.joint_reference("head_roll_joint")?)
+                .abs()
+                <= GAZE_DEADBAND_RAD;
             if angle_difference(target.azimuth, current.azimuth).abs() > GAZE_DEADBAND_RAD
                 || (target.elevation - current.elevation).abs() > GAZE_DEADBAND_RAD
                 || !centred
             {
                 if now - self.started_at >= NECK_LEAD_SECONDS && !centred {
                     let (lower, upper) = bounds(&limits, "base_yaw_joint")?;
-                    let desired = target.azimuth.clamp(lower, upper);
+                    let desired = (target.azimuth + model.joint_reference("base_yaw_joint")?)
+                        .clamp(lower, upper);
                     let step = BASE_CATCHUP_SPEED_RAD_S * GAZE_UPDATE_SECONDS / 1.875;
                     let base = start["base_yaw_joint"]
                         + (desired - start["base_yaw_joint"]).clamp(-step, step);
@@ -557,7 +561,8 @@ impl GazeCoordinator {
             let achieved =
                 Bearing::from_direction(model.fk(&aim)?.camera.rotate_vector([0., 0., 1.]));
             let (lower, upper) = bounds(&limits, "base_yaw_joint")?;
-            self.status.clamped = target.azimuth != target.azimuth.clamp(lower, upper)
+            let base_angle = target.azimuth + model.joint_reference("base_yaw_joint")?;
+            self.status.clamped = base_angle != base_angle.clamp(lower, upper)
                 || angle_difference(achieved.azimuth, target.azimuth).abs() > GAZE_DEADBAND_RAD
                 || (achieved.elevation - target.elevation).abs() > GAZE_DEADBAND_RAD;
         }
@@ -740,27 +745,21 @@ pub(crate) mod tests {
         (poses, motions)
     }
     fn physical_limits() -> Vec<JointLimit> {
-        let c: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../simulation/mujoco/config/servo_calibration-v2.json"
-        ))
-        .unwrap();
-        ORION_JOINT_NAMES
+        crate::HardwareVersion::V2
+            .load_calibration(root().join("hardware/profiles/v2-joints.json"))
+            .unwrap()
             .iter()
-            .map(|name| {
-                let joint = &c["joints"][name];
-                let per_count = std::f64::consts::TAU / c["encoder_resolution"].as_f64().unwrap();
-                let a = joint["safe_min_delta_raw"].as_f64().unwrap() * per_count
-                    / joint["encoder_direction"].as_f64().unwrap();
-                let b = joint["safe_max_delta_raw"].as_f64().unwrap() * per_count
-                    / joint["encoder_direction"].as_f64().unwrap();
+            .map(|joint| {
+                let (lower_rad, upper_rad) = joint.safe_range_radians();
                 JointLimit {
-                    name: (*name).into(),
-                    lower_rad: a.min(b),
-                    upper_rad: a.max(b),
+                    name: joint.name.clone(),
+                    lower_rad,
+                    upper_rad,
                 }
             })
             .collect()
     }
+
     pub(crate) struct FollowingDriver {
         pub(crate) positions: JointPositions,
         writes: Vec<JointPositions>,
@@ -959,7 +958,17 @@ pub(crate) mod tests {
             tick(step, false, &mut character, &mut core);
         }
         let facing = character.status().active_anchor.clone().unwrap();
-        assert!((facing["base_yaw_joint"] - 0.4).abs() < 0.01);
+        assert!(
+            (facing["base_yaw_joint"]
+                - core
+                    .camera_kinematics()
+                    .unwrap()
+                    .joint_reference("base_yaw_joint")
+                    .unwrap()
+                - 0.4)
+                .abs()
+                < 0.01
+        );
         for step in 401..=450 {
             tick(step, true, &mut character, &mut core);
             assert!(
@@ -983,7 +992,14 @@ pub(crate) mod tests {
             tick(step, false, &mut character, &mut core);
         }
         assert!(
-            (character.status().active_anchor.as_ref().unwrap()["base_yaw_joint"] - 0.8).abs()
+            (character.status().active_anchor.as_ref().unwrap()["base_yaw_joint"]
+                - core
+                    .camera_kinematics()
+                    .unwrap()
+                    .joint_reference("base_yaw_joint")
+                    .unwrap()
+                - 0.8)
+                .abs()
                 < 0.01
         );
     }
@@ -1316,7 +1332,14 @@ pub(crate) mod tests {
         }
         let q = &core.driver().positions;
         assert!(
-            q["head_roll_joint"].abs() <= GAZE_DEADBAND_RAD + 0.005,
+            (q["head_roll_joint"]
+                - core
+                    .camera_kinematics()
+                    .unwrap()
+                    .joint_reference("head_roll_joint")
+                    .unwrap())
+            .abs()
+                <= GAZE_DEADBAND_RAD + 0.005,
             "{q:?}"
         );
         let bearing = Bearing::from_direction(

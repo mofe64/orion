@@ -225,7 +225,7 @@ class GatewayContractTests(unittest.TestCase):
     def test_v2_preview_reads_repository_poses_separately_from_pi_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'project'
-            calibration = Path(directory) / 'config/servo_calibration-v2.json'
+            calibration = Path(directory) / 'release/hardware/profiles/v2-joints.json'
             gateway = OrionGateway(self.client, root, hardware='v2', calibration_file=calibration)
             completed = Mock(returncode=0, stdout='{"format_version":2,"compiler":"orion-runtime"}')
             with patch.object(gateway, '_trajectory_compiler_path', return_value=Path('/compiler')), \

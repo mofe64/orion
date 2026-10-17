@@ -7,6 +7,7 @@ use crate::error::{OrionRuntimeError as Error, Result};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Register {
+    Id,
     ModelNumber,
     FirmwareMajorVersion,
     FirmwareMinorVersion,
@@ -46,6 +47,11 @@ struct RegisterInfo {
 impl Register {
     fn info(self) -> RegisterInfo {
         match self {
+            Self::Id => RegisterInfo {
+                address: 5,
+                width: 1,
+                writable: true,
+            },
             Self::FirmwareMajorVersion => RegisterInfo {
                 address: 0,
                 width: 1,
@@ -99,8 +105,8 @@ impl Register {
             Self::HomingOffset => RegisterInfo {
                 address: 31,
                 width: 2,
-                // Written only by the servo-setup centring tool, never at runtime.
-                writable: false,
+                // Only the explicit torque-free `servo zero` operation writes Ofs.
+                writable: true,
             },
             Self::OperatingMode => RegisterInfo {
                 address: 33,
@@ -190,6 +196,9 @@ pub trait Sts3215Transport {
     fn open(&mut self, port: &str, baud_rate: i32) -> Result<()>;
     fn close(&mut self);
     fn is_open(&self) -> bool;
+    fn ping(&mut self, servo_id: u8) -> Result<bool> {
+        Ok(self.read_register(servo_id, Register::ModelNumber).is_ok())
+    }
     fn read_register(&mut self, servo_id: u8, register: Register) -> Result<i32>;
     fn write_register(&mut self, servo_id: u8, register: Register, value: i32) -> Result<()>;
     fn set_eeprom_lock(&mut self, servo_ids: &[u8], locked: bool) -> Result<()>;
@@ -257,6 +266,12 @@ impl Sts3215Transport for RustypotTransport {
 
     fn is_open(&self) -> bool {
         self.controller.is_some()
+    }
+
+    fn ping(&mut self, servo_id: u8) -> Result<bool> {
+        self.controller()?
+            .ping(servo_id)
+            .map_err(|error| Error::Runtime(format!("Pinging servo {servo_id} failed: {error}")))
     }
 
     fn read_register(&mut self, servo_id: u8, register: Register) -> Result<i32> {

@@ -222,33 +222,33 @@ telemetry.
 
 ## Assets and installed releases
 
-The computer prepares runtime, gateway, listener and voice-service code from one
-Git commit in a temporary folder. A local Ubuntu 24.04 ARM64 Docker environment
-builds production binaries and Python wheels and runs software tests. The Pi's
-OS, architecture, glibc and system Python are checked before preparation and
-again before installation. Compiler and package caches stay on the computer.
+The release build prepares runtime, gateway, listener and voice-service code
+from the selected source. Shared executables, the GGUF server, Python 3.12 and
+component wheels build in ARM64 Debian Bookworm for glibc 2.36 compatibility.
+Camera/KMS/Hailo bindings build separately against Bookworm and Trixie libraries.
+GitHub tag builds and local Docker builds use the same entry point.
 
-The Pi verifies a checksummed bundle, checks installation space and installs
-only its prebuilt wheels with source builds, package registry access and caching
-disabled. Python environments are created at their final release paths. Camera
-environments see the provisioned system `libcamera` and `pykms` bindings.
-For camera releases, preparation downloads the pinned YuNet model into
-`vision/models/` and verifies its SHA-256 before activation. The vision unit uses
-that release-local model. Readiness rejects unavailable V2 gaze and vision
-detection errors and requires an inference when the camera is enabled; a saved
-camera-off preference remains valid.
-Transfer files and wheels are temporary; active and rollback releases keep their
-installed dependencies. Shared model files and native inference tools live under
-`~/.local/share/orion/voice-stack/`.
+The Pi verifies an archive checksum and its file inventory. It creates isolated
+venvs from `/opt/orion/python` at their permanent release paths, then installs
+prebuilt wheels offline. `VERSION_CODENAME` selects native bindings; OS Python
+versions do not participate. Shared model files live under
+`~/.local/share/orion/voice-stack/models/`, use pinned URLs/hashes, and are linked
+into releases after verification. Models remain outside application tarballs.
 
-The runtime and gateway keep the existing catalog root, normally
-`/home/mofe/dev/orion`. It contains the calibrated pose library, motion definitions,
-scenes, audio cues and user assets. Activation updates built-in pose, motion and
-scene YAML from the same Git commit as the executables. Calibration remains in
-the Pi user's configuration directory, and user-authored assets remain in their
-separate catalog directories.
-V2 camera geometry uses an explicit `--camera-urdf` path inside the deployed
-release, so an older catalog checkout cannot supply obsolete camera frames.
+Immutable executables, camera geometry and the V2 joint profile belong to a
+release. The runtime and gateway share a separate live catalogue, initially
+`~/.local/share/orion/voice-stack/catalog/`; existing installations retain their
+catalogue root. Built-in YAML follows the release, while user-authored poses,
+motions and scenes stay in their own directories. The V2 profile fixes zero at
+mechanical rest and stores IDs, directions and radian limits; only servo EEPROM
+contains per-servo homing offsets. No V2 per-lamp calibration file is loaded.
+
+Activation returns the old runtime to rest, switches managed files and units,
+and runs the new runtime’s torque-free check after the bus is released. First
+installation stays stopped for reboot and commissioning. Failed checks keep
+motion off. Systemd also checks before daemon startup. Updates and rollback use
+the existing transaction snapshots; rollback cannot undo EEPROM zeroing and
+refuses a transition back to the legacy V2 coordinate frame.
 
 The installer records managed built-in paths in
 `~/.local/share/orion/voice-stack/catalog-assets.json`. The first update derives
@@ -410,11 +410,11 @@ exercise software behavior. Native MuJoCo adds physics; its rest test includes a
 known arm/base contact failure that prevents the shoulder reaching rest and
 therefore keeps torque enabled.
 
-Physical checks establish whether the assembled robot reaches supported rest,
+Physical checks establish whether the assembled robot reaches mechanical rest,
 returns home smoothly, retains speech captured while waking, and plays clear
 audio. Microphone direction, echo and cable clearance also require the robot.
 See the [runtime tests](../runtime/README.md#build-and-test) and
-[hardware setup](../hardware/servo_setup/README.md).
+[mechanical rest setup](hardware-versions.md#calibrate-v2-first).
 
 ## Shopping and to-do storage
 

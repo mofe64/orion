@@ -7,7 +7,7 @@ the surrounding voice session, agent call and playback lifecycle.
 ## Setup on the Pi
 
 Use 64-bit Linux on the Pi 5 with 8 GB RAM. The speech environment uses Python
-3.11, the pinned Sherpa ONNX/Piper model, and the native
+3.12, the pinned Sherpa ONNX/Piper model, and the native
 Qwen GGUF server. The listener uses a separate Python 3.12 environment with
 Silero ONNX and Rustpotter.
 See [Pi installation](../docs/quickstart.md#prepare-a-new-pi).

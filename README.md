@@ -11,7 +11,16 @@ Studio closed; Codex inference and web search still require the internet.
 2. [System architecture](docs/system-architecture.md): the processes on the Pi and how they talk.
 3. [How Orion moves](docs/motion-architecture.md): from a request to servo movement.
 4. [Voice architecture](docs/voice-architecture.md): wake word, transcription, agent and reply.
-5. [Hardware versions](docs/hardware-versions.md): V1 and V2 lamps, V2 calibration and centring.
+5. [Hardware versions](docs/hardware-versions.md): V1 and V2 lamps, V2 mechanical rest zeroing.
+
+On a freshly imaged Raspberry Pi OS Lite 64-bit Pi 5, install with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash
+```
+
+Then reboot, run `codex login`, assign new servo IDs, fold into mechanical rest,
+and run `oriond servo zero` followed by `oriond --check` before starting Orion.
 
 Everything else is in the [documentation index](docs/README.md).
 
@@ -62,7 +71,7 @@ cargo test --manifest-path agent/Cargo.toml
 cargo test --manifest-path history/Cargo.toml
 cargo test --manifest-path runtime/Cargo.toml --all-targets
 PYTHONPATH=motion .venv/bin/python -m pytest -q motion/test
-python3 -m unittest discover -s orion_studio/tests -v
+uv run --project orion_studio --locked --managed-python python -m unittest discover -s orion_studio/tests -v
 
 cd orion_studio
 pnpm test
@@ -72,13 +81,10 @@ pnpm build
 Some runtime integration tests expect the repository Python environment at
 `.venv/bin/python`. Model-independent voice-worker tests use the worker's own
 environment; see its [validation instructions](speech/README.md#validation).
-Most Orion environments use Python 3.12; Pi speech uses Python 3.11 for its
-CPU dependencies. Package metadata and setup scripts select the versions.
-The root `.venv` supports workstation simulation. Keep separate environments for Pi
-capture (`voice/.venv`), speech inference (`speech/.venv`), and
-servo setup (`hardware/servo_setup/.venv`). Use `uv sync --locked` for
-packages with a lockfile. The Pi gateway uses system Python. The release preparer creates separate
-environments for capture and inference.
+Every Python component uses uv-managed Python 3.12, including speech and the
+Studio gateway. Run `uv sync --locked --managed-python` in each component.
+Release venvs use `/opt/orion/python`, independent of Bookworm’s Python 3.11 or
+Trixie’s Python 3.13. Workstation simulation uses its own managed 3.12 venv.
 
 ## Operating limits
 
@@ -95,6 +101,6 @@ See [configuration](docs/configuration.md) for stored settings and credentials.
 ## Safety
 
 Before powering or moving physical hardware, follow the
-[servo setup guide](hardware/servo_setup/README.md). Software torque
+[V2 mechanical rest procedure](docs/hardware-versions.md#calibrate-v2-first). Software torque
 disable is not an emergency stop. Keep an accessible physical power or torque
 interruption available during hardware work.

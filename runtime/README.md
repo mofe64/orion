@@ -285,11 +285,11 @@ a direct diagnostic process. For a manual configure/enable sequence, start with
 ### Read hardware state without enabling torque
 
 ```bash
-cd /home/mofe/dev/orion
+cd ~/orion
 
 runtime/target/release/oriond --check \
   --port /dev/ttyACM0 \
-  --calibration /home/mofe/.config/orion/servo_calibration.json
+  --hardware v2
 ```
 
 `--check` reads one direct state snapshot and exits. It does not enable torque
@@ -300,14 +300,14 @@ or write servo registers.
 In Terminal 1:
 
 ```bash
-cd /home/mofe/dev/orion
+cd ~/orion
 
 runtime/target/release/oriond --serve \
   --backend hardware \
   --port /dev/ttyACM0 \
   --baud-rate 1000000 \
   --character-on-start off \
-  --calibration /home/mofe/.config/orion/servo_calibration.json
+  --hardware v2
 ```
 
 The expected startup message is:
@@ -324,7 +324,7 @@ serves commands through `/tmp/oriond.sock`.
 Open Terminal 2:
 
 ```bash
-cd /home/mofe/dev/orion
+cd ~/orion
 
 runtime/target/release/oriond --status
 runtime/target/release/oriond --configure
@@ -760,3 +760,24 @@ The runtime owns priority, expiry and shared curiosity admission. See
 opt-in camera presence. The deadline is not renewed, so losing presence can allow
 rest immediately. Explicit rest and sleep-after-reply bypass this deferral;
 presence never creates a wake event. See [presence and rest](../docs/motion-architecture.md#presence-defers-automatic-rest).
+
+## V2 mechanical rest zero
+
+Stop `oriond` before commissioning. Connect one STS3215 at a time to assign its
+joint ID with `oriond servo set-id --joint shoulder_pitch_joint`. The command
+scans IDs 1–253 at 1 Mbps and refuses unless exactly one servo answers.
+
+Fold the assembled lamp into mechanical rest, then run `oriond servo zero`.
+It disables torque, checks two seconds of stability, writes and reads back each
+Ofs register, relocks EEPROM, and verifies every joint reads 2047 ±8 counts.
+A failure restores the saved offsets; torque stays off. A single detected USB
+adapter is selected automatically; use `--port DEVICE` when needed.
+
+V2 uses `hardware/profiles/v2-joints.json`, with angles measured from rest:
+`(raw - 2047) * direction * 2*pi/4096`. The runtime, compiler and Studio share
+its IDs and limits. Servo offsets belong in EEPROM, not a per-lamp file.
+See [V2 setup](../docs/hardware-versions.md#calibrate-v2-first) for the rest image.
+
+V2 is the default hardware selection. Starting character mode from rest lifts
+to `home` over at least four seconds; ordinary resumes retain their shorter
+startup. Pass `--hardware v1` when using a commissioned V1 calibration.

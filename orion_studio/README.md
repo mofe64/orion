@@ -92,16 +92,17 @@ family, as configured below.
 
 For gateway source development on the Pi, stop its installed service before
 starting a second listener on the same port. Supply the existing catalog,
-calibration and the trajectory compiler built from the source under test:
+joint profile and the trajectory compiler built from the source under test:
 
 ```bash
-python3 orion_studio/gateway.py serve \
+uv run --project orion_studio --managed-python python orion_studio/gateway.py serve \
   --bind :: --port 7447 \
   --socket /tmp/oriond.sock \
   --token-file ~/.config/orion/studio-token \
-  --project-root /home/mofe/dev/orion \
-  --calibration ~/.config/orion/servo_calibration.json \
-  --trajectory-compiler /home/mofe/dev/orion/runtime/target/release/orion-trajectory
+  --project-root "$PWD" \
+  --hardware v2 \
+  --calibration "$PWD/hardware/profiles/v2-joints.json" \
+  --trajectory-compiler "$PWD/runtime/target/release/orion-trajectory"
 ```
 
 `--bind ::` listens on IPv4 and IPv6 using a dual-stack socket, so either address

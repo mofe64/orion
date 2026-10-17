@@ -3,9 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
 use crate::control::state::JointState;
-use crate::devices::sts3215::transport::{
-    Register, Sts3215RawState, Sts3215Transport, decode_sign_magnitude,
-};
+use crate::devices::sts3215::transport::{Register, Sts3215RawState, Sts3215Transport};
 use crate::error::{OrionRuntimeError as Error, Result};
 use crate::motion::calibration::{ENCODER_RESOLUTION, JointCalibration};
 use crate::motion::pose::JointPositions;
@@ -160,18 +158,6 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 if self.transport.read_register(id, Register::Status)? != 0 {
                     return Err(Error::Runtime(format!(
                         "Servo {id} reported a fault before configuration."
-                    )));
-                }
-                // Raw positions depend on the servo's offset. A calibration
-                // taken under a different offset maps every angle wrongly.
-                let offset = decode_sign_magnitude(
-                    self.transport.read_register(id, Register::HomingOffset)?,
-                    11,
-                );
-                if offset != joint.homing_offset_raw {
-                    return Err(Error::Runtime(format!(
-                        "Servo {id} ({}) has homing offset {offset}, but the calibration was taken with {}. Re-run servo centring or recalibrate.",
-                        joint.name, joint.homing_offset_raw
                     )));
                 }
                 let version = (
@@ -352,6 +338,13 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 return Err(Error::Runtime(
                     "STS3215 reported a fault during activation.".into(),
                 ));
+            }
+            let delta = raw.position - joint.neutral_raw;
+            if delta < joint.safe_min_delta_raw || delta > joint.safe_max_delta_raw {
+                return Err(Error::OutOfRange(format!(
+                    "{} reads raw {}, outside its joint profile; fold the lamp into mechanical rest and run oriond servo zero.",
+                    joint.name, raw.position
+                )));
             }
             initial_goals.insert(joint.servo_id, raw.position);
         }
@@ -558,9 +551,15 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
                 joint.name
             )));
         }
-        let delta = (raw_position - joint.neutral_raw + ENCODER_RESOLUTION / 2)
-            .rem_euclid(ENCODER_RESOLUTION)
-            - ENCODER_RESOLUTION / 2;
+        let delta = if joint.neutral_raw == 2047 {
+            // V2 is a linear absolute span, including diagnostic readings at
+            // 4095. Never turn the +2048 endpoint into a negative half turn.
+            raw_position - 2047
+        } else {
+            (raw_position - joint.neutral_raw + ENCODER_RESOLUTION / 2)
+                .rem_euclid(ENCODER_RESOLUTION)
+                - ENCODER_RESOLUTION / 2
+        };
         let steps_per_radian = ENCODER_RESOLUTION as f64 / (2.0 * PI);
         Ok(delta as f64 / (steps_per_radian * joint.encoder_direction as f64))
     }
@@ -574,7 +573,7 @@ fn validate_raw_range(joint: &JointCalibration) -> Result<()> {
     let highest = joint.neutral_raw + joint.safe_max_delta_raw;
     if lowest < 0 || highest >= ENCODER_RESOLUTION {
         return Err(Error::InvalidArgument(format!(
-            "{} safe range covers raw {lowest}..{highest}, crossing the STS3215 0/4095 boundary; the servo would turn the long way. Centre the servos with orion-centre-servos before running hardware.",
+            "{} safe range covers raw {lowest}..{highest}, crossing the STS3215 0/4095 boundary; the servo would turn the long way. Correct the joint profile before enabling torque; run oriond servo zero in mechanical rest.",
             joint.name
         )));
     }
@@ -625,24 +624,29 @@ impl<T: Sts3215Transport> RuntimeDriver for Sts3215Driver<T> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct FakeTransport {
+    pub(crate) struct FakeTransport {
         open: bool,
-        calls: Vec<String>,
-        registers: BTreeMap<(u8, Register), i32>,
+        pub(crate) calls: Vec<String>,
+        pub(crate) registers: BTreeMap<(u8, Register), i32>,
         states: BTreeMap<u8, Sts3215RawState>,
-        register_writes: Vec<(u8, Register, i32)>,
+        pub(crate) register_writes: Vec<(u8, Register, i32)>,
         position_writes: Vec<BTreeMap<u8, i32>>,
         timed_out_write: Option<(u8, Register, bool)>,
         failed_readback: Option<(u8, Register)>,
+        pub(crate) fail_zero_verify: bool,
+        pub(crate) drift: i32,
+        pub(crate) fail_write_once: Option<(u8, Register)>,
     }
 
     impl FakeTransport {
-        fn add_servo(&mut self, id: u8, position: i32) {
+        pub(crate) fn add_servo(&mut self, id: u8, position: i32) {
             for (register, value) in [
+                (Register::Id, id as i32),
+                (Register::PresentPosition, position),
                 (Register::ModelNumber, 777),
                 (Register::FirmwareMajorVersion, 3),
                 (Register::FirmwareMinorVersion, 10),
@@ -692,6 +696,14 @@ mod tests {
         }
         fn read_register(&mut self, id: u8, register: Register) -> Result<i32> {
             self.calls.push("read_register".into());
+            if register == Register::PresentPosition {
+                if self.fail_zero_verify && self.register_writes.len() >= 5 {
+                    self.fail_zero_verify = false;
+                    return Ok(0);
+                }
+                let position = self.registers.get_mut(&(id, register)).unwrap();
+                *position = (*position + self.drift).rem_euclid(4096);
+            }
             if self.failed_readback == Some((id, register)) {
                 return Err(Error::Runtime("read-back unavailable".into()));
             }
@@ -703,6 +715,10 @@ mod tests {
         fn write_register(&mut self, id: u8, register: Register, value: i32) -> Result<()> {
             self.calls.push("write_register".into());
             self.register_writes.push((id, register, value));
+            if self.fail_write_once == Some((id, register)) {
+                self.fail_write_once = None;
+                return Err(Error::Runtime("Injected EEPROM write failure".into()));
+            }
             if let Some((failed_id, failed_register, committed)) = self.timed_out_write {
                 if (id, register) == (failed_id, failed_register) {
                     if committed {
@@ -715,7 +731,31 @@ mod tests {
                     .into());
                 }
             }
+            if register == Register::HomingOffset {
+                let old = super::super::transport::decode_sign_magnitude(
+                    self.registers[&(id, register)],
+                    11,
+                );
+                let new = super::super::transport::decode_sign_magnitude(value, 11);
+                let p = self
+                    .registers
+                    .get_mut(&(id, Register::PresentPosition))
+                    .unwrap();
+                *p = (*p + old - new).rem_euclid(4096);
+            }
             self.registers.insert((id, register), value);
+            if register == Register::Id {
+                let registers: Vec<_> = self
+                    .registers
+                    .iter()
+                    .filter(|((servo, _), _)| *servo == id)
+                    .map(|((_, r), v)| (*r, *v))
+                    .collect();
+                self.registers.retain(|(servo, _), _| *servo != id);
+                for (r, v) in registers {
+                    self.registers.insert((value as u8, r), v);
+                }
+            }
             Ok(())
         }
         fn set_eeprom_lock(&mut self, _ids: &[u8], locked: bool) -> Result<()> {
@@ -757,7 +797,6 @@ mod tests {
             encoder_direction: 1,
             safe_min_delta_raw: min,
             safe_max_delta_raw: max,
-            homing_offset_raw: 0,
         }
     }
 
@@ -1134,36 +1173,34 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(error.contains("0/4095"), "{error}");
-            assert!(error.contains("orion-centre-servos"), "{error}");
+            assert!(error.contains("joint profile"), "{error}");
             assert!(driver.transport().calls.is_empty());
         }
     }
 
     #[test]
-    fn requires_the_servo_homing_offset_used_by_the_calibration() {
-        // Ofs is sign-magnitude with bit 11 as the sign: 0x800 | 1220 = -1220.
-        let cases = [
-            (0, 0, true),
-            (0x800 | 1220, -1220, true),
-            (0, -1220, false),
-            (2019, 0, false),
-        ];
-        for (register, expected, accepted) in cases {
-            let mut transport = FakeTransport::default();
-            transport.add_servo(4, 2047);
-            transport
-                .registers
-                .insert((4, Register::HomingOffset), register);
-            let mut joint = calibration("head_roll_joint", 4, 2047, -438, 877);
-            joint.homing_offset_raw = expected;
-            let mut driver = Sts3215Driver::new(transport);
-            let result = driver.connect("/dev/fake", 1_000_000, vec![joint]);
-            assert_eq!(result.is_ok(), accepted, "{result:?}");
-            if !accepted {
-                assert!(result.unwrap_err().to_string().contains("homing offset"));
-                assert!(!driver.transport().is_open());
-            }
-        }
+    fn torque_gate_rejects_an_unzeroed_rest_joint_before_writing_goals() {
+        let mut t = FakeTransport::default();
+        t.add_servo(2, 2046);
+        let mut driver = Sts3215Driver::new(t);
+        driver
+            .configure(
+                "/dev/fake",
+                1_000_000,
+                vec![calibration("shoulder_pitch_joint", 2, 2047, 0, 1180)],
+            )
+            .unwrap();
+        let error = driver.activate().unwrap_err();
+        assert!(error.to_string().contains("run oriond servo zero"));
+        assert!(driver.transport.position_writes.is_empty());
+        assert!(!driver.transport.calls.contains(&"torque_on".into()));
+    }
+
+    #[test]
+    fn rest_frame_reading_4095_stays_positive_for_diagnostics() {
+        let driver = Sts3215Driver::new(FakeTransport::default());
+        let joint = calibration("base_yaw_joint", 1, 2047, -1000, 1000);
+        assert!((driver.raw_to_radians(&joint, 4095).unwrap() - PI).abs() < 1e-12);
     }
 
     #[test]
