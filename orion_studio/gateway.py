@@ -2241,7 +2241,7 @@ def create_token(path: Path) -> None:
             output.write(token + "\n")
     except FileExistsError as error:
         raise SystemExit(f"Refusing to replace existing token file '{path}'.") from error
-    print(token)
+    print(f"Studio token file: {path}")
 
 
 class GatewayHTTPServer(ThreadingHTTPServer):

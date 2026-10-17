@@ -2,8 +2,10 @@
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import unittest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -61,6 +63,28 @@ class CatalogTests(Fixture):
         self.assertEqual(self.git('rev-parse', 'HEAD').stdout, head)
         self.assertEqual(self.git('status', '--porcelain').stdout, status)
         self.assertEqual(self.motion.read_text(), 'local edit backed up during activation\n')
+
+    def test_fresh_catalog_without_git_directory_never_invokes_missing_git(self):
+        shutil.rmtree(self.project / '.git')
+        with patch('pi_catalog.subprocess.run', side_effect=FileNotFoundError('git')) as run:
+            assets = self.assets()
+        run.assert_not_called()
+        self.assertEqual(assets[self.pose], 'release YAML\n')
+        self.assertEqual(assets[self.added], 'added YAML\n')
+        self.assertNotIn(self.retired, assets)
+        self.assertTrue(all(path not in assets for path in self.preserved))
+
+    def test_git_migration_without_binary_or_with_nonzero_exit_has_no_old_paths(self):
+        for failure in (FileNotFoundError('git'), subprocess.CompletedProcess([], 1, str(self.retired.relative_to(self.project)) + '\0')):
+            with self.subTest(failure=type(failure).__name__):
+                options = {'side_effect': failure} if isinstance(failure, Exception) else {'return_value': failure}
+                with patch('pi_catalog.subprocess.run', **options) as run:
+                    assets = self.assets()
+                run.assert_called_once_with(['git', '-C', str(self.project), 'ls-files', '-z'],
+                                            capture_output=True, text=True)
+                self.assertEqual(assets[self.pose], 'release YAML\n')
+                self.assertNotIn(self.retired, assets)
+                self.assertTrue(all(path not in assets for path in self.preserved))
 
     def test_inventory_tracks_additions_for_removal_on_the_next_release(self):
         assets = self.assets()

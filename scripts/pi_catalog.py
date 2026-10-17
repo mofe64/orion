@@ -61,10 +61,17 @@ def catalog_plan(release, project, root):
         if not isinstance(old, list) or any(not isinstance(p, str) or not built_in_asset(p) for p in old):
             raise ValueError('Invalid built-in catalog inventory')
     else:
-        # Migrate the existing Git catalog without changing HEAD or the index.
-        tracked = subprocess.run(['git', '-C', str(project), 'ls-files', '-z'],
-                                 capture_output=True, text=True)
-        old = [p for p in tracked.stdout.split('\0') if built_in_asset(p)] if tracked.returncode == 0 else []
+        old = []
+        # Only migrate a checkout; fresh installs need neither Git nor an index.
+        if (project / '.git').exists():
+            try:
+                tracked = subprocess.run(['git', '-C', str(project), 'ls-files', '-z'],
+                                         capture_output=True, text=True)
+            except FileNotFoundError:
+                pass
+            else:
+                if tracked.returncode == 0:
+                    old = [p for p in tracked.stdout.split('\0') if built_in_asset(p)]
     files = {}
     for relative in sorted(set(old) | incoming.keys()):
         path = project / relative

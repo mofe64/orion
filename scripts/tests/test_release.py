@@ -216,6 +216,23 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any('hailort-' in p for p in native_install))
             for flag in ('--offline', '--no-index', '--no-build', '--no-deps'): self.assertIn(flag, native_install)
 
+    def test_create_token_prints_only_its_private_file_path(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token = Path(folder) / '.config/orion/studio-token'
+            command = [sys.executable, str(SCRIPTS.parent / 'orion_studio/gateway.py'),
+                       'create-token', '--token-file', str(token)]
+            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=20)
+            secret = token.read_text().strip()
+            self.assertGreaterEqual(len(secret), 32)
+            self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn(secret, result.stdout + result.stderr)
+            self.assertIn(str(token), result.stdout)
+            # Creating a token must never replace an existing pairing secret.
+            repeated = subprocess.run(command, capture_output=True, text=True, timeout=20)
+            self.assertNotEqual(repeated.returncode, 0)
+            self.assertEqual(token.read_text().strip(), secret)
+            self.assertNotIn(secret, repeated.stdout + repeated.stderr)
+
     def test_hailo_identification_distinguishes_8_and_8l(self):
         self.assertEqual(check_hailo.device_kind('Device Architecture: HAILO8L'), 'HAILO8L')
         self.assertEqual(check_hailo.device_kind('Device Architecture: Hailo-8'), 'HAILO8')
