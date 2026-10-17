@@ -75,6 +75,7 @@ tar -xzf "$bundle" -C "$stage/payload" --no-same-owner --no-same-permissions
 bootstrap=$stage/payload/python/bin/python3.12
 [[ -x $bootstrap ]] || { echo 'Release is missing managed Python 3.12' >&2; exit 1; }
 exec_status=0
-"$bootstrap" "$stage/payload/release/scripts/release_install.py" --payload "$stage/payload" \
+# Keep module imports from adding bytecode to the checksummed payload.
+PYTHONDONTWRITEBYTECODE=1 "$bootstrap" -B "$stage/payload/release/scripts/release_install.py" --payload "$stage/payload" \
   --codename "$VERSION_CODENAME" --root "$root" || exec_status=$?
 exit "$exec_status"

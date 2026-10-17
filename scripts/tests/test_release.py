@@ -2,12 +2,15 @@
 import io
 import gzip
 import json
+import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import Mock, patch
 import zipfile
@@ -127,6 +130,63 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'checksum'): verify_payload(root, manifest)
             (release / 'extra').touch()
             with self.assertRaisesRegex(RuntimeError, 'inventory'): verify_payload(root, manifest)
+
+    def test_bootstrap_entry_point_keeps_extracted_payload_unchanged_before_verification(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder); source = base / 'source'
+            release = source / 'release'; scripts = release / 'scripts'
+            scripts.mkdir(parents=True)
+            for module in SCRIPTS.glob('*.py'):
+                shutil.copy(module, scripts / module.name)
+            (release / 'release.json').write_text(json.dumps({
+                'release_id': 'a'*12+'-12345678', 'commit': 'a'*40, 'hardware': 'v2'}))
+            bootstrap = source / 'python/bin/python3.12'
+            bootstrap.parent.mkdir(parents=True)
+            # Use the host interpreter behind the bundle path in this portable fixture.
+            bootstrap.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+            bootstrap.chmod(0o755)
+            manifest = write_manifest(source, release, TARGET_PLATFORM)
+            bundle = base / 'bundle.tar.gz'; pack_bundle(source, bundle)
+            payload = base / 'stage/payload'; payload.mkdir(parents=True)
+            with tarfile.open(bundle) as archive:
+                inspect_archive(archive)
+                archive.extractall(payload, filter='data')
+            def files():
+                return sorted(p.relative_to(payload).as_posix() for p in payload.rglob('*') if p.is_file())
+            expected = files(); inventory = base / 'expected.json'
+            inventory.write_text(json.dumps(expected))
+            hooks = base / 'hooks'; hooks.mkdir()
+            # Instrument the real verification boundary, then stop before Pi/system changes.
+            (hooks / 'sitecustomize.py').write_text(textwrap.dedent("""\
+                import json, os, sys
+                from pathlib import Path
+                import pi_release_bundle
+                original_verify = pi_release_bundle.verify_payload
+                def checked_verify(payload, manifest):
+                    expected = json.loads(Path(os.environ['ORION_TEST_INVENTORY']).read_text())
+                    actual = sorted(p.relative_to(payload).as_posix() for p in payload.rglob('*') if p.is_file())
+                    assert actual == expected, 'Bootstrap changed payload inventory before verify_payload'
+                    assert '-B' in sys.orig_argv, 'Bootstrap must pass -B'
+                    assert os.environ.get('PYTHONDONTWRITEBYTECODE') == '1'
+                    original_verify(payload, manifest)
+                    print('Extracted payload unchanged and verified')
+                    raise SystemExit(0)
+                pi_release_bundle.verify_payload = checked_verify
+                """))
+            environment = os.environ.copy()
+            for name in ('PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX'):
+                environment.pop(name, None)
+            environment.update(stage=str(payload.parent), root=str(base / 'installed'),
+                VERSION_CODENAME='bookworm', ORION_TEST_INVENTORY=str(inventory),
+                PYTHONPATH=os.pathsep.join((str(hooks), str(payload / 'release/scripts'))))
+            installer = (SCRIPTS / 'install.sh').read_text()
+            command = installer[installer.index('bootstrap=$stage/payload/python/bin/python3.12\n'):]
+            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', command], env=environment,
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Extracted payload unchanged and verified', result.stdout)
+            self.assertEqual(files(), expected)
+            verify_payload(payload, manifest)
 
     def test_archive_rejects_traversal_and_links_before_extraction(self):
         for name, kind in [('../escape', tarfile.REGTYPE), ('/escape', tarfile.REGTYPE), ('link', tarfile.SYMTYPE), ('device', tarfile.CHRTYPE)]:
