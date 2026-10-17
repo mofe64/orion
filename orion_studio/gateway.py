@@ -656,6 +656,7 @@ class OrionGateway:
         return {
             "api_version": API_VERSION,
             "runtime": runtime,
+            "mind": runtime.get("mind"),
             "scene": {
                 "active": scenes.get("scene"),
                 "last": scenes.get("last_scene"),

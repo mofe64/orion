@@ -46,6 +46,9 @@ Search uses normalized whole words and returns at most eight entries. Retrieved 
 
 `character/orion.md` defines Orion's character. The build includes this text at the start of the system prompt.
 
+Each model turn reads the runtime's saved mind state beside the time context. State older than ten minutes is omitted.
+The state adjusts tone lightly. Orion describes it only when asked. See [shared mind state](../docs/motion-architecture.md#shared-mind-state).
+
 Personality choices generate `SOUL.md`. Studio traits and habits adjust tone after the character text. Catalogue IDs determine these instructions. Successful profile changes replace provider context and retain the logical conversation group.
 
 ## Lists and reminders

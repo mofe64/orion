@@ -21,6 +21,7 @@ Paths in this table are relative to the Pi user's home directory.
 | `.config/orion/servo_calibration.json` | V1 servo calibration |
 | `.config/orion/studio-token` | Gateway and listener access token |
 | `.local/share/orion/SOUL.md` | Personality choices |
+| `.local/share/orion/mind.json` | Runtime energy, mood, activity and attention |
 | `.local/share/orion/MEMORY.md` | Saved memories |
 | `.local/share/orion/MEMORY.automatic.json` | Automatic-memory duplicate protection |
 | `.local/share/orion/weather.json` | Weather location and temperature unit |
@@ -33,6 +34,10 @@ Memory-related files follow a custom `ORION_MEMORY_PATH` location when configure
 The default asset project is `~/.local/share/orion/voice-stack/catalog/`. User assets occupy `motion/user/poses/<version>/`, `motion/motions/<version>/user/` and `scenes/<version>/user/` within that project. `ORION_INSTALL_ROOT` changes the installer data root.
 
 ## Character behaviors
+
+`oriond` writes `mind.json` through atomic replacement with mode `0600`. It saves at most once per ten seconds and at shutdown.
+Saved timestamps preserve activity and mood decay across restarts. A missing or invalid file selects default state.
+The agent omits state older than ten minutes. Studio Debug shows the state through `/api/v2/status`.
 
 `behaviours.json` accepts boolean keys: `object_glances`, `mutual_gaze`, `arrival_notice`, `new_object_peek` and `presence_defers_rest`. Missing keys select false. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
 

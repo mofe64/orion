@@ -790,6 +790,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             return serde_json::json!({"ok": false, "error": "Unexpected voice arguments"})
                 .to_string();
         }
+        let had_confirmed = feedback.confirmed_activity();
         let action = if parts[1] == "confirmed" {
             if feedback.confirm(parts[0], now_seconds) {
                 // Ownership/confirmation must be accepted before clearing Stop.
@@ -809,6 +810,9 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         } else {
             feedback.event(parts[0], parts[1], now_seconds)
         };
+        if action.is_ok() && !had_confirmed && feedback.confirmed_activity() {
+            character.mind.confirmed_turn();
+        }
         match action {
             Ok(Some((reaction, cue))) => {
                 if cue == Some("error_muted")

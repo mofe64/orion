@@ -42,6 +42,21 @@ The compiler limits overshoot and adjusts timing for motor speed. The driver che
 
 ## Character mode
 
+### Shared mind state
+
+`oriond` owns energy, mood, activity and attention in `expression/mind.rs`. The agent and Studio read this state.
+The state does not grant motion ownership, start detection or change wake confirmation.
+
+Energy combines local time and conversation activity. Each confirmed turn increases activity. Activity falls with a thirty-minute half-life.
+Mood is a value from minus one to one. Spoken reaction cues adjust it. Mood falls toward zero with a twenty-minute half-life.
+The state label is `sleepy`, `cheerful`, `subdued`, `curious` or `content`.
+
+Attention uses existing speaker, person, Hands and object targets. Its timestamp changes when the target changes.
+A worker reads the local clock and saves state. The control loop uses arithmetic and a bounded message queue.
+See [saved files](configuration.md#saved-files) for storage and reader rules.
+
+### Startup and anchors
+
 Character startup applies configuration, enables torque and moves to `home`. Successful measured arrival establishes the idle anchor. Failed or cancelled startup leaves character mode off.
 
 Installed services start character mode. Manual V2 serving defaults to maintenance mode. See [startup configuration](configuration.md#runtime-startup).

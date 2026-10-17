@@ -278,6 +278,7 @@ struct Attention {
 /// and it persists info into its fields between ticks so we can track the character's state over time.
 #[derive(Debug)]
 pub struct CharacterCoordinator {
+    pub mind: super::mind::MindState,
     pub(crate) behaviour_log: Option<super::behaviour::BehaviourLog>,
     surroundings: surroundings::SurroundingsState,
     hands: hands::HandsState,
@@ -408,6 +409,7 @@ impl CharacterCoordinator {
     /// Fields are initialized to their default values, ready for the first tick.
     pub fn new(seed: u64) -> Self {
         Self {
+            mind: super::mind::MindState::default(),
             behaviour_log: None,
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
@@ -876,6 +878,27 @@ impl CharacterCoordinator {
     /// Returns a reference to the character's current status struct.
     pub fn status(&self) -> &CharacterStatus {
         &self.status
+    }
+
+    pub(crate) fn mind_attention(&self) -> super::mind::AttentionTarget {
+        use super::mind::AttentionTarget as Target;
+        if self.hands.blocks_gaze() {
+            return Target::Hands;
+        }
+        if self.work_anchor || self.work.is_some() {
+            return Target::Object {
+                class: "object".into(),
+            };
+        }
+        if let Some(track_id) = self.attention.as_ref().and_then(|a| a.speaker_track_id) {
+            return Target::Speaker { track_id };
+        }
+        if let Some(track_id) = self.held_gaze_track().or(self.gaze.status().track_id) {
+            return Target::Person { track_id };
+        }
+        self.object_attention()
+            .map(|class| Target::Object { class })
+            .unwrap_or_default()
     }
 
     /// Automatic rest may interrupt background idles, but never foreground work

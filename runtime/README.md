@@ -2,6 +2,9 @@
 
 `oriond` owns servo communication, light output and speaker playback. Clients request named poses, motions, scenes or supported controls through its Unix socket. Hardware and MuJoCo use the same trajectory compiler.
 
+The runtime owns the [shared mind state](../docs/motion-architecture.md#shared-mind-state). The `status` command includes `mind`.
+A separate worker saves hardware state. MuJoCo keeps its mind state in memory.
+
 ## Build and test
 
 Run these steps from the repository root. Simulation also requires the [MuJoCo Python environment](../simulation/mujoco/README.md#python-environment).

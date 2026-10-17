@@ -252,6 +252,15 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         .as_ref()
         .map(crate::expression::behaviour::BehaviourLog::new);
     let mut character = CharacterCoordinator::new(0x4f52_494f_4e);
+    let mind_path = (options.backend == Backend::Hardware)
+        .then(|| std::env::var_os("HOME"))
+        .flatten()
+        .map(|home| PathBuf::from(home).join(".local/share/orion/mind.json"));
+    let (mind_store, mind) = crate::expression::mind::MindStore::start(mind_path);
+    character.mind = mind;
+    let mut mind_snapshot_at = 0.;
+    let mut mind_speech_run = None;
+    let mut mind_cue_index = 0;
     character.behaviour_log = behaviour_log.clone();
     character.set_gaze_enabled(options.gaze_on);
     character.set_hands_maximum_arm_degrees(options.hands_max_arm_degrees)?;
@@ -387,6 +396,28 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             character.note_speech_started(now_seconds);
         }
         playing_run = current_playing;
+        if current_playing != mind_speech_run {
+            mind_speech_run = current_playing;
+            mind_cue_index = 0;
+        }
+        if current_playing.is_some()
+            && let (Some(analysis), Some(frame)) =
+                (speech.active_analysis(), speech.active_energy_frame())
+        {
+            while let Some((at, cue)) = analysis.cues.get(mind_cue_index) {
+                if *at > frame {
+                    break;
+                }
+                character.mind.cue(*cue);
+                mind_cue_index += 1;
+            }
+        }
+        character.mind.advance(wall_time(), mind_store.hour());
+        character.mind.attend(character.mind_attention());
+        if now_seconds >= mind_snapshot_at {
+            mind_store.snapshot(&character.mind);
+            mind_snapshot_at = now_seconds + 1.;
+        }
         if let Some(energy) = speech.active_energy() {
             speaking_light_intensity = smooth_speaking_light(speaking_light_intensity, energy);
             lighting.render_effect("speaking_energy", now_seconds, speaking_light_intensity)?;
@@ -499,6 +530,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
                 let mut value: serde_json::Value =
                     serde_json::from_str(&response).expect("runtime status JSON");
                 value["hardware"] = serde_json::json!(options.hardware.profile().hardware);
+                value["mind"] = serde_json::json!(character.mind);
                 value["physical_joints"] = serde_json::json!(
                     options
                         .hardware
@@ -517,6 +549,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         rest.light_on = lighting.is_on();
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }
+    mind_store.shutdown(&character.mind);
     Ok(0)
 }
 

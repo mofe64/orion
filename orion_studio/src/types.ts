@@ -242,6 +242,7 @@ export interface CharacterStatus {
 }
 
 export interface GatewayStatus {
+  mind?: { energy: number; mood: number; label: string; attention: { kind: "none" | "speaker" | "person" | "hands" | "object"; since: number; track_id?: number; class?: string }; updated_at: number } | null;
   api_version: 2;
   runtime: {
     joints?: Array<{ name: string; position_rad?: number; velocity_rad_s?: number; current_ma?: number; voltage_v?: number; temperature_c?: number; status?: number }>;

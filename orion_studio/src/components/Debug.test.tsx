@@ -33,3 +33,9 @@ it("shows plain labels alongside exact state tokens", () => {
     expect(html).toContain(label); expect(html).toContain(`<code>${token}</code>`);
   }
 });
+
+ it("shows read-only mind values and handles older runtimes", () => {
+   expect(markup(base)).toContain("Mind state is unavailable.");
+   const html = markup({...base, mind:{energy:0.25,mood:0.15,label:"sleepy",updated_at:1000,attention:{kind:"speaker",track_id:4,since:990}}});
+   for (const text of ["25%", "0.15", "sleepy", "speaker 4"]) expect(html).toContain(text);
+ });

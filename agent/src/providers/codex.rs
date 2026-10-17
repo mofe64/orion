@@ -14,6 +14,8 @@ use tokio::{
 };
 
 const MAX_EVENT_BYTES: u64 = 2 * 1024 * 1024;
+#[path = "mind.rs"]
+mod mind;
 
 pub(crate) struct Codex {
     // Drop the process before releasing its temporary working directory.
@@ -313,12 +315,19 @@ impl Codex {
         // errors are ordinary results and do not change this protocol boundary.
         self.reset_required = true;
         self.pending.clear();
+        let mut context = crate::tools::time_context();
+        if !self.structured
+            && let Some(state) = mind::context()
+        {
+            context.push('\n');
+            context.push_str(&state);
+        }
         let start = self
             .rpc(
                 "turn/start",
                 json!({"threadId":self.info.conversation_id,
             "model":self.info.model, "effort":self.info.effort,
-            "input":[{"type":"text", "text":text}, {"type":"text", "text":crate::tools::time_context()}]}),
+            "input":[{"type":"text", "text":text}, {"type":"text", "text":context}]}),
             )
             .await?;
         let turn_id = start["turn"]["id"]

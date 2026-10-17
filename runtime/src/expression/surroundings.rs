@@ -126,6 +126,17 @@ impl SurroundingsState {
     }
 }
 impl CharacterCoordinator {
+    pub(super) fn object_attention(&self) -> Option<String> {
+        self.surroundings
+            .active_object
+            .then(|| {
+                self.surroundings
+                    .glance
+                    .as_ref()
+                    .map(|g| g.category.clone())
+            })
+            .flatten()
+    }
     pub(crate) fn clear_surroundings<D: RuntimeDriver>(
         &mut self,
         now: f64,
