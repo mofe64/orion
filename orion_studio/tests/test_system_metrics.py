@@ -60,7 +60,7 @@ class MetricsTests(unittest.TestCase):
             snapshot = metrics.snapshot()
             self.assertLessEqual(len(snapshot['history']['cpu']), 451)
             json.dumps(snapshot, allow_nan=False)
-            self.assertEqual(list(root.iterdir()), [root / 'proc', root / 'sys'])
+            self.assertEqual(sorted(root.iterdir()), [root / 'proc', root / 'sys'])
 
     def test_authenticated_endpoint(self):
         gateway = OrionGateway(Mock())
