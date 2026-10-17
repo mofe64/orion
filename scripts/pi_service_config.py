@@ -27,6 +27,7 @@ ACTIVE_WAKE_MODEL = REFERENCE_WAKE_MODEL
 ACTIVE_WAKE_THRESHOLD = '0.35'
 # Recognize the legacy managed threshold so upgrades keep following the active profile.
 MANAGED_WAKE_THRESHOLDS = frozenset((float(ACTIVE_WAKE_THRESHOLD), 0.8))
+# Asset-pack paths stay in the catalog; only app resources move to the release.
 PATH_SUFFIXES = (
     'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
     'orion-service/target/release/orion-service', 'studio-service/target/release/orion-studio-headless',
@@ -35,7 +36,7 @@ PATH_SUFFIXES = (
     'voice/models/wake/hey_orion_trained_080.rpw',
     'voice/models/wake/hey_orion_reference.rpw',
     'voice/models/verifier',
-    'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh', 'audio/cues',
+    'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh',
 )
 
 

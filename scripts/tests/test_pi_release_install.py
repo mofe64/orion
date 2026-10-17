@@ -2,6 +2,7 @@
 import copy
 import json
 import io
+import shlex
 import subprocess
 from pathlib import Path
 import shutil
@@ -14,6 +15,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import install_pi_voice_stack as installer
 import pi_service_config
+from release_assets import ASSET_DIRECTORIES, remove_assets
 from pi_service_config import SERVICES, effective_start, read_env, render_plan
 
 
@@ -67,6 +69,44 @@ class ConfigurationTests(Fixture):
                 self.assertIn(str(second / 'orion_studio/gateway.py'), gateway_unit)
                 self.assertIn('--project-root ' + str(project), gateway_unit)
                 self.assertNotIn(str(first), gateway_unit)
+
+    def test_v2_services_use_catalog_asset_paths_after_release_assets_are_removed(self):
+        (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
+        expected = {
+            '--poses': 'motion/config/v2/poses.yaml',
+            '--motions': 'motion/motions/v2',
+            '--scenes': 'scenes/v2',
+            '--cues': 'audio/cues',
+        }
+        self.assertEqual(set(ASSET_DIRECTORIES), {
+            directory for directory in ASSET_DIRECTORIES
+            if any(path == directory or path.startswith(directory + '/') for path in expected.values())})
+        builtins = ('motion/config/v2/poses.yaml', 'motion/motions/v2/idle.yaml',
+                    'scenes/v2/scene.yaml', 'audio/cues/cue.wav')
+        for relative in builtins:
+            self.write(self.release / relative, 'built-in asset')
+            self.write(self.project / relative, 'catalog asset')
+        remove_assets(self.release)
+        self.assertTrue(all(not (self.release / relative).exists() for relative in builtins))
+        unit = self.units / 'oriond.service'
+        override = self.units / 'oriond.service.d/99-local.conf'
+        for existing_override in (False, True):
+            with self.subTest(existing_override=existing_override):
+                if existing_override:
+                    arguments = ' '.join(f'{flag} /old/release/{relative}' for flag, relative in expected.items())
+                    self.write(override, '[Service]\nExecStart=\nExecStart=/old/release/runtime/target/release/oriond --serve ' + arguments + '\n')
+                plan = self.plan()
+                arguments = shlex.split(effective_start([(p, plan[p]) for p in (unit, override) if p in plan]))
+                for flag, relative in expected.items():
+                    self.assertEqual(arguments[arguments.index(flag) + 1], str(self.project / relative))
+                gateway = plan[self.units / 'orion-studio-gateway.service']
+                self.assertIn('--project-root ' + str(self.project), gateway)
+                for path, value in plan.items():
+                    if path.suffix in ('.service', '.conf'):
+                        for directory in ASSET_DIRECTORIES:
+                            self.assertNotIn(str(self.release / directory), value, str(path))
+                for relative in builtins:
+                    self.assertEqual((self.project / relative).read_text(), 'catalog asset')
 
     def test_v2_camera_geometry_and_detector_are_loaded_from_release_including_overrides(self):
         (self.release / 'release.json').write_text('{"revision":"new","hardware":"v2"}')
