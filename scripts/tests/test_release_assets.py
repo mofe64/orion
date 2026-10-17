@@ -175,3 +175,20 @@ class ReleasePlanIntegrationTests(unittest.TestCase):
             event.write_text(json.dumps({'inputs': {'version': 'v1.0.0'}}))
             failed = subprocess.run([*command[:4], '--event-name', 'workflow_dispatch', '--output', str(output)], cwd=root, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0); self.assertIn('prerelease', failed.stderr)
+
+    def test_forced_push_compares_against_the_last_app_release(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def git(*args): return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q'); git('config', 'user.email', 'test@example.invalid'); git('config', 'user.name', 'Release test')
+            (root / 'VERSION').write_text('1.0.0'); (root / 'ASSETS_VERSION').write_text('2.0.0')
+            git('add', '.'); git('commit', '-qm', 'Base'); git('tag', 'v1.0.0')
+            (root / 'audio/cues').mkdir(parents=True); (root / 'audio/cues/a.wav').write_bytes(b'audio')
+            git('add', '.'); git('commit', '-qm', 'Asset update')
+            (root / 'VERSION').write_text('1.0.1'); git('commit', '-qam', 'App update'); head = git('rev-parse', 'HEAD')
+            event = root / 'event.json'; event.write_text(json.dumps({'before': '1' * 40, 'after': head, 'forced': True}))
+            output = root / 'output'
+            subprocess.run([sys.executable, str(SCRIPTS / 'release_plan.py'), '--event', str(event), '--event-name', 'push',
+                            '--output', str(output)], cwd=root, check=True, capture_output=True)
+            self.assertEqual(output.read_text(), 'kind=app\ntag=v1.0.1\n')

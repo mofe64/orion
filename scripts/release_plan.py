@@ -42,6 +42,11 @@ def main():
             base = event['before']; head = event['after']
         if set(base) == {'0'}:
             base = head + '^'
+        elif subprocess.run(['git', 'cat-file', '-e', base + '^{commit}'], stderr=subprocess.DEVNULL).returncode != 0:
+            # A forced push removes the old head. Compare against the last app release instead.
+            last = subprocess.run(['git', 'describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*', head],
+                                  capture_output=True, text=True)
+            base = last.stdout.strip() if last.returncode == 0 else head + '^'
         comparison = base + ('...' if args.event_name == 'pull_request' else '..') + head
         paths = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', comparison]).decode().split('\0')
         paths = [p for p in paths if p]
