@@ -64,7 +64,8 @@ def test_every_rendered_service_starts_from_release_and_catalog_without_a_checko
         for directory in ('hardware/profiles', 'description/urdf', 'scripts/systemd',
                           'voice/orion_voice', 'vision/orion_vision'):
             shutil.copytree(ROOT / directory, release / directory, ignore=ignore)
-        for relative in ('orion_studio/gateway.py', 'runtime/mujoco_bridge.py'):
+        for relative in ('orion_studio/gateway.py', 'runtime/mujoco_bridge.py',
+                         'scripts/home_assistant_install.py', 'scripts/release-home-assistant.json'):
             path = release / relative; path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, path)
         (release / 'release.json').write_text(json.dumps({'revision': 'layout-test', 'hardware': 'v2',
