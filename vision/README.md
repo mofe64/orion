@@ -90,4 +90,4 @@ Explicit object lookup uses the same bounded worker. Desk points assume an inter
    systemctl --no-pager --full status orion-vision
    ```
 
-Camera-off closes capture and clears image buffers. A capture watchdog reopens a stalled source. Camera viewing also requires permission from the runtime's rest coordinator.
+Camera-off closes capture and clears image buffers. A capture watchdog reopens a stalled source. A failed camera start waits longer before each new attempt, up to 30 seconds. After eight failed starts in a row, the service exits and systemd starts it again. Camera viewing also requires permission from the runtime's rest coordinator.

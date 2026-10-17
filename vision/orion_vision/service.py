@@ -21,6 +21,10 @@ from .sources import Picamera2Source, ReplaySource
 from .behaviours import settings as behaviour_settings
 
 LOG = logging.getLogger(__name__)
+# Picamera2 leaks file handles when its constructor fails. Back off between
+# attempts, then exit so systemd restarts the service with fresh handles.
+START_RETRY_LIMIT_SECONDS = 30.
+START_FAILURES_BEFORE_EXIT = 8
 BOUNDARY = "orion-frame"
 
 
@@ -79,6 +83,8 @@ class Vision:
         self.clients = 0
         self.snapshot_until = 0.
         self.thread = None
+        self.start_failures = 0
+        self.exit = os._exit
 
     def start(self):
         if self.pipeline:
@@ -155,12 +161,18 @@ class Vision:
                         else:
                             self.source.start(lambda capture, generation=generation: self.publish(capture, generation), self.wants_rgb)
                         recovering_hands = False
+                        self.start_failures = 0
                     except Exception as error:
                         LOG.exception("Camera start failed")
                         self._disable()
                         recovering_hands = False
                         self.error = str(error)
-                        retry_at = self.clock() + 1
+                        self.start_failures += 1
+                        if self.start_failures >= START_FAILURES_BEFORE_EXIT:
+                            LOG.error("Camera failed to start %d times; exiting for a clean restart", self.start_failures)
+                            self.exit(1)
+                            return
+                        retry_at = self.clock() + min(2. ** (self.start_failures - 1), START_RETRY_LIMIT_SECONDS)
                 if (self.pipeline and hasattr(self.pipeline, 'release_hands') and now >= hands_release_at
                         and not recovering_hands
                         and (not self.enabled or mode != 'hands')):

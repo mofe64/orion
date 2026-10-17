@@ -400,6 +400,20 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(vision.dropped, 0)
 
 
+class CameraRetryTests(unittest.TestCase):
+    def test_failed_starts_back_off_then_exit_for_a_clean_restart(self):
+        source = MagicMock()
+        source.start.side_effect = OSError("camera busy")
+        times = iter(range(0, 100000, 100))
+        vision = Vision(source, Path('/nonexistent-preference'), clock=lambda: next(times))
+        exits = []
+        vision.exit = lambda code: (exits.append(code), vision.stop.set())
+        vision.start()
+        vision.thread.join(timeout=5)
+        self.assertEqual(exits, [1])
+        self.assertEqual(source.start.call_count, 8)
+
+
 class StartupTests(unittest.TestCase):
     def test_service_tracks_without_a_camera_intrinsics_file(self):
         from orion_vision.gaze_client import boottime_ns
