@@ -13,12 +13,9 @@ poses:
   rest: rest
   attentive: up
   delight: up
-  desk_work: down
   lean_reach_low: down
   lean_reach_left: down
   lean_reach_right: down
-  desk_anticipation: redistribute
-  desk_arm_lead: down
   look_left: up
   look_left_anticipation: redistribute
   look_left_lean: up
@@ -43,8 +40,8 @@ motions:
     contexts:
     - start: home
       anchor: home
-    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with the
-      command-time planner'
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with
+      the command-time planner'
     planner: arrival
   attention_left:
     intent: A small grounded turn toward the confirmed speaker on the left.
@@ -76,26 +73,6 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
-  hands_entry:
-    intent: Anticipate with the arm, lower the camera toward the desk, and hold.
-    direction: down
-    main_keyframe: 2
-    contexts:
-    - start: home
-      anchor: desk_work
-    source: 'runtime/src/expression/hands.rs: desk_work entry; leave_hands restores the saved previous anchor
-      through prepare_hands_motion'
-    planner: hands
-  hands_return:
-    intent: Slow arm-led desk transition with anticipation and a held destination anchor.
-    direction: redistribute
-    main_keyframe: 2
-    contexts:
-    - start: desk_work
-      anchor: home
-    source: 'runtime/src/expression/hands.rs: desk_work entry; leave_hands restores the saved previous anchor
-      through prepare_hands_motion'
-    planner: hands
   idle_attentive_hold:
     intent: Raise the gaze slowly while holding an attentive posture.
     direction: up
@@ -129,8 +106,6 @@ motions:
       anchor: look_left
     - start: look_right
       anchor: look_right
-    - start: desk_work
-      anchor: desk_work
     source: 'runtime/src/expression/character.rs: choose_idle uses directional anchors and the Hands anchor'
     movement_degrees:
     - 8
@@ -285,8 +260,8 @@ motions:
     contexts:
     - start: home
       anchor: home
-    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with the
-      command-time planner'
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with
+      the command-time planner'
     planner: peek
   pet_notice:
     intent: Lift into delight, follow the pet briefly, and return to the held anchor.
@@ -295,8 +270,8 @@ motions:
     contexts:
     - start: home
       anchor: home
-    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with the
-      command-time planner'
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with
+      the command-time planner'
     planner: pet
     movement_degrees:
     - 8
@@ -399,8 +374,8 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   speak_react_thinking:
-    intent: Look aside and slightly down during a thoughtful pause.
-    direction: down
+    intent: Glance aside and raise the gaze during a thoughtful pause.
+    direction: up
     main_keyframe: 0
     contexts:
     - start: home
@@ -422,3 +397,33 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_sorry:
+    intent: Shrink back and lower the head after a mistake.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: speech reactions use the held anchor'
+    movement_degrees:
+    - 8
+    - null
+    main_joint: head_pitch_joint
+    speed_degrees_s:
+      base_yaw_joint: 150
+      other: 180
+  speak_react_shy:
+    intent: Turn away and lower the head, peek back, then return.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: speech reactions use the held anchor'
+    movement_degrees:
+    - 8
+    - null
+    main_joint: head_roll_joint
+    speed_degrees_s:
+      base_yaw_joint: 150
+      other: 180

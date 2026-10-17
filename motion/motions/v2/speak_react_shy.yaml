@@ -1,0 +1,23 @@
+format_version: 2
+motion:
+  name: speak_react_shy
+  description: Turn away and lower the head, peek back, then return.
+  space: anchor_relative
+  style: attentive
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      head_roll_joint: 0.44
+      head_pitch_joint: 0.175
+    duration: 0.42
+    arrival: settle
+    hold: 0.15
+    marker: shy
+  - offsets:
+      head_roll_joint: 0.21
+      head_pitch_joint: 0.1
+    duration: 0.27
+    arrival: through
+  - offsets: {}
+    duration: 0.36
+    arrival: settle
