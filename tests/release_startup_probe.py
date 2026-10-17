@@ -17,9 +17,13 @@ def inside(path):
 
 
 if service == 'orion-studio-gateway':
-    program = Path(command[1])
+    program = inside(command[1])
+    # A script launch puts its directory first on Python's module search path.
+    sys.path.insert(0, str(program.parent))
     spec = importlib.util.spec_from_file_location('installed_gateway', program)
     gateway = importlib.util.module_from_spec(spec); spec.loader.exec_module(gateway)
+    for module in ('system_metrics', 'home_assistant'):
+        inside(sys.modules[module].__file__)
     original = gateway.OrionGateway
     def construct(*args, **kwargs):
         instance = original(*args, **kwargs)

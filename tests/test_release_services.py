@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import tomllib
 import venv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,8 @@ def test_every_rendered_service_starts_from_release_and_catalog_without_a_checko
         for directory in ('hardware/profiles', 'description/urdf', 'scripts/systemd',
                           'voice/orion_voice', 'vision/orion_vision'):
             shutil.copytree(ROOT / directory, release / directory, ignore=ignore)
-        for relative in ('orion_studio/gateway.py', 'runtime/mujoco_bridge.py',
+        studio_modules = tomllib.loads((ROOT / 'orion_studio/pyproject.toml').read_text())['tool']['setuptools']['py-modules']
+        for relative in (*(f'orion_studio/{module}.py' for module in studio_modules), 'runtime/mujoco_bridge.py',
                          'scripts/home_assistant_install.py', 'scripts/release-home-assistant.json'):
             path = release / relative; path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, path)
