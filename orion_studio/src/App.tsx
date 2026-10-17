@@ -129,7 +129,7 @@ export default function App() {
     if (value.source === "built_in") throw new Error("Orion collection scenes cannot be deleted.");
     if (value.source === "user" || value.remote_revision) {
       if (!connection) throw new Error("Connect Orion to delete this published scene.");
-      if (!capabilities?.capabilities.scene_library.delete) throw new Error("Update Orion’s Studio gateway to delete published scenes.");
+      if (!capabilities?.capabilities.scene_library.delete) throw new Error("Update Orion to delete published scenes.");
       const revision = value.remote_revision ?? (await getUserScene(connection, value.name)).revision;
       await deleteUserScene(connection, value.name, revision);
     }

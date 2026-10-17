@@ -25,7 +25,7 @@ export function PoseEditor({ pose, limits, onChange }: PoseEditorProps) {
           return <div className="joint-control" key={name}><header><label htmlFor={`pose-${name}`}>{label(name)}</label><output>{value.toFixed(3)} rad <span>{(value * 180 / Math.PI).toFixed(1)}°</span></output></header><input id={`pose-${name}`} type="range" min={range.lower_rad} max={range.upper_rad} step={0.001} value={value} onChange={(event) => onChange({ ...pose, positions: { ...pose.positions, [name]: Math.max(range.lower_rad, Math.min(range.upper_rad, Number(event.target.value))) } })} /><div><span>{range.lower_rad.toFixed(2)}</span><input aria-label={`${label(name)} radians`} type="number" min={range.lower_rad} max={range.upper_rad} step={0.001} value={value} onChange={(event) => onChange({ ...pose, positions: { ...pose.positions, [name]: Math.max(range.lower_rad, Math.min(range.upper_rad, Number(event.target.value))) } })} /><span>{range.upper_rad.toFixed(2)}</span></div></div>;
         })}
       </div>
-      <p className="field-help">Ranges come from live Pi calibration when connected and the tracked accepted calibration while offline.</p>
+      <p className="field-help">Each joint can move only within its safe range.</p>
     </aside>
   );
 }

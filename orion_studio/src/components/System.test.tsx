@@ -4,7 +4,7 @@ import { System, SystemReadings } from "./System";
 import type { SystemMetrics } from "../lib/systemMetrics";
 it("renders connection guidance and unavailable readings", () => {
   expect(renderToStaticMarkup(<System connection={null}/>)).toContain("Connect Orion");
-  expect(renderToStaticMarkup(<SystemReadings metrics={{ latest: null, history: {} }}/>)).toContain("Waiting");
+  expect(renderToStaticMarkup(<SystemReadings metrics={{ latest: null, history: {} }}/>)).toContain("Loading");
 });
 it("renders metrics, histories, services, processes and warnings", () => {
   const disk = { path: "/", percent: 91, used_bytes: 100, total_bytes: 200 };
@@ -15,5 +15,6 @@ it("renders metrics, histories, services, processes and warnings", () => {
     processes: { cpu: [{ pid: 42, name: "worker", cpu_percent: 30, rss_bytes: 100 }], rss: [] }, hailo_temperature_c: null,
   } };
   const html = renderToStaticMarkup(<SystemReadings metrics={metrics}/>);
-  for (const text of ["40.0%", "76.0", "last 15 minutes", "oriond", "worker", "under voltage", "exceeds 75", "exceeds 90%", "CPU cores"]) expect(html).toContain(text);
+  for (const text of ["40.0%", "76.0", "Last 15 minutes", "Movement and lights", "restarted 2 times", "worker", "Check the power supply", "running hot", "Storage is almost full"]) expect(html).toContain(text);
+  for (const text of ["PID", "under_voltage", "oriond", "Throttl", "Hailo", "Swap"]) expect(html).not.toContain(text);
 });
