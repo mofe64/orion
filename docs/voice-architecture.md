@@ -31,11 +31,11 @@ Each candidate receives a fresh session ID. Cancellation, mute, disconnect and e
 
 ### Acoustic wake verification
 
-Rustpotter proposes “Hey Orion” candidates. The acoustic verifier checks nearby audio for the phrase. Acceptance permits the wake cue, light pulse and confirmed-wake sequence.
+Rustpotter proposes “Hey Orion” candidates. By default, Qwen transcribes a short wake prefix and checks it for the phrase. Acceptance permits the wake cue, light pulse and confirmed-wake sequence. Nothing is shown or played before acceptance.
 
-Rejection discards candidate audio while preserving rolling pre-roll and detector history. It does not restart capture. The verifier remains authoritative for ordinary wakes when loaded.
+Rejection discards candidate audio while preserving rolling pre-roll and detector history. It does not restart capture. The optional acoustic verifier (`--verifier-dir`) replaces the Qwen prefix check when loaded.
 
-A slow verifier disables playback interruption. If no verifier is loaded, Qwen can check a short prefix while full command capture continues.
+Full command capture continues while Qwen checks the prefix. A slow or missing acoustic verifier disables playback interruption.
 
 ### Complete command checks
 

@@ -233,17 +233,18 @@ class ConfigurationTests(Fixture):
                 result = self.plan()[self.units / 'orion-listener.service']
                 self.assertIn('--hardware ' + hardware, result)
                 self.assertIn('--threshold 0.35', result)
-                self.assertIn('--verifier-dir ' + str(self.release / 'voice/models/verifier'), result)
+                self.assertIn('--no-verifier', result)
+                self.assertNotIn('--verifier-dir', result)
 
-    def test_bundled_verifier_in_existing_override_moves_to_new_release(self):
+    def test_bundled_verifier_in_existing_override_is_turned_off(self):
         self.installed_units()
         path = self.units / 'orion-listener.service.d/99-local.conf'
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener '
                    '--threshold 0.47 --verifier-dir /old/release/voice/models/verifier\n')
         result = self.plan()[path]
-        self.assertIn('--verifier-dir ' + str(self.release / 'voice/models/verifier'), result)
+        self.assertIn('--no-verifier', result)
+        self.assertNotIn('--verifier-dir', result)
         self.assertNotIn('/old/release', result)
-        self.assertEqual(result.count('--verifier-dir'), 1)
 
     def test_removes_retired_environment_and_preserves_other_tuning(self):
         self.env.write_text('# operator tuning\nORION_ASR_THREADS="2"\nORION_TTS_THREADS=4\n'
@@ -327,7 +328,7 @@ class ConfigurationTests(Fixture):
         result = self.plan()[path]
         self.assertIn('--threshold 0.35', result)
         self.assertIn(str(self.release / 'voice/models/wake/hey_orion_reference.rpw'), result)
-        self.assertNotIn('--no-verifier', result)
+        self.assertEqual(result.count('--no-verifier'), 1)
 
     def test_non_numeric_operator_threshold_is_preserved(self):
         self.installed_units()
@@ -366,9 +367,10 @@ class ListenerStartTests(unittest.TestCase):
             start += f' --wake-model /old/release/voice/models/wake/{model}'
         return start
 
-    def test_wheel_installs_get_explicit_release_verifier_path(self):
+    def test_wheel_installs_use_the_asr_wake_check(self):
         result = pi_service_config.listener_start(self.start('0.35'), self.release)
-        self.assertIn(f'--verifier-dir {self.release}/voice/models/verifier', result)
+        self.assertIn('--no-verifier', result)
+        self.assertNotIn('--verifier-dir', result)
 
     def test_custom_or_disabled_verifier_is_preserved(self):
         for setting in ('--verifier-dir /custom/verifier', '--verifier-dir=/custom/verifier', '--no-verifier'):

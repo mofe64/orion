@@ -1,6 +1,6 @@
 # Change the Hey Orion wake model
 
-The listener uses a Rustpotter candidate model and an acoustic phrase verifier. Qwen checks complete command recordings before agent dispatch. Changing one stage does not replace the others.
+The listener uses a Rustpotter candidate model and a Qwen check of the wake prefix. An optional acoustic phrase verifier can replace the prefix check. Qwen checks complete command recordings before agent dispatch. Changing one stage does not replace the others.
 
 The installed model selection lives in `scripts/pi_service_config.py`. The verifier decision rule lives in `voice/models/verifier/config.json`.
 

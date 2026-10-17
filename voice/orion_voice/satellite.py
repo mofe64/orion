@@ -572,6 +572,15 @@ async def serve(args):
     changed = asyncio.Event()
     feedback = asyncio.Queue(maxsize=64)
     background = set()
+    # Sessions whose wake chime and light already started. Without the acoustic
+    # verifier they start only after the ASR wake check accepts the phrase.
+    announced = deque(maxlen=16)
+
+    def announce(identity):
+        if identity not in announced:
+            announced.append(identity)
+            expression("wake", identity)
+            expression("verify", identity)
     wake_debug = WakeDebugRecorder.from_environment()
     session.wake_debug = wake_debug
 
@@ -668,13 +677,12 @@ async def serve(args):
                 if kind in {"wake.candidate", "wake.verified", "utterance"}:
                     timing_history.append({"sessionId": message["sessionId"], "event": kind, "at": time.monotonic()})
                 if kind == "wake.candidate":
-                    # With acoustic verification, the chime and light pulse wait for acceptance.
-                    if not message.get("acousticVerification"): expression("wake")
+                    # The chime and light pulse wait for acoustic or ASR acceptance.
+                    pass
                 elif kind == "wake.verified" and message["accepted"]:
                     # oriond opens its voice session on "wake" (chime and pulse) and
                     # accepts confirmation while listening only after "verify".
-                    expression("wake")
-                    expression("verify")
+                    announce(message["sessionId"])
                     background.add(asyncio.create_task(acoustic_confirmation(
                         message["sessionId"], session.observation.copy(), session.observed_at,
                         session.barge_in_session)))
@@ -690,8 +698,14 @@ async def serve(args):
                 elif kind == "conversation.ready": expression("window", message["sessionId"])
                 elif kind == "conversation.closed": expression("finish", message["sessionId"])
                 elif kind == "utterance":
-                    expression(("verify" if message["purpose"] == "wake_prefix" else "endpoint")
-                               if owner is not None else "unavailable")
+                    if owner is None:
+                        # No processor can check the phrase; say so with the wake and error cues.
+                        if message["sessionId"] not in announced:
+                            announced.append(message["sessionId"])
+                            expression("wake")
+                        expression("unavailable")
+                    elif message["purpose"] != "wake_prefix" and message["sessionId"] in announced:
+                        expression("endpoint")
                 elif kind == "session.expired": expression("cancel", message["sessionId"])
                 elif kind == "session.interrupted": expression("cancel", message["sessionId"])
             if outgoing is not None:
@@ -883,6 +897,7 @@ async def serve(args):
                         expression("processing", identity)
                     elif message["type"] == "wake.confirmed" or (
                             message["type"] == "wake.verified" and message["accepted"]):
+                        announce(identity)
                         await confirmed_feedback(identity, observation, observed_at, message.get("followup"), skip_attention)
                     elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
                         expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"

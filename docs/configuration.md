@@ -104,9 +104,9 @@ Changing `voice-stack.env` does not replace saved choices. Studio's Voice settin
 
 ## Microphone listener
 
-Rustpotter proposes wake candidates. The acoustic verifier checks the phrase before wake feedback. Qwen checks the complete recording before dispatching a command.
+Rustpotter proposes wake candidates. Qwen checks a short wake prefix before wake feedback. Qwen checks the complete recording before dispatching a command.
 
-`scripts/pi_service_config.py` selects the installed wake model and threshold. `voice/models/verifier/config.json` selects the acoustic threshold. `--wake-model`, `--threshold` and `--verifier-dir` override their respective inputs. `--no-verifier` uses Qwen prefix confirmation.
+`scripts/pi_service_config.py` selects the installed wake model and threshold. `voice/models/verifier/config.json` selects the acoustic threshold. `--wake-model`, `--threshold` and `--verifier-dir` override their respective inputs. The installed listener uses `--no-verifier`, which selects Qwen prefix confirmation.
 
 | Variable | Function |
 | --- | --- |

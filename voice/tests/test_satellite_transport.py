@@ -462,8 +462,9 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                             endpoint = f'voice {identity} endpoint'
                             confirmed = f'voice {identity} confirmed'
                             self.assertEqual(expressions.count(confirmed), 1)
-                            self.assertLess(expressions.index(wake), expressions.index(endpoint))
-                            self.assertLess(expressions.index(endpoint), expressions.index(confirmed))
+                            # The chime and light start only once the ASR check confirms the wake.
+                            self.assertNotIn(endpoint, expressions)
+                            self.assertLess(expressions.index(wake), expressions.index(confirmed))
                             attention = [value for value in expressions if f'voice {identity} attend_' in value]
                             if side == 'left':
                                 self.assertEqual(len(attention), 1)
@@ -533,7 +534,6 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                         except OSError: await asyncio.sleep(.01)
                     else: self.fail('Listener did not start')
                     await asyncio.sleep(.04)
-                    self.assertTrue(any(command.endswith(' wake') for command in expressions), 'wake feedback must precede processor authentication')
                     async with first:
                         await first.send(json.dumps(dict(type='hello',protocol=2,token='bad')))
                         with self.assertRaises(ConnectionClosed): await first.recv()
@@ -554,8 +554,9 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(utterance['sessionId'],candidate['sessionId'])
                         await asyncio.sleep(.01)
                         identity=candidate['sessionId']
-                        self.assertEqual(expressions.count(f'voice {identity} wake'), 1)
-                        self.assertEqual(expressions.count(f'voice {identity} endpoint'), 1)
+                        # No chime, light or endpoint cue until the processor confirms the wake.
+                        self.assertEqual(expressions.count(f'voice {identity} wake'), 0)
+                        self.assertEqual(expressions.count(f'voice {identity} endpoint'), 0)
                     await asyncio.sleep(.03)
                     self.assertTrue(FakeCapture.instances[-1].opened)
                     async with connect(f'ws://127.0.0.1:{port}') as controller:

@@ -21,8 +21,8 @@ def services_for_release(release):
     return MANAGED_SERVICES if camera.get('enabled') is True else SERVICES
 
 REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
-# The reference model proposes candidates for the packaged acoustic verifier
-# (voice/models/verifier); the trained model remains packaged for comparison.
+# The reference model proposes candidates. The ASR wake check confirms them;
+# the packaged acoustic verifier (voice/models/verifier) stays off by default.
 ACTIVE_WAKE_MODEL = REFERENCE_WAKE_MODEL
 ACTIVE_WAKE_THRESHOLD = '0.35'
 # Recognize the legacy managed threshold so upgrades keep following the active profile.
@@ -130,9 +130,11 @@ def listener_start(start, release):
     elif model is None:
         start += f' --wake-model {release}/voice/models/wake/{REFERENCE_WAKE_MODEL}'
     # Wheel-installed code lives in site-packages; models stay in the release.
-    # Preserve explicit custom verifiers and the operator's ASR fallback choice.
+    # The packaged verifier is replaced by the ASR wake check. A custom
+    # verifier directory is an operator choice and stays.
+    start = re.sub(r'(?<!\S)--verifier-dir(?:\s+|=)\S*voice/models/verifier/?(?=\s|$)', '--no-verifier', start)
     if not re.search(r'(?<!\S)--(?:verifier-dir(?:\s|=)|no-verifier(?:\s|$))', start):
-        start += f' --verifier-dir {release}/voice/models/verifier'
+        start += ' --no-verifier'
     if '--local-processor' not in start:
         start += ' --local-processor'
     return start

@@ -26,9 +26,9 @@ class ListenerDefaultsTests(unittest.TestCase):
         with patch.object(satellite, '__file__', str(wheel_module)):
             args = satellite.parse_args(shlex.split(command)[1:])
         self.assertEqual(args.wake_model, release / 'voice/models/wake/hey_orion_reference.rpw')
-        self.assertEqual(args.verifier_dir, release / 'voice/models/verifier')
+        # The ASR wake check confirms candidates; the acoustic verifier is off.
+        self.assertIsNone(args.verifier_dir)
         self.assertTrue(args.wake_model.is_file())
-        self.assertTrue((args.verifier_dir / 'config.json').is_file())
 
     def test_standalone_listener_uses_reference_wake_profile(self):
         seen = []

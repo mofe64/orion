@@ -6,7 +6,7 @@ The listener owns microphone capture, wake detection and voice-session boundarie
 
 Use the [Pi installer](../docs/quickstart.md) for the complete listener and models. V1 uses the audio HAT. V2 uses the XVF3800 USB array.
 
-The installed service supplies explicit wake and verifier model paths. `--local-processor` reserves processing ownership for a loopback connection. Other authenticated connections can read or change mute.
+The installed service supplies an explicit wake model path and `--no-verifier`. `--local-processor` reserves processing ownership for a loopback connection. Other authenticated connections can read or change mute.
 
 ## Capture and sessions
 
@@ -14,7 +14,7 @@ V1 captures synchronized stereo PCM16 at 16 kHz. It retains stereo for direction
 
 The listener keeps pre-roll and command audio in memory. Pre-roll is audio retained from before wake detection. Mute, cancellation and disconnect clear session buffers.
 
-Rustpotter proposes a candidate. The acoustic verifier accepts or rejects it before runtime wake feedback. Rejection discards candidate audio while preserving rolling pre-roll. With no verifier, Qwen can check a short wake prefix.
+Rustpotter proposes a candidate. By default, Qwen checks a short wake prefix. The wake cue and light pulse start only after Qwen accepts the phrase. `--verifier-dir` turns on the acoustic verifier instead. Rejection discards candidate audio while preserving rolling pre-roll.
 
 Qwen checks the complete utterance before the agent receives a command. Recordings that reach the capture limit do not become agent requests. See [voice sessions](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
 
