@@ -48,6 +48,9 @@ volume rather than the source bind mount.
 The unpacked payload also stays in a temporary Linux volume: Python contains
 case-distinct terminfo names that some host filesystems merge. Only the final
 tarball and checksum cross onto the host, and the temporary volume is removed.
+Cleanup restores the caller's ownership of the disposable source snapshot,
+including container-created venvs, so Linux runners can remove it too. It does
+not follow compiler symlinks into the persistent cache.
 
 The installer retains `~/.local/share/orion/voice-stack/releases/` and the
 existing transaction snapshot/rollback layout. It installs services and command

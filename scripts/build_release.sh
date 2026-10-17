@@ -15,7 +15,23 @@ for codename in bookworm trixie; do
 done
 build_stage=$(mktemp -d)
 payload_volume=
-trap 'rm -rf "$build_stage"; if [[ -n $payload_volume ]]; then docker volume rm "$payload_volume" >/dev/null; fi' EXIT
+build_owner="$(id -u):$(id -g)"
+cleanup() {
+  build_status=$?
+  trap - EXIT
+  # Container-created venvs belong to root on Linux bind mounts. Restore only
+  # the disposable snapshot's owner; -h never follows its compiler symlinks.
+  if docker run --rm --mount "type=bind,source=$build_stage,target=/cleanup" \
+      orion-release:bookworm chown -Rh "$build_owner" /cleanup; then
+    rm -rf "$build_stage" || build_status=1
+  else
+    echo "Could not restore ownership of temporary source: $build_stage" >&2
+    build_status=1
+  fi
+  if [[ -n $payload_volume ]]; then docker volume rm "$payload_volume" >/dev/null || build_status=1; fi
+  exit "$build_status"
+}
+trap cleanup EXIT
 # Linux distributions contain case-distinct names (including Python terminfo).
 # Keep the payload on Linux; export only the final archive to the host.
 payload_volume=$(docker volume create)
