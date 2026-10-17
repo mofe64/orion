@@ -1,0 +1,424 @@
+format_version: 1
+margin_degrees: 3
+rest_margin_exempt: true
+scene_speed_degrees_s:
+  acknowledge_left:
+    base_yaw_joint: 150
+    other: 180
+  acknowledge_right:
+    base_yaw_joint: 150
+    other: 180
+poses:
+  home: home
+  rest: rest
+  attentive: up
+  delight: up
+  desk_work: down
+  lean_reach_low: down
+  lean_reach_left: down
+  lean_reach_right: down
+  desk_anticipation: redistribute
+  desk_arm_lead: down
+  look_left: up
+  look_left_anticipation: redistribute
+  look_left_lean: up
+  look_left_overshoot: up
+  attention_left: up
+  attention_left_anticipation: redistribute
+  attention_left_lean: up
+  attention_left_overshoot: up
+  look_right: up
+  look_right_anticipation: redistribute
+  look_right_lean: up
+  look_right_overshoot: up
+  attention_right: up
+  attention_right_anticipation: redistribute
+  attention_right_lean: up
+  attention_right_overshoot: up
+motions:
+  arrival_notice:
+    intent: Raise the head first, then adopt the attentive posture and return.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with the
+      command-time planner'
+    planner: arrival
+  attention_left:
+    intent: A small grounded turn toward the confirmed speaker on the left.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    speed_degrees_s:
+      base_yaw_joint: 150
+      other: 180
+  attention_right:
+    intent: A small grounded turn toward the confirmed speaker on the right.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    speed_degrees_s:
+      base_yaw_joint: 150
+      other: 180
+  delight_lift:
+    intent: Lift the head and look up into the delight posture.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  hands_entry:
+    intent: Anticipate with the arm, lower the camera toward the desk, and hold.
+    direction: down
+    main_keyframe: 2
+    contexts:
+    - start: home
+      anchor: desk_work
+    source: 'runtime/src/expression/hands.rs: desk_work entry; leave_hands restores the saved previous anchor
+      through prepare_hands_motion'
+    planner: hands
+  hands_return:
+    intent: Slow arm-led desk transition with anticipation and a held destination anchor.
+    direction: redistribute
+    main_keyframe: 2
+    contexts:
+    - start: desk_work
+      anchor: home
+    source: 'runtime/src/expression/hands.rs: desk_work entry; leave_hands restores the saved previous anchor
+      through prepare_hands_motion'
+    planner: hands
+  idle_attentive_hold:
+    intent: Raise the gaze slowly while holding an attentive posture.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: attentive
+      anchor: attentive
+    source: 'runtime/src/expression/character.rs: choose_idle adds attentive hold for the attentive profile'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: head_pitch_joint
+  idle_breathe:
+    intent: Raise the head slowly, breathe through the arm, and settle back.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: head_pitch_joint
+  idle_directional_hold:
+    intent: Raise the gaze slowly while holding a directional or desk anchor.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: look_left
+      anchor: look_left
+    - start: look_right
+      anchor: look_right
+    - start: desk_work
+      anchor: desk_work
+    source: 'runtime/src/expression/character.rs: choose_idle uses directional anchors and the Hands anchor'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: head_pitch_joint
+  idle_head_curiosity:
+    intent: Raise the gaze and turn the neck slowly to inspect the surroundings.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: head_roll_joint
+  idle_micro_glance:
+    intent: Turn the base slowly for a brief glance with a full return.
+    direction: lateral
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: base_yaw_joint
+  idle_shoulder_adjust:
+    intent: Redistribute the shoulder and elbow slowly, then return.
+    direction: redistribute
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: shoulder_pitch_joint
+  idle_soft_head_shake:
+    intent: Turn the neck slowly left and right with a soft return.
+    direction: lateral
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: head_roll_joint
+  idle_weight_shift:
+    intent: Shift the shoulder and elbow slowly, then restore their balance.
+    direction: redistribute
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - 15
+    main_joint: shoulder_pitch_joint
+  look_around:
+    intent: Deliberate three-stop desk search, neck leading the base, then returning to its anchor.
+    direction: down
+    main_keyframe: 2
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  look_at_left:
+    intent: Turn directly toward the predefined target on Orion's left.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  look_at_left_expressive:
+    intent: Notice, lean toward, and settle on the predefined left target.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    speed_degrees_s:
+      base_yaw_joint: 150
+      other: 180
+  look_at_right:
+    intent: Turn directly toward the predefined target on Orion's right.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  look_at_right_expressive:
+    intent: Notice, lean toward, and settle on the predefined right target.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    speed_degrees_s:
+      base_yaw_joint: 150
+      other: 180
+  mutual_gaze_away:
+    intent: Turn the neck aside with a raised gaze, then return.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - null
+    main_joint: head_roll_joint
+  mutual_gaze_hi:
+    intent: Raise the gaze in a clear head-only greeting and return.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - null
+    main_joint: head_pitch_joint
+  mutual_gaze_notice:
+    intent: Raise the gaze, turn the neck with curiosity, and return.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 8
+    - null
+    main_joint: head_pitch_joint
+  peek_new_object:
+    intent: Arm-led desk peek with a curious neck turn and a full anchor return.
+    direction: down
+    main_keyframe: 2
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with the
+      command-time planner'
+    planner: peek
+  pet_notice:
+    intent: Lift into delight, follow the pet briefly, and return to the held anchor.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with the
+      command-time planner'
+    planner: pet
+    movement_degrees:
+    - 8
+    - null
+    main_joint: head_pitch_joint
+  return_home:
+    intent: Move from the current joint state to Orion's home pose.
+    direction: home
+    main_keyframe: 0
+    contexts:
+    - start: attentive
+      anchor: attentive
+    source: 'runtime/src/control/core.rs: play starts from the measured pose and return_home targets home'
+  speak_calm_sway:
+    intent: Sway the neck and arm gently with alternating raised and lowered gaze.
+    direction: lateral
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_emphasis_nod:
+    intent: Nod down at a phrase boundary, lift back, and settle at the anchor.
+    direction: nod
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - 15
+    main_joint: head_pitch_joint
+  speak_explanatory_lean:
+    intent: Lean forward with a raised gaze for explanatory emphasis, then return.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_agree:
+    intent: Make two clear downward nods with an upward return between them.
+    direction: nod
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - 15
+    main_joint: head_pitch_joint
+  speak_react_curious:
+    intent: Raise the gaze and turn the neck with a slight upright lean.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_disagree:
+    intent: A clear three-beat head shake used as a spoken disagreement reaction.
+    direction: lateral
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_happy:
+    intent: Lift the head and gaze with two bright upward bounces.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_laugh:
+    intent: Make three raised head bounces with a light arm lift.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_surprised:
+    intent: Pull the arm back and raise the head for a surprised pause.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_sympathy:
+    intent: Lower the head and turn the neck softly for sympathy.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_thinking:
+    intent: Look aside and slightly down during a thoughtful pause.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_react_unsure:
+    intent: Look slightly down while turning the neck from side to side.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+  speak_reflective_tilt:
+    intent: Turn the neck aside and lower the gaze, then return quietly.
+    direction: down
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'

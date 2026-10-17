@@ -1,20 +1,25 @@
 format_version: 2
 motion:
   name: arrival_notice
-  description: Head-led attentive entry for an observed arrival, then a return to the held anchor.
+  description: Raise the head first, then adopt the attentive posture and return.
   space: anchor_relative
   style: return_home
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: -0.15, head_pitch_joint: 0.08}
-      duration: 0.4
-      arrival: settle
-      marker: arrival_head
-    - offsets: {base_yaw_joint: -0.30, shoulder_pitch_joint: -0.10, elbow_pitch_joint: 0.025, head_roll_joint: -0.15, head_pitch_joint: 0.08}
-      duration: 0.9
-      arrival: settle
-      hold: 0.6
-      marker: arrival_attentive
-    - offsets: {}
-      duration: 1.4
-      arrival: settle
+  - offsets:
+      head_roll_joint: -0.08
+      head_pitch_joint: -0.08
+    duration: 0.7
+    arrival: settle
+    marker: arrival_head
+  - offsets:
+      shoulder_pitch_joint: -0.04
+      elbow_pitch_joint: 0.025
+      head_pitch_joint: -0.08
+    duration: 1.0
+    arrival: settle
+    hold: 0.6
+    marker: arrival_attentive
+  - offsets: {}
+    duration: 1.1
+    arrival: settle

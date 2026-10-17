@@ -1,21 +1,27 @@
 format_version: 2
 motion:
   name: idle_directional_hold
-  description: Readable pose-compatible detail while holding left or right.
+  description: Raise the gaze slowly while holding a directional or desk anchor.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.008400}
-      duration: 0.0656
-      arrival: through
-      marker: idle_head_start
-    - offsets: {head_pitch_joint: 0.070, shoulder_pitch_joint: -0.050}
-      duration: 0.6344
-      arrival: through
-    - offsets: {head_roll_joint: 0.060, elbow_pitch_joint: 0.050, head_pitch_joint: 0.025}
-      duration: 0.65
-      arrival: through
-    - offsets: {}
-      duration: 0.85
-      arrival: settle
+  - offsets:
+      head_pitch_joint: -0.025132741228718346
+    duration: 0.0656
+    arrival: through
+    marker: idle_head_start
+  - offsets:
+      head_pitch_joint: -0.20943951023931956
+      shoulder_pitch_joint: -0.01
+      elbow_pitch_joint: -0.015
+    duration: 1.6
+    arrival: through
+  - offsets:
+      head_roll_joint: 0.04
+      head_pitch_joint: -0.08377580409572782
+    duration: 1.4
+    arrival: through
+  - offsets: {}
+    duration: 1.8
+    arrival: settle

@@ -49,55 +49,30 @@ poses:
       head_pitch_joint: -0.3593592526676467
     idle_profile: home
   attentive:
-    description: Head-led attentive posture; arrival variants turn toward the observed person. Lamp playback unverified.
-    tags:
-    - powered
-    - idle_anchor
-    default_lighting: warm_idle_breathe
-    positions:
-      base_yaw_joint: -0.2890873852123405
-      shoulder_pitch_joint: 0.7633010452146021
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: -0.15719417290902923
-      head_pitch_joint: -0.2793592526676467
-    idle_profile: attentive
-  thinking:
-    description: 'V1 thinking intent on V2: arm and head-pitch offsets from V1 home, neck
-      swivel leading the base turn at half its angle; hardware playback unverified.'
-    tags:
-    - simulation_preview
-    default_lighting: warm_idle_breathe
-    positions:
-      base_yaw_joint: -0.14908738521234052
-      shoulder_pitch_joint: 0.6833010452146021
-      elbow_pitch_joint: -1.0330389530342436
-      head_roll_joint: -0.08719417290902924
-      head_pitch_joint: -0.33935925266764666
-  curious:
-    description: 'V1 curious intent on V2: arm and head-pitch offsets from V1 home, neck swivel
-      leading the base turn at half its angle; hardware playback unverified.'
-    tags:
-    - simulation_preview
-    default_lighting: warm_idle_breathe
-    positions:
-      base_yaw_joint: 0.19091261478765947
-      shoulder_pitch_joint: 0.8233010452146021
-      elbow_pitch_joint: -1.1930389530342436
-      head_roll_joint: 0.08280582709097077
-      head_pitch_joint: -0.1993592526676467
-  delight:
-    description: 'V1 delight intent on V2: arm and head-pitch offsets from V1 home, neck swivel
-      leading the base turn at half its angle; hardware playback unverified.'
+    description: Raise the head toward a person while keeping a compact arm posture.
     tags:
     - powered
     - idle_anchor
     default_lighting: warm_idle_breathe
     positions:
       base_yaw_joint: 0.01091261478765948
-      shoulder_pitch_joint: 1.023301045214602
-      elbow_pitch_joint: -1.2730389530342436
+      shoulder_pitch_joint: 0.7833010452146022
+      elbow_pitch_joint: -1.1130389530342437
       head_roll_joint: -0.007194172909029231
-      head_pitch_joint: -0.0993582526676467
+      head_pitch_joint: -0.4393592526676467
+    idle_profile: attentive
+  delight:
+    description: Lift the head and look up with an open, upright posture.
+    tags:
+    - powered
+    - idle_anchor
+    default_lighting: warm_idle_breathe
+    positions:
+      base_yaw_joint: 0.01091261478765948
+      shoulder_pitch_joint: 0.7833010452146022
+      elbow_pitch_joint: -1.1780389530342437
+      head_roll_joint: -0.007194172909029231
+      head_pitch_joint: -0.5593592526676467
   desk_anticipation:
     description: Small arm pullback before the desk entry; lamp unverified.
     tags: [powered, transition]
@@ -139,212 +114,183 @@ poses:
       elbow_pitch_joint: 0.0
       head_roll_joint: 0.0
       head_pitch_joint: 0.0
-  zero_reference:
-    description: V2.1 CAD all-zero reference, not a captured physical zero.
-    tags:
-    - simulation_preview
-    - calibration_reference
-    positions:
-      base_yaw_joint: -0.03664038521234052
-      shoulder_pitch_joint: 0.7927380452146021
-      elbow_pitch_joint: -1.1058249530342437
-      head_roll_joint: 0.006611827090970771
-      head_pitch_joint: -0.47901025266764674
   look_left:
-    description: 'V1 look_left intent on V2: arm and head-pitch offsets from V1 home, neck
-      swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look left with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -1.2170873852123405
-      shoulder_pitch_joint: 0.7633010452146021
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: -0.6211941729090292
-      head_pitch_joint: -0.2793592526676467
+      base_yaw_joint: -0.8377580409572782
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: -0.4537856055185257
+      head_pitch_joint: -0.45935925266764666
     idle_profile: directional
   look_left_anticipation:
-    description: 'V1 look_left_anticipation intent on V2: arm and head-pitch offsets from
-      V1 home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look left anticipation with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.0909126147876595
-      shoulder_pitch_joint: 0.8233010452146021
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: 0.03280582709097077
-      head_pitch_joint: -0.2593592526676467
+      base_yaw_joint: 0.05235987755982989
+      shoulder_pitch_joint: 0.8483010452146021
+      elbow_pitch_joint: -1.1280389530342436
+      head_roll_joint: -0.13962634015954636
+      head_pitch_joint: -0.3843592526676467
   look_left_lean:
-    description: 'V1 look_left_lean intent on V2: arm and head-pitch offsets from V1 home,
-      neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look left lean with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.8670873852123404
-      shoulder_pitch_joint: 0.6833010452146021
-      elbow_pitch_joint: -1.0330389530342436
-      head_roll_joint: -0.44619417290902924
-      head_pitch_joint: -0.3193592526676467
+      base_yaw_joint: -0.5934119456780721
+      shoulder_pitch_joint: 0.8833010452146022
+      elbow_pitch_joint: -1.1730389530342435
+      head_roll_joint: -0.3490658503988659
+      head_pitch_joint: -0.4793592526676467
   look_left_overshoot:
-    description: 'V1 look_left_overshoot intent on V2: arm and head-pitch offsets from V1
-      home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look left overshoot with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -1.2970873852123406
-      shoulder_pitch_joint: 0.7233010452146021
-      elbow_pitch_joint: -1.0830389530342437
-      head_roll_joint: -0.6611941729090293
-      head_pitch_joint: -0.2893592526676467
+      base_yaw_joint: -0.9424777960769379
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: -0.5235987755982988
+      head_pitch_joint: -0.45935925266764666
   attention_left:
-    description: 'V1 attention_left intent on V2: arm and head-pitch offsets from V1 home,
-      neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Attention left with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.3390873852123405
-      shoulder_pitch_joint: 0.848301045214602
-      elbow_pitch_joint: -1.1330389530342435
-      head_roll_joint: -0.18219417290902923
-      head_pitch_joint: -0.3193592526676467
+      base_yaw_joint: -0.3490658503988659
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: -0.20943951023931956
+      head_pitch_joint: -0.45935925266764666
     idle_profile: directional
   attention_left_anticipation:
-    description: 'V1 attention_left_anticipation intent on V2: arm and head-pitch offsets
-      from V1 home, neck swivel leading the base turn at half its angle; hardware playback
-      unverified.'
+    description: Attention left anticipation with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.03591261478765949
-      shoulder_pitch_joint: 0.838301045214602
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: 0.00530582709097077
-      head_pitch_joint: -0.33935925266764666
+      base_yaw_joint: 0.03490658503988659
+      shoulder_pitch_joint: 0.8483010452146021
+      elbow_pitch_joint: -1.1280389530342436
+      head_roll_joint: -0.08726646259971647
+      head_pitch_joint: -0.3843592526676467
   attention_left_lean:
-    description: 'V1 attention_left_lean intent on V2: arm and head-pitch offsets from V1
-      home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Attention left lean with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.25908738521234054
-      shoulder_pitch_joint: 0.8183010452146021
-      elbow_pitch_joint: -1.1030389530342437
-      head_roll_joint: -0.14219417290902922
-      head_pitch_joint: -0.30936025266764666
+      base_yaw_joint: -0.2617993877991494
+      shoulder_pitch_joint: 0.8833010452146022
+      elbow_pitch_joint: -1.1730389530342435
+      head_roll_joint: -0.17453292519943295
+      head_pitch_joint: -0.4793592526676467
   attention_left_overshoot:
-    description: 'V1 attention_left_overshoot intent on V2: arm and head-pitch offsets from
-      V1 home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Attention left overshoot with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.3690873852123405
-      shoulder_pitch_joint: 0.838301045214602
-      elbow_pitch_joint: -1.1230389530342437
-      head_roll_joint: -0.19719417290902921
-      head_pitch_joint: -0.3143592526676467
+      base_yaw_joint: -0.4014257279586958
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: -0.24434609527920614
+      head_pitch_joint: -0.45935925266764666
   look_right:
-    description: 'V1 look_right intent on V2: arm and head-pitch offsets from V1 home, neck
-      swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look right with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 1.4110296147876595
-      shoulder_pitch_joint: 0.7633010452146021
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: 0.7628058270909708
-      head_pitch_joint: -0.2793592526676467
+      base_yaw_joint: 0.8377580409572782
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: 0.4537856055185257
+      head_pitch_joint: -0.45935925266764666
     idle_profile: directional
   look_right_anticipation:
-    description: 'V1 look_right_anticipation intent on V2: arm and head-pitch offsets from
-      V1 home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look right anticipation with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.06908738521234052
-      shoulder_pitch_joint: 0.8233010452146021
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: -0.047194172909029226
-      head_pitch_joint: -0.2593592526676467
+      base_yaw_joint: -0.05235987755982989
+      shoulder_pitch_joint: 0.8483010452146021
+      elbow_pitch_joint: -1.1280389530342436
+      head_roll_joint: 0.13962634015954636
+      head_pitch_joint: -0.3843592526676467
   look_right_lean:
-    description: 'V1 look_right_lean intent on V2: arm and head-pitch offsets from V1 home,
-      neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look right lean with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 1.2009126147876594
-      shoulder_pitch_joint: 0.6833010452146021
-      elbow_pitch_joint: -1.0330389530342436
-      head_roll_joint: 0.5878058270909707
-      head_pitch_joint: -0.3193592526676467
+      base_yaw_joint: 0.5934119456780721
+      shoulder_pitch_joint: 0.8833010452146022
+      elbow_pitch_joint: -1.1730389530342435
+      head_roll_joint: 0.3490658503988659
+      head_pitch_joint: -0.4793592526676467
   look_right_overshoot:
-    description: 'V1 look_right_overshoot intent on V2: arm and head-pitch offsets from V1
-      home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Look right overshoot with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 1.4610296147876594
-      shoulder_pitch_joint: 0.7233010452146021
-      elbow_pitch_joint: -1.0830389530342437
-      head_roll_joint: 0.7628058270909708
-      head_pitch_joint: -0.2893592526676467
+      base_yaw_joint: 0.9424777960769379
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: 0.5235987755982988
+      head_pitch_joint: -0.45935925266764666
   attention_right:
-    description: 'V1 attention_right intent on V2: arm and head-pitch offsets from V1 home,
-      neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Attention right with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.36091261478765946
-      shoulder_pitch_joint: 0.848301045214602
-      elbow_pitch_joint: -1.1330389530342435
-      head_roll_joint: 0.16780582709097078
-      head_pitch_joint: -0.3193592526676467
+      base_yaw_joint: 0.3490658503988659
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: 0.20943951023931956
+      head_pitch_joint: -0.45935925266764666
     idle_profile: directional
   attention_right_anticipation:
-    description: 'V1 attention_right_anticipation intent on V2: arm and head-pitch offsets
-      from V1 home, neck swivel leading the base turn at half its angle; hardware playback
-      unverified.'
+    description: Attention right anticipation with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: -0.014087385212340514
-      shoulder_pitch_joint: 0.838301045214602
-      elbow_pitch_joint: -1.1130389530342437
-      head_roll_joint: -0.01969417290902923
-      head_pitch_joint: -0.33935925266764666
+      base_yaw_joint: -0.03490658503988659
+      shoulder_pitch_joint: 0.8483010452146021
+      elbow_pitch_joint: -1.1280389530342436
+      head_roll_joint: 0.08726646259971647
+      head_pitch_joint: -0.3843592526676467
   attention_right_lean:
-    description: 'V1 attention_right_lean intent on V2: arm and head-pitch offsets from V1
-      home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Attention right lean with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.2809126147876595
-      shoulder_pitch_joint: 0.8183010452146021
-      elbow_pitch_joint: -1.1030389530342437
-      head_roll_joint: 0.12780582709097077
-      head_pitch_joint: -0.30936025266764666
+      base_yaw_joint: 0.2617993877991494
+      shoulder_pitch_joint: 0.8833010452146022
+      elbow_pitch_joint: -1.1730389530342435
+      head_roll_joint: 0.17453292519943295
+      head_pitch_joint: -0.4793592526676467
   attention_right_overshoot:
-    description: 'V1 attention_right_overshoot intent on V2: arm and head-pitch offsets from
-      V1 home, neck swivel leading the base turn at half its angle; hardware playback unverified.'
+    description: Attention right overshoot with a raised gaze and a bounded turn.
     tags:
     - simulation_preview
     default_lighting: warm_idle_breathe
     positions:
-      base_yaw_joint: 0.3909126147876595
-      shoulder_pitch_joint: 0.838301045214602
-      elbow_pitch_joint: -1.1230389530342437
-      head_roll_joint: 0.1828058270909708
-      head_pitch_joint: -0.3143592526676467
+      base_yaw_joint: 0.4014257279586958
+      shoulder_pitch_joint: 0.8183010452146021
+      elbow_pitch_joint: -1.1530389530342435
+      head_roll_joint: 0.24434609527920614
+      head_pitch_joint: -0.45935925266764666

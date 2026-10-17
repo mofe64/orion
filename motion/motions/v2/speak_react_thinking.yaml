@@ -1,16 +1,20 @@
 format_version: 2
 motion:
   name: speak_react_thinking
-  description: A glance aside and up used as a spoken thinking reaction.
+  description: Look aside and slightly down during a thoughtful pause.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {base_yaw_joint: -0.20, head_pitch_joint: 0.14, head_roll_joint: -0.08, shoulder_pitch_joint: -0.04}
-      duration: 0.38
-      arrival: settle
-      hold: 0.35
-      marker: thinking
-    - offsets: {}
-      duration: 0.42
-      arrival: settle
+  - offsets:
+      base_yaw_joint: -0.18
+      head_pitch_joint: 0.14
+      head_roll_joint: -0.1
+      shoulder_pitch_joint: -0.025
+    duration: 0.38
+    arrival: settle
+    hold: 0.35
+    marker: thinking
+  - offsets: {}
+    duration: 0.42
+    arrival: settle

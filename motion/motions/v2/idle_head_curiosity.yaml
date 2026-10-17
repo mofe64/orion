@@ -1,17 +1,21 @@
 format_version: 2
 motion:
   name: idle_head_curiosity
-  description: Gentle pitch and roll examination around the anchor.
+  description: Raise the gaze and turn the neck slowly to inspect the surroundings.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
-    - offsets: {head_roll_joint: 0.11, head_pitch_joint: 0.080}
-      duration: 0.75
-      arrival: through
-    - offsets: {head_roll_joint: 0.050, head_pitch_joint: -0.040}
-      duration: 0.65
-      arrival: through
-    - offsets: {}
-      duration: 0.85
-      arrival: settle
+  - offsets:
+      head_roll_joint: 0.20943951023931956
+      head_pitch_joint: -0.14
+    duration: 1.6
+    arrival: through
+  - offsets:
+      head_roll_joint: 0.08377580409572782
+      head_pitch_joint: -0.06
+    duration: 1.4
+    arrival: through
+  - offsets: {}
+    duration: 1.8
+    arrival: settle

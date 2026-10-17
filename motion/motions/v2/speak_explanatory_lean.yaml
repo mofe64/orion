@@ -1,18 +1,25 @@
 format_version: 2
 motion:
   name: speak_explanatory_lean
-  description: Clear forward explanatory emphasis with overlapping return.
+  description: Lean forward with a raised gaze for explanatory emphasis, then return.
   space: anchor_relative
   style: speaking_calm
   return_to_anchor: true
   keyframes:
-    - offsets: {shoulder_pitch_joint: 0.10, elbow_pitch_joint: -0.12, head_pitch_joint: 0.10}
-      duration: 0.46
-      arrival: through
-      marker: phrase
-    - offsets: {shoulder_pitch_joint: 0.045, elbow_pitch_joint: -0.05, head_roll_joint: -0.04}
-      duration: 0.42
-      arrival: through
-    - offsets: {}
-      duration: 0.56
-      arrival: settle
+  - offsets:
+      shoulder_pitch_joint: 0.1
+      elbow_pitch_joint: -0.12
+      head_pitch_joint: -0.08
+    duration: 0.75
+    arrival: through
+    marker: phrase
+  - offsets:
+      shoulder_pitch_joint: 0.045
+      elbow_pitch_joint: -0.05
+      head_roll_joint: -0.04
+      head_pitch_joint: -0.02
+    duration: 0.7
+    arrival: through
+  - offsets: {}
+    duration: 0.9
+    arrival: settle

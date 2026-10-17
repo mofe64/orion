@@ -1,28 +1,41 @@
 format_version: 2
 motion:
   name: pet_notice
-  description: Compressed delight lift, brief observed pet tracking and an anchor return.
+  description: Lift into delight, follow the pet briefly, and return to the held anchor.
   space: anchor_relative
   style: speaking_calm
   return_to_anchor: true
   keyframes:
-    - offsets: {shoulder_pitch_joint: -0.01, elbow_pitch_joint: 0.008}
-      duration: 0.3
-      arrival: settle
-      marker: compression
-    - offsets: {shoulder_pitch_joint: 0.16, elbow_pitch_joint: -0.135, head_pitch_joint: 0.260001}
-      duration: 0.8
-      arrival: settle
-      marker: delight
-    - offsets: {shoulder_pitch_joint: 0.16, elbow_pitch_joint: -0.135, head_pitch_joint: 0.260001, head_roll_joint: 0.06}
-      duration: 0.25
-      arrival: settle
-      marker: pet_head
-    - offsets: {shoulder_pitch_joint: 0.16, elbow_pitch_joint: -0.135, head_pitch_joint: 0.260001, head_roll_joint: 0.06}
-      duration: 0.35
-      arrival: settle
-      hold: 3.0
-      marker: pet_track
-    - offsets: {}
-      duration: 3.0
-      arrival: settle
+  - offsets:
+      shoulder_pitch_joint: 0.005
+      elbow_pitch_joint: 0.003
+    duration: 0.3
+    arrival: settle
+    marker: compression
+  - offsets:
+      shoulder_pitch_joint: -0.08
+      elbow_pitch_joint: -0.04
+      head_pitch_joint: -0.2
+    duration: 1.0
+    arrival: settle
+    marker: delight
+  - offsets:
+      shoulder_pitch_joint: -0.08
+      elbow_pitch_joint: -0.04
+      head_pitch_joint: -0.2
+      head_roll_joint: 0.06
+    duration: 0.45
+    arrival: settle
+    marker: pet_head
+  - offsets:
+      shoulder_pitch_joint: -0.08
+      elbow_pitch_joint: -0.04
+      head_pitch_joint: -0.2
+      head_roll_joint: 0.06
+    duration: 0.55
+    arrival: settle
+    hold: 3.0
+    marker: pet_track
+  - offsets: {}
+    duration: 3.0
+    arrival: settle

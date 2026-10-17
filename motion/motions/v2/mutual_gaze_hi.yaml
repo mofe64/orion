@@ -1,18 +1,20 @@
 format_version: 2
 motion:
   name: mutual_gaze_hi
-  description: A tiny head-only acknowledgement after continued mutual attention.
+  description: Raise the gaze in a clear head-only greeting and return.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
-    - offsets: {head_pitch_joint: 0.055}
-      duration: 0.28
-      arrival: through
-      marker: hi
-    - offsets: {head_pitch_joint: 0.012}
-      duration: 0.32
-      arrival: settle
-    - offsets: {}
-      duration: 0.75
-      arrival: settle
+  - offsets:
+      head_pitch_joint: -0.17453292519943295
+    duration: 0.6
+    arrival: through
+    marker: hi
+  - offsets:
+      head_pitch_joint: -0.05235987755982989
+    duration: 0.55
+    arrival: settle
+  - offsets: {}
+    duration: 0.9
+    arrival: settle
