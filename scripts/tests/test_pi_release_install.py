@@ -1181,8 +1181,9 @@ class CommissioningTests(Fixture):
         (self.root / 'installation.json').write_text(json.dumps({'version': 2, 'release': str(old), 'hardware': 'v2'}))
         system = FakeSystem(self.units)
         with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
-            installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
+            folder = installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
         self.assertTrue(all(state['active'] for state in system.states.values()))
+        self.assertTrue(json.loads((folder / 'state.json').read_text())['services_started'])
 
     def test_old_v2_frame_stays_stopped_even_if_raw_readings_pass_new_limits(self):
         (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')
@@ -1205,6 +1206,8 @@ class CommissioningTests(Fixture):
         self.assertTrue((self.root / 'installation.json').is_file())
         self.assertTrue(all(not state['active'] for state in system.states.values()))
         self.assertTrue(all(state['enabled'] == 'enabled' for state in system.states.values()))
+        installed = json.loads((self.root / 'installation.json').read_text())
+        self.assertNotIn('services_started', json.loads((Path(installed['rollback']) / 'state.json').read_text()))
 
     def test_failed_direct_check_installs_units_but_never_starts_motion(self):
         (self.release / 'release.json').write_text('{"hardware":"v2","joint_frame":"mechanical_rest"}')

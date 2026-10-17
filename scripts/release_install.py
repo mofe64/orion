@@ -126,7 +126,9 @@ def configure_hailo(present, boot=Path('/boot/firmware/config.txt')):
     if last_setting != ('all', 'dtparam=pciex1_gen=3'):
         # A trailing [all] makes this independent of Imager's final conditional.
         run('sudo', 'tee', '-a', boot, input='\n[all]\n# Orion AI HAT+\ndtparam=pciex1_gen=3\n', text=True, stdout=subprocess.DEVNULL)
-    print('AI HAT+: PCIe Gen 3 configured; reboot required for driver/firmware changes.')
+        print('AI HAT+: PCIe Gen 3 configured; reboot required for driver/firmware changes.')
+    else:
+        print('AI HAT+: PCIe Gen 3 already configured.')
 
 
 def prepare_environments(release, wheels, uv, codename, hailo):
@@ -207,11 +209,20 @@ def install(payload, root, codename):
         files[Path('/usr/local/bin/oriond')] = '#!/bin/sh\ncd ' + str(project) + '\nexec ' + str(release / 'runtime/target/release/oriond') + ' "$@"\n'
         files[Path('/usr/local/bin/orion-check-hailo')] = '#!/bin/sh\nexec ' + str(release / 'vision/.venv/bin/python') + ' ' + str(release / 'scripts/check_hailo.py') + ' --root ' + str(root) + ' "$@"\n'
         files[Path('/usr/local/bin/codex')] = '#!/bin/sh\nexec ' + str(root / f'codex-{CODEX_VERSION}/bin/codex') + ' "$@"\n'
-        activate(root, release, home, files, System(), commissioning=True,
-                 before_restore=lambda folder, data: restore_native_packages(root, codename, folder, data))
+        folder = activate(root, release, home, files, System(), commissioning=True,
+                          before_restore=lambda folder, data: restore_native_packages(root, codename, folder, data))
         (release / '.orion-preparing').unlink()
-    print('Release installed. Reboot for lighting, Hailo and group permissions. Run codex login --device-auth, fold into rest, then oriond servo zero and oriond --check.')
-    print('Start Orion: sudo systemctl start oriond orion-listener orion-studio-gateway orion-voice-stack orion-vision')
+    started = json.loads((folder / 'state.json').read_text()).get('services_started', False)
+    print(install_summary(metadata['version'], started))
+
+
+def install_summary(version, started):
+    """Tell the user the one next action. Enabled services start at boot."""
+    if started:
+        return (f'Orion {version} is installed and running. '
+                'If this install added the AI HAT+ or the light driver, run: sudo reboot')
+    return (f'Orion {version} is installed. Motion stays off until servo commissioning. '
+            'Run codex login --device-auth, fold the lamp into rest, run oriond servo zero, then run: sudo reboot')
 
 
 

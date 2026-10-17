@@ -285,6 +285,15 @@ class ReleaseTests(unittest.TestCase):
                 receiver.configure_hailo(True, boot)
             run.assert_not_called()
 
+    def test_install_summary_names_one_next_action(self):
+        running = receiver.install_summary('v0.1.3', True)
+        self.assertIn('installed and running', running)
+        self.assertNotIn('systemctl', running)
+        stopped = receiver.install_summary('v0.1.3', False)
+        self.assertIn('oriond servo zero', stopped)
+        self.assertIn('sudo reboot', stopped)
+        self.assertNotIn('systemctl', stopped)
+
     def test_unexpected_python_directory_is_preserved(self):
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(receiver, 'PYTHON', Path(folder) / 'bin/python3.12'), patch.object(receiver, 'run') as run:
