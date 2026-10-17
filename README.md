@@ -64,3 +64,7 @@ Orion accepts a follow-up after reply playback ends. V2 also accepts verified wa
 WARNING: Powered joints can pinch fingers. Keep a physical power disconnect accessible during hardware work.
 
 1. Follow [hardware setup](docs/hardware-versions.md#calibrate-v2-first) before operating powered joints.
+
+## System readings
+
+Studio provides a System page for Pi resource use and service state. See the [Studio guide](orion_studio/README.md#system-readings).

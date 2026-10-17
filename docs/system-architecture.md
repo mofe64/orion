@@ -130,3 +130,11 @@ Descent fades the visible light to black. Rest suppresses ordinary output while 
 Status reports `disabled`, `awake`, `going_to_rest`, `resting`, `waking` or `fault`. It includes the tracked movement, deadline and failure reason. Remaining time can be zero while active work delays rest.
 
 See [configuration](configuration.md), [motion architecture](motion-architecture.md) and [voice architecture](voice-architecture.md) for their local contracts.
+
+## System metrics
+
+The Studio gateway owns a background Linux counter sampler. It reads `/proc`, thermal files and cgroup counters.
+A cgroup is a Linux resource group for a service or container. The gateway reads systemd properties through `libsystemd`.
+It checks Raspberry Pi throttling flags at most once every ten seconds. Unavailable counters return null.
+The authenticated `/api/v2/system/metrics` endpoint returns the latest sample and 15-minute history arrays.
+The sampler stores no readings on disk. Studio polls every two seconds while the System page is visible.

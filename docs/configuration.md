@@ -181,3 +181,9 @@ Clock alarms use the Pi's clock and time zone. `sunrise_minutes` accepts 5–60 
 `transition_seconds` accepts 0–3600 seconds. Wind-down accepts 10–60 minutes. Focus accepts 5–120 minutes. Restart cancels unfinished light transitions while preserving saved alerts.
 
 See [alert behavior](system-architecture.md#timers-and-alarms) and [release installation](release-packaging.md).
+
+## System metrics
+
+System metrics use the gateway process and require no configuration. Linux provides CPU, memory, disk, service and process counters.
+Raspberry Pi temperature uses `/sys/class/thermal/thermal_zone0/temp`. Throttling flags require `vcgencmd`.
+The gateway returns null for unavailable counters. Hailo temperature returns null when no inexpensive health counter is available.

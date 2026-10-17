@@ -468,3 +468,7 @@ export const getBehaviours = (connection: GatewayConnection, signal?: AbortSigna
   request<BehaviourResponse>(connection, "/api/v2/behaviours", { signal });
 export const setBehaviours = (connection: GatewayConnection, changes: Partial<BehaviourSettings>, signal?: AbortSignal) =>
   request<BehaviourResponse>(connection, "/api/v2/behaviours", { method: "POST", body: JSON.stringify(changes), signal });
+
+export function getSystemMetrics(connection: GatewayConnection, signal?: AbortSignal): Promise<import("./systemMetrics").SystemMetrics> {
+  return request(connection, "/api/v2/system/metrics", { signal });
+}

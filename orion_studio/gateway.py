@@ -31,6 +31,8 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 
+from system_metrics import SystemMetrics
+
 API_VERSION = 2
 # Resolve once so a running gateway stays with its release if a launcher symlink changes.
 GATEWAY_PROGRAM = Path(__file__).resolve()
@@ -317,6 +319,7 @@ class OrionGateway:
     ):
         if hardware not in ("v1", "v2"):
             raise ValueError("Hardware must be v1 or v2")
+        self.system_metrics = SystemMetrics()
         self.hardware = hardware
         self.client = client
         self.project_root = project_root
@@ -2017,6 +2020,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
+            if path == '/api/v2/system/metrics':
+                return HTTPStatus.OK, gateway.system_metrics.snapshot()
             if path == '/api/v2/behaviours':
                 return HTTPStatus.OK, gateway.get_behaviours()
             if path == '/api/v2/tracking/mode':
@@ -2317,6 +2322,7 @@ def main() -> None:
         camera_preference_file=args.camera_preference_file,
         tracking_preference_file=args.tracking_preference_file,
     )
+    gateway.system_metrics.start()
     server = GatewayHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)
     )
@@ -2328,6 +2334,7 @@ def main() -> None:
         pass
     finally:
         server.server_close()
+        gateway.system_metrics.close()
 
 
 if __name__ == "__main__":
