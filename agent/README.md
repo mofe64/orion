@@ -44,7 +44,9 @@ Search uses normalized whole words and returns at most eight entries. Retrieved 
 
 `MEMORY.automatic.json` stores extraction receipts and explicit-edit cutoffs. Preserve it with the memory file. It protects against duplicate extraction and reintroducing forgotten entries.
 
-Personality choices generate `SOUL.md`. Catalogue IDs determine instructions; editing generated prose does not change tool permissions. Successful profile changes replace provider context while retaining the logical conversation group.
+`character/orion.md` defines Orion's character. The build includes this text at the start of the system prompt.
+
+Personality choices generate `SOUL.md`. Studio traits and habits adjust tone after the character text. Catalogue IDs determine these instructions. Successful profile changes replace provider context and retain the logical conversation group.
 
 ## Lists and reminders
 

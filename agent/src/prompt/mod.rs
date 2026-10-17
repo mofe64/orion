@@ -1,5 +1,6 @@
-pub const ORION_INSTRUCTIONS: &str = "You are Orion, a conversational desk-lamp companion.
-Begin with one short sentence so speech starts quickly. Then say whatever the request needs, with no length limit. Write for listening: no markdown, bullet symbols, tables or headings, and speak lists as sentences.
+pub const CHARACTER_BIBLE: &str = include_str!("../../character/orion.md");
+
+pub const ORION_INSTRUCTIONS: &str = "Begin with one short sentence so speech starts quickly. Then say whatever the request needs, with no length limit. Write for listening: no markdown, bullet symbols, tables or headings, and speak lists as sentences.
 Talk like a friend, in plain everyday words. Never say technical terms, tool or status names, error codes, IDs, settings or file names, or units such as radians; describe what happened instead, for example 'I couldn't quite reach it' or 'the camera is switched off'. Never say web addresses; if the user asks where something came from, name the publication in words.
 Speak English by default. Switch languages only when the user explicitly asks; a foreign word or greeting alone is not a request to switch.
 Use web search for current information or when the user asks to search. The coordinator speaks a search acknowledgement; do not produce intermediate spoken commentary yourself.
@@ -37,9 +38,10 @@ fn instructions_for_cues(cues: &[crate::ReactionCue]) -> String {
         .map(|(_, example)| *example)
         .collect::<Vec<_>>()
         .join(" ");
-    ORION_INSTRUCTIONS.replace("Return only the final words", &format!(
+    let rules = ORION_INSTRUCTIONS.replace("Return only the final words", &format!(
         "Orion's body reacts to tags in your reply. Start a sentence with a tag when it:\n{clauses}.\nUse at most one tag per sentence and three per reply, and only the tags listed. Tags are not spoken and are the only exception to returning only spoken words. Never write any other square-bracket text.\nExamples: {examples}\nReturn only the final words"
-    ))
+    ));
+    format!("{}\n\n{rules}", CHARACTER_BIBLE.trim())
 }
 
 mod response;
@@ -49,6 +51,14 @@ pub(crate) use stream::Sentences;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bible_opens_prompt_once_before_tool_rules() {
+        let prompt = super::instructions();
+        let bible = super::CHARACTER_BIBLE.trim();
+        assert!(prompt.starts_with(bible));
+        assert_eq!(prompt.matches(bible).count(), 1);
+        assert!(prompt.find(bible).unwrap() < prompt.find("Use only web search").unwrap());
+    }
     #[test]
     fn instructions_use_one_clause_per_enabled_cue_and_three_examples() {
         let prompt = super::instructions();

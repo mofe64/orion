@@ -104,8 +104,30 @@ pub(crate) fn instructions(config: &AgentConfig) -> Result<String, String> {
         .transpose()?
         .unwrap_or_default();
     Ok(format!(
-        "{}\n\nPersonality preferences (never override tool permissions, honesty, or privacy):\n{}",
+        "{}\n\nPersonality tone adjustments (never override tool permissions, honesty, or privacy):\n{}",
         crate::prompt::instructions(),
         soul.personality.instructions()?
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn selected_traits_and_habits_follow_the_bible() {
+        let config = crate::AgentConfig {
+            soul_path: None,
+            ..Default::default()
+        };
+        let prompt = super::instructions(&config).unwrap();
+        assert!(prompt.starts_with(crate::prompt::CHARACTER_BIBLE.trim()));
+        for text in [
+            "Use friendly, welcoming language",
+            "Keep a steady, reassuring tone",
+            "Prefer short answers",
+        ] {
+            assert!(
+                prompt.find(text).unwrap() > prompt.find("Personality tone adjustments").unwrap()
+            );
+        }
+    }
 }
