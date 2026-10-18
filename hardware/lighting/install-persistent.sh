@@ -149,7 +149,9 @@ install -m 0644 "${script_directory}/orion-neopixel-pin.service" \
 install -m 0644 "${script_directory}/70-orion-neopixel.rules" \
     /etc/udev/rules.d/70-orion-neopixel.rules
 
+boot_changed=0
 if ! grep -Eq '^[[:space:]]*dtoverlay=rp1_ws281x_pwm([[:space:]]|$)' "${boot_config}"; then
+    boot_changed=1
     if [[ ! -e ${boot_config}.orion-backup ]]; then
         cp -a "${boot_config}" "${boot_config}.orion-backup"
     fi
@@ -172,4 +174,11 @@ echo "Boot configuration: ${boot_config}"
 if [[ -e ${boot_config}.orion-backup ]]; then
     echo "Boot configuration backup: ${boot_config}.orion-backup"
 fi
-echo "Reboot, then run hardware/lighting/verify-persistent.sh."
+# The driver loads now when the running boot already has the overlay.
+modprobe rp1_ws281x_pwm 2>/dev/null || true
+if [[ ${boot_changed} == 1 || ! -e /sys/class/misc/ws281x_pwm ]]; then
+    touch /run/orion-reboot-required
+    echo "Lights: restart the Pi to finish the light setup."
+else
+    echo "Lights: ready."
+fi

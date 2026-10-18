@@ -276,12 +276,14 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             boot = Path(folder) / 'config.txt'
             boot.write_text('[pi4]\ndtparam=pciex1_gen=3\n')
-            with patch.object(receiver, 'run') as run:
+            with patch.object(receiver, 'run') as run, patch.object(receiver.Path, 'exists', return_value=True):
                 receiver.configure_hailo(True, boot)
-            self.assertEqual(run.call_args.args, ('sudo', 'tee', '-a', boot))
-            self.assertIn('[all]\n', run.call_args.kwargs['input'])
-            boot.write_text(boot.read_text() + run.call_args.kwargs['input'])
-            with patch.object(receiver, 'run') as run:
+            tee = run.call_args_list[0]
+            self.assertEqual(tee.args, ('sudo', 'tee', '-a', boot))
+            self.assertIn('[all]\n', tee.kwargs['input'])
+            self.assertEqual(run.call_args.args, ('sudo', 'touch', receiver.REBOOT_FLAG))
+            boot.write_text(boot.read_text() + tee.kwargs['input'])
+            with patch.object(receiver, 'run') as run, patch.object(receiver.Path, 'exists', return_value=True):
                 receiver.configure_hailo(True, boot)
             run.assert_not_called()
 
@@ -301,6 +303,8 @@ class ReleaseTests(unittest.TestCase):
         running = receiver.install_summary('v0.1.3', True)
         self.assertIn('installed and running', running)
         self.assertNotIn('systemctl', running)
+        self.assertNotIn('reboot', running)
+        self.assertIn('sudo reboot', receiver.install_summary('v0.1.3', True, reboot=True))
         stopped = receiver.install_summary('v0.1.3', False)
         self.assertIn('oriond servo zero', stopped)
         self.assertIn('sudo reboot', stopped)

@@ -112,6 +112,9 @@ def check_installation(root):
         raise RuntimeError('Checks failed: ' + ', '.join(failed))
 
 
+REBOOT_FLAG = Path('/run/orion-reboot-required')
+
+
 def configure_hailo(present, boot=Path('/boot/firmware/config.txt')):
     if not present:
         print('AI HAT+: absent; skipping Hailo setup.')
@@ -126,9 +129,11 @@ def configure_hailo(present, boot=Path('/boot/firmware/config.txt')):
     if last_setting != ('all', 'dtparam=pciex1_gen=3'):
         # A trailing [all] makes this independent of Imager's final conditional.
         run('sudo', 'tee', '-a', boot, input='\n[all]\n# Orion AI HAT+\ndtparam=pciex1_gen=3\n', text=True, stdout=subprocess.DEVNULL)
-        print('AI HAT+: PCIe Gen 3 configured; reboot required for driver/firmware changes.')
+        print('AI HAT+: PCIe Gen 3 configured.')
     else:
         print('AI HAT+: PCIe Gen 3 already configured.')
+    if last_setting != ('all', 'dtparam=pciex1_gen=3') or not Path('/dev/hailo0').exists():
+        run('sudo', 'touch', REBOOT_FLAG)
 
 
 JOURNAL_SETTINGS = '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n'
@@ -227,14 +232,14 @@ def install(payload, root, codename):
                           before_restore=lambda folder, data: restore_native_packages(root, codename, folder, data))
         (release / '.orion-preparing').unlink()
     started = json.loads((folder / 'state.json').read_text()).get('services_started', False)
-    print(install_summary(metadata['version'], started))
+    print(install_summary(metadata['version'], started, REBOOT_FLAG.exists()))
 
 
-def install_summary(version, started):
+def install_summary(version, started, reboot=False):
     """Tell the user the one next action. Enabled services start at boot."""
     if started:
-        return (f'Orion {version} is installed and running. '
-                'If this install added the AI HAT+ or the light driver, run: sudo reboot')
+        return (f'Orion {version} is installed and running. Restart the Pi to finish the light and AI HAT+ setup: sudo reboot'
+                if reboot else f'Orion {version} is installed and running.')
     return (f'Orion {version} is installed. Motion stays off until servo commissioning. '
             'Run codex login --device-auth, fold the lamp into rest, run oriond servo zero, then run: sudo reboot')
 
