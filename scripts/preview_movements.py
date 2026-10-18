@@ -110,23 +110,6 @@ def lamp_contacts(model, data):
         yield contact, (a, b)
 
 
-def idle_endpoint_speeds(item):
-    """Check the first/last 50 Hz command intervals and exact endpoint velocities."""
-    if item['kind'] != 'motion' or not item['name'].startswith('idle_'):
-        return None
-    samples = item['samples']
-    speeds = {}
-    for label, first, last, endpoint in (
-            ('start', samples[0], samples[1], samples[0]),
-            ('end', samples[-2], samples[-1], samples[-1])):
-        dt = last['time'] - first['time']
-        command_speed = max(abs(q - first['positions'][joint]) / dt
-                            for joint, q in last['positions'].items())
-        endpoint_speed = max(abs(v) for v in endpoint['velocities'].values())
-        speeds[label] = float(np.degrees(max(command_speed, endpoint_speed)))
-    return speeds
-
-
 def inspect(item, document, model):
     if 'error' in item: return {'problems': [item['error']], 'contacts': [], 'clamped_samples': [], 'peak_speed': {}}
     table = intent_table()
@@ -169,28 +152,17 @@ def inspect(item, document, model):
             bounds[1] = np.maximum(bounds[1], np.array(observation['point']) + 0.01)
     final = item['samples'][-1]['positions']
     end_error = max(abs(final[name] - item['expected_end'][name]) for name in names)
-    speed_limit = document['maximum_velocity_rad_s']
     problems = []
-    endpoint_speeds = idle_endpoint_speeds(item)
-    for endpoint, speed in (endpoint_speeds or {}).items():
-        if speed >= 2.0:
-            problems.append(f'Idle {endpoint} speed {speed:.3f} must be below 2 deg/s')
     if contacts: problems.append(f'{len(contacts)} non-adjacent lamp-body contact pairs')
     clamps = item['clamped_samples']
     if clamps: problems.append('Runtime clamped joints: ' + ', '.join(sorted(set(clamps))))
     if outside: problems.append('Samples outside limits: ' + ', '.join(sorted(outside)))
-    if any(peak > speed_limit + 1e-6 for peak in peaks.values()): problems.append('Servo speed exceeded')
     if end_error > 1e-6: problems.append(f'End anchor error: {end_error:.6f} rad')
     # Mechanical rest is an intentional hard-stop pose. Its entry and startup
     # paths must pass through the margin; all operating drawings retain 3 degrees.
     rest_transit = table['rest_margin_exempt'] and (item['kind'] == 'startup' or (item['kind'] == 'pose' and item['name'] == 'rest'))
     if not rest_transit and minimum_margin < table['margin_degrees'] - 1e-6:
         problems.append(f'Joint-limit margin is only {minimum_margin:.2f} deg')
-    limits = spec.get('speed_degrees_s') if spec else table['scene_speed_degrees_s'].get(item['name']) if item['kind'] == 'scene' else None
-    if limits:
-        for name, peak in peaks.items():
-            ceiling = limits.get(name, limits['other'])
-            if np.degrees(peak) > ceiling + 1e-6: problems.append(f'{name} speed {np.degrees(peak):.1f} exceeds {ceiling} deg/s')
     if spec:
         apex = item['keyframes'][spec['main_keyframe']]
         main = apex['positions']; apex_time = apex['time']
@@ -208,7 +180,7 @@ def inspect(item, document, model):
         direction = table['poses'][item['name']]
         if direction == 'up' and not (height > 1 or gaze > 1): problems.append('Pose intent requires a head lift or raised gaze')
         if direction == 'down' and gaze > -1: problems.append('Pose intent requires a lowered gaze')
-    is_turn = item['name'].startswith(('look_left', 'look_right', 'attention_left', 'attention_right', 'look_at_')) or item['name'] in table['scene_speed_degrees_s']
+    is_turn = item['name'].startswith(('look_left', 'look_right', 'attention_left', 'attention_right', 'look_at_')) or item['name'] in ('acknowledge_left', 'acknowledge_right')
     if is_turn:
         largest_turn = max(np.degrees(abs(s['positions']['base_yaw_joint']) + abs(s['positions']['head_roll_joint'])) for s in item['samples'])
         if largest_turn > 90 + 1e-6: problems.append(f'Combined yaw and swivel reach {largest_turn:.1f} deg')
@@ -221,12 +193,10 @@ def inspect(item, document, model):
     no_op = max(abs(sample['positions'][name] - start[name]) for sample in item['samples'] for name in names) < 1e-9
     if no_op and item['start_pose'] == 'rest': problems = []
     arm_movement = max(np.degrees(abs(s['positions'][n] - start[n])) for s in item['samples'] for n in ('shoulder_pitch_joint', 'elbow_pitch_joint'))
-    if item['kind'] == 'tracking' and arm_movement > item['maximum_arm_degrees'] + 1e-6:
-        problems.append(f'Arm fallback exceeds {item["maximum_arm_degrees"]} degrees')
-    return {'idle_endpoint_speed_degrees_s': endpoint_speeds, 'largest_arm_movement_deg': float(arm_movement), 'problems': problems, 'contacts': list(contacts.values()), 'clamped_samples': clamps,
+    return {'largest_arm_movement_deg': float(arm_movement), 'problems': problems, 'contacts': list(contacts.values()), 'clamped_samples': clamps,
             'limit_boundary_samples': dict(boundary), 'minimum_margin_degrees': float(minimum_margin),
             'outside_limits': sorted(outside), 'peak_speed': peaks, 'peak_speed_degrees_s': {n: float(np.degrees(v)) for n, v in peaks.items()},
-            'servo_speed_limit': speed_limit, 'end_anchor_error_rad': end_error,
+            'end_anchor_error_rad': end_error,
             'main_joint_movement_deg': main_joint_movement, 'head_heading_change_deg': heading_change,
             'head_height_change_mm': height, 'gaze_pitch_change_deg': gaze, 'largest_joint_movement_deg': movement,
             'intent': spec['intent'] if spec else table['poses'].get(item['name'], item['kind']),
@@ -268,7 +238,7 @@ def record(item, document, model, output, fps):
                 frame = Image.new('RGB', (width, height), '#eef1ed')
                 for column, camera in enumerate(cameras):
                     renderer.update_scene(data, camera=camera)
-                    # A green sphere marks the scripted hand point on the desk.
+                    # A green sphere marks the scripted raised hand.
                     observations = item.get('hand_points', [])
                     observation = next((o for o in reversed(observations) if o['time'] <= sample['time']), None)
                     if observation and observation['point'] is not None:

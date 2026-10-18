@@ -10,15 +10,15 @@ motion:
       head_roll_joint: 0.14
       head_pitch_joint: 0.1
       shoulder_pitch_joint: -0.03
-    duration: 0.9
+    duration: 0.52
     arrival: through
     marker: reflection
   - offsets:
       head_roll_joint: 0.06
       head_pitch_joint: 0.04
       shoulder_pitch_joint: -0.01
-    duration: 0.9
+    duration: 0.48
     arrival: through
   - offsets: {}
-    duration: 1.1
+    duration: 0.66
     arrival: settle

@@ -77,7 +77,7 @@ export class TrackingPreference {
       if (!controller.signal.aborted)
         this.update({ mode: saved.tracking_mode,
           ...(cameraRevision === this.cameraRevision ? { cameraEnabled: saved.camera_enabled } : {}),
-          notice: saved.tracking_mode === "off" ? "Tracking is off." : saved.tracking_mode === "idle" ? "Autonomous behaviours and conversation gaze are on." : saved.tracking_mode === "hands" ? "Following your work." : "Face tracking is on." });
+          notice: saved.tracking_mode === "off" ? "Tracking is off." : saved.tracking_mode === "idle" ? "Autonomous behaviours and conversation gaze are on." : saved.tracking_mode === "hands" ? "Hand tracking is on." : "Face tracking is on." });
     } catch (error) {
       if (!controller.signal.aborted) {
         this.saveFailure = failure("Studio couldn't save Orion's tracking mode. Please try again.", error);

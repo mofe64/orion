@@ -1,13 +1,6 @@
 format_version: 1
 margin_degrees: 3
 rest_margin_exempt: true
-scene_speed_degrees_s:
-  acknowledge_left:
-    base_yaw_joint: 150
-    other: 180
-  acknowledge_right:
-    base_yaw_joint: 150
-    other: 180
 poses:
   home: home
   home_low: down
@@ -54,9 +47,6 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
-    speed_degrees_s:
-      base_yaw_joint: 150
-      other: 180
   attention_right:
     intent: A small grounded turn toward the confirmed speaker on the right.
     direction: up
@@ -65,9 +55,6 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
-    speed_degrees_s:
-      base_yaw_joint: 150
-      other: 180
   delight_lift:
     intent: Lift the head and look up into the delight posture.
     direction: up
@@ -198,9 +185,6 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
-    speed_degrees_s:
-      base_yaw_joint: 150
-      other: 180
   look_at_right:
     intent: Turn directly toward the predefined target on Orion's right.
     direction: up
@@ -217,9 +201,6 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
-    speed_degrees_s:
-      base_yaw_joint: 150
-      other: 180
   mutual_gaze_away:
     intent: Turn the neck aside with a raised gaze, then return.
     direction: up
@@ -412,9 +393,6 @@ motions:
     - 8
     - null
     main_joint: head_pitch_joint
-    speed_degrees_s:
-      base_yaw_joint: 150
-      other: 180
   speak_react_shy:
     intent: Turn away and lower the head, peek back, then return.
     direction: down
@@ -427,9 +405,6 @@ motions:
     - 8
     - null
     main_joint: head_roll_joint
-    speed_degrees_s:
-      base_yaw_joint: 150
-      other: 180
   listen_lean_in:
     intent: Lean slightly toward the speaker, hold, and return.
     direction: up

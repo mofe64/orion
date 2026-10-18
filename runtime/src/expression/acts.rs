@@ -128,7 +128,6 @@ impl CharacterCoordinator {
             && self.acts.allowed
             && self.status.enabled
             && !self.gaze.is_stopped()
-            && !self.hands.blocks_gaze()
             && !self.work_anchor
             && self.work.is_none()
             && self.attention.is_none()
@@ -136,7 +135,6 @@ impl CharacterCoordinator {
             && !self.foreground_pending
             && self.foreground_scene_run_id.is_none()
             && self.speech_motion_run_id.is_none()
-            && self.status.hands_failure.is_none()
             && self.surroundings.reaction.is_none()
             && matches!(
                 self.status.state,
@@ -152,7 +150,6 @@ impl CharacterCoordinator {
         if let Some((run, name)) = self.acts.drift.clone() {
             if !self.acts.allowed
                 || !self.acts.settings.posture_drift
-                || self.hands.blocks_gaze()
                 || self.work_anchor
                 || self.gaze.is_stopped()
             {
@@ -226,7 +223,6 @@ impl CharacterCoordinator {
     pub(super) fn tick_listening<D: RuntimeDriver>(&mut self, now: f64, core: &mut RuntimeCore<D>) {
         if self.acts.listening_attempted
             || !self.acts.settings.listen_lean_in
-            || self.hands.blocks_gaze()
             || self.work_anchor
             || core.mode() != RuntimeMode::Holding
         {
@@ -313,7 +309,7 @@ impl CharacterCoordinator {
             "think_beat_b"
         };
         self.acts.next_beat = now + self.rng.range(3., 5.);
-        if self.hands.blocks_gaze() || self.work_anchor {
+        if self.work_anchor {
             return true;
         }
         if let (Ok(definition), Some(anchor)) = (
@@ -341,14 +337,14 @@ impl CharacterCoordinator {
         true
     }
     pub(super) fn idle_factors(&self) -> (f64, f64, f64) {
-        if !self.acts.settings.mind_idle_rhythm || self.hands.blocks_gaze() || self.work_anchor {
+        if !self.acts.settings.mind_idle_rhythm || self.work_anchor {
             return (1., 1., 1.);
         }
         let energy = self.mind.energy.clamp(0., 1.);
         (1.6 - energy, 0.85 + 0.3 * energy, 0.9 + 0.2 * energy)
     }
     pub(crate) fn mind_light_intensity(&self) -> f64 {
-        if !self.acts.settings.mind_idle_rhythm || self.hands.blocks_gaze() || self.work_anchor {
+        if !self.acts.settings.mind_idle_rhythm || self.work_anchor {
             1.
         } else {
             0.6 + 0.4 * self.mind.energy.clamp(0., 1.)
@@ -404,7 +400,6 @@ impl CharacterCoordinator {
             && self.mind.energy < 0.3
             && self.last_idle.as_deref() != Some("yawn")
             && !self.work_anchor
-            && !self.hands.blocks_gaze()
             && core.motions().motion("yawn").is_ok()
     }
 }
@@ -576,23 +571,29 @@ mod tests {
         assert_eq!(names.into_iter().collect::<Vec<_>>(), ["home"]);
     }
     #[test]
-    fn hands_and_rest_pending_block_drift_and_energy_variation() {
-        let (mut core, mut character) = fixture();
+    fn rest_pending_blocks_drift() {
+        let (core, mut character) = fixture();
         character.acts.settings.posture_drift = true;
-        character.acts.allowed = true;
-        let observation =
-            serde_json::from_value(serde_json::json!({"capture_boottime_ns":1_000_000_000u64,
-            "camera_on":true,"tracking_mode":"hands","settings":{},"objects":[],"faces":[],
-            "looking_away":null,"hand_count":0,"hand_point":null}))
-            .unwrap();
-        character
-            .observe_surroundings(observation, 0., &mut core)
-            .unwrap();
-        assert!(character.hands.blocks_gaze());
-        assert!(!character.drift_ready(&core));
-        assert_eq!(character.idle_factors(), (1., 1., 1.));
         character.acts.allowed = false;
         assert!(!character.drift_ready(&core));
+    }
+    #[test]
+    fn mind_tempo_does_not_stack_with_random_idle_tempo() {
+        let (core, mut character) = fixture();
+        let anchor = core.poses().pose("home").unwrap();
+        let limits = core.driver().joint_limits().unwrap();
+        let source = core.motions().motion("idle_breathe").unwrap();
+        for energy in [0., 0.25, 0.5, 0.75, 1.] {
+            character.mind.energy = energy;
+            for _ in 0..32 {
+                let varied = character
+                    .vary_idle(source.clone(), anchor, &limits, false)
+                    .unwrap();
+                let tempo =
+                    source.keyframes[0].duration_seconds / varied.keyframes[0].duration_seconds;
+                assert!((tempo - (0.9 + 0.2 * energy)).abs() < 1e-12);
+            }
+        }
     }
     fn speech() -> SpeechAnalysis {
         SpeechAnalysis {

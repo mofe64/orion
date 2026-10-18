@@ -9,8 +9,6 @@ from .tracker import MAX_AGE_NS, Tracker, choose_track
 from .find import FindError, FindJob, locate
 from .behaviours import KEYS, ObjectMap, overlaps
 from .novelty import NoveltyTrack
-from .hands import HandWindow
-from .intrinsics import SIZE
 from .detector_policy import backend, rates
 
 GAZE_RETRY_SECONDS = 3.
@@ -50,8 +48,7 @@ class FacePipeline:
         self.challenger_since_ns = None
         self.objects, self.palms = objects, palms
         self.mode = "off"
-        self.hand_window = HandWindow()
-        self.hand_count, self.hand_point = 0, None
+        self.hand_count = 0
         self.camera_enabled = False
         self.find_job = None
         self.behaviours = dict.fromkeys(KEYS, False)
@@ -65,15 +62,14 @@ class FacePipeline:
         self.thread = Thread(target=self._run, name="vision-inference", daemon=True)
         self.thread.start()
 
-    def reset(self, enabled, camera_enabled=None, mode=None, preserve_hands=False):
+    def reset(self, enabled, camera_enabled=None, mode=None):
         # Match inference's commands -> changed lock order: a reset cannot
-        # turn an already-approved Hands publication into an off-mode message.
+        # change the mode underneath an approved tracking publication.
         with self.commands:
             with self.changed:
                 self.enabled = enabled
                 self.mode = mode if mode is not None else ("faces" if enabled else "off")
-                self.hand_window.clear()
-                self.hand_count, self.hand_point = 0, None
+                self.hand_count = 0
                 self.camera_enabled = enabled if camera_enabled is None else camera_enabled
                 self.generation += 1
                 self.capture_generation += 1
@@ -93,8 +89,7 @@ class FacePipeline:
                 self.speaker_until = 0.
                 self.changed.notify_all()
             try:
-                if not preserve_hands:
-                    self.client.clear_surroundings()
+                self.client.clear_surroundings()
             except (OSError, ValueError, AttributeError):
                 pass
             if not enabled or self.mode != "faces":
@@ -188,19 +183,17 @@ class FacePipeline:
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
             return False
-        # Hands streams every palm inference so the runtime can follow
-        # continuously; other modes need only a slower heartbeat.
-        self.next_surroundings = self.clock() + (rates(self.palms).hands_publish_seconds if self.mode == 'hands' else .5)
+        self.next_surroundings = self.clock() + .5
         self.client.surroundings({'capture_boottime_ns': stamp,
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': self.mode if self.enabled else 'off',
-            'hand_count': self.hand_count, 'hand_point': self.hand_point,
+            'hand_count': self.hand_count,
             'objects': self.object_map.snapshot(self.boot_clock()),
             'novelty': self.novelty_observation,
             'faces': [{'track_id': track.id, 'azimuth': float(math.atan2(math.sin(track.state[0]), math.cos(track.state[0]))),
                        'elevation': float(track.state[1]), 'frontal': track.face.looking_at_orion}
-                      for track in tracks],
-            'looking_away': not any(track.face.looking_at_orion for track in tracks) if tracks else None})
+                      for track in tracks if self.mode != "hands"],
+            'looking_away': not any(track.face.looking_at_orion for track in tracks) if tracks and self.mode != 'hands' else None})
         return True
 
     def close(self):
@@ -255,8 +248,7 @@ class FacePipeline:
                 "palms_available": self.palms is not None, "tracking_mode": self.mode,
                 "backends": {name: backend(detector) if detector is not None else 'unavailable'
                              for name, detector in (('faces', self.detector), ('palms', self.palms), ('objects', self.objects))},
-                "hand_count": self.hand_count if self.mode == "hands" else 0,
-                "hand_point": self.hand_point if self.mode == "hands" else None}
+                "hand_count": self.hand_count if self.mode == "hands" else 0}
 
     def needs_frame(self):
         with self.changed:
@@ -403,49 +395,51 @@ class FacePipeline:
             return challenger
         return current
 
-    def release_hands(self):
-        # Retry off-mode recovery after a higher-priority owner finishes, even
-        # when privacy/Off means there will be no more inference frames.
-        try:
-            with self.commands:
-                self.client.command('gaze hands off')
-        except (OSError, ValueError, AttributeError) as error:
-            self.gaze_error = str(error)
-
-    def _hand_frame(self, stamp, buffer, generation, rgb=None, preview_generation=None):
-        if self.palms is None:
-            raise ValueError('Palm detector unavailable')
-        camera = self.client.camera_pose(stamp)
-        palms = self.palms.detect(buffer)
+    def _tracking_frame(self, stamp, buffer, generation, rgb=None, preview_generation=None):
+        detector = self.palms if self.mode == 'hands' else self.detector
+        faces = detector.detect(buffer)
+        bearings = self.client.bearings(stamp, self.intrinsics.rays([face.centre for face in faces])) if faces else []
+        with self.changed:
+            self.inferences += 1
+            if not self.enabled or generation != self.generation:
+                return
+            # Drop late results instead of sending a stale target.
+            if not 0 <= self.boot_clock() - stamp <= 1_000_000_000:
+                self.error = "Detection result is stale"
+                self.latest_preview = None
+                return
+            self.hand_count = len(faces) if self.mode == 'hands' else 0
+            fresh = self.tracker.update(stamp, faces, bearings)
+            tracks = [track for track in self.tracker.tracks
+                if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
+            chosen = self._choose_target(tracks, stamp)
+            if rgb is not None and preview_generation == self.preview_generation:
+                detections = [{"class": "hand" if self.mode == "hands" else "face", "box": track.observation(stamp)["box"],
+                    "score": track.face.confidence, "track_id": track.id,
+                    "chosen_target": track is chosen, "capture_boottime_ns": str(stamp)}
+                    for track in fresh]
+                self.latest_preview = (stamp, rgb, detections)
+            else:
+                self.latest_preview = None
+        if self.mode != 'hands':
+            self._advance_novelty(stamp, buffer, faces, generation)
         with self.commands:
             with self.changed:
-                self.inferences += 1
-                if not self.enabled or self.mode != 'hands' or generation != self.generation:
+                if not self.enabled or generation != self.generation:
                     return
-                if not 0 <= self.boot_clock() - stamp <= 1_000_000_000:
-                    self.hand_window.clear()
-                    self.hand_count, self.hand_point = 0, None
-                    return
-                self.hand_count = len(palms)
-                self.hand_point = self.hand_window.observe(palms, stamp, self.intrinsics, camera)
-                if rgb is not None and preview_generation == self.preview_generation:
-                    # Boxes and pixels come from one capture, as for faces.
-                    width, height = SIZE
-                    detections = [{"class": "hand", "track_id": index + 1, "score": palm.confidence,
-                        "chosen_target": False, "capture_boottime_ns": str(stamp),
-                        "box": [min(max(palm.box[0] / width, 0.), 1.), min(max(palm.box[1] / height, 0.), 1.),
-                                min(max(palm.box[2] / width, 0.), 1.), min(max(palm.box[3] / height, 0.), 1.)]}
-                        for index, palm in enumerate(palms)]
-                    self.latest_preview = (stamp, rgb, detections)
-                else:
-                    self.latest_preview = None
+            self._send_gaze(chosen)
             try:
-                if self._surroundings(stamp, []):
-                    self.gaze_error = None
+                self._surroundings(stamp, fresh)
             except (OSError, ValueError, AttributeError) as error:
-                # Motion refusal does not invalidate palms, points or the
-                # completed preview from this capture.
                 self.gaze_error = str(error)
+        try:
+            if self.mode != 'hands':
+                self._background_objects(stamp, buffer, faces, generation)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+        with self.changed:
+            self.error = None
 
     def _run(self):
         next_inference = 0.
@@ -484,7 +478,7 @@ class FacePipeline:
                             self.speaker_until = now + 3.
                 self.next_voice_poll = now + .2
             policy = rates(self.palms if self.mode == 'hands' else self.detector)
-            self.rate_hz = policy.hands_hz if self.mode == 'hands' else (policy.voice_hz if active else policy.idle_hz)
+            self.rate_hz = policy.voice_hz if active else policy.idle_hz
             if last_inference is not None:
                 next_inference = last_inference + 1 / self.rate_hz
             if now < next_inference:
@@ -498,50 +492,7 @@ class FacePipeline:
             last_inference = self.clock()
             next_inference = last_inference + 1 / self.rate_hz
             try:
-                if self.mode == 'hands':
-                    self._hand_frame(stamp, buffer, generation, rgb, preview_generation)
-                    with self.changed:
-                        self.error = None
-                    continue
-                faces = self.detector.detect(buffer)
-                bearings = self.client.bearings(stamp, self.intrinsics.rays([face.centre for face in faces])) if faces else []
-                with self.changed:
-                    self.inferences += 1
-                    if not self.enabled or generation != self.generation:
-                        continue
-                    # Drop late results instead of sending a stale target.
-                    if not 0 <= self.boot_clock() - stamp <= 1_000_000_000:
-                        self.error = "Detection result is stale"
-                        self.latest_preview = None
-                        continue
-                    fresh = self.tracker.update(stamp, faces, bearings)
-                    tracks = [track for track in self.tracker.tracks
-                        if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
-                    chosen = self._choose_target(tracks, stamp)
-                    if rgb is not None and preview_generation == self.preview_generation:
-                        detections = [{"box": track.observation(stamp)["box"],
-                            "score": track.face.confidence, "track_id": track.id,
-                            "chosen_target": track is chosen, "capture_boottime_ns": str(stamp)}
-                            for track in fresh]
-                        self.latest_preview = (stamp, rgb, detections)
-                    else:
-                        self.latest_preview = None
-                self._advance_novelty(stamp, buffer, faces, generation)
-                with self.commands:
-                    with self.changed:
-                        if not self.enabled or generation != self.generation:
-                            continue
-                    self._send_gaze(chosen)
-                    try:
-                        self._surroundings(stamp, fresh)
-                    except (OSError, ValueError, AttributeError) as error:
-                        self.gaze_error = str(error)
-                try:
-                    self._background_objects(stamp, buffer, faces, generation)
-                except (OSError, ValueError, AttributeError):
-                    pass
-                with self.changed:
-                    self.error = None
+                self._tracking_frame(stamp, buffer, generation, rgb, preview_generation)
             except Exception as error:
                 with self.changed:
                     self.error = str(error)

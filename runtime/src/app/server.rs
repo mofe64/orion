@@ -265,7 +265,6 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut mind_cue_index = 0;
     character.behaviour_log = behaviour_log.clone();
     character.set_gaze_enabled(options.gaze_on);
-    character.set_hands_maximum_arm_degrees(options.hands_max_arm_degrees)?;
     if options.gaze_on
         && let Some(error) = camera_error
     {

@@ -107,6 +107,7 @@ impl GazeCoordinator {
     pub(crate) fn mind_target(&self) -> super::mind::AttentionTarget {
         use super::mind::AttentionTarget;
         match self.target.as_ref() {
+            Some(target) if target.category.as_deref() == Some("hand") => AttentionTarget::Hands,
             Some(target)
                 if target
                     .category
@@ -436,10 +437,17 @@ impl GazeCoordinator {
                 .as_ref()
                 .is_some_and(|run| run.run_id == id)
             {
-                let completed = core.snapshot().last_motion.as_ref().is_some_and(|run| {
-                    run.run_id == id && run.state == crate::MovementPhase::Completed
+                let finished = core
+                    .snapshot()
+                    .last_motion
+                    .as_ref()
+                    .filter(|run| run.run_id == id);
+                // A cut-off or missed settle can replan. Servo/bus faults yield
+                // through the same path for every tracked target.
+                let fault = finished.is_some_and(|run| {
+                    run.state == crate::MovementPhase::Cancelled && run.error.is_some()
                 });
-                if !completed {
+                if fault || core.snapshot().motion.is_some() {
                     self.forget();
                     return false;
                 }
@@ -509,10 +517,10 @@ impl GazeCoordinator {
         anchor: &JointPositions,
         core: &RuntimeCore<D>,
     ) -> Result<Option<MotionDefinition>> {
-        let commanded = self
-            .status
-            .run_id
-            .and_then(|id| core.character_commanded_state(id, now));
+        let commanded = match self.status.run_id {
+            Some(id) => core.character_commanded_state(id, now),
+            None => core.gaze_commanded_state(),
+        };
         if self.status.run_id.is_some() && commanded.is_none() {
             return Ok(None);
         }
@@ -679,50 +687,6 @@ pub(crate) fn cap_tracking_speed(
         }
     }
     Ok(None)
-}
-
-/// A hand step settles at its temporary target; ownership retains the held pose.
-pub(crate) fn hand_step(
-    start: &crate::TrajectorySample,
-    target: &JointPositions,
-    limits: &[JointLimit],
-    returning: bool,
-) -> Result<Option<MotionDefinition>> {
-    let definition = MotionDefinition {
-        name: "hands_track".into(),
-        description: "Head tracking from the held pose".into(),
-        space: MotionSpace::AnchorRelative,
-        return_to_anchor: true,
-        style: MotionStyle {
-            name: "return_home",
-            tempo: 1.0,
-            tangent_tension: 0.0,
-            joint_lag: 0.0,
-            amplitude: 1.0,
-            overshoot_scale: 0.0,
-            settle_character: 1.0,
-        },
-        keyframes: vec![MotionKeyframe {
-            pose_name: None,
-            target: target.keys().map(|n| (n.clone(), 0.)).collect(),
-            duration_seconds: if returning {
-                settle_seconds(&start.positions, target)
-            } else {
-                AIM_SECONDS
-            },
-            arrival: KeyframeArrival::Settle,
-            hold_seconds: 0.,
-            marker: None,
-        }],
-    };
-    cap_tracking_speed(
-        definition,
-        &start.positions,
-        &start.velocities,
-        Some(start.accelerations.clone()),
-        target,
-        limits,
-    )
 }
 
 fn bounds(limits: &[JointLimit], name: &str) -> Result<(f64, f64)> {
@@ -1501,7 +1465,11 @@ pub(crate) mod tests {
             gaze.set_enabled(true);
             advance(&mut gaze, &mut core, &anchor, &boot, 0, Some(0.5));
             advance(&mut gaze, &mut core, &anchor, &boot, 5, Some(0.5));
-            if command != "stop" {
+            if command == "stop" {
+                // The app suspends gaze for an explicit Stop. A cut-off core
+                // step alone leaves the target available for replanning.
+                gaze.suspend(GazeStopCommand::Stop);
+            } else {
                 gaze.yield_to_priority(0.1, &mut core);
             }
             let result: serde_json::Value =
@@ -1594,6 +1562,135 @@ pub(crate) mod tests {
                     "{measured:?} target {desired}"
                 );
             }
+        }
+    }
+    fn character_tracking_trace(category: &str) -> (Vec<JointPositions>, Vec<f64>) {
+        let (mut core, anchor, boot) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        let mut trace = Vec::new();
+        let mut elevations = Vec::new();
+        for step in 1..=520 {
+            let now = step as f64 * 0.02;
+            let stamp = 1_000_000_000 + (now * 1e9) as u64;
+            boot.store(stamp, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            if (205..=350).contains(&step) && step % 5 == 0 {
+                let mode = if category == "hand" { "hands" } else { "faces" };
+                let observation = serde_json::from_value(serde_json::json!({
+                    "capture_boottime_ns":stamp,"camera_on":true,"tracking_mode":mode,
+                    "settings":{},"objects":[],"faces":[],"looking_away":null,
+                    "hand_count":u8::from(category == "hand")
+                }))
+                .unwrap();
+                character
+                    .observe_surroundings(observation, now, &mut core)
+                    .unwrap();
+                let mut target = target(stamp, 0.35);
+                target.elevation = 0.5;
+                target.category = Some(category.into());
+                assert!(character.queue_gaze_target(target, now, &mut core).unwrap());
+            }
+            if step == 300 {
+                let commanded = core.gaze_commanded_state().unwrap();
+                // Physical load error must not become the start of a new command.
+                core.driver().offset_feedback(0.07, -0.07);
+                let response: serde_json::Value =
+                    serde_json::from_str(&core.handle_command("stop", now)).unwrap();
+                assert_eq!(response["ok"], true);
+                character
+                    .tick(now, &mut core, false, None, false, None, None)
+                    .unwrap();
+                let run = character.gaze_status().run_id.unwrap();
+                let replanned = core.character_commanded_state(run, now).unwrap();
+                assert_eq!(replanned.positions, commanded.positions);
+                assert!(character.gaze_status().error.is_none());
+                core.driver().offset_feedback(0., 0.);
+            }
+            if step == 355 {
+                character.clear_gaze(now, &mut core).unwrap();
+            }
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            if step >= 205 {
+                let positions = core.driver().positions.clone();
+                let bearing = Bearing::from_direction(
+                    core.camera_kinematics()
+                        .unwrap()
+                        .fk(&positions)
+                        .unwrap()
+                        .camera
+                        .rotate_vector([0., 0., 1.]),
+                );
+                trace.push(positions);
+                elevations.push(bearing.elevation);
+                assert_eq!(character.status().active_anchor.as_ref(), Some(&anchor));
+                assert!(character.gaze_status().error.is_none());
+            }
+        }
+        (trace, elevations)
+    }
+
+    #[test]
+    fn hands_and_faces_share_the_entire_planner_including_interruption_and_loss() {
+        let (faces, face_elevations) = character_tracking_trace("face");
+        let (hands, hand_elevations) = character_tracking_trace("hand");
+        // Exact samples include deadband, neck lead, base catch-up, filtering,
+        // interruption, load error and target loss. Any separate path diverges.
+        assert_eq!(hands, faces);
+        assert_eq!(hand_elevations, face_elevations);
+        assert!(
+            hand_elevations[100] > 0.35,
+            "raised hand must lift the gaze"
+        );
+        assert!(
+            hands
+                .iter()
+                .any(|pose| (pose["base_yaw_joint"] - hands[0]["base_yaw_joint"]).abs() > 0.02)
+        );
+        let lowest_after_loss = hand_elevations[150..]
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            lowest_after_loss >= hand_elevations[0] - 0.01,
+            "loss must not pitch below the anchor"
+        );
+    }
+
+    #[test]
+    fn missed_tracking_completion_replans_from_the_last_command_without_recovery() {
+        for category in ["face", "hand"] {
+            let (mut core, anchor, boot) = following();
+            let mut gaze = GazeCoordinator::default();
+            gaze.set_enabled(true);
+            let mut target = target(1_000_000_000, 0.3);
+            target.category = Some(category.into());
+            gaze.queue(target.clone(), 0., &core).unwrap();
+            assert!(gaze.tick(0., &anchor, &mut core));
+            core.driver().offset_feedback(0.07, -0.07);
+            core.tick(10.).unwrap();
+            assert_eq!(
+                core.snapshot().motion.as_ref().unwrap().state,
+                crate::MovementPhase::Settling
+            );
+            core.tick(12.1).unwrap();
+            assert_eq!(
+                core.snapshot().last_motion.as_ref().unwrap().state,
+                crate::MovementPhase::TimedOut
+            );
+            let held = core.gaze_commanded_state().unwrap();
+            boot.store(13_100_000_000, Ordering::Relaxed);
+            target.capture_boottime_ns = 13_100_000_000;
+            gaze.queue(target, 12.1, &core).unwrap();
+            assert!(gaze.tick(12.1, &anchor, &mut core));
+            let replanned = core
+                .character_commanded_state(gaze.status.run_id.unwrap(), 12.1)
+                .unwrap();
+            assert_eq!(replanned.positions, held.positions);
+            assert!(gaze.status.error.is_none());
         }
     }
 }

@@ -1,71 +1,102 @@
 import tempfile
 import unittest
 from pathlib import Path
-from threading import Event, Thread, Lock
+from threading import Event, Thread
 from unittest.mock import Mock
 import cv2
 import numpy as np
 from orion_vision.detect_hands import Palm, PalmDetector, anchors, preprocess, decode
-from orion_vision.hands import HandWindow
 from orion_vision.pipeline import FacePipeline
-from orion_vision.gaze_client import RuntimeRejected
-from test_objects import CAMERA, intrinsics
-from test_tracking import eventually
+from orion_vision.gaze_client import GazeClient, RuntimeRejected
+from test_objects import intrinsics
+from test_tracking import eventually, face
 
 
 class PalmTests(unittest.TestCase):
-    def test_motion_rejection_preserves_fresh_palm_previews_and_reports_gaze_error(self):
-        client, palms = Mock(), Mock()
-        palms.detect.return_value = [Palm([320,180,64,36],.9)]
-        client.camera_pose.return_value = CAMERA
-        client.surroundings.side_effect = RuntimeRejected('Hands return needs rest')
+    def pipeline(self, mode='hands'):
+        detector, client = Mock(), Mock()
+        detector.detect.return_value = [Palm([320,180,64,36],.9)]
+        client.bearings.return_value = [{'azimuth': .2, 'elevation': .6}]
+        client.voice_active.return_value = False
         now = [10.]
-        pipeline = FacePipeline(Mock(), intrinsics(), client, clock=lambda: now[0],
-            boot_clock=lambda: int(now[0] * 1e9), palms=palms)
-        pipeline.reset(True, mode='hands')
-        frame = np.zeros((360,640,3),np.uint8)
-        for _ in range(4):
-            stamp = int(now[0] * 1e9)
-            pipeline._hand_frame(stamp, frame, pipeline.generation, frame, pipeline.preview_generation)
-            self.assertEqual(pipeline.preview()[0], stamp)
-            self.assertEqual(len(pipeline.preview()[2]), 1)
-            self.assertEqual(pipeline.status()['hand_count'], 1)
-            self.assertEqual(pipeline.status()['gaze_error'], 'Hands return needs rest')
-            self.assertIsNone(pipeline.status()['error'])
-            # A frame inside the heartbeat interval sends no command, so it
-            # cannot clear the preceding rejection as if recovery succeeded.
-            now[0] += .01
-            stamp = int(now[0] * 1e9)
-            calls = client.surroundings.call_count
-            pipeline._hand_frame(stamp, frame, pipeline.generation, frame, pipeline.preview_generation)
-            self.assertEqual(client.surroundings.call_count, calls)
-            self.assertEqual(pipeline.status()['gaze_error'], 'Hands return needs rest')
-            now[0] += .21
+        pipeline = FacePipeline(detector, intrinsics(), client, clock=lambda: now[0],
+            boot_clock=lambda: int(now[0] * 1e9), palms=detector)
+        pipeline.reset(True, mode=mode)
+        return pipeline, detector, client, now
 
-    def test_reset_waits_for_an_approved_hands_publication(self):
-        # Pause exactly where reset acquires the command lock. It must not
-        # change the mode underneath the worker already publishing metadata.
-        attempting = Event()
-        class ObservedLock:
-            def __init__(self): self.lock = Lock()
-            def __enter__(self):
-                attempting.set()
-                self.lock.acquire()
-            def __exit__(self, *args): self.lock.release()
-        client = Mock()
-        pipeline = FacePipeline(Mock(), intrinsics(), client)
-        pipeline.reset(True, mode='hands')
-        pipeline.commands = ObservedLock()
-        with pipeline.commands:
-            attempting.clear()
-            thread = Thread(target=lambda: pipeline.reset(False, mode='hands', preserve_hands=True))
-            thread.start()
-            self.assertTrue(attempting.wait(1))
-            pipeline._surroundings(pipeline.boot_clock(), [])
-            self.assertEqual(client.surroundings.call_args.args[0]['tracking_mode'], 'hands')
-        thread.join(1)
-        self.assertFalse(thread.is_alive())
-        self.assertFalse(pipeline.enabled)
+    def test_first_raised_palm_sends_a_bearing_without_desk_projection_or_delay(self):
+        pipeline, detector, client, now = self.pipeline()
+        frame = np.zeros((360,640,3),np.uint8)
+        stamp = int(now[0] * 1e9)
+        pipeline._tracking_frame(stamp, frame, pipeline.generation, frame, pipeline.preview_generation)
+        track = client.target.call_args.args[0]
+        np.testing.assert_allclose(track.state[:2], [.2, .6])
+        self.assertEqual(track.capture_ns, stamp)
+        client.camera_pose.assert_not_called()
+        client.bearings.assert_called_once()
+        transport = GazeClient()
+        transport.command = Mock(return_value={'accepted': True})
+        transport.target(track)
+        import json
+        payload = json.loads(transport.command.call_args.args[0].removeprefix('gaze target '))
+        self.assertEqual(payload['class'], 'hand')
+        self.assertEqual(payload['elevation'], .6)
+        self.assertNotIn('point', payload)
+        self.assertTrue(pipeline.preview()[2][0]['chosen_target'])
+
+    def test_hand_and_face_frames_share_filtering_and_loss(self):
+        states = []
+        for mode in ['faces', 'hands']:
+            pipeline, detector, client, now = self.pipeline(mode)
+            frame = np.zeros((360,640,3),np.uint8)
+            values = []
+            for index, (azimuth, elevation) in enumerate([(.2,.5),(.22,.52),(.21,.48)]):
+                detection = face((352,198),64) if mode == 'faces' else Palm([320,166,64,64],.95)
+                detector.detect.return_value = [detection]
+                client.bearings.return_value = [{'azimuth':azimuth,'elevation':elevation}]
+                pipeline._tracking_frame(int(now[0]*1e9),frame,pipeline.generation)
+                values.append(client.target.call_args.args[0].state.copy())
+                now[0] += .1
+            detector.detect.return_value = []
+            pipeline._tracking_frame(int(now[0]*1e9),frame,pipeline.generation)
+            self.assertFalse(client.clear.called)
+            now[0] += 1.1
+            pipeline._tracking_frame(int(now[0]*1e9),frame,pipeline.generation)
+            client.clear.assert_called_once()
+            states.append(values)
+        np.testing.assert_array_equal(states[0], states[1])
+
+    def test_motion_rejection_preserves_paired_preview(self):
+        pipeline, detector, client, now = self.pipeline()
+        client.target.side_effect = RuntimeRejected('Servo bus unavailable')
+        frame = np.zeros((360,640,3),np.uint8)
+        stamp = int(now[0]*1e9)
+        pipeline._tracking_frame(stamp,frame,pipeline.generation,frame,pipeline.preview_generation)
+        self.assertEqual(pipeline.preview()[0],stamp)
+        self.assertEqual(pipeline.status()['gaze_error'],'Servo bus unavailable')
+        self.assertIsNone(pipeline.status()['error'])
+
+    def test_worker_uses_face_rate_and_discards_late_palms_after_mode_change(self):
+        pipeline, detector, client, now = self.pipeline()
+        pipeline.start(); self.addCleanup(pipeline.close)
+        frame = np.zeros((360,640,3),np.uint8)
+        pipeline.submit(int(now[0]*1e9),frame)
+        eventually(lambda: client.target.called)
+        self.assertEqual(pipeline.rate_hz,10)
+        entered, release = Event(), Event(); self.addCleanup(release.set)
+        def detect(_):
+            entered.set(); release.wait(2)
+            return [Palm([320,180,64,36],.9)]
+        detector.detect.side_effect=detect
+        now[0]+=.21
+        pipeline.submit(int(now[0]*1e9),frame)
+        self.assertTrue(entered.wait(1))
+        pipeline.reset(True,mode='faces')
+        client.target.reset_mock()
+        release.set()
+        eventually(lambda: pipeline.pending is None)
+        self.assertEqual(pipeline.hand_count,0)
+        self.assertFalse(client.target.called)
 
     def test_letterbox_preserves_rgb_and_model_decoder_uses_xywh_nms(self):
         blob, geometry = preprocess(np.full((360,640,3), [240,30,10], np.uint8))
@@ -88,76 +119,3 @@ class PalmTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'model.onnx';path.write_bytes(b'corrupt')
             with self.assertRaisesRegex(ValueError,'SHA-256'): PalmDetector(path)
-
-    def test_window_uses_each_capture_transform_and_requires_continuity(self):
-        window=HandWindow(); lens=intrinsics(); target=np.array([0.,-.5,0.])
-        for i in range(11):
-            angle=i*.015
-            rotation=np.array([[np.cos(angle),-np.sin(angle),0],[np.sin(angle),np.cos(angle),0],[0,0,1]]) @ np.array(CAMERA['rotation'])
-            origin=np.array([i*.002,0.,.2])
-            local=rotation.T @ (target-origin)
-            pixel=cv2.fisheye.projectPoints(local.reshape(1,1,3),np.zeros(3),np.zeros(3),lens.matrix,lens.distortion)[0].reshape(2)
-            point=window.observe([Palm([pixel[0]-10,pixel[1]-10,20,20],.9)],1+i*200_000_000,lens,
-                                 dict(position=origin.tolist(),rotation=rotation.tolist()))
-            if i<2:self.assertIsNone(point)
-        np.testing.assert_allclose(point,target,atol=1e-8)
-        self.assertIsNone(window.observe([],2_200_000_001,lens,CAMERA))
-        self.assertEqual(len(window.samples),0)
-        window.observe([Palm([300,30,30,30],.9)],3_000_000_001,lens,CAMERA)
-        self.assertIsNone(window.observe([Palm([300,30,30,30],.9)],5_000_000_001,lens,CAMERA))
-        self.assertEqual(len(window.samples),1)
-
-    def test_hands_mode_publishes_paired_hand_boxes_and_counts_hands(self):
-        faces,palms,client=Mock(),Mock(),Mock()
-        palms.detect.return_value=[Palm([320,180,64,36],.9)]
-        client.camera_pose.return_value=CAMERA
-        client.voice_active.return_value=False
-        now=[10.]
-        pipeline=FacePipeline(faces,intrinsics(),client,clock=lambda:now[0],boot_clock=lambda:int(now[0]*1e9),palms=palms)
-        pipeline.start();self.addCleanup(pipeline.close)
-        pipeline.reset(True,mode='hands')
-        frame,rgb=np.zeros((360,640,3),np.uint8),np.zeros((360,640,3),np.uint8)
-        stamp=int(now[0]*1e9)
-        pipeline.submit(stamp,frame,rgb=rgb)
-        eventually(lambda:pipeline.preview() is not None)
-        captured,pixels,detections=pipeline.preview()
-        self.assertEqual(captured,stamp);self.assertIs(pixels,rgb)
-        self.assertEqual(detections,[{"class":"hand","track_id":1,"score":.9,"chosen_target":False,
-            "capture_boottime_ns":str(stamp),"box":[.5,.5,.1,.1]}])
-        self.assertEqual(pipeline.status()['hand_count'],1)
-        faces.detect.assert_not_called()
-
-    def test_single_worker_switches_detectors_and_late_hand_work_cannot_survive_mode_change(self):
-        faces,palms,objects,client=Mock(),Mock(),Mock(),Mock()
-        faces.detect.return_value=[]
-        palms.detect.return_value=[Palm([300,30,30,30],.9)]
-        client.camera_pose.return_value=CAMERA
-        client.voice_active.return_value=False
-        now=[10.]
-        pipeline=FacePipeline(faces,intrinsics(),client,clock=lambda:now[0],boot_clock=lambda:int(now[0]*1e9),objects=objects,palms=palms)
-        pipeline.start();self.addCleanup(pipeline.close)
-        frame=np.zeros((360,640,3),np.uint8)
-        pipeline.reset(True)
-        pipeline.submit(int(now[0]*1e9),frame)
-        eventually(lambda:faces.detect.call_count==1)
-        pipeline.reset(True,mode='hands')
-        for _ in range(11):
-            before=palms.detect.call_count;now[0]+=.21
-            pipeline.submit(int(now[0]*1e9),frame)
-            eventually(lambda:palms.detect.call_count>before)
-        self.assertEqual(faces.detect.call_count,1)
-        self.assertEqual(pipeline.rate_hz,5)
-        objects.detect.assert_not_called()
-        self.assertIsNotNone(pipeline.hand_point)
-        self.assertEqual(pipeline.observations(),[])
-        self.assertEqual(client.surroundings.call_args.args[0]['tracking_mode'],'hands')
-        entered,release=Event(),Event();self.addCleanup(release.set)
-        def detect(_): entered.set();release.wait(2);return [Palm([300,30,30,30],.9)]
-        palms.detect.side_effect=detect;now[0]+=.21
-        pipeline.submit(int(now[0]*1e9),frame);self.assertTrue(entered.wait(1))
-        pipeline.reset(True,mode='faces');client.surroundings.reset_mock();release.set()
-        now[0]+=.21;pipeline.submit(int(now[0]*1e9),frame)
-        eventually(lambda:faces.detect.call_count==2)
-        self.assertEqual(pipeline.hand_count,0)
-        self.assertIsNone(pipeline.hand_point)
-        self.assertTrue(all(call.args[0]['tracking_mode']=='faces' for call in client.surroundings.call_args_list))

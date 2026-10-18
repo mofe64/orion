@@ -9,17 +9,17 @@ motion:
   - offsets:
       head_roll_joint: -0.08
       head_pitch_joint: -0.08
-    duration: 0.7
+    duration: 0.4
     arrival: settle
     marker: arrival_head
   - offsets:
       shoulder_pitch_joint: -0.04
       elbow_pitch_joint: 0.025
       head_pitch_joint: -0.08
-    duration: 1.0
+    duration: 0.9
     arrival: settle
     hold: 0.6
     marker: arrival_attentive
   - offsets: {}
-    duration: 1.1
+    duration: 1.4
     arrival: settle

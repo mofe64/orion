@@ -232,8 +232,6 @@ export interface RunStatus {
 }
 
 export interface CharacterStatus {
-  hands_failure?: { stage: "entry" | "follow" | "return"; message: string;
-    recovery_required: boolean; movement: RunStatus | null } | null;
   enabled: boolean;
   state: "off" | "starting" | "home_idle" | "pose_idle" | "listening" | "thinking" | "speaking" | "foreground_scene" | "settling" | "shutting_down";
   active_anchor: JointPositions | null;

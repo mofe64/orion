@@ -14,9 +14,6 @@ use crate::motion::style::MotionStyle;
 mod acts;
 #[path = "aim_light.rs"]
 mod aim_light;
-#[path = "hands.rs"]
-mod hands;
-pub use hands::HandsFailure;
 #[path = "reactions.rs"]
 mod reactions;
 #[path = "surroundings.rs"]
@@ -238,8 +235,6 @@ pub enum NextIdleCategory {
 #[derive(Clone, Debug, Serialize)]
 pub struct CharacterStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hands_failure: Option<HandsFailure>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_rejection: Option<String>,
     /// Whether character mode is enabled.
     pub enabled: bool,
@@ -284,7 +279,6 @@ pub struct CharacterCoordinator {
     acts: acts::Acts,
     pub(crate) behaviour_log: Option<super::behaviour::BehaviourLog>,
     surroundings: surroundings::SurroundingsState,
-    hands: hands::HandsState,
     gaze: super::gaze::GazeCoordinator,
     /// Character state we expose to other parts of the application.
     status: CharacterStatus,
@@ -418,9 +412,7 @@ impl CharacterCoordinator {
             behaviour_log: None,
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
-            hands: hands::HandsState::default(),
             status: CharacterStatus {
-                hands_failure: None,
                 last_rejection: None,
                 enabled: false,
                 state: CharacterState::Off,
@@ -581,17 +573,9 @@ impl CharacterCoordinator {
         {
             return Ok(false);
         }
-        if self.hands.blocks_gaze()
-            && let Some(failure) = &self.status.hands_failure
-        {
-            return Err(Error::InvalidState(failure.message.clone()));
-        }
         if self.surroundings.reaction.is_some() {
             // Face observations continue; this one bounded response owns motion.
             return Ok(true);
-        }
-        if self.hands.blocks_gaze() {
-            return Ok(false);
         }
         if self.attention.is_some() {
             return self.update_speaker_bearing(target, now, core);
@@ -888,9 +872,6 @@ impl CharacterCoordinator {
 
     pub(crate) fn mind_attention(&self) -> super::mind::AttentionTarget {
         use super::mind::AttentionTarget as Target;
-        if self.hands.blocks_gaze() {
-            return Target::Hands;
-        }
         if self.work_anchor || self.work.is_some() {
             return Target::Object {
                 class: self.work_attention_class(),
@@ -1212,7 +1193,6 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.cancel_acts(now, core)?;
-        self.preempt_hands(now, core)?;
         self.preempt_reaction(now, core)?;
         self.gaze.yield_to_priority(now, core);
         // if we have an active idle or thinking run, and the runtime is still moving,
@@ -1241,7 +1221,6 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
-        self.hands_foreground_override(core);
         if self
             .work
             .take()
@@ -1420,14 +1399,12 @@ impl CharacterCoordinator {
         if (scene_active || speech_active || !self.status.enabled) && self.work.is_some() {
             self.preempt_for_foreground(now, core)?;
         }
-        self.finish_hands(now, core);
         if self.acts.lifecycle.is_some() {
             return Ok(());
         }
         if (scene_active || speech_active) && self.acts.drift.is_some() {
             self.cancel_acts(now, core)?;
         }
-        self.expire_hands(now, core)?;
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)?;
         if self.tick_work(now, core)? {
@@ -1712,13 +1689,7 @@ impl CharacterCoordinator {
             self.reset_timers(now);
         }
 
-        if self.surroundings.reaction.is_some() || self.hands_run_active() {
-            return Ok(());
-        }
-        if self.status.hands_failure.is_some() {
-            // A failed work-light move must not trigger more arm movement or
-            // ordinary idles. Explicit recovery, foreground work and rest keep
-            // their existing priority paths above this point.
+        if self.surroundings.reaction.is_some() {
             return Ok(());
         }
         if self.tick_posture(now, core)? {
@@ -1731,8 +1702,7 @@ impl CharacterCoordinator {
         if self.status.state == CharacterState::Thinking && self.tick_thinking_beats(now, core) {
             return Ok(());
         }
-        if !self.hands.blocks_gaze()
-            && !self.foreground_pending
+        if !self.foreground_pending
             && self.attention.is_none()
             && let Some(anchor) = self.status.active_anchor.clone()
             && self.gaze.tick(now, &anchor, core)
@@ -1817,9 +1787,6 @@ impl CharacterCoordinator {
         if self.attention.is_some() {
             return Ok(());
         }
-        if self.hands.suppress_idle(now) {
-            return Ok(());
-        }
         // if we get here, that means we are allowed to idle
         // chose the idle category based on which deadline is closer
         let category = if self.next_micro_at <= self.next_large_at {
@@ -1896,14 +1863,11 @@ impl CharacterCoordinator {
         core: &RuntimeCore<D>,
     ) -> String {
         // get the closest pose profile based on the character's anchor
-        let profile = if self.hands.owns_anchor() {
-            Some("directional".into())
-        } else {
-            self.status
-                .active_anchor
-                .as_ref()
-                .and_then(|anchor| closest_pose_profile(core, anchor))
-        };
+        let profile = self
+            .status
+            .active_anchor
+            .as_ref()
+            .and_then(|anchor| closest_pose_profile(core, anchor));
 
         // get the list of candidates based on the profile and category
         let mut candidates: Vec<&str> = match (profile.as_deref(), category) {
@@ -1941,7 +1905,13 @@ impl CharacterCoordinator {
         let requested_mirror = self.rng.index(2) == 0 && random_direction;
         let (_, amplitude_centre, tempo_centre) = self.idle_factors();
         let amplitude = amplitude_centre + self.rng.range(-0.15, 0.15);
-        let tempo = tempo_centre + self.rng.range(-0.1, 0.1);
+        let random_tempo = self.rng.range(0.9, 1.1);
+        // Mind rhythm supplies the tempo instead of stacking two variations.
+        let tempo = if self.acts.settings.mind_idle_rhythm && !self.work_anchor {
+            tempo_centre
+        } else {
+            random_tempo
+        };
         let safe_side = |mirror: bool| {
             let sign = if mirror { -1.0 } else { 1.0 };
             motion.keyframes.iter().all(|keyframe| {
@@ -3245,7 +3215,6 @@ impl CharacterCoordinator {
         self.thinking_run = None;
         self.clear_attention();
         self.status = CharacterStatus {
-            hands_failure: None,
             last_rejection: None,
             enabled: false,
             state: CharacterState::Off,

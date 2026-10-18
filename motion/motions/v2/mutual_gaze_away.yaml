@@ -9,10 +9,10 @@ motion:
   - offsets:
       head_roll_joint: -0.17453292519943295
       head_pitch_joint: -0.1
-    duration: 1.0
+    duration: 0.55
     arrival: settle
     hold: 0.35
     marker: look_away
   - offsets: {}
-    duration: 1.1
+    duration: 0.85
     arrival: settle

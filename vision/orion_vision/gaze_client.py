@@ -70,7 +70,7 @@ class GazeClient:
         from .tracker import angle_delta
         value = self.command("gaze target " + json.dumps({"track_id": track.id,
             "capture_boottime_ns": track.capture_ns, "azimuth": float(angle_delta(track.state[0])),
-            "elevation": float(track.state[1]), "confidence": track.face.confidence, "class": "face"}))
+            "elevation": float(track.state[1]), "confidence": track.face.confidence, "class": getattr(track.face, "category", "face")}))
         return value.get('accepted', True) is True
 
     def gaze_available(self):

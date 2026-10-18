@@ -10,13 +10,13 @@ motion:
       head_pitch_joint: -0.20943951023931956
       shoulder_pitch_joint: -0.01
       elbow_pitch_joint: -0.015
-    duration: 1.6656
+    duration: 0.7531075304176259
     arrival: through
   - offsets:
       head_roll_joint: 0.04
       head_pitch_joint: -0.08377580409572782
-    duration: 1.4
+    duration: 0.6330154554422888
     arrival: through
   - offsets: {}
-    duration: 1.8
+    duration: 0.8138770141400856
     arrival: settle

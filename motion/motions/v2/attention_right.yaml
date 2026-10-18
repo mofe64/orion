@@ -6,16 +6,16 @@ motion:
   style: expressive_turn
   keyframes:
   - pose: attention_right_anticipation
-    duration: 0.65
+    duration: 0.22
     arrival: through
   - pose: attention_right_lean
-    duration: 1.1
+    duration: 0.42
     arrival: through
     marker: notice
   - pose: attention_right_overshoot
-    duration: 0.8
+    duration: 0.28
     arrival: through
   - pose: attention_right
-    duration: 1.0
+    duration: 0.38
     arrival: settle
     marker: settled

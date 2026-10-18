@@ -10,41 +10,6 @@ pub(crate) struct PreparedAim {
 }
 
 impl<D: RuntimeDriver> RuntimeCore<D> {
-    /// A completed Hands spline ends with a stationary command that the driver
-    /// keeps holding. Continue from that command, rather than commanding the
-    /// measured load error as a new starting goal. Other owners and failed
-    /// runs still use their existing measured-start behavior.
-    pub(crate) fn completed_hands_command(&self) -> Result<Option<crate::TrajectorySample>> {
-        if self.mode != RuntimeMode::Holding
-            || self.active_movement.is_some()
-            || !self.last_movement.as_ref().is_some_and(|motion| {
-                motion.state == MovementPhase::Completed && motion.name == "hands_track"
-            })
-        {
-            return Ok(None);
-        }
-        let target = self
-            .last_completed_target
-            .as_ref()
-            .ok_or_else(|| Error::InvalidState("Completed Hands command is unavailable".into()))?;
-        let (error, velocity) = final_measurements(&self.snapshot.joints, target)?;
-        if error > self.completion.position_tolerance_rad
-            || velocity > self.completion.velocity_tolerance_rad_s
-        {
-            return Err(Error::InvalidState(
-                "Measured Hands pose drifted beyond completion limits; go to rest, then resume Orion"
-                    .into(),
-            ));
-        }
-        self.driver.validate_positions(target)?;
-        let zeros = target.keys().map(|name| (name.clone(), 0.0)).collect();
-        Ok(Some(crate::TrajectorySample {
-            positions: target.clone(),
-            velocities: zeros,
-            accelerations: target.keys().map(|name| (name.clone(), 0.0)).collect(),
-        }))
-    }
-
     pub(crate) fn validate_curiosity_motion(
         &self,
         definition: &MotionDefinition,
@@ -53,7 +18,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     ) -> Result<()> {
         let limits = self.driver.joint_limits()?;
         let scale = definition.uniform_amplitude_scale(anchor, &limits)?;
-        let mut state = replacing
+        let state = replacing
             .filter(|(id, _)| {
                 self.active_movement
                     .as_ref()
@@ -65,9 +30,6 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 })
             })
             .transpose()?;
-        if replacing.is_none() && definition.name == "hands_track" {
-            state = self.completed_hands_command()?;
-        }
         let (positions, velocities, accelerations) = state.map_or_else(
             || (self.measured_positions(), self.measured_velocities(), None),
             |state| (state.positions, state.velocities, Some(state.accelerations)),
@@ -353,105 +315,6 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         definition.style.overshoot_scale = 0.0;
         Ok(())
     }
-    /// Try the head first. Search bounded arm directions only after head reach fails.
-    /// Each trial calls the gaze solver; the search never implements head IK.
-    pub(crate) fn hands_light_target(
-        &self,
-        anchor: &JointPositions,
-        point: [f64; 3],
-        maximum_arm_rad: f64,
-    ) -> Result<JointPositions> {
-        use crate::control::camera_rays::Bearing;
-        use crate::expression::gaze::solve_aim;
-        let model = self
-            .camera_kinematics()
-            .ok_or_else(|| Error::InvalidState("Hands needs V2 geometry".into()))?;
-        let mut limits = self.driver.joint_limits()?;
-        // Keep operating targets away from mechanical stops without changing calibration.
-        for limit in &mut limits {
-            limit.lower_rad += 3_f64.to_radians();
-            limit.upper_rad -= 3_f64.to_radians();
-        }
-        let solve = |pose: &JointPositions| -> Result<(JointPositions, bool, f64)> {
-            let mut q = pose.clone();
-            let mut clipped = false;
-            // The camera origin moves with the head. Recompute its finite-point bearing.
-            for _ in 0..3 {
-                let camera = model.fk(&q)?.camera;
-                let direction = std::array::from_fn(|i| point[i] - camera.position[i]);
-                let bearing = Bearing::from_direction(direction);
-                (q, clipped) = solve_aim(model, &q, bearing.azimuth, bearing.elevation, &limits)?;
-            }
-            let camera = model.fk(&q)?.camera;
-            let direction: [f64; 3] = std::array::from_fn(|i| point[i] - camera.position[i]);
-            let length = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
-            let axis = camera.rotate_vector([0., 0., 1.]);
-            let error = axis
-                .iter()
-                .zip(direction)
-                .map(|(a, b)| a * b / length)
-                .sum::<f64>()
-                .clamp(-1., 1.)
-                .acos();
-            Ok((
-                q,
-                clipped || error > crate::expression::gaze::GAZE_DEADBAND_RAD,
-                error,
-            ))
-        };
-        let (head, clipped, mut best_error) = solve(anchor)?;
-        if !clipped || maximum_arm_rad == 0. {
-            return Ok(head);
-        }
-        let mut best = head;
-        let mut best_radius = f64::INFINITY;
-        // Polar search minimizes arm displacement (Euclidean joint angle), then
-        // bisects the first reachable radius. Angular resolution is 22.5 degrees.
-        for direction in 0..16 {
-            let angle = direction as f64 * std::f64::consts::TAU / 16.;
-            let unit = [angle.cos(), angle.sin()];
-            let maximum = maximum_arm_rad / unit[0].abs().max(unit[1].abs());
-            let trial = |radius: f64| -> Result<(JointPositions, bool, f64)> {
-                let mut q = anchor.clone();
-                for (name, scale) in ["shoulder_pitch_joint", "elbow_pitch_joint"]
-                    .into_iter()
-                    .zip(unit)
-                {
-                    let limit = limits.iter().find(|l| l.name == name).unwrap();
-                    q.insert(
-                        name.into(),
-                        (anchor[name] + radius * scale).clamp(limit.lower_rad, limit.upper_rad),
-                    );
-                }
-                solve(&q)
-            };
-            let (mut q, unreachable, error) = trial(maximum)?;
-            if unreachable {
-                if best_radius.is_infinite() && error < best_error {
-                    best = q;
-                    best_error = error;
-                }
-                continue;
-            }
-            let (mut low, mut high) = (0., maximum);
-            for _ in 0..9 {
-                let mid = (low + high) / 2.;
-                let (candidate, clipped, _) = trial(mid)?;
-                if clipped {
-                    low = mid;
-                } else {
-                    high = mid;
-                    q = candidate;
-                }
-            }
-            if high < best_radius {
-                best_radius = high;
-                best = q;
-            }
-        }
-        Ok(best)
-    }
-
     pub fn configure_comfort_box(&mut self, config: ComfortBoxConfig) -> Result<()> {
         let comfort = ComfortBox::from_config(&config, &self.poses, &self.driver.joint_limits()?)?;
         self.comfort = Some((config, comfort));

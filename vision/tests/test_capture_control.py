@@ -82,7 +82,7 @@ class CaptureWatchdogTests(unittest.TestCase):
         self.assertEqual(self.vision.camera_restarts, 0)
         self.assertEqual(self.source.starts, 1)
 
-    def test_hands_watchdog_reopen_does_not_send_off_but_privacy_still_does(self):
+    def test_hands_watchdog_and_privacy_clear_tracks_like_faces(self):
         from orion_vision.pipeline import FacePipeline
         from test_objects import intrinsics
         client = Mock()
@@ -97,12 +97,12 @@ class CaptureWatchdogTests(unittest.TestCase):
             self.now = 3.1
             eventually(lambda: self.source.starts == 2)
         self.assertEqual(self.vision.camera_restarts, 1)
-        client.clear_surroundings.assert_not_called()
+        self.assertTrue(client.clear_surroundings.called)
         self.assertFalse(any(call.args == ('gaze hands off',) for call in client.command.call_args_list))
-        self.assertEqual(pipeline.mode, 'hands')
+        eventually(lambda: pipeline.mode == 'hands')
         # Reopening does not fabricate fresh hand evidence or keep old pixels.
-        self.assertIsNone(pipeline.hand_point)
+        self.assertEqual(pipeline.tracker.tracks, [])
         self.assertIsNone(pipeline.pending)
         self.preference.write_text('{"camera_enabled":false}')
         eventually(lambda: not self.vision.enabled and client.clear_surroundings.called)
-        eventually(lambda: any(call.args == ('gaze hands off',) for call in client.command.call_args_list))
+        self.assertEqual(pipeline.tracker.tracks, [])

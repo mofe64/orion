@@ -186,29 +186,42 @@ mod movement_review {
         for tick in 0..=1000 {
             let time=tick as f64*0.02;let now=4.+time;
             core.tick(now)?;
+            // End at gaze completion, before ordinary idles take ownership.
+            let finished = time>=16. && core.snapshot().motion.is_none()
+                && core.snapshot().last_motion.as_ref().is_some_and(|motion|
+                    motion.name=="gaze_performance" && motion.state==MovementPhase::Completed);
             if tick%5==0 && time<16. {
                 let point = if time<2. || time>=12. {None}
-                    else if time<5. {Some([-0.10+0.20*(time-2.)/3.,-0.35,0.])}
-                    else if time<9. {Some([0.35,-0.001,0.])}
-                    else {Some([0.10-0.20*(time-9.)/3.,-0.35,0.])};
+                    else if time<5. {Some([-0.20+0.40*(time-2.)/3.,-0.80,0.60])}
+                    else if time<9. {Some([0.35,-0.80,0.65])}
+                    else {Some([0.20-0.40*(time-9.)/3.,-0.80,0.60])};
                 let value=serde_json::from_value(json!({"capture_boottime_ns":core.camera_boottime_ns().unwrap(),
                     "camera_on":true,"tracking_mode":"hands","settings":{},"objects":[],"faces":[],
-                    "looking_away":null,"hand_count":u8::from(point.is_some()),"hand_point":point}))
+                    "looking_away":null,"hand_count":u8::from(point.is_some())}))
                     .map_err(|e|Error::Runtime(e.to_string()))?;
                 character.observe_surroundings(value,now,&mut core)?;
+                if let Some(point) = point {
+                    let camera=core.camera_kinematics().unwrap().fk(&core.driver().positions)?.camera;
+                    let bearing=crate::control::camera_rays::Bearing::from_direction(std::array::from_fn(|i|point[i]-camera.position[i]));
+                    character.queue_gaze_target(crate::expression::gaze::GazeTarget {
+                        track_id:1,capture_boottime_ns:core.camera_boottime_ns().unwrap(),
+                        azimuth:bearing.azimuth,elevation:bearing.elevation,
+                        confidence:0.9,category:Some("hand".into()),range:None,
+                    },now,&mut core)?;
+                } else { character.clear_gaze(now,&mut core)?; }
                 observations.push(json!({"time":time,"point":point}));
             }
-            if tick==800 {character.leave_hands(now,&mut core)?;}
-            character.tick(now,&mut core,false,None,false,None,None)?;
-            if let Some(failure)=&character.status().hands_failure {return Err(Error::Runtime(failure.message.clone()));}
+            if tick==800 {character.clear_gaze(now,&mut core)?;}
+            if !finished {character.tick(now,&mut core,false,None,false,None,None)?;}
             let velocities=core.snapshot().motion.as_ref().and_then(|m|core.character_commanded_state(m.run_id,now))
                 .map(|s|s.velocities).unwrap_or_else(||anchor.keys().map(|n|(n.clone(),0.)).collect());
             samples.push(json!({"time":time,"positions":core.driver().positions,"velocities":velocities}));
+            if finished {break;}
         }
-        Ok(json!({"kind":"tracking","name":"hands_desk","start_pose":"home","anchor":"home",
-            "anchor_source":"runtime/src/expression/hands.rs: current pose with head-first tracking",
+        Ok(json!({"kind":"tracking","name":"hands_bearing","start_pose":"home","anchor":"home",
+            "anchor_source":"runtime/src/expression/gaze.rs: shared face and palm bearing planner",
             "samples":samples,"keyframes":[],"expected_end":anchor,"clamped_samples":[],"amplitude_scale":1.,
-            "hand_points":observations,"maximum_arm_degrees":5.}))
+            "hand_points":observations}))
     }
     pub fn run() -> Result<()> {
         let args: Vec<_> = std::env::args().collect();
@@ -216,7 +229,7 @@ mod movement_review {
         let assets = Path::new(&args[2]);
         let requests: Value = serde_json::from_slice(&std::fs::read(&args[3])?)?;
         let mut items:Vec<_>=requests.as_array().unwrap().iter().map(|r|match item(root,assets,r){Ok(v)=>v,Err(e)=>json!({"kind":"motion","name":r["name"],"start_pose":r["start"],"anchor":r["anchor"],"error":e.to_string()})}).collect();
-        items.push(match hands(root, assets) {Ok(v)=>v,Err(e)=>json!({"kind":"tracking","name":"hands_desk","start_pose":"home","anchor":"home","error":e.to_string()})});
+        items.push(match hands(root, assets) {Ok(v)=>v,Err(e)=>json!({"kind":"tracking","name":"hands_bearing","start_pose":"home","anchor":"home","error":e.to_string()})});
         println!("{}", json!(items));
         Ok(())
     }

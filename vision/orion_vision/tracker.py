@@ -29,6 +29,8 @@ class Track:
 
     def record_mouth(self):
         landmarks = np.asarray(self.face.landmarks, dtype=float)
+        if not len(landmarks):
+            return
         axis = landmarks[1] - landmarks[0]
         span = np.linalg.norm(axis)
         if span < 1:

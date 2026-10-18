@@ -17,15 +17,15 @@ motion:
       shoulder_pitch_joint: -0.20943951023931956
       elbow_pitch_joint: 0.12
       head_roll_joint: 0.04
-    duration: 1.6
+    duration: 0.9344
     arrival: through
   - offsets:
       base_yaw_joint: -0.02
       shoulder_pitch_joint: -0.08377580409572782
       elbow_pitch_joint: 0.05
       head_roll_joint: 0.015
-    duration: 1.4
+    duration: 0.8
     arrival: through
   - offsets: {}
-    duration: 1.8
+    duration: 1.0
     arrival: settle

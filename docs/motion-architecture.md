@@ -32,7 +32,7 @@ Rust trajectory compiler
 STS3215 driver or MuJoCo driver
 ```
 
-Ordinary movement starts from measured position and velocity. Speech continuation starts from the current commanded state to preserve continuity despite servo lag.
+Ordinary movement starts from measured position and velocity. Speech continuation and gaze start from the current commanded state. Servo lag does not change their commanded starting position.
 
 Absolute motions resolve named poses. Relative motions add offsets to the anchor. The compiler reduces relative amplitude uniformly when necessary. This preserves the gesture's joint proportions.
 
@@ -132,15 +132,13 @@ Tracking mode differs from Idle/Lamp routine mode. See [camera modes](../vision/
 
 ### Hands following
 
-Hands mode keeps the current pose as its held anchor. The head aims the camera and light toward a hand point on the desk. Hands and Faces share the gaze solver, angular deadband, head steps, speed limit and return settle. Hands keeps base yaw fixed.
+Hands and Faces use the same gaze planner. Vision sends a filtered image bearing for the selected target.
 
-Without a hand point, the head tilts down 30 degrees from the held pose. The shoulder, elbow and neck keep their held angles. The lamp holds this search direction while it waits for a hand.
+The neck leads the turn. The base follows to center the neck. The shoulder and elbow keep the held anchor.
 
-The arm moves only when the head cannot reach the hand point. The planner searches bounded shoulder and elbow offsets for the smallest reachable lean. `--hands-max-arm-degrees` sets the maximum offset of each arm joint, from zero to five degrees. The default is five degrees. This option does not change calibration or joint limits.
+A lost target follows the same settle and anchor return in both modes. A new target replans from the current commanded state.
 
-The arm returns when the hand enters head-only reach or leaves. After ten seconds without a hand, the head returns to its held angle. A two-second camera timeout or a tracking mode change also requests this return. Idle motion waits while Hands owns tracking.
-
-Hand presence cannot wake a resting lamp or clear Stop. Explicit movement releases the held Hands anchor. A movement failure keeps its diagnostics until a successful return or torque disable.
+Hand presence cannot wake a resting lamp or clear Stop. Servo and bus faults use the shared runtime handling.
 
 ### Object aims
 

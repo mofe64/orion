@@ -276,13 +276,13 @@ V2 poses include home, rest, attentive, delight, desk-work and desk-reach postur
 
 Positive V2 head pitch lowers the gaze. Positive neck swivel turns the head right. V2 `head_roll_joint` names the neck swivel; it does not provide a sideways head tilt.
 
-The [intent table](../motion/config/v2/movement-intents.yaml) defines movement direction, main keyframes, drawing sizes, speed limits and preview contexts. A preview context identifies the starting pose and the anchor used for the return.
+The [intent table](../motion/config/v2/movement-intents.yaml) defines movement direction, main keyframes, drawing sizes and preview contexts. A preview context identifies the starting pose and the anchor used for the return.
 
-The Hands preview starts from home and follows scripted desk points. It includes arm fallback, hand loss and the held-pose return. Arrival, pet and object-peek previews call their runtime planners with representative observation targets.
+The Hands preview starts from home and follows scripted bearings. It includes raised hands, target loss and the held-pose return. Arrival, pet and object-peek previews call their runtime planners with representative observation targets.
 
 The preview reports head height and gaze pitch relative to the starting pose. Positive gaze change means looking up. Operating targets retain a three-degree joint-limit margin. Rest and startup use the intentional mechanical-rest boundary.
 
-Look targets keep combined base yaw and neck swivel within 90 degrees. Expressive turns and acknowledgement scenes limit base speed to 150 degrees per second. Their other joints stay below 180 degrees per second.
+Look targets keep combined base yaw and neck swivel within 90 degrees.
 
 1. Compile the catalogue and run the movement checks without recording videos.
 

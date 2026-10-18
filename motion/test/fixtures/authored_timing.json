@@ -1,0 +1,421 @@
+{
+  "arrival_notice": {
+    "original": [
+      [
+        0.4,
+        0
+      ],
+      [
+        0.9,
+        0.6
+      ],
+      [
+        1.4,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "attention_left": {
+    "original": [
+      [
+        0.22,
+        0
+      ],
+      [
+        0.42,
+        0
+      ],
+      [
+        0.28,
+        0
+      ],
+      [
+        0.38,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "attention_right": {
+    "original": [
+      [
+        0.22,
+        0
+      ],
+      [
+        0.42,
+        0
+      ],
+      [
+        0.28,
+        0
+      ],
+      [
+        0.38,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "idle_attentive_hold": {
+    "original": [
+      [
+        0.0864,
+        0
+      ],
+      [
+        0.6636,
+        0
+      ],
+      [
+        0.65,
+        0
+      ],
+      [
+        0.85,
+        0
+      ]
+    ],
+    "proportions": [
+      [
+        1.6864,
+        0
+      ],
+      [
+        1.4,
+        0
+      ],
+      [
+        1.8,
+        0
+      ]
+    ]
+  },
+  "idle_breathe": {
+    "original": [
+      [
+        0.0656,
+        0
+      ],
+      [
+        1.2344,
+        0
+      ],
+      [
+        0.9,
+        0
+      ],
+      [
+        1.2,
+        0
+      ]
+    ],
+    "proportions": [
+      [
+        1.6656,
+        0
+      ],
+      [
+        1.4,
+        0
+      ],
+      [
+        1.8,
+        0
+      ]
+    ]
+  },
+  "idle_directional_hold": {
+    "original": [
+      [
+        0.0656,
+        0
+      ],
+      [
+        0.6344,
+        0
+      ],
+      [
+        0.65,
+        0
+      ],
+      [
+        0.85,
+        0
+      ]
+    ],
+    "proportions": [
+      [
+        1.6656,
+        0
+      ],
+      [
+        1.4,
+        0
+      ],
+      [
+        1.8,
+        0
+      ]
+    ]
+  },
+  "idle_head_curiosity": {
+    "original": [
+      [
+        0.75,
+        0
+      ],
+      [
+        0.65,
+        0
+      ],
+      [
+        0.85,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "idle_micro_glance": {
+    "original": [
+      [
+        0.65,
+        0.75
+      ],
+      [
+        0.55,
+        0
+      ],
+      [
+        0.75,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "idle_shoulder_adjust": {
+    "original": [
+      [
+        0.8,
+        0
+      ],
+      [
+        0.65,
+        0
+      ],
+      [
+        0.9,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "idle_soft_head_shake": {
+    "original": [
+      [
+        0.5,
+        0
+      ],
+      [
+        0.55,
+        0
+      ],
+      [
+        0.45,
+        0
+      ],
+      [
+        0.65,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "idle_weight_shift": {
+    "original": [
+      [
+        0.0656,
+        0
+      ],
+      [
+        0.9344,
+        0
+      ],
+      [
+        0.8,
+        0
+      ],
+      [
+        1.0,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "look_at_left_expressive": {
+    "original": [
+      [
+        0.25,
+        0
+      ],
+      [
+        0.4,
+        0
+      ],
+      [
+        0.3,
+        0
+      ],
+      [
+        0.35,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "look_at_right_expressive": {
+    "original": [
+      [
+        0.25,
+        0
+      ],
+      [
+        0.4,
+        0
+      ],
+      [
+        0.3,
+        0
+      ],
+      [
+        0.35,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "mutual_gaze_away": {
+    "original": [
+      [
+        0.55,
+        0.35
+      ],
+      [
+        0.85,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "mutual_gaze_hi": {
+    "original": [
+      [
+        0.28,
+        0
+      ],
+      [
+        0.32,
+        0
+      ],
+      [
+        0.75,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "mutual_gaze_notice": {
+    "original": [
+      [
+        0.4,
+        0.15
+      ],
+      [
+        0.6,
+        2.0
+      ],
+      [
+        0.9,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "pet_notice": {
+    "original": [
+      [
+        0.3,
+        0
+      ],
+      [
+        0.8,
+        0
+      ],
+      [
+        0.25,
+        0
+      ],
+      [
+        0.35,
+        3.0
+      ],
+      [
+        3.0,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "speak_calm_sway": {
+    "original": [
+      [
+        0.52,
+        0
+      ],
+      [
+        0.58,
+        0
+      ],
+      [
+        0.6,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "speak_explanatory_lean": {
+    "original": [
+      [
+        0.46,
+        0
+      ],
+      [
+        0.42,
+        0
+      ],
+      [
+        0.56,
+        0
+      ]
+    ],
+    "proportions": null
+  },
+  "speak_reflective_tilt": {
+    "original": [
+      [
+        0.52,
+        0
+      ],
+      [
+        0.48,
+        0
+      ],
+      [
+        0.66,
+        0
+      ]
+    ],
+    "proportions": null
+  }
+}

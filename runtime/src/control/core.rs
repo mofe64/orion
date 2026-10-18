@@ -82,8 +82,8 @@ pub struct RuntimeCore<D: RuntimeDriver> {
     next_run_id: u64,
     active_movement: Option<ActiveMovement>,
     last_movement: Option<MotionState>,
-    /// Final command retained only after successful measured completion.
-    last_completed_target: Option<JointPositions>,
+    /// Latest state written to the servos, retained across completion and cut-off.
+    last_commanded_state: Option<crate::TrajectorySample>,
     sequence: u64,
     snapshot: StateSnapshot,
     bus_failures: u32,
@@ -127,7 +127,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             next_run_id: 1,
             active_movement: None,
             last_movement: None,
-            last_completed_target: None,
+            last_commanded_state: None,
             sequence: 1,
             snapshot,
             bus_failures: 0,
@@ -174,6 +174,11 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
 
     pub fn camera_boottime_ns(&self) -> Option<u64> {
         self.camera_geometry.as_ref()?.now_ns()
+    }
+
+    /// The servo holds the latest written goal after a cut-off or completed step.
+    pub(crate) fn gaze_commanded_state(&self) -> Option<crate::TrajectorySample> {
+        self.last_commanded_state.clone()
     }
 
     pub(crate) fn character_commanded_state(
@@ -225,19 +230,23 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         let elapsed = now_seconds - self.movement_started_at;
         let mut entered_settling = false;
 
-        let command = if let Some(sequence) = &self.motion_sequence {
-            Some(sequence.sample(elapsed)?)
+        let state = if let Some(sequence) = &self.motion_sequence {
+            Some(sequence.sample_state(elapsed)?)
         } else if let Some(trajectory) = &self.trajectory {
-            Some(trajectory.sample(elapsed)?)
+            Some(trajectory.sample_state(elapsed)?)
         } else {
             None
         };
+        let command = state.as_ref().map(|state| state.positions.clone());
         if let Some(command) = &command
             && let Err(error) = self.driver.write(command)
         {
             // The trajectory is sampled by time, so the next good cycle
             // resumes at the correct point without replaying this one.
             return self.record_bus_failure("write", error);
+        }
+        if state.is_some() {
+            self.last_commanded_state = state;
         }
         self.record_bus_success();
 
@@ -435,7 +444,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 return Ok(command_error("enable", "configure before enabling torque"));
             }
             let states = self.driver.activate()?;
-            self.last_completed_target = None;
+            self.last_commanded_state = None;
             self.mode = RuntimeMode::Holding;
             self.sequence += 1;
             self.publish_snapshot(states)?;
@@ -451,7 +460,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             self.trajectory = None;
             self.motion_sequence = None;
             self.driver.deactivate()?;
-            self.last_completed_target = None;
+            self.last_commanded_state = None;
             self.mode = RuntimeMode::Configured;
             self.refresh_snapshot()?;
             return Ok(json!({"ok": true, "command": "disable", "mode": "configured"}).to_string());
@@ -581,7 +590,6 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     }
 
     fn begin_movement(&mut self, name: &str, target: JointPositions) -> Result<u64> {
-        self.last_completed_target = None;
         let run_id = self.next_run_id;
         self.next_run_id = self
             .next_run_id
@@ -735,7 +743,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 state: phase,
             });
         }
-        self.last_completed_target = (phase == MovementPhase::Completed).then_some(movement.target);
+
         self.last_movement = Some(movement.status);
         self.mode = RuntimeMode::Holding;
         self.sync_lifecycle_to_snapshot();
@@ -903,8 +911,8 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     .ok_or_else(|| Error::InvalidState("No character spline to extend.".into()))?
                     .sample_state((now_seconds - self.movement_started_at).max(0.0))?,
             )
-        } else if definition.name == "hands_track" {
-            self.completed_hands_command()?
+        } else if definition.name == "gaze_performance" {
+            self.last_commanded_state.clone()
         } else {
             None
         };

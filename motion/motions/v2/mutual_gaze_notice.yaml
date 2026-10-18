@@ -8,17 +8,17 @@ motion:
   keyframes:
   - offsets:
       head_pitch_joint: -0.17453292519943295
-    duration: 0.75
+    duration: 0.4
     arrival: settle
     hold: 0.15
     marker: meet
   - offsets:
       head_pitch_joint: -0.17453292519943295
       head_roll_joint: 0.17453292519943295
-    duration: 0.9
+    duration: 0.6
     arrival: settle
     hold: 2.0
     marker: curious
   - offsets: {}
-    duration: 1.1
+    duration: 0.9
     arrival: settle

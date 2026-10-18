@@ -1051,6 +1051,10 @@ impl JointTrajectory {
     }
     // the following methods delegate to the underlying CompiledTrajectory to invoke
     // the corresponding methods on the compiled trajectory
+    pub fn sample_state(&self, elapsed_seconds: f64) -> Result<TrajectorySample> {
+        self.0.sample_state(elapsed_seconds)
+    }
+
     pub fn sample(&self, elapsed_seconds: f64) -> Result<JointPositions> {
         self.0.sample(elapsed_seconds)
     }

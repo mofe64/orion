@@ -53,7 +53,7 @@ The [model reference](../docs/vision-reference.md#model-installation) links the 
 | Off | Plain viewing without background detection |
 | Idle | Observations for enabled behaviors and conversation speaker following |
 | Faces | Face detection and ambient following |
-| Hands | Palm detection and work-area following |
+| Hands | Palm detection and hand following |
 
 Mode changes invalidate pending results. Camera privacy off closes capture in every mode. Neither hand presence nor a tracking selection enables torque or wakes a resting lamp.
 

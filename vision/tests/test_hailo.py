@@ -212,7 +212,7 @@ class SelectionTests(unittest.TestCase):
 
 class SchedulingTests(unittest.TestCase):
     def test_hailo_face_rate_status_and_cpu_palm_rate(self):
-        for mode, palm_backend, expected in (('faces', 'cpu', 15), ('hands', 'cpu', 5), ('hands', 'hailo', 15)):
+        for mode, palm_backend, expected in (('faces', 'cpu', 15), ('hands', 'cpu', 10), ('hands', 'hailo', 15)):
             with self.subTest(mode=mode, palms=palm_backend):
                 faces, palms, objects, client = Mock(), Mock(), Mock(), Mock()
                 faces.backend = objects.backend = 'hailo'; palms.backend = palm_backend
@@ -230,7 +230,7 @@ class SchedulingTests(unittest.TestCase):
                     eventually(lambda: pipeline.rate_hz == (10 if mode == 'faces' else expected))
                     palms.backend = 'cpu'
                     pipeline.submit(3, np.zeros((360, 640, 3), np.uint8))
-                    eventually(lambda: pipeline.rate_hz == (10 if mode == 'faces' else 5))
+                    eventually(lambda: pipeline.rate_hz == 10)
                 finally:
                     pipeline.close()
 

@@ -27,7 +27,7 @@ Palm detection uses the same NumPy anchor decoding and overlapping-box removal o
 | Work | Hailo detector | CPU detector |
 | --- | --- | --- |
 | Faces, idle or voice activity | 15 Hz | 10 Hz idle; 3 Hz during voice activity |
-| Palms, Hands mode | 15 Hz on HAILO8L | 5 Hz |
+| Palms, Hands mode | 15 Hz on HAILO8L | 10 Hz idle; 3 Hz during voice activity |
 | Background objects | Every 5 seconds | Every 60 seconds |
 
 Background object work requires an enabled object behavior and runtime permission. Hands mode runs the palm detector instead of face tracking.

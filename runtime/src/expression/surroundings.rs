@@ -81,8 +81,6 @@ pub(crate) struct Surroundings {
     pub novelty: Option<NovelObject>,
     #[serde(default)]
     pub hand_count: u8,
-    #[serde(default)]
-    pub hand_point: Option<[f64; 3]>,
 }
 #[derive(Debug)]
 pub(super) struct ObjectGlance {
@@ -151,7 +149,6 @@ impl CharacterCoordinator {
         core: &mut RuntimeCore<D>,
     ) -> Result<()> {
         self.surroundings.clear();
-        self.leave_hands(now, core)?;
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)
     }
@@ -181,7 +178,6 @@ impl CharacterCoordinator {
             && self.status.enabled
             && self.gaze.status().enabled
             && !self.gaze.is_stopped()
-            && !self.hands.blocks_gaze()
             && self.work.is_none()
             && !self.work_anchor
             && self.attention.is_none()
@@ -202,17 +198,10 @@ impl CharacterCoordinator {
         let boot = core
             .camera_boottime_ns()
             .ok_or_else(|| Error::InvalidState("V2 camera clock unavailable".into()))?;
-        if value.hand_count > 8
-            || value.hand_point.is_some_and(|p| {
-                !p.into_iter().all(f64::is_finite)
-                    || p[2].abs() > 1e-6
-                    || p[1] >= 0.0
-                    || p[0].hypot(p[1]) > 1.0
-            })
-            || value
-                .novelty
-                .as_ref()
-                .is_some_and(|object| !object.valid(value.capture_boottime_ns))
+        if value
+            .novelty
+            .as_ref()
+            .is_some_and(|object| !object.valid(value.capture_boottime_ns))
             || value.objects.len() > 32
             || value.faces.len() > 16
             || value.faces.iter().any(|face| {
@@ -255,9 +244,8 @@ impl CharacterCoordinator {
             self.surroundings.arrival.clear();
             self.surroundings.glance = None;
             self.settle_reaction(now, core)?;
-            return self.observe_hands(value.hand_count, value.hand_point, now, core);
+            return Ok(());
         }
-        self.leave_hands(now, core)?;
         if let Some(log) = &self.behaviour_log {
             log.presence(
                 value.faces.len(),
@@ -622,7 +610,7 @@ mod tests {
     ) -> Surroundings {
         serde_json::from_value(serde_json::json!({"capture_boottime_ns":stamp,
             "camera_on":camera,"tracking_mode":mode,"settings":{"presence_defers_rest":enabled},
-            "objects":[],"looking_away":null,"hand_count":hands,"hand_point":null,
+            "objects":[],"looking_away":null,"hand_count":hands,
             "faces":if face {serde_json::json!([{"track_id":1,"azimuth":0.,"elevation":0.,"frontal":false}])}else{serde_json::json!([])}
         })).unwrap()
     }

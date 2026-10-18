@@ -21,6 +21,10 @@ SCORE_THRESHOLD = SCORES['cpu']['palms']
 
 @dataclass
 class Palm:
+    category = "hand"
+    looking_at_orion = False
+    landmarks = ()
+
     box: list
     confidence: float
 

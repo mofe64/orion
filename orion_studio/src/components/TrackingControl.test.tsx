@@ -36,15 +36,9 @@ describe("Home tracking mode", () => {
     expect(html).toContain('role="status"'); expect(html).toContain("Tracking is off.");
     expect(html).toContain("Could not save");
   });
-  it("shows movement recovery failure even after switching to Faces", () => {
-    const html = renderToStaticMarkup(<TrackingControl {...props} mode="faces"
-      notice="Face tracking is on." runtimeFailure="Hands return was rejected: shoulder outside recovery tolerance" />);
-    expect(html).toContain("Tracking paused · recovery needed");
-    expect(html).toContain("Go to rest, then resume Orion");
-    expect(html).toContain("Technical details");
-    expect(html).toContain("shoulder outside recovery tolerance");
-    expect(html).not.toContain("Following faces");
-    expect(html).not.toContain("Face tracking is on.");
-    expect(html).not.toContain('disabled=""');
+  it("describes hand following without a recovery state", () => {
+    const html = renderToStaticMarkup(<TrackingControl {...props} mode="hands" />);
+    expect(html).toContain("Following hands");
+    expect(html).not.toContain("Go to rest");
   });
 });

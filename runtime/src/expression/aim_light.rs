@@ -67,7 +67,7 @@ impl CharacterCoordinator {
     ) {
         self.work = None;
         self.work_anchor = held;
-        core.set_character_comfort(held || self.hands.owns_anchor());
+        core.set_character_comfort(held);
         self.status.state = self.idle_state();
         self.reset_timers(now);
     }
