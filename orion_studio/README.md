@@ -149,8 +149,15 @@ Unavailable counters show no value. CPU percentages for services and processes c
 The **Orion** tab contains Orion's own controls. The **Home** tab contains household devices and setup.
 Follow the [Home setup procedure](../docs/quickstart.md#home-assistant) to install Home Assistant and create its owner account.
 
-Home groups device entities by room. Simple devices have on and off controls.
-**Orion can control** changes the Home Assistant assistant exposure setting for that entity.
-**Discovered** lists devices that need setup. **Add device** searches available integrations.
-Studio displays supported Home Assistant configuration forms. Unsupported forms provide **Continue in Home Assistant**.
-**Open Home Assistant** opens the full interface on port 8123.
+Home groups household devices by room. Each device includes its controls and useful readings.
+Select a room beside a device to move it. **No room yet** means the device has no room.
+
+**Voice control** lets Orion use the device. Manual controls work with voice control off.
+Orion cannot control locks, alarms, garage doors, gates, scenes or scripts.
+
+**Search for devices** refreshes nearby devices and current device states. **Add device** searches device brands.
+**Found nearby** lists devices that need setup. Cancelled devices remain in **Hidden** until you add them.
+
+Studio displays supported setup forms. Other steps provide **Continue in Home Assistant** and **Check setup**.
+**Open Home Assistant** opens the system browser at the connected lamp’s address on port 8123.
+The Mac and lamp must share a network that permits access to that port.

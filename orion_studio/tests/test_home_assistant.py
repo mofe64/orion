@@ -98,6 +98,7 @@ class FakeHA:
                         result = [{'entity_id': identifier, 'state': 'off', 'attributes': {'friendly_name': name, **attrs}} for identifier, name, attrs in (
                             ('light.desk', 'Desk', {}), ('light.second', 'Desk', {}), ('switch.private', 'Private', {}),
                             ('lock.front', 'Front door', {}), ('alarm_control_panel.home', 'Alarm', {}), ('cover.garage', 'Garage', {'device_class': 'garage'}))]
+                    elif kind == 'config_entries/get': result = []
                     elif kind == 'config_entries/flow/progress': result = [{'flow_id': 'flow_1', 'context': {'source': 'zeroconf'}}, {'flow_id': 'other', 'context': {'source': 'user'}}]
                     self.send_frame(b'ping', opcode=9)
                     self.send_frame({'id': message['id'], 'type': 'result', 'success': True, 'result': result})
@@ -154,6 +155,9 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(self.home.flow('POST', 'flow_1', {'password': 'integration-secret'})['data_schema'], self.fake.schema)
         self.home.flow('DELETE', 'flow_1')
         self.assertEqual(len(self.home.discovered()), 1)
+        self.assertTrue(self.home.discovered()[0]['hidden'])
+        self.assertFalse(any(method == 'DELETE' for method, _, _ in self.fake.calls))
+        self.assertEqual(self.home.flow('GET', 'flow_1')['flow_id'], 'flow_1')
         with self.assertRaises(HomeError): self.home.flow('GET', '../auth')
     def test_voice_allowlist_name_ambiguity_refused_domains_and_single_target(self):
         self.connect()
@@ -215,3 +219,112 @@ class HomeTests(unittest.TestCase):
             self.assertNotIn('TEMP-SECRET', str(error.exception))
         finally:
             server.shutdown(); server.server_close(); thread.join()
+
+
+class HouseholdTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.home = HomeAssistant(data=Path(self.temp.name))
+        self.fixture = json.loads((Path(__file__).parent / 'fixtures/home_assistant.json').read_text())
+        self.peer = Mock()
+        def command(kind, **fields):
+            return {'config/device_registry/list': self.fixture['devices'], 'config/entity_registry/list': self.fixture['entities'],
+                    'config/area_registry/list': self.fixture['areas'], 'get_states': self.fixture['states'],
+                    'homeassistant/expose_entity/list': {'exposed_entities': self.fixture['exposed']},
+                    'config_entries/flow/progress': self.fixture['discovered'], 'config_entries/get': self.fixture.get('entries', [])}.get(kind)
+        self.peer.command.side_effect = command
+        self.home.session = Mock(return_value=self.peer)
+        self.home.rest = Mock(return_value={})
+
+    def test_real_household_filtering_grouping_and_voice_use_same_inventory(self):
+        inventory = self.home.devices()
+        identifiers = {entity['entity_id'] for area in inventory['areas'] for entity in area['entities']}
+        expected = {'light.reading_lamp', 'sensor.lamp_power', 'media_player.tv', 'climate.living', 'cover.blind',
+                    'fan.bedside', 'switch.coffee', 'sensor.bedroom_temperature', 'sensor.bedroom_battery', 'lock.front_door', 'cover.garage'}
+        self.assertEqual(identifiers, expected)
+        self.assertEqual(len(inventory['devices']), 9)
+        lamp = next(device for device in inventory['devices'] if device['id'] == 'lamp')
+        self.assertEqual(len(lamp['entities']), 2)
+        self.assertEqual(next(device for device in inventory['devices'] if device['id'] == 'plug')['area'], 'No room yet')
+        for state in self.fixture['states']:
+            self.fixture['exposed'][state['entity_id']] = {'conversation': True}
+        self.assertEqual({entry['entity_id'] for entry in self.home.voice({'action': 'list'})['devices']}, expected)
+        with self.assertRaises(HomeError): self.home.voice({'action': 'control', 'entity': 'switch.lamp_config', 'command': 'on'})
+        self.home.rest.assert_not_called()
+
+    def test_device_access_only_updates_safe_controls(self):
+        self.fixture['entities'].append({'entity_id': 'switch.lamp_socket', 'device_id': 'lamp', 'platform': 'hue'})
+        self.fixture['states'].append({'entity_id': 'switch.lamp_socket', 'state': 'off', 'attributes': {}})
+        self.home.expose({'device_id': 'lamp', 'exposed': True})
+        self.peer.command.assert_called_with('homeassistant/expose_entity', assistants=['conversation'], entity_ids=['light.reading_lamp', 'switch.lamp_socket'], should_expose=True)
+        for identifier in ('door', 'garage', 'weather', 'missing'):
+            with self.assertRaises(HomeError): self.home.expose({'device_id': identifier, 'exposed': True})
+        with self.assertRaises(HomeError): self.home.expose({'entity_id': 'switch.lamp_config', 'exposed': True})
+
+    def test_room_assignment_updates_device_and_clears_entity_overrides(self):
+        self.home.room({'device_id': 'lamp', 'area_id': 'bedroom'})
+        self.assertTrue(any(call.args[0] == 'config/device_registry/update' and call.kwargs == {'device_id': 'lamp', 'area_id': 'bedroom'} for call in self.peer.command.call_args_list))
+        self.peer.command.assert_called_with('config/entity_registry/update', entity_id='sensor.lamp_power', area_id=None)
+        self.home.room({'device_id': 'lamp', 'area_id': None})
+        with self.assertRaises(HomeError): self.home.room({'device_id': 'lamp', 'area_id': 'missing'})
+        with self.assertRaises(HomeError): self.home.room({'device_id': 'missing', 'area_id': None})
+
+    def test_entities_on_one_device_share_the_same_room_and_service_devices_are_hidden(self):
+        for device in self.fixture['devices']:
+            if device['id'] == 'lamp': device['area_id'] = None
+            if device['id'] == 'weather': device['entry_type'] = 'service'
+        for entity in self.fixture['entities']:
+            if entity['entity_id'] == 'light.reading_lamp': entity['area_id'] = 'living'
+            if entity['entity_id'] == 'sensor.lamp_power': entity['area_id'] = 'bedroom'
+        result = self.home.devices()
+        lamp = next(device for device in result['devices'] if device['id'] == 'lamp')
+        self.assertEqual({entity['area'] for entity in lamp['entities']}, {lamp['area']})
+        self.assertNotIn('weather', {device['id'] for device in result['devices']})
+
+    def test_manual_control_does_not_require_voice_permission_and_validates_settings(self):
+        entities = [entity for area in self.home.devices()['areas'] for entity in area['entities']]
+        television = next(entity for entity in entities if entity['entity_id'] == 'media_player.tv')
+        self.assertFalse(television['exposed'])
+        self.home.control(television, {'command': 'volume', 'volume': 35})
+        self.home.rest.assert_called_with('/api/services/media_player/volume_set', 'POST', {'entity_id': 'media_player.tv', 'volume_level': .35})
+        for value in (-1, 101, True, float('nan'), '30'):
+            with self.assertRaises(HomeError): self.home.control(television, {'command': 'volume', 'volume': value})
+        with self.assertRaises(HomeError): self.home.control(television, {'command': 'volume'})
+        for identifier in ('cover.garage', 'lock.front_door'):
+            with self.assertRaises(HomeError): self.home.control(next(entity for entity in entities if entity['entity_id'] == identifier), {'command': 'open'})
+
+    def test_manual_controls_route_through_the_gateway_for_each_supported_type(self):
+        gateway = OrionGateway(Mock()); gateway.home = self.home
+        for identifier, command, extra, service in (
+            ('light.reading_lamp', 'on', {'brightness': 60}, 'light/turn_on'),
+            ('switch.coffee', 'on', {}, 'switch/turn_on'), ('fan.bedside', 'off', {}, 'fan/turn_off'),
+            ('climate.living', 'temperature', {'temperature': 22}, 'climate/set_temperature'),
+            ('cover.blind', 'open', {}, 'cover/open_cover'), ('cover.blind', 'close', {}, 'cover/close_cover'),
+            ('cover.blind', 'stop', {}, 'cover/stop_cover'), ('media_player.tv', 'play', {}, 'media_player/media_play'),
+            ('media_player.tv', 'pause', {}, 'media_player/media_pause'), ('media_player.tv', 'off', {}, 'media_player/turn_off')):
+            with self.subTest(identifier=identifier, command=command):
+                gateway.home_request('POST', 'control', {'entity_id': identifier, 'command': command, **extra})
+                self.assertEqual(self.home.rest.call_args.args[0], '/api/services/' + service)
+        gateway.home_request('POST', 'room', {'device_id': 'lamp', 'area_id': 'bedroom'})
+        with self.assertRaises(GatewayError): gateway.home_request('POST', 'control', {'entity_id': 'switch.lamp_config', 'command': 'on'})
+
+    def test_cancel_preserves_discovery_across_gateway_restart_and_ignored_can_restart(self):
+        self.home.flow('DELETE', 'tv_setup')
+        self.home.rest.assert_not_called()
+        self.assertTrue(self.home.discovered()[0]['hidden'])
+        again = HomeAssistant(data=Path(self.temp.name)); again.session = self.home.session
+        self.assertTrue(again.discovered()[0]['hidden'])
+        self.home.rest.return_value = {'type': 'form', 'flow_id': 'tv_setup'}
+        self.assertEqual(self.home.flow('GET', 'tv_setup')['flow_id'], 'tv_setup')
+        self.fixture['entries'] = [{'source': 'ignore', 'entry_id': 'ignored_tv', 'domain': 'samsungtv', 'title': 'Bedroom TV'}]
+        self.assertEqual(self.home.discovered()[-1]['ignored_entry_id'], 'ignored_tv')
+        self.home.flow('POST', payload={'handler': 'samsungtv', 'ignored_entry_id': 'ignored_tv'})
+        self.home.rest.assert_any_call('/api/config/config_entries/entry/ignored_tv', 'DELETE')
+        self.home.rest.assert_called_with('/api/config/config_entries/flow', 'POST', {'handler': 'samsungtv'})
+        with self.assertRaises(HomeError): self.home.flow('POST', payload={'handler': 'hue', 'ignored_entry_id': 'ignored_tv'})
+
+    def test_completed_setup_does_not_return_device_credentials(self):
+        self.home.rest.return_value = {'type': 'create_entry', 'data': {'password': 'DEVICE-SECRET'}, 'result': {'entry_id': 'lamp'}}
+        result = self.home.flow('POST', payload={'handler': 'hue'})
+        self.assertNotIn('DEVICE-SECRET', json.dumps(result))
+        self.assertEqual(result['result']['entry_id'], 'lamp')

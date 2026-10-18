@@ -199,6 +199,9 @@ The container restarts unless stopped. It mounts `/run/dbus` read-only for Bluet
 
 Home Assistant stores its configuration in `~/.local/share/orion/home-assistant`. Installation metadata uses `~/.local/share/orion/home-assistant-install.json`.
 The gateway saves its Home Assistant access token in `~/.config/orion/home-assistant.json` with mode `0600`.
+
+The gateway stores hidden device setup IDs in `~/.local/share/orion/home-hidden.json`. Cancelled discoveries remain available in Home Assistant.
+
 Studio receives no Home Assistant token. Onboarding uses the Pi timezone and the location from `~/.local/share/orion/weather.json`, when set.
 Home Assistant analytics remain off during Studio onboarding.
 

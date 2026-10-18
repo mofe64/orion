@@ -1,0 +1,574 @@
+{
+  "devices": [
+    {
+      "id": "lamp",
+      "name": "Reading lamp",
+      "area_id": "living",
+      "config_entries": [
+        "lamp"
+      ]
+    },
+    {
+      "id": "tv",
+      "name": "Living room TV",
+      "area_id": "living",
+      "config_entries": [
+        "tv"
+      ]
+    },
+    {
+      "id": "thermostat",
+      "name": "Heating",
+      "area_id": "living",
+      "config_entries": [
+        "thermostat"
+      ]
+    },
+    {
+      "id": "blind",
+      "name": "Window blind",
+      "area_id": "bedroom",
+      "config_entries": [
+        "blind"
+      ]
+    },
+    {
+      "id": "fan",
+      "name": "Bedside fan",
+      "area_id": "bedroom",
+      "config_entries": [
+        "fan"
+      ]
+    },
+    {
+      "id": "plug",
+      "name": "Coffee machine",
+      "area_id": null,
+      "config_entries": [
+        "plug"
+      ]
+    },
+    {
+      "id": "weather",
+      "name": "Room sensor",
+      "area_id": "bedroom",
+      "config_entries": [
+        "weather"
+      ]
+    },
+    {
+      "id": "door",
+      "name": "Front door",
+      "area_id": "hall",
+      "config_entries": [
+        "door"
+      ]
+    },
+    {
+      "id": "garage",
+      "name": "Garage door",
+      "area_id": "hall",
+      "config_entries": [
+        "garage"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "light.reading_lamp",
+      "device_id": "lamp",
+      "platform": "hue",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.lamp_power",
+      "device_id": "lamp",
+      "platform": "hue",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "media_player.tv",
+      "device_id": "tv",
+      "platform": "samsungtv",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "climate.living",
+      "device_id": "thermostat",
+      "platform": "tado",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "cover.blind",
+      "device_id": "blind",
+      "platform": "matter",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "fan.bedside",
+      "device_id": "fan",
+      "platform": "matter",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "switch.coffee",
+      "device_id": "plug",
+      "platform": "tplink",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.bedroom_temperature",
+      "device_id": "weather",
+      "platform": "matter",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.bedroom_battery",
+      "device_id": "weather",
+      "platform": "matter",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "lock.front_door",
+      "device_id": "door",
+      "platform": "matter",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "cover.garage",
+      "device_id": "garage",
+      "platform": "myq",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sun.sun",
+      "device_id": null,
+      "platform": "sun",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.sun_next_dawn",
+      "device_id": null,
+      "platform": "sun",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.sun_next_dusk",
+      "device_id": null,
+      "platform": "sun",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.backup_state",
+      "device_id": null,
+      "platform": "backup",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.backup_last_successful",
+      "device_id": null,
+      "platform": "backup",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "person.owner",
+      "device_id": null,
+      "platform": "person",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "zone.home",
+      "device_id": null,
+      "platform": "zone",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "todo.shopping_list",
+      "device_id": null,
+      "platform": "todo",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "tts.google_translate_en_com",
+      "device_id": null,
+      "platform": "tts",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "conversation.home_assistant",
+      "device_id": null,
+      "platform": "conversation",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "update.home_assistant",
+      "device_id": null,
+      "platform": "update",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "event.backup",
+      "device_id": null,
+      "platform": "backup",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "scene.movie",
+      "device_id": null,
+      "platform": "scene",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "script.leave",
+      "device_id": null,
+      "platform": "script",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "sensor.lamp_signal",
+      "device_id": "lamp",
+      "platform": "hue",
+      "entity_category": "diagnostic",
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "switch.lamp_config",
+      "device_id": "lamp",
+      "platform": "hue",
+      "entity_category": "config",
+      "disabled_by": null,
+      "hidden_by": null
+    },
+    {
+      "entity_id": "light.hidden",
+      "device_id": "lamp",
+      "platform": "hue",
+      "entity_category": null,
+      "disabled_by": null,
+      "hidden_by": "user"
+    },
+    {
+      "entity_id": "switch.disabled",
+      "device_id": "plug",
+      "platform": "tplink",
+      "entity_category": null,
+      "disabled_by": "user",
+      "hidden_by": null
+    }
+  ],
+  "areas": [
+    {
+      "area_id": "living",
+      "name": "Living room"
+    },
+    {
+      "area_id": "bedroom",
+      "name": "Bedroom"
+    },
+    {
+      "area_id": "hall",
+      "name": "Hallway"
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "light.reading_lamp",
+      "state": "on",
+      "attributes": {
+        "friendly_name": "Reading lamp",
+        "brightness": 166,
+        "supported_color_modes": [
+          "brightness"
+        ],
+        "supported_features": 0
+      }
+    },
+    {
+      "entity_id": "sensor.lamp_power",
+      "state": "6.2",
+      "attributes": {
+        "friendly_name": "Power",
+        "device_class": "power",
+        "unit_of_measurement": "W"
+      }
+    },
+    {
+      "entity_id": "media_player.tv",
+      "state": "playing",
+      "attributes": {
+        "friendly_name": "Living room TV",
+        "volume_level": 0.35,
+        "supported_features": 152461
+      }
+    },
+    {
+      "entity_id": "climate.living",
+      "state": "heat",
+      "attributes": {
+        "friendly_name": "Heating",
+        "temperature": 21,
+        "current_temperature": 20.5,
+        "min_temp": 5,
+        "max_temp": 30,
+        "target_temp_step": 0.5,
+        "temperature_unit": "\u00b0C"
+      }
+    },
+    {
+      "entity_id": "cover.blind",
+      "state": "open",
+      "attributes": {
+        "friendly_name": "Window blind",
+        "current_position": 100,
+        "supported_features": 11,
+        "device_class": "blind"
+      }
+    },
+    {
+      "entity_id": "fan.bedside",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Bedside fan",
+        "supported_features": 48
+      }
+    },
+    {
+      "entity_id": "switch.coffee",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Coffee machine"
+      }
+    },
+    {
+      "entity_id": "sensor.bedroom_temperature",
+      "state": "21",
+      "attributes": {
+        "friendly_name": "Temperature",
+        "device_class": "temperature",
+        "unit_of_measurement": "\u00b0C"
+      }
+    },
+    {
+      "entity_id": "sensor.bedroom_battery",
+      "state": "87",
+      "attributes": {
+        "friendly_name": "Battery",
+        "device_class": "battery",
+        "unit_of_measurement": "%"
+      }
+    },
+    {
+      "entity_id": "lock.front_door",
+      "state": "locked",
+      "attributes": {
+        "friendly_name": "Front door"
+      }
+    },
+    {
+      "entity_id": "cover.garage",
+      "state": "closed",
+      "attributes": {
+        "friendly_name": "Garage door",
+        "device_class": "garage"
+      }
+    },
+    {
+      "entity_id": "sun.sun",
+      "state": "above_horizon",
+      "attributes": {
+        "friendly_name": "Sun"
+      }
+    },
+    {
+      "entity_id": "sensor.sun_next_dawn",
+      "state": "2026-10-19T06:31:00+00:00",
+      "attributes": {
+        "friendly_name": "Next dawn"
+      }
+    },
+    {
+      "entity_id": "sensor.sun_next_dusk",
+      "state": "2026-10-18T17:56:00+00:00",
+      "attributes": {
+        "friendly_name": "Next dusk"
+      }
+    },
+    {
+      "entity_id": "sensor.backup_state",
+      "state": "idle",
+      "attributes": {
+        "friendly_name": "Backup state"
+      }
+    },
+    {
+      "entity_id": "sensor.backup_last_successful",
+      "state": "2026-10-18T03:12:00+00:00",
+      "attributes": {
+        "friendly_name": "Last successful backup"
+      }
+    },
+    {
+      "entity_id": "person.owner",
+      "state": "home",
+      "attributes": {
+        "friendly_name": "Owner"
+      }
+    },
+    {
+      "entity_id": "zone.home",
+      "state": "1",
+      "attributes": {
+        "friendly_name": "Home"
+      }
+    },
+    {
+      "entity_id": "todo.shopping_list",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Shopping list"
+      }
+    },
+    {
+      "entity_id": "tts.google_translate_en_com",
+      "state": "unknown",
+      "attributes": {
+        "friendly_name": "Google Translate"
+      }
+    },
+    {
+      "entity_id": "conversation.home_assistant",
+      "state": "unknown",
+      "attributes": {
+        "friendly_name": "Home Assistant"
+      }
+    },
+    {
+      "entity_id": "update.home_assistant",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Home Assistant update"
+      }
+    },
+    {
+      "entity_id": "event.backup",
+      "state": "2026-10-18T03:12:00+00:00",
+      "attributes": {
+        "friendly_name": "Automatic backup"
+      }
+    },
+    {
+      "entity_id": "scene.movie",
+      "state": "unknown",
+      "attributes": {
+        "friendly_name": "Movie night"
+      }
+    },
+    {
+      "entity_id": "script.leave",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Leave home"
+      }
+    },
+    {
+      "entity_id": "sensor.lamp_signal",
+      "state": "-51",
+      "attributes": {
+        "friendly_name": "Signal strength",
+        "device_class": "signal_strength"
+      }
+    },
+    {
+      "entity_id": "switch.lamp_config",
+      "state": "on",
+      "attributes": {
+        "friendly_name": "Power recovery"
+      }
+    },
+    {
+      "entity_id": "light.hidden",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Hidden lamp"
+      }
+    },
+    {
+      "entity_id": "switch.disabled",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Disabled switch"
+      }
+    }
+  ],
+  "exposed": {
+    "light.reading_lamp": {
+      "conversation": true
+    },
+    "cover.blind": {
+      "conversation": true
+    }
+  },
+  "discovered": [
+    {
+      "flow_id": "tv_setup",
+      "handler": "samsungtv",
+      "context": {
+        "source": "ssdp",
+        "title_placeholders": {
+          "name": "Bedroom TV"
+        }
+      }
+    }
+  ]
+}

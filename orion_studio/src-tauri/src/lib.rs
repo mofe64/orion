@@ -6,6 +6,7 @@ mod settings;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(orion_service::Backend)
         .invoke_handler(tauri::generate_handler![
             coordinator::start_voice_worker,

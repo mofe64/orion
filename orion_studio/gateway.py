@@ -367,6 +367,8 @@ class OrionGateway:
                 result = self.home.ws('homeassistant/expose_entity/list')
             elif path == 'access' and method == 'POST':
                 result = self.home.expose(payload)
+            elif path == 'room' and method == 'POST':
+                result = self.home.room(payload)
             elif path == 'control' and method == 'POST':
                 if not isinstance(payload, dict):
                     raise HomeError('Choose a home entity.', 400)

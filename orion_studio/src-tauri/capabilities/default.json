@@ -3,5 +3,8 @@
   "identifier": "default",
   "description": "Core permissions for the Orion Studio desktop window.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "http://*" }, { "url": "https://*" }] }
+  ]
 }

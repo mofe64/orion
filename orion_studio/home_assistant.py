@@ -19,6 +19,12 @@ CLIENT_ID = 'http://127.0.0.1:7447/'
 DISCOVERY = {'zeroconf', 'ssdp', 'dhcp', 'bluetooth', 'homekit', 'homekit_controller'}
 # Scenes and scripts can run lock, alarm or garage actions, so voice cannot start them.
 DOMAINS = {'light', 'switch', 'fan', 'climate', 'cover', 'media_player'}
+VIRTUAL = {'sun', 'backup', 'person', 'zone', 'todo', 'tts', 'conversation', 'update', 'event', 'scene', 'script', 'automation', 'input_boolean', 'input_number', 'input_text', 'input_select', 'schedule', 'timer', 'counter', 'template', 'group'}
+READINGS = {'temperature', 'humidity', 'battery', 'power', 'energy', 'illuminance', 'pressure', 'carbon_dioxide', 'carbon_monoxide', 'pm25', 'moisture', 'motion', 'occupancy', 'opening', 'door', 'window', 'smoke', 'water', 'gas'}
+
+
+def can_control(entity):
+    return entity['domain'] in DOMAINS and not (entity['domain'] == 'cover' and entity.get('attributes', {}).get('device_class') in ('garage', 'garage_door', 'gate'))
 
 
 class HomeError(Exception):
@@ -141,6 +147,7 @@ class HomeAssistant:
         self.data = data or Path.home() / '.local/share/orion'
         self.host, self.port = host, port
         self.setup_lock = threading.Lock()
+        self.discovery_lock = threading.RLock()
 
     def credentials(self):
         try:
@@ -294,25 +301,77 @@ class HomeAssistant:
             identifier = state['entity_id']
             registry = by_entity.get(identifier, {})
             device = by_device.get(registry.get('device_id'), {})
-            area_id = registry.get('area_id') or device.get('area_id')
-            room = by_area.get(area_id, 'Unassigned')
+            area_id = device.get('area_id') or registry.get('area_id')
+            room = by_area.get(area_id, 'No room yet')
             attributes = state.get('attributes', {})
+            domain = identifier.split('.')[0]
+            if (registry.get('entity_category') in ('config', 'diagnostic') or registry.get('hidden_by') or registry.get('disabled_by')
+                    or device.get('disabled_by') or device.get('entry_type') == 'service' or domain in VIRTUAL or registry.get('platform') in VIRTUAL):
+                continue
+            if domain not in DOMAINS | {'lock', 'alarm_control_panel'} and not (
+                    domain in ('sensor', 'binary_sensor') and device and attributes.get('device_class') in READINGS):
+                continue
             entity = {'entity_id': identifier, 'name': registry.get('name') or attributes.get('friendly_name') or registry.get('original_name') or identifier,
                       'area': room, 'area_id': area_id, 'device_id': device.get('id'), 'domain': identifier.split('.')[0],
                       'state': state['state'], 'attributes': attributes, 'exposed': exposed.get(identifier, {}).get('conversation') is True}
             rooms.setdefault(room, []).append(entity)
+        groups = {}
+        for room, items in rooms.items():
+            for entity in items:
+                key = entity['device_id'] or entity['entity_id']
+                device = by_device.get(key, {})
+                group = groups.setdefault(key, {'id': key, 'name': device.get('name_by_user') or device.get('name') or entity['name'],
+                    'area': room, 'area_id': entity['area_id'], 'config_entries': device.get('config_entries', []), 'entities': []})
+                group['entities'].append(entity)
+        rooms = {}
+        for group in groups.values():
+            for entity in group['entities']:
+                entity.update(area=group['area'], area_id=group['area_id'])
+                rooms.setdefault(group['area'], []).append(entity)
         return {'areas': [{'name': room, 'entities': items} for room, items in sorted(rooms.items())],
-                'devices': devices, 'entities': entities, 'area_registry': areas}
+                'devices': sorted(groups.values(), key=lambda device: device['name'].casefold()), 'area_registry': areas}
 
     def expose(self, payload):
-        if not isinstance(payload, dict) or set(payload) != {'entity_id', 'exposed'} or type(payload['exposed']) is not bool:
-            raise HomeError('Choose an entity and an access setting.', 400)
-        identifier = entity_id(payload['entity_id'])
-        self.ws('homeassistant/expose_entity', assistants=['conversation'], entity_ids=[identifier], should_expose=payload['exposed'])
-        return {'entity_id': identifier, 'exposed': payload['exposed']}
+        if not isinstance(payload, dict) or set(payload) not in ({'entity_id', 'exposed'}, {'device_id', 'exposed'}) or type(payload['exposed']) is not bool:
+            raise HomeError('Choose a device and a voice control setting.', 400)
+        devices = self.devices()
+        entries = [entity for device in devices['devices'] for entity in device['entities']
+                   if (device['id'] == payload.get('device_id') or entity['entity_id'] == payload.get('entity_id')) and can_control(entity)]
+        if not entries:
+            raise HomeError('Voice control is not available for this device.', 400)
+        self.ws('homeassistant/expose_entity', assistants=['conversation'], entity_ids=[entry['entity_id'] for entry in entries], should_expose=payload['exposed'])
+        return {'exposed': payload['exposed']}
+
+    def room(self, payload):
+        if not isinstance(payload, dict) or set(payload) != {'device_id', 'area_id'}:
+            raise HomeError('Choose a device and a room.', 400)
+        current = self.devices()
+        device = next((item for item in current['devices'] if item['id'] == payload['device_id']), None)
+        area = payload['area_id']
+        if device is None or area is not None and area not in {item['area_id'] for item in current['area_registry']}:
+            raise HomeError('Choose an available device and room.', 400)
+        if any(entity.get('device_id') for entity in device['entities']):
+            self.ws('config/device_registry/update', device_id=device['id'], area_id=area)
+            for entity in device['entities']:
+                self.ws('config/entity_registry/update', entity_id=entity['entity_id'], area_id=None)
+        else:
+            self.ws('config/entity_registry/update', entity_id=device['id'], area_id=area)
+        return {'ok': True}
+
+    def hidden_discoveries(self):
+        try:
+            return set(json.loads((self.data / 'home-hidden.json').read_text()))
+        except (OSError, ValueError, TypeError):
+            return set()
 
     def discovered(self):
-        return [flow for flow in self.ws('config_entries/flow/progress') if flow.get('context', {}).get('source') in DISCOVERY]
+        with self.discovery_lock:
+            hidden = self.hidden_discoveries()
+            found = [{**flow, 'hidden': flow['flow_id'] in hidden} for flow in self.ws('config_entries/flow/progress') if flow.get('context', {}).get('source') in DISCOVERY]
+            ignored = [{'type': 'ignored', 'flow_id': 'ignored-' + entry['entry_id'], 'ignored_entry_id': entry['entry_id'],
+                        'handler': entry['domain'], 'title': entry['title'], 'hidden': True}
+                       for entry in self.ws('config_entries/get') if entry.get('source') == 'ignore']
+            return found + ignored
 
     def flow(self, method, identifier=None, payload=None):
         path = '/api/config/config_entries/flow'
@@ -320,9 +379,25 @@ class HomeAssistant:
             if not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}', identifier):
                 raise HomeError('Invalid Home Assistant flow.', 400)
             path += '/' + identifier
-        elif method != 'POST' or not isinstance(payload, dict) or set(payload) != {'handler'} or not isinstance(payload['handler'], str):
-            raise HomeError('Choose an integration.', 400)
-        return self.rest(path, method, payload)
+        elif method != 'POST' or not isinstance(payload, dict) or set(payload) not in ({'handler'}, {'handler', 'ignored_entry_id'}) or not isinstance(payload['handler'], str):
+            raise HomeError('Choose a device brand.', 400)
+        with self.discovery_lock:
+            if identifier and method == 'DELETE':
+                found = next((item for item in self.discovered() if item['flow_id'] == identifier), None)
+                if found:
+                    hidden = self.hidden_discoveries() | {identifier}
+                    private_json(self.data / 'home-hidden.json', sorted(hidden))
+                    return {'hidden': True}
+            if not identifier and 'ignored_entry_id' in payload:
+                entry = next((item for item in self.discovered() if item.get('ignored_entry_id') == payload['ignored_entry_id'] and item['handler'] == payload['handler']), None)
+                if not entry:
+                    raise HomeError('Search for this device again.', 404)
+                self.rest('/api/config/config_entries/entry/' + quote(entry['ignored_entry_id'], safe=''), 'DELETE')
+                payload = {'handler': payload['handler']}
+            result = self.rest(path, method, payload)
+            if isinstance(result, dict):
+                result.pop('data', None)
+            return result
 
     def voice(self, payload):
         if not isinstance(payload, dict) or payload.get('action') not in ('list', 'state', 'control'):
@@ -338,7 +413,7 @@ class HomeAssistant:
         area = payload.get('area')
         matches = [entity for entity in entries if (entity['entity_id'].casefold() == target.casefold() or entity['name'].casefold() == target.casefold()) and (not area or entity['area'].casefold() == str(area).casefold())]
         if len(matches) != 1:
-            raise HomeError('Which device do you mean? Please give its room.' if matches else 'That device is not available to Orion. Enable Orion can control in Home.', 409)
+            raise HomeError('Which device do you mean? Please give its room.' if matches else 'That device is not available to Orion. Turn on Voice control in Home.', 409)
         entity = matches[0]
         if payload['action'] == 'state':
             return {'ok': True, 'device': summary(entity)}
@@ -356,7 +431,7 @@ class HomeAssistant:
                    'fan': {'on': 'turn_on', 'off': 'turn_off', 'toggle': 'toggle'},
                    'climate': {'on': 'turn_on', 'off': 'turn_off', 'temperature': 'set_temperature'},
                    'cover': {'open': 'open_cover', 'close': 'close_cover', 'stop': 'stop_cover', 'position': 'set_cover_position'},
-                   'media_player': {'on': 'turn_on', 'off': 'turn_off', 'play': 'media_play', 'pause': 'media_pause', 'stop': 'media_stop'}}
+                   'media_player': {'on': 'turn_on', 'off': 'turn_off', 'play': 'media_play', 'pause': 'media_pause', 'stop': 'media_stop', 'volume': 'volume_set'}}
         service = actions[domain].get(action)
         if service is None:
             raise HomeError('That action is not supported for this home device.', 400)
@@ -364,12 +439,14 @@ class HomeAssistant:
         temperature_setting = ('temperature', 'color_temp_kelvin', 1000, 40000, 'light') if domain == 'light' else ('temperature', 'temperature', -50, 100, 'climate')
         for field, destination, minimum, maximum, allowed in (
             ('brightness', 'brightness_pct', 0, 100, 'light'), temperature_setting,
-            ('position', 'position', 0, 100, 'cover')):
+            ('position', 'position', 0, 100, 'cover'), ('volume', 'volume_level', 0, 100, 'media_player')):
             value = payload.get(field)
             if value is not None:
                 if domain != allowed or isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not minimum <= value <= maximum:
                     raise HomeError('That device setting is invalid.', 400)
-                data[destination] = value
+                data[destination] = value / 100 if field == 'volume' else value
+        if (action == 'volume' and 'volume_level' not in data) or (action == 'temperature' and 'temperature' not in data):
+            raise HomeError('Choose a setting for this device.', 400)
         colour = payload.get('colour')
         if colour is not None:
             if domain != 'light' or not isinstance(colour, str) or not re.fullmatch(r'[a-zA-Z ]{1,40}', colour):
