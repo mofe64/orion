@@ -134,6 +134,14 @@ V2 wake attention uses visual speaker selection. USB direction settings do not s
 
 `--rest-after-seconds` sets the inactivity interval. Its default is 1800 seconds. Lamp mode disables automatic rest. See [rest behavior](system-architecture.md#automatic-rest-and-waking).
 
+## Studio light controls
+
+The Lamp panel in Studio follows the setting on Orion. Voice changes and changes from other Studio windows appear automatically.
+The controls show the chosen power, brightness, mood, colours and effect. A fade shows its remaining time.
+
+Temporary speech, idle and scene lighting does not replace the chosen setting. Studio shows a short message during these changes.
+Brightness changes keep the chosen colours and effect. The power switch keeps the chosen brightness and palette.
+
 ## Systemd services
 
 Systemd manages Linux background processes.
@@ -145,6 +153,7 @@ Systemd manages Linux background processes.
 | `orion-voice-stack` | Agent, coordinator and speech workers |
 | `orion-studio-gateway` | Authenticated external controls |
 | `orion-vision` | V2 camera and detection |
+| `orion-spotify` | Spotify Connect discovery and music input |
 | `orion-neopixel-pin` | GPIO12 lighting setup |
 | `orion-wifi-fallback.timer` | Optional network recovery checks |
 

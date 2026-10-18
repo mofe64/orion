@@ -92,11 +92,7 @@ It installs the boot overlay, module options and GPIO permissions. `orion-neopix
 
 `oriond` owns the device while the daemon runs. Named scene effects provide normal animated lighting.
 
-The Lamp panel in Studio follows the setting on Orion. Voice changes and changes from other Studio windows appear automatically.
-The controls show the chosen power, brightness, mood, colours and effect. A fade shows its remaining time.
-
-Temporary speech, idle and scene lighting does not replace the chosen setting. Studio shows a short message during these changes.
-Brightness changes keep the chosen colours and effect. The power switch keeps the chosen brightness and palette.
+See [Studio light controls](../../docs/configuration.md#studio-light-controls) for shared light settings and temporary lighting changes.
 
 CAUTION: High output can overload the LED supply. Start with low channel values when checking wiring.
 

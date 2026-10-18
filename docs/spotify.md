@@ -6,7 +6,7 @@ Spotify Premium is required. Playing from the Spotify app does not require setup
 ## Play from Spotify
 
 1. Turn Orion on.
-2. Connect your phone or computer to Orion’s Wi-Fi network.
+2. Connect your phone or computer to the same Wi-Fi network as Orion.
 3. Open Spotify.
 4. Start a song.
 5. Open the speaker list.

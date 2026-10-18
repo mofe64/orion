@@ -57,7 +57,7 @@ The build copies Git's file inventory into a temporary source directory. Ignored
 
 The unpacked payload uses a Linux Docker volume. This preserves file names that differ only in letter case on macOS.
 
-The build runs [service startup checks](../tests/test_release_services.py) with separate release and catalog folders. The fixture has no Git metadata or `AGENTS.md`. It checks all five managed services and compiles a trajectory through the gateway. Device access and inference use test substitutes.
+The build runs [service startup checks](../tests/test_release_services.py) with separate release and catalog folders. The fixture has no Git metadata or `AGENTS.md`. It checks all six managed services and compiles a trajectory through the gateway. Device access and inference use test substitutes.
 
 ## Install and deploy
 
