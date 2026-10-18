@@ -102,7 +102,7 @@ export function CameraCard({ connection, overlay = true, onEnabledChange }: {
       const saved = await setCameraEnabled(connection, desired ?? !enabled);
       if (generation !== epoch.current) return;
       setEnabled(saved.camera_enabled); onEnabledChange?.(saved.camera_enabled); setRevision(value => value + 1);
-    } catch (value) { if (generation === epoch.current) setError(value instanceof Error ? value.message : "Couldn’t change camera privacy."); }
+    } catch (value) { if (generation === epoch.current) setError(value instanceof Error ? value.message : "Couldn’t turn the camera on or off."); }
     finally { if (generation === epoch.current) setPending(false); }
   };
   const snapshot = async () => {
@@ -123,7 +123,7 @@ export function CameraCard({ connection, overlay = true, onEnabledChange }: {
       {state !== "live" && <div className="camera-placeholder">{connection ? labels[state] : "Connect Orion to view its camera"}</div>}</div>
     <div className="camera-actions"><p role="status">{connection ? labels[state] : "Camera disconnected"}</p><button className="quiet-button" disabled={!connection || pending || state !== "live"} onClick={() => void snapshot()}>Save snapshot</button>
       {connection && enabled === null && <button className="quiet-button" disabled={pending} onClick={() => void toggle(false)}>Turn camera off</button>}</div>
-    <p className="camera-help">Turning the camera off stops capture for everyone. Snapshots save to this device only when you choose Save snapshot.</p>
+    <p className="camera-help">When the camera is off, Orion can’t see you.</p>
     {(error || streamError) && <p role="alert" className="camera-error">{error || streamError}</p>}
   </section>;
 }

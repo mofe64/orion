@@ -26,15 +26,30 @@ def wheel(*args, destination, constraints=()):
     destination.mkdir(parents=True, exist_ok=True)
     environment = None
     if constraints:
-        # Isolated build environments read PIP_CONSTRAINT for their build requirements.
+        # pip 26 applies only PIP_BUILD_CONSTRAINT to isolated build requirements;
+        # older pip reads PIP_CONSTRAINT there.
         path = destination.parent / f'build-constraints-{uuid.uuid4().hex}.txt'
         path.write_text(''.join(line + '\n' for line in constraints))
-        environment = {**os.environ, 'PIP_CONSTRAINT': str(path)}
+        environment = {**os.environ, 'PIP_CONSTRAINT': str(path), 'PIP_BUILD_CONSTRAINT': str(path)}
     try:
         run(sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', destination, *args, env=environment)
     finally:
         if constraints:
             path.unlink()
+
+
+# pybind11 writes its internals version into every module it builds (Python 3.12).
+PYBIND11_INTERNALS = {'2.13.6': 5, '3.0.1': 11}
+
+
+def check_pybind11(wheel_path, version):
+    """Stop the build when the camera binding was compiled with another pybind11."""
+    import zipfile
+    marker = b'__pybind11_internals_v%d' % PYBIND11_INTERNALS[version]
+    with zipfile.ZipFile(wheel_path) as archive:
+        modules = [archive.read(name) for name in archive.namelist() if name.endswith('.so')]
+    if not modules or not all(marker + b'_' in module for module in modules):
+        raise RuntimeError(f'{wheel_path.name} was not built with pybind11 {version}; check the build constraint')
 
 
 def binding_wrapper(name, revision):
@@ -65,6 +80,7 @@ def native(codename):
           # libcamera 0.5 binds Camera with its own shared-pointer holder, which
           # pybind11 3 rejects; libcamera 0.7 needs pybind11 3's smart holder.
           constraints=['pybind11==' + pins['pybind11_version']])
+    check_pybind11(next(out.glob('rpi_libcamera-*.whl')), pins['pybind11_version'])
     kms = binding_wrapper('pykms', manifest['kms_wrapper_revision'])
     shutil.copy2(ROOT / 'scripts/native/kms-meson.patch', kms / 'pypatch.patch')
     wheel(kms, '-C', 'setup-args=-Drevision=' + manifest['kms_source_revision'],

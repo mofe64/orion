@@ -6,7 +6,7 @@ describe("camera controls and overlay", () => {
   it("explains privacy and disables unavailable snapshots", () => {
     const html = renderToStaticMarkup(<CameraCard connection={null} />);
     expect(html).toContain("Connect Orion to view its camera");
-    expect(html).toContain("Turning the camera off stops capture for everyone.");
+    expect(html).toContain("When the camera is off, Orion can’t see you.");
     expect(html).toMatch(/disabled=""[^>]*>Save snapshot/);
     expect(html).not.toContain("<img");
   });

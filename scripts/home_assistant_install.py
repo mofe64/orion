@@ -30,6 +30,53 @@ def image_pin(manifest):
     return pin, f"{pin['image']}:{pin['version']}@{pin['digest']}"
 
 
+# Home Assistant images use zstd layers, which need Docker Engine 23 or later.
+# Debian Bookworm's docker.io is 20.10, so Orion installs Docker's own packages.
+DOCKER_MINIMUM = 23
+DOCKER_KEY_URL = 'https://download.docker.com/linux/debian/gpg'
+DOCKER_KEY_FINGERPRINT = '9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
+DOCKER_KEYRING = Path('/etc/apt/keyrings/docker.asc')
+DOCKER_SOURCES = Path('/etc/apt/sources.list.d/docker.list')
+OS_RELEASE = Path('/etc/os-release')
+
+
+def engine_version(run):
+    result = run('docker', 'version', '--format', '{{.Server.Version}}', capture_output=True, text=True, check=False)
+    match = re.match(r'(\d+)\.', result.stdout.strip()) if result.returncode == 0 else None
+    return int(match.group(1)) if match else None
+
+
+def install_docker(run):
+    codename = re.search(r'^VERSION_CODENAME=(\w+)', OS_RELEASE.read_text(), re.M).group(1)
+    run('apt-get', 'update')
+    run('env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y', '--no-install-recommends', 'ca-certificates', 'curl', 'gnupg')
+    key = run('curl', '-fsSL', DOCKER_KEY_URL, capture_output=True).stdout
+    listing = run('gpg', '--show-keys', '--with-colons', input=key, capture_output=True).stdout
+    if DOCKER_KEY_FINGERPRINT.encode() not in listing:
+        raise RuntimeError('Docker signing key fingerprint does not match')
+    DOCKER_KEYRING.parent.mkdir(parents=True, exist_ok=True)
+    DOCKER_KEYRING.write_bytes(key)
+    DOCKER_KEYRING.chmod(0o644)
+    DOCKER_SOURCES.write_text(f'deb [arch=arm64 signed-by={DOCKER_KEYRING}] https://download.docker.com/linux/debian {codename} stable\n')
+    run('apt-get', 'remove', '-y', 'docker.io', 'docker-doc', 'podman-docker', 'containerd', 'runc', check=False)
+    run('apt-get', 'update')
+    run('env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y', '--no-install-recommends',
+        'docker-ce', 'docker-ce-cli', 'containerd.io')
+    run('systemctl', 'enable', '--now', 'docker.service')
+
+
+def ensure_docker(run, which):
+    """Leave a running Docker Engine that can unpack Home Assistant's image."""
+    version = None
+    if which('docker'):
+        version = engine_version(run)
+        if version is None:
+            run('systemctl', 'enable', '--now', 'docker.service', check=False)
+            version = engine_version(run)
+    if version is None or version < DOCKER_MINIMUM:
+        install_docker(run)
+
+
 def save_metadata(data, state, uid, gid):
     temporary = None
     try:
@@ -52,15 +99,8 @@ def install(home, uid, gid, manifest, update=False, run=execute, which=shutil.wh
     with lock.open('a') as guard:
         os.chown(lock, uid, gid)
         fcntl.flock(guard, fcntl.LOCK_EX)
-        missing = not which('docker')
-        if missing:
-            run('apt-get', 'update')
-            run('env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y', '--no-install-recommends', 'docker.io')
-            run('systemctl', 'enable', '--now', 'docker.service')
+        ensure_docker(run, which)
         inspected = run('docker', 'container', 'inspect', NAME, capture_output=True, text=True, check=False)
-        if not missing and inspected.returncode != 0:
-            run('systemctl', 'enable', '--now', 'docker.service')
-            inspected = run('docker', 'container', 'inspect', NAME, capture_output=True, text=True, check=False)
         previous = json.loads(inspected.stdout)[0] if inspected.returncode == 0 else None
         if previous and (not update or previous['Config']['Image'] == image):
             if not (data / 'home-assistant-install.json').exists() and re.fullmatch(r'[a-f0-9]{64}', previous.get('Id', '')):
