@@ -123,6 +123,16 @@ class System:
     def remove(self, path):
         self.run('sudo', 'rm', '-f', path)
 
+    def inspect_protected(self, path):
+        """Contents and mode of a file inside a root-only folder such as /etc/polkit-1/rules.d."""
+        if subprocess.run(['sudo', 'test', '-L', str(path)]).returncode == 0:
+            raise RuntimeError(f'Refusing to replace a symlink: {path}')
+        if subprocess.run(['sudo', 'test', '-e', str(path)]).returncode:
+            return None, None
+        data = self.run('sudo', 'cat', path, capture_output=True).stdout
+        mode = int(self.run('sudo', 'stat', '-c', '%a', path, capture_output=True, text=True).stdout.strip(), 8)
+        return data, mode
+
     def foreign_runtimes(self):
         """oriond processes that systemd does not own, such as a hand-started copy."""
         try:
@@ -437,13 +447,20 @@ def snapshot(root, files, system):
     data = {'version': 2, 'status': 'prepared', 'files': [],
             'services': {name: system.state(name) for name in MANAGED_SERVICES}}
     for index, path in enumerate(files):
-        if path.is_symlink():
-            raise RuntimeError(f'Refusing to replace a symlink: {path}')
         backup = folder / str(index)
-        if path.exists():
-            shutil.copy2(path, backup)
-        data['files'].append({'path': str(path), 'backup': str(backup) if path.exists() else None,
-                              'mode': path.stat().st_mode & 0o777 if path.exists() else None})
+        try:
+            if path.is_symlink():
+                raise RuntimeError(f'Refusing to replace a symlink: {path}')
+            exists = path.exists()
+            if exists:
+                shutil.copy2(path, backup)
+            mode = path.stat().st_mode & 0o777 if exists else None
+        except PermissionError:
+            contents, mode = system.inspect_protected(path)
+            exists = contents is not None
+            if exists:
+                backup.write_bytes(contents)
+        data['files'].append({'path': str(path), 'backup': str(backup) if exists else None, 'mode': mode})
     atomic_json(folder / 'state.json', data)
     return folder, data
 
@@ -521,11 +538,12 @@ def activate(root, release, home, files, system, commissioning=False, before_res
         switched = True
         data['status'] = 'switching'; atomic_json(folder / 'state.json', data)
         system.stop('oriond')
+        modes = {entry['path']: entry['mode'] for entry in data['files']}
         for path, value in files.items():
             if value is None:
                 system.remove(path)
             else:
-                mode = (path.stat().st_mode & 0o777 if path.exists() else
+                mode = (modes[str(path)] if modes.get(str(path)) is not None else
                         0o755 if str(path).startswith('/usr/local/bin/') else
                         0o644 if str(path).startswith(('/etc/', '/usr/local/libexec/', '/usr/local/share/orion/')) or path.suffix in ('.yaml', '.yml') else 0o600)
                 system.write(path, value if isinstance(value, bytes) else value.encode(), mode)

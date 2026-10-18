@@ -731,6 +731,32 @@ class SystemWriteTests(Fixture):
             system.write(Path('/etc/systemd/system/oriond.service'), b'unit', 0o644)
         mkdir.assert_not_called()
 
+    def test_snapshot_backs_up_files_in_root_only_folders_through_sudo(self):
+        rules = self.base / 'rules.d'
+        rules.mkdir()
+        target = rules / '60-orion-home-assistant.rules'
+        target.write_text('old rule')
+        system = FakeSystem(self.base / 'units')
+        system.inspect_protected = lambda path: (b'old rule', 0o644)
+        original = installer.Path.is_symlink
+        def is_symlink(path):
+            if path == target: raise PermissionError(13, 'Permission denied', str(path))
+            return original(path)
+        with patch.object(installer.Path, 'is_symlink', is_symlink):
+            folder, data = installer.snapshot(self.base / 'root', [target], system)
+        entry = data['files'][0]
+        self.assertEqual((entry['mode'], Path(entry['backup']).read_bytes()), (0o644, b'old rule'))
+
+    def test_protected_inspection_reports_missing_files_and_refuses_symlinks(self):
+        system = installer.System()
+        def run(args, **kwargs):
+            return subprocess.CompletedProcess(args, 1)
+        with patch.object(installer.subprocess, 'run', side_effect=run):
+            self.assertEqual(system.inspect_protected(Path('/etc/polkit-1/rules.d/x.rules')), (None, None))
+        with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+            with self.assertRaisesRegex(RuntimeError, 'symlink'):
+                system.inspect_protected(Path('/etc/polkit-1/rules.d/x.rules'))
+
 
 class DeployHardeningTests(Fixture):
     def calibration(self, **override):
