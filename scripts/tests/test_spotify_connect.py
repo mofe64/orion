@@ -13,6 +13,14 @@ from pi_service_config import services_for_release
 
 
 class SpotifyConnectTests(unittest.TestCase):
+    def test_service_allows_interface_discovery_in_its_address_family_sandbox(self):
+        template = (SCRIPTS / 'systemd/orion-spotify.service.in').read_text()
+        families = next(line.split('=', 1)[1].split() for line in template.splitlines()
+                        if line.startswith('RestrictAddressFamilies='))
+        # glibc getifaddrs(), used by libmdns, opens a netlink socket.
+        self.assertIn('AF_NETLINK', families)
+        self.assertTrue({'AF_INET', 'AF_INET6', 'AF_UNIX'}.issubset(families))
+
     def test_studio_sign_in_bootstraps_connect_without_tokens_in_arguments(self):
         with patch.dict('os.environ', {}, clear=True), patch('spotify_connect.time.time',return_value=100):
             self.assertEqual(environment({'access_token':'private-token','expires_at':200}), {'LIBRESPOT_ACCESS_TOKEN':'private-token'})
