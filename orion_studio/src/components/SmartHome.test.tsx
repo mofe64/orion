@@ -57,6 +57,11 @@ describe("Home", () => {
     }
     expect(form({type:"abort",reason:"The device refused the pairing code."})).toContain("The device refused the pairing code.");
   });
+  it.each(["samsungtv", "hue"])("explains cancelled %s setup without connection advice", handler => {
+    const html = form({type:"abort",handler,reason:"aborted"});
+    expect(html).toContain("Setup was cancelled. You can add this device again.");
+    expect(html).not.toMatch(/Wi-Fi|Make sure|pairing code/);
+  });
   it("supports control types independently of voice permission and restricts unsafe devices", () => {
     const entries = [lamp, { ...lamp, entity_id: "climate.heat", domain: "climate", attributes: { temperature: 21 } }, { ...lamp, entity_id: "cover.blind", domain: "cover", attributes: { supported_features: 11 } }, { ...lamp, entity_id: "media_player.tv", domain: "media_player", state: "playing", attributes: { supported_features: 16389, volume_level: .3 } }, { ...lamp, entity_id: "cover.garage", domain: "cover", attributes: { device_class: "garage" } }];
     const data = { ...devices, devices: entries.map((entity, i) => ({ id: String(i), name: `Device ${i}`, area: "Study", entities: [{ ...entity, exposed: false }] })) };

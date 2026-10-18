@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { Home, homeFeedbackArea } from "./Home";
+import { OwnerLamp } from "./OwnerLamp";
 import type { GatewayStatus, ProjectCatalog } from "../types";
 
 vi.mock("./RobotViewport", () => ({ RobotViewport: () => null }));
@@ -9,6 +10,13 @@ const props = { catalog, theme: "dark" as const, voiceLabel: "Off", connection: 
   onConnect: vi.fn(), onVoice: vi.fn(), onCreate: vi.fn(), onRefresh: async () => {}, onRun: vi.fn() };
 
 describe("Home control availability", () => {
+  it("uses the power switch for off and labels one colour without trailing space", () => {
+    const html=renderToStaticMarkup(<OwnerLamp connection={{url:"http://test",token:"test"}} resting={false} onPreview={vi.fn()} status={{on:true,brightness:40,mood:"warm",colors:[[40,20,4,210]],effect:"solid",takeover:null,fade:null}}/>);
+    expect(html).toContain('role="switch" aria-label="Lamp power"');
+    expect(html).toContain('>Color<input');
+    expect(html).not.toContain('value="off"');
+    expect(html).toContain('value="solid" selected=""');
+  });
   it("shows the lamp's chosen brightness, palette and effect during a takeover",()=>{
     const status={character:{enabled:true},runtime:{motion:null},scene:{active:null},speech:{active:null},lamp:{on:true,brightness:65,mood:"warm_red",colors:[[40,20,4,210],[255,0,0,0]],effect:"thinking_drift",fade:{remaining_seconds:4,brightness:45,colors:[[40,20,4,210]]},takeover:"speech"}} as unknown as GatewayStatus;
     const html=renderToStaticMarkup(<Home {...props} status={status} connection={{url:"http://test",token:"test"}}/>);

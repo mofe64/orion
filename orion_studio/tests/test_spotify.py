@@ -53,7 +53,7 @@ class SpotifyTests(unittest.TestCase):
     def test_client_id_loopback_expiry_and_cancel_are_plain_errors(self):
         for client in ['', 'a'*31, 'g'*32, None]:
             with self.assertRaisesRegex(SpotifyError,'Client ID'): self.spotify.begin(client, REDIRECT_URI)
-        with self.assertRaisesRegex(SpotifyError,'redirect URI'): self.spotify.begin('a'*32,'http://localhost:49687/callback')
+        with self.assertRaisesRegex(SpotifyError,'address in your Spotify app matches the one in Studio'): self.spotify.begin('a'*32,'http://localhost:49687/callback')
         self.spotify.begin('a'*32,REDIRECT_URI); state=self.spotify.pending['state']; self.now+=601
         with self.assertRaisesRegex(SpotifyError,'expired'): self.spotify.finish('x',state)
         self.spotify.begin('a'*32,REDIRECT_URI); state=self.spotify.pending['state']
@@ -65,7 +65,8 @@ class SpotifyTests(unittest.TestCase):
             self.reply({'access_token':'access','refresh_token':'refresh','expires_in':3600}); self.reply(account,status)
             with self.assertRaisesRegex(SpotifyError,message): self.spotify.finish('code',state)
             self.assertFalse(self.path.exists())
-        self.assertIn('redirect URI',str(friendly(400,{'error':'invalid_request','error_description':'redirect URI mismatch'},token=True)))
+        self.assertEqual(str(friendly(400,{'error':'invalid_request','error_description':'redirect URI mismatch'},token=True)),
+                         'Check that the address in your Spotify app matches the one in Studio, then sign in again.')
         self.assertIn('Client ID',str(friendly(400,{'error':'invalid_client'},token=True)))
         self.assertIn('Premium',str(friendly(403,{'error':{'reason':'PREMIUM_REQUIRED'}})))
 

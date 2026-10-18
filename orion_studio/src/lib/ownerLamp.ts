@@ -7,7 +7,7 @@ export const lampMoods = {
   cool:{label:"Cool",colors:[[150,190,255,110],[0,45,255,0]]},
   warm_red:{label:"Warm red",colors:[[40,20,4,210],[255,0,0,0]]},
 } satisfies Record<string,{label:string;colors:LampColor[]}>;
-export const lampEffects:Record<string,string> = {solid:"Steady",warm_idle_breathe:"Gentle breathe",attentive_focus:"Focus",thinking_drift:"Drift",speaking_energy:"Soft pulse",acknowledge_pulse:"Pulse",curious_sweep:"Sweep",delight_spark:"Sparkle",settle_glow:"Glow",off:"Off"};
+export const lampEffects:Record<string,string> = {solid:"Steady",warm_idle_breathe:"Gentle breathe",attentive_focus:"Focus",thinking_drift:"Drift",speaking_energy:"Soft pulse",acknowledge_pulse:"Pulse",curious_sweep:"Sweep",delight_spark:"Sparkle",settle_glow:"Glow"};
 
 function project(actual:LampStatus|null, patch:LampUpdate):LampStatus|null {
   if (!actual) return null;

@@ -14,13 +14,13 @@ export function SpotifySetup({pending, onSignIn}: {pending:boolean; onSignIn:(cl
   return <details className="music-setup"><summary>Set up music by voice</summary>
     <ol>
       <li><span>Create an app in the Spotify developer dashboard. Choose Web API.</span><HomeAssistantLink url={SPOTIFY_DASHBOARD}>Open Spotify dashboard</HomeAssistantLink></li>
-      <li><span>Add this redirect URI to the app, then save.</span><div className="music-redirect"><code>{SPOTIFY_REDIRECT_URI}</code><button type="button" aria-label="Copy Spotify redirect URI" onClick={() => void navigator.clipboard.writeText(SPOTIFY_REDIRECT_URI).then(() => setCopy("Copied"), () => setCopy("Select the address above and copy it."))}><Copy size={15}/></button></div>{copy && <small role="status">{copy}</small>}</li>
+      <li><span>In your Spotify app's settings, paste this address under Redirect URIs, then save.</span><div className="music-redirect"><code>{SPOTIFY_REDIRECT_URI}</code><button type="button" aria-label="Copy Spotify address" onClick={() => void navigator.clipboard.writeText(SPOTIFY_REDIRECT_URI).then(() => setCopy("Copied"), () => setCopy("Select the address above and copy it."))}><Copy size={15}/></button></div>{copy && <small role="status">{copy}</small>}</li>
       <li><label htmlFor="spotify-client-id">Paste the app’s Client ID</label><input id="spotify-client-id" type="text" value={clientId} autoComplete="off" spellCheck={false} placeholder="Paste your Client ID" aria-describedby="spotify-client-help" aria-invalid={!!clientId && !valid} onChange={event => setClientId(event.target.value)} />
         <small id="spotify-client-help">{clientId && !valid ? "Use the 32-character Client ID from your app dashboard." : "Use the Spotify Premium account that will play on Orion."}</small>
         <button className="primary-button" disabled={!valid || pending} onClick={() => onSignIn(clientId.trim())}>{pending ? "Waiting for Spotify…" : "Sign in with Spotify"}</button>
       </li>
     </ol>
-    {pending && <p role="status">Finish signing in in your browser. If Spotify reports a wrong redirect URI, check the address above in your app’s settings. If it refuses your account, add it under User Management in the app dashboard.</p>}
+    {pending && <p role="status">Finish signing in in your browser. If Spotify says the address is wrong, check that Redirect URIs has the address above. If it refuses your account, add it under User Management in the app dashboard.</p>}
   </details>;
 }
 

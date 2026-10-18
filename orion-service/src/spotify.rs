@@ -122,7 +122,7 @@ impl SignIn {
                 let _ = stream.write_all(response.as_bytes()).await;
                 if let Some(result) = result { return result; }
             }
-        }).await.map_err(|_| "Spotify sign-in timed out. Check that the redirect URI matches Studio, then sign in again.".to_string())?
+        }).await.map_err(|_| "Spotify sign-in timed out. Check that the address in your Spotify app matches the one in Studio, then sign in again.".to_string())?
     }
 }
 

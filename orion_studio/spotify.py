@@ -64,7 +64,7 @@ def friendly(status, body, *, token=False):
     if 'premium' in text:
         return SpotifyError('Spotify Premium is required to play music on Orion.', 403)
     if 'redirect' in text:
-        return SpotifyError(f'In the Spotify developer dashboard, add this exact redirect URI: {REDIRECT_URI}. Save it, then sign in again.')
+        return SpotifyError('Check that the address in your Spotify app matches the one in Studio, then sign in again.')
     if status == 403:
         return SpotifyError('Spotify refused access. In your Spotify app dashboard, open User Management and add the account you use. Then sign in again.', 403)
     if status == 401 or token and reason == 'invalid_grant':
@@ -98,7 +98,7 @@ class Spotify:
         if not isinstance(client_id, str) or not re.fullmatch(r'[0-9a-fA-F]{32}', client_id):
             raise SpotifyError('Paste the 32-character Client ID from your Spotify app dashboard.')
         if redirect_uri != REDIRECT_URI:
-            raise SpotifyError(f'Use this redirect URI in your Spotify app: {REDIRECT_URI}')
+            raise SpotifyError('Check that the address in your Spotify app matches the one in Studio, then sign in again.')
         with self.lock:
             verifier, state = secrets.token_urlsafe(64), secrets.token_urlsafe(32)
             challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()

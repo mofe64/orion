@@ -28,6 +28,7 @@ export function setupProblem(reason: string | undefined, flow?: HomeFlow): strin
     unknown:"The device could not finish setup.", aborted:"Setup was cancelled.",
   };
   if (reason === "already_configured") return homeText(reason);
+  if (reason === "aborted") return "Setup was cancelled. You can add this device again.";
   const message=messages[reason ?? ""] ?? homeText(reason,"The device could not finish setup.");
   const tv=/tv|television|cast/i.test(`${flow?.handler ?? ""} ${flow?.title ?? ""}`);
   return `${message} ${tv ? "Make sure the TV is on, then accept the request or enter the code shown on the TV." : "Make sure the device is on and connected to your Wi-Fi, then try again."}`;
