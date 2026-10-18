@@ -8,7 +8,7 @@ use std::os::unix::{
     net::{UnixListener, UnixStream},
 };
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -31,7 +31,7 @@ enum Control {
     Quit,
 }
 
-/// One worker and one ALSA client own the speaker for the daemon's lifetime.
+/// One supervised worker and one ALSA client own the speaker.
 /// Foreground ownership excludes music: stopping a cue never stops the song.
 pub(super) struct Mixer {
     sender: mpsc::Sender<Control>,
@@ -43,7 +43,8 @@ pub(super) struct Mixer {
     error: Arc<Mutex<Option<String>>>,
     worker: Option<JoinHandle<()>>,
     loaders: Vec<JoinHandle<()>>,
-    player: Child,
+    player: Arc<Mutex<Option<Child>>>,
+    stopping: Arc<AtomicBool>,
     pulse: Arc<Mutex<MusicPulse>>,
 }
 
@@ -54,41 +55,15 @@ impl Mixer {
         socket: PathBuf,
         volume: Arc<AtomicU8>,
     ) -> crate::Result<Self> {
-        if let Some(parent) = socket.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        if socket.exists() {
-            if UnixStream::connect(&socket).is_ok() {
-                return Err(crate::Error::InvalidState(
-                    "The music receiver is already running.".into(),
-                ));
-            }
-            fs::remove_file(&socket)?;
-        }
-        let listener = UnixListener::bind(&socket)?;
-        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
-        let mut child = Command::new(player)
-            .args([
-                "-q",
-                "-D",
-                device,
-                "-t",
-                "raw",
-                "-f",
-                "S16_LE",
-                "-r",
-                "48000",
-                "-c",
-                "2",
-                "--buffer-time=40000",
-                "--period-time=10000",
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+        let mut listener = listen(&socket)?;
+        let mut child = spawn_player(player, device)?;
         let mut output = child.stdin.take().expect("piped mixer output");
+        let player_path = player.to_owned();
+        let device = device.to_owned();
+        let player = Arc::new(Mutex::new(Some(child)));
+        let worker_player = Arc::clone(&player);
+        let stopping = Arc::new(AtomicBool::new(false));
+        let worker_stopping = Arc::clone(&stopping);
         let (sender, receiver) = mpsc::channel();
         let active = Arc::new(AtomicU64::new(0));
         let duck = Arc::new(AtomicBool::new(false));
@@ -99,27 +74,48 @@ impl Mixer {
             Arc::clone(&active),
             Arc::clone(&duck),
             Arc::clone(&music),
-            Arc::clone(&error),
             Arc::clone(&pulse),
         );
         let worker = thread::Builder::new()
             .name("orion-audio-mixer".into())
             .spawn(move || {
-                let result = run(
-                    &mut output,
-                    listener,
-                    receiver,
-                    volume,
-                    &shared.0,
-                    &shared.1,
-                    &shared.2,
-                    &shared.4,
-                );
-                if let Err(reason) = result {
-                    *shared.3.lock().unwrap() = Some(format!("Audio playback stopped: {reason}"));
+                // Keep the command queue and unread foreground samples across output failures.
+                // In particular, an alarm queued during recovery must still reach the speaker.
+                let mut foreground = None;
+                loop {
+                    let result = run(
+                        &mut output,
+                        listener,
+                        &receiver,
+                        &mut foreground,
+                        &volume,
+                        &shared.0,
+                        &shared.1,
+                        &shared.2,
+                        &shared.3,
+                    );
+                    if result.is_ok() || worker_stopping.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    eprintln!(
+                        "Audio output failed; reopening the speaker: {}",
+                        result.unwrap_err()
+                    );
+                    shared.2.store(false, Ordering::Relaxed);
+                    *shared.3.lock().unwrap() = MusicPulse::default();
+                    drop(output);
+                    let Some(restarted) = restart_output(
+                        &player_path,
+                        &device,
+                        &socket,
+                        &worker_player,
+                        &worker_stopping,
+                    ) else {
+                        break;
+                    };
+                    (output, listener) = restarted;
                 }
                 shared.0.store(0, Ordering::Relaxed);
-                drop(output);
                 let _ = fs::remove_file(socket);
             })?;
         Ok(Self {
@@ -132,7 +128,8 @@ impl Mixer {
             error,
             worker: Some(worker),
             loaders: vec![],
-            player: child,
+            player,
+            stopping,
             pulse,
         })
     }
@@ -233,14 +230,91 @@ impl Mixer {
 }
 impl Drop for Mixer {
     fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Relaxed);
         let _ = self.sender.send(Control::Quit);
-        let _ = self.player.kill();
-        let _ = self.player.wait();
+        if let Some(mut player) = self.player.lock().unwrap().take() {
+            let _ = player.kill();
+            let _ = player.wait();
+        }
         if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
             let _ = worker.join();
         }
         for loader in self.loaders.drain(..) {
             let _ = loader.join();
+        }
+    }
+}
+
+fn listen(socket: &Path) -> std::io::Result<UnixListener> {
+    if let Some(parent) = socket.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if socket.exists() {
+        if UnixStream::connect(socket).is_ok() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                "The music receiver is already running.",
+            ));
+        }
+        fs::remove_file(socket)?;
+    }
+    let listener = UnixListener::bind(socket)?;
+    fs::set_permissions(socket, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
+fn spawn_player(player: &Path, device: &str) -> std::io::Result<Child> {
+    Command::new(player)
+        .args([
+            "-q",
+            "-D",
+            device,
+            "-t",
+            "raw",
+            "-f",
+            "S16_LE",
+            "-r",
+            "48000",
+            "-c",
+            "2",
+            "--buffer-time=40000",
+            "--period-time=10000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+}
+
+fn restart_output(
+    path: &Path,
+    device: &str,
+    socket: &Path,
+    player: &Mutex<Option<Child>>,
+    stopping: &AtomicBool,
+) -> Option<(ChildStdin, UnixListener)> {
+    if let Some(mut child) = player.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    loop {
+        thread::park_timeout(Duration::from_millis(100));
+        // Serialize child replacement with Drop, which kills a blocked output writer.
+        let mut current = player.lock().unwrap();
+        if stopping.load(Ordering::Relaxed) {
+            return None;
+        }
+        match listen(socket)
+            .and_then(|listener| spawn_player(path, device).map(|child| (child, listener)))
+        {
+            Ok((mut child, listener)) => {
+                let output = child.stdin.take().expect("piped mixer output");
+                *current = Some(child);
+                return Some((output, listener));
+            }
+            Err(error) => eprintln!("Could not reopen audio output; retrying: {error}"),
         }
     }
 }
@@ -383,15 +457,15 @@ fn duck_gain(gain: f64, duck: bool) -> f64 {
 fn run(
     output: &mut impl Write,
     listener: UnixListener,
-    controls: mpsc::Receiver<Control>,
-    volume: Arc<AtomicU8>,
+    controls: &mpsc::Receiver<Control>,
+    foreground: &mut Option<Foreground>,
+    volume: &AtomicU8,
     active: &AtomicU64,
     duck: &AtomicBool,
     music: &AtomicBool,
     pulse: &Mutex<MusicPulse>,
 ) -> std::io::Result<()> {
     let mut tracker = BeatTracker::default();
-    let mut foreground: Option<Foreground> = None;
     let mut connection: Option<UnixStream> = None;
     let mut resampler = Resampler::default();
     let mut pending = vec![];
@@ -403,9 +477,9 @@ fn run(
         for command in controls.try_iter() {
             match command {
                 Control::Quit => return Ok(()),
-                Control::Stop => foreground = None,
+                Control::Stop => *foreground = None,
                 Control::Start(id, source, input) => {
-                    foreground = Some(Foreground {
+                    *foreground = Some(Foreground {
                         id,
                         source,
                         input,
@@ -415,11 +489,11 @@ fn run(
                 }
             }
         }
-        if let Some(source) = &mut foreground {
+        if let Some(source) = foreground {
             source.fill()?;
             if source.ended && source.frames.is_empty() {
                 let _ = active.compare_exchange(source.id, 0, Ordering::Relaxed, Ordering::Relaxed);
-                foreground = None;
+                *foreground = None;
             }
         }
         if connection.is_none() {
@@ -487,8 +561,8 @@ fn run(
             let song = song[index];
             audible_music |= song.iter().any(|sample| sample.abs() > 0.0001);
             let voice = foreground
-                .as_mut()
-                .and_then(|source| source.frames.pop_front())
+                .as_ref()
+                .and_then(|source| source.frames.get(index).copied())
                 .unwrap_or([0.; 2]);
             let voice_gain = if foreground
                 .as_ref()
@@ -510,6 +584,9 @@ fn run(
         alarm = alarm_target;
         music.store(audible_music, Ordering::Relaxed);
         output.write_all(&bytes)?;
+        if let Some(source) = foreground {
+            source.frames.drain(..source.frames.len().min(FRAMES));
+        }
         deadline += Duration::from_millis(10);
         if let Some(delay) = deadline.checked_duration_since(Instant::now()) {
             thread::sleep(delay);
@@ -532,7 +609,7 @@ mod tests {
         let player = directory.path().join("player");
         fs::write(
             &player,
-            "#!/bin/sh\necho started >> \"$0.starts\"\ncat > \"$0.pcm\"\n",
+            "#!/bin/sh\necho started >> \"$0.starts\"\nexec cat > \"$0.pcm\"\n",
         )
         .unwrap();
         fs::set_permissions(&player, fs::Permissions::from_mode(0o700)).unwrap();
@@ -548,7 +625,7 @@ mod tests {
             assert!(
                 Instant::now() < ready_by,
                 "fake player did not start: {:?}",
-                mixer.player.try_wait()
+                mixer.player.lock().unwrap().as_mut().unwrap().try_wait()
             );
             thread::sleep(Duration::from_millis(10));
         }
@@ -594,6 +671,78 @@ mod tests {
         );
         drop(mixer);
         song.join().unwrap();
+    }
+    #[test]
+    fn dead_player_restarts_and_plays_an_alarm_queued_during_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let player = directory.path().join("player");
+        let unavailable = directory.path().join("unavailable");
+        let pcm = directory.path().join("player.pcm");
+        fs::write(
+            &player,
+            "#!/bin/sh\necho started >> \"$0.starts\"\nexec cat >> \"$0.pcm\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = directory.path().join("music.sock");
+        let mut mixer =
+            Mixer::open(&player, "test", socket.clone(), Arc::new(AtomicU8::new(0))).unwrap();
+        let wait = |condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !condition() {
+                assert!(Instant::now() < deadline, "mixer did not recover");
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&|| fs::metadata(&pcm).is_ok_and(|file| file.len() >= (FRAMES * 4) as u64));
+        let mut old_music = UnixStream::connect(&socket).unwrap();
+        old_music
+            .write_all(&2000_i16.to_le_bytes().repeat(441))
+            .unwrap();
+        // Hold the outage open across several restart attempts, not just the backoff.
+        fs::rename(&player, &unavailable).unwrap();
+        mixer
+            .player
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .kill()
+            .unwrap();
+        wait(&|| mixer.player.lock().unwrap().is_none());
+        let before = fs::metadata(&pcm).unwrap().len() as usize;
+        mixer.stream(AudioSource::Alarm).unwrap();
+        assert!(mixer.queue(&1000_i16.to_le_bytes().repeat(2400)).unwrap());
+        mixer.finish();
+        thread::sleep(Duration::from_millis(250));
+        mixer.update().unwrap();
+        assert!(mixer.playing(), "the pending alarm must survive the outage");
+        fs::rename(&unavailable, &player).unwrap();
+        wait(&|| {
+            fs::read(&pcm).unwrap()[before..]
+                .chunks_exact(2)
+                .any(|sample| i16::from_le_bytes(sample.try_into().unwrap()) == 250)
+        });
+        wait(&|| !mixer.playing());
+        mixer.update().unwrap();
+        assert_eq!(
+            fs::read_to_string(directory.path().join("player.starts"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        // The receiver must accept a fresh Spotify connection after rebinding.
+        let mut music = UnixStream::connect(&socket).unwrap();
+        music
+            .write_all(&2000_i16.to_le_bytes().repeat(4410 * 2))
+            .unwrap();
+        wait(&|| mixer.music_playing());
+        mixer.stream(AudioSource::Speech).unwrap();
+        assert!(mixer.queue(&1000_i16.to_le_bytes().repeat(2400)).unwrap());
+        mixer.finish();
+        wait(&|| !mixer.playing());
+        mixer.update().unwrap();
     }
     #[test]
     fn ducking_reaches_one_quarter_smoothly_and_returns_after_voice() {

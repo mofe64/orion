@@ -156,6 +156,8 @@ The character rest coordinator performs descent and torque release together. Stu
 
 RGBW means red, green, blue and white channels. Each channel accepts an integer from 0 to 255. Pixel indices depend on the selected hardware profile.
 
+`oriond` keeps the speaker open while it runs. Standalone `--play-cue` opens the speaker directly and requires the daemon to stop first.
+
 1. Set a low warm light level.
 
    ```bash
@@ -168,19 +170,31 @@ RGBW means red, green, blue and white channels. Each channel accepts an integer 
    runtime/target/debug/oriond --hardware v2 --lights-off
    ```
 
-3. Play a local cue.
+3. Stop the daemon before standalone cue playback.
+
+   ```bash
+   sudo systemctl stop oriond
+   ```
+
+4. Play a local cue.
 
    ```bash
    runtime/target/debug/oriond --play-cue acknowledge_warm
    ```
 
-4. Run a combined scene.
+5. Start the daemon again.
+
+   ```bash
+   sudo systemctl start oriond
+   ```
+
+6. Run a combined scene.
 
    ```bash
    runtime/target/debug/oriond --run-scene acknowledge_left --wait
    ```
 
-5. Read scene status.
+7. Read scene status.
 
    ```bash
    runtime/target/debug/oriond --scene-status

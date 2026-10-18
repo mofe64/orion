@@ -56,6 +56,9 @@ Wake audio saving requires the explicit `ORION_WAKE_DEBUG_DIR` setting. These re
 
 Run these steps from the repository root.
 
+`oriond` keeps the speaker open. Stop `oriond` before using `orion_voice.xvf_measure record --play` for direct speaker measurements.
+Start `oriond` again after the measurement. Speaker measurements do not play while `oriond` runs.
+
 1. Install locked dependencies.
 
    ```bash
