@@ -3,7 +3,7 @@ export interface HomeStatus { installed: boolean; running: boolean; version: str
 export interface HomeEntity { entity_id: string; name: string; area: string; area_id?: string | null; device_id?: string; domain: string; state: string; exposed: boolean; attributes: Record<string, unknown> }
 export interface HomeDevice { id: string; name: string; area: string; area_id?: string | null; config_entries?: string[]; entities: HomeEntity[] }
 export interface HomeDevices { areas: { name: string; entities: HomeEntity[] }[]; devices: HomeDevice[]; area_registry: { area_id: string; name: string }[] }
-export interface HomeFlow { type: string; flow_id?: string; handler?: string; step_id?: string; title?: string; description?: string; reason?: string; hidden?: boolean; ignored_entry_id?: string; result?: { entry_id?: string }; data_schema?: HomeField[]; errors?: Record<string, string>; menu_options?: string[]; context?: { source?: string; title_placeholders?: Record<string, string> } }
+export interface HomeFlow { type: string; flow_id?: string; handler?: string; step_id?: string; title?: string; description?: string; reason?: string; ignored?: boolean; ignored_entry_id?: string; result?: { entry_id?: string }; data_schema?: HomeField[]; errors?: Record<string, string>; menu_options?: string[]; context?: { source?: string; title_placeholders?: Record<string, string> } }
 export interface HomeField { name: string; label?: string; type?: string; required?: boolean; default?: unknown; options?: unknown[] | Record<string, string>; selector?: Record<string, Record<string, unknown> | null>; value_min?: number; value_max?: number; description?: { suggested_value?: unknown } }
 export type Integration = { domain: string; name: string };
 export type HomeCommand = { command: string; brightness?: number; temperature?: number; volume?: number };
@@ -18,6 +18,19 @@ export function homeText(value: string | undefined, fallback = "Device"): string
 export function integrationList(value: unknown): Integration[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap(item => typeof item === "string" ? [{ domain: item, name: homeText(item) }] : item && typeof item.domain === "string" ? [{ domain: item.domain, name: homeText(item.name ?? item.domain) }] : []);
+}
+export function setupProblem(reason: string | undefined, flow?: HomeFlow): string {
+  const messages: Record<string,string> = {
+    cannot_connect:"Could not connect to the device.", connection_error:"The device did not answer.", timeout:"The device did not answer in time.",
+    pairing_failed:"The device did not accept the connection.", authentication_failed:"The device did not accept the connection.",
+    invalid_auth:"The sign-in details or pairing code did not work.", invalid_pin:"The pairing code did not work.",
+    not_allowed:"The device did not allow the connection.", user_rejected:"The connection request was declined.",
+    unknown:"The device could not finish setup.", aborted:"Setup was cancelled.",
+  };
+  if (reason === "already_configured") return homeText(reason);
+  const message=messages[reason ?? ""] ?? homeText(reason,"The device could not finish setup.");
+  const tv=/tv|television|cast/i.test(`${flow?.handler ?? ""} ${flow?.title ?? ""}`);
+  return `${message} ${tv ? "Make sure the TV is on, then accept the request or enter the code shown on the TV." : "Make sure the device is on and connected to your Wi-Fi, then try again."}`;
 }
 export const homeUrl = (connection: GatewayConnection) => { const url = new URL(connection.url); if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Use the lamp’s local address."); url.port = "8123"; url.protocol = "http:"; url.pathname = "/"; url.search = ""; url.hash = ""; return url.href; };
 export const getHome = (connection: GatewayConnection, signal?: AbortSignal) => homeRequest<HomeStatus>(connection, "status", undefined, signal);

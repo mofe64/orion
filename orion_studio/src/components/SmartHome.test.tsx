@@ -42,7 +42,20 @@ describe("Home", () => {
     expect(form({ type: "create_entry" })).toContain("Choose a room");
     expect(form({ type: "abort", reason: "already_configured" })).toContain("already in your home");
     const error = form({ type: "form", errors: { base: "cannot_connect", api_key: "invalid_auth" } });
-    expect(error).toContain("Could not connect."); expect(error).not.toContain("cannot_connect"); expect(error).not.toContain("base:");
+    expect(error).toContain("Could not connect to the device."); expect(error).not.toContain("cannot_connect"); expect(error).not.toContain("base:");
+  });
+  it("explains a TV setup failure and gives the pairing action", () => {
+    for (const flow of [
+      {type:"form",handler:"samsungtv",errors:{base:"pairing_failed"}},
+      {type:"abort",handler:"samsungtv",reason:"not_allowed"},
+    ]) {
+      const html=form(flow);
+      expect(html).toContain('role="alert"');
+      expect(html).toContain("Make sure the TV is on, then accept the request or enter the code shown on the TV.");
+      expect(html).not.toContain("pairing_failed");
+      expect(html).not.toContain("not_allowed");
+    }
+    expect(form({type:"abort",reason:"The device refused the pairing code."})).toContain("The device refused the pairing code.");
   });
   it("supports control types independently of voice permission and restricts unsafe devices", () => {
     const entries = [lamp, { ...lamp, entity_id: "climate.heat", domain: "climate", attributes: { temperature: 21 } }, { ...lamp, entity_id: "cover.blind", domain: "cover", attributes: { supported_features: 11 } }, { ...lamp, entity_id: "media_player.tv", domain: "media_player", state: "playing", attributes: { supported_features: 16389, volume_level: .3 } }, { ...lamp, entity_id: "cover.garage", domain: "cover", attributes: { device_class: "garage" } }];

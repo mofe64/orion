@@ -155,7 +155,7 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(self.home.flow('POST', 'flow_1', {'password': 'integration-secret'})['data_schema'], self.fake.schema)
         self.home.flow('DELETE', 'flow_1')
         self.assertEqual(len(self.home.discovered()), 1)
-        self.assertTrue(self.home.discovered()[0]['hidden'])
+        self.assertFalse(self.home.discovered()[0]['ignored'])
         self.assertFalse(any(method == 'DELETE' for method, _, _ in self.fake.calls))
         self.assertEqual(self.home.flow('GET', 'flow_1')['flow_id'], 'flow_1')
         with self.assertRaises(HomeError): self.home.flow('GET', '../auth')
@@ -309,11 +309,20 @@ class HouseholdTests(unittest.TestCase):
         with self.assertRaises(GatewayError): gateway.home_request('POST', 'control', {'entity_id': 'switch.lamp_config', 'command': 'on'})
 
     def test_cancel_preserves_discovery_across_gateway_restart_and_ignored_can_restart(self):
+        private_json(self.home.data / 'home-hidden.json', ['tv_setup'])
         self.home.flow('DELETE', 'tv_setup')
         self.home.rest.assert_not_called()
-        self.assertTrue(self.home.discovered()[0]['hidden'])
+        self.assertFalse(self.home.discovered()[0]['ignored'])
         again = HomeAssistant(data=Path(self.temp.name)); again.session = self.home.session
-        self.assertTrue(again.discovered()[0]['hidden'])
+        self.assertFalse(again.discovered()[0]['ignored'])
+        self.home.set_discovery({'flow_id':'tv_setup','ignored':True})
+        self.assertTrue(again.discovered()[0]['ignored'])
+        self.home.flow('DELETE','tv_setup')
+        self.assertTrue(again.discovered()[0]['ignored'])
+        again.set_discovery({'flow_id':'tv_setup','ignored':False})
+        self.assertFalse(self.home.discovered()[0]['ignored'])
+        with self.assertRaises(HomeError): self.home.set_discovery({'flow_id':'missing','ignored':True})
+        with self.assertRaises(HomeError): self.home.set_discovery({'flow_id':'tv_setup','ignored':'false'})
         self.home.rest.return_value = {'type': 'form', 'flow_id': 'tv_setup'}
         self.assertEqual(self.home.flow('GET', 'tv_setup')['flow_id'], 'tv_setup')
         self.fixture['entries'] = [{'source': 'ignore', 'entry_id': 'ignored_tv', 'domain': 'samsungtv', 'title': 'Bedroom TV'}]

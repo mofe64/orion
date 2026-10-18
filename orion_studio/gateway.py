@@ -377,6 +377,8 @@ class OrionGateway:
                 result = self.home.devices()
             elif path == 'discovered' and method == 'GET':
                 result = self.home.discovered()
+            elif path == 'discovered' and method == 'POST':
+                result = self.home.set_discovery(payload)
             elif path == 'integrations' and method == 'GET':
                 result = self.home.rest('/api/config/config_entries/flow_handlers')
             elif path == 'access' and method == 'GET':

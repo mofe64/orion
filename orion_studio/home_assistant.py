@@ -358,20 +358,33 @@ class HomeAssistant:
             self.ws('config/entity_registry/update', entity_id=device['id'], area_id=area)
         return {'ok': True}
 
-    def hidden_discoveries(self):
+    def ignored_discoveries(self):
         try:
-            return set(json.loads((self.data / 'home-hidden.json').read_text()))
+            return set(json.loads((self.data / 'home-ignored.json').read_text()))
         except (OSError, ValueError, TypeError):
             return set()
 
     def discovered(self):
         with self.discovery_lock:
-            hidden = self.hidden_discoveries()
-            found = [{**flow, 'hidden': flow['flow_id'] in hidden} for flow in self.ws('config_entries/flow/progress') if flow.get('context', {}).get('source') in DISCOVERY]
+            ignored_ids = self.ignored_discoveries()
+            found = [{**flow, 'ignored': flow['flow_id'] in ignored_ids} for flow in self.ws('config_entries/flow/progress') if flow.get('context', {}).get('source') in DISCOVERY]
             ignored = [{'type': 'ignored', 'flow_id': 'ignored-' + entry['entry_id'], 'ignored_entry_id': entry['entry_id'],
-                        'handler': entry['domain'], 'title': entry['title'], 'hidden': True}
+                        'handler': entry['domain'], 'title': entry['title'], 'ignored': True}
                        for entry in self.ws('config_entries/get') if entry.get('source') == 'ignore']
             return found + ignored
+
+    def set_discovery(self, payload):
+        if not isinstance(payload, dict) or set(payload) != {'flow_id', 'ignored'} or type(payload['ignored']) is not bool:
+            raise HomeError('Choose a found device to ignore or show again.', 400)
+        with self.discovery_lock:
+            found = next((item for item in self.discovered() if item['flow_id'] == payload['flow_id'] and not item.get('ignored_entry_id')), None)
+            if not found:
+                raise HomeError('Search for this device again.', 404)
+            ignored = self.ignored_discoveries()
+            if payload['ignored']: ignored.add(payload['flow_id'])
+            else: ignored.discard(payload['flow_id'])
+            private_json(self.data / 'home-ignored.json', sorted(ignored))
+            return {'ignored': payload['ignored']}
 
     def flow(self, method, identifier=None, payload=None):
         path = '/api/config/config_entries/flow'
@@ -385,9 +398,7 @@ class HomeAssistant:
             if identifier and method == 'DELETE':
                 found = next((item for item in self.discovered() if item['flow_id'] == identifier), None)
                 if found:
-                    hidden = self.hidden_discoveries() | {identifier}
-                    private_json(self.data / 'home-hidden.json', sorted(hidden))
-                    return {'hidden': True}
+                    return {'cancelled': True}
             if not identifier and 'ignored_entry_id' in payload:
                 entry = next((item for item in self.discovered() if item.get('ignored_entry_id') == payload['ignored_entry_id'] and item['handler'] == payload['handler']), None)
                 if not entry:
