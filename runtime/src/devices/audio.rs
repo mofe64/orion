@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{OrionRuntimeError as Error, Result};
 
+mod mixer;
 mod volume;
 pub use volume::{VolumeControl, VolumeStatus};
 
@@ -41,6 +42,10 @@ pub const ORION_AMIXER_PATH: &str = "/usr/bin/amixer";
 pub const ORION_APLAY_PATH: &str = "/usr/bin/aplay";
 
 pub trait AudioDevice {
+    fn set_music_ducking(&mut self, _duck: bool) {}
+    fn music_playing(&self) -> bool {
+        false
+    }
     fn play(&mut self, cue: &str) -> Result<()>;
     fn play_file(&mut self, label: &str, path: &Path) -> Result<()>;
     fn start_pcm(&mut self, _label: &str) -> Result<()> {
@@ -455,6 +460,7 @@ pub struct AlsaAudioDevice {
     pcm_writer: Option<thread::JoinHandle<std::io::Result<()>>>,
     writer_stop: Option<Arc<AtomicBool>>,
     volume: VolumeControl,
+    mixer: Option<mixer::Mixer>,
 }
 
 impl AlsaAudioDevice {
@@ -486,11 +492,22 @@ impl AlsaAudioDevice {
             pcm_writer: None,
             writer_stop: None,
             volume: VolumeControl::default(),
+            mixer: None,
         })
     }
 
     pub fn active_label(&self) -> Option<&str> {
         self.active_label.as_deref()
+    }
+
+    pub fn with_music_socket(mut self, path: PathBuf) -> Result<Self> {
+        self.mixer = Some(mixer::Mixer::open(
+            &self.player_path,
+            &self.pcm_device,
+            path,
+            Arc::clone(&self.volume.level),
+        )?);
+        Ok(self)
     }
 
     pub fn with_volume_path(mut self, path: Option<PathBuf>) -> Result<Self> {
@@ -513,6 +530,11 @@ impl AlsaAudioDevice {
             ));
         }
         validate_wav_header(path)?;
+        if let Some(mixer) = &mut self.mixer {
+            mixer.file(path.to_owned(), source)?;
+            self.active_label = Some(label.into());
+            return Ok(());
+        }
         let mut child = Command::new(&self.player_path)
             .args([
                 "-q",
@@ -547,6 +569,11 @@ impl AlsaAudioDevice {
 
     fn start_stream(&mut self, label: &str, source: AudioSource) -> Result<()> {
         self.update()?;
+        if let Some(mixer) = &mut self.mixer {
+            mixer.stream(source)?;
+            self.active_label = Some(label.into());
+            return Ok(());
+        }
         if self.child.is_some() {
             return Err(Error::InvalidState("Audio already playing.".into()));
         }
@@ -599,6 +626,16 @@ impl AlsaAudioDevice {
 }
 
 impl AudioDevice for AlsaAudioDevice {
+    fn set_music_ducking(&mut self, duck: bool) {
+        if let Some(mixer) = &self.mixer {
+            mixer.duck(duck);
+        }
+    }
+    fn music_playing(&self) -> bool {
+        self.mixer
+            .as_ref()
+            .is_some_and(|mixer| mixer.music_playing())
+    }
     fn play(&mut self, cue: &str) -> Result<()> {
         let path = self.cues.cue(cue)?.to_owned();
         self.start_playback(cue, &path, AudioSource::Cue)
@@ -623,6 +660,9 @@ impl AudioDevice for AlsaAudioDevice {
     }
 
     fn queue_pcm(&mut self, pcm: &[u8]) -> Result<bool> {
+        if let Some(mixer) = &self.mixer {
+            return mixer.queue(pcm);
+        }
         let sender = self
             .pcm_sender
             .as_ref()
@@ -637,10 +677,20 @@ impl AudioDevice for AlsaAudioDevice {
     }
 
     fn finish_pcm(&mut self) {
+        if let Some(mixer) = &mut self.mixer {
+            mixer.finish();
+        }
         self.pcm_sender = None;
     }
 
     fn update(&mut self) -> Result<()> {
+        if let Some(mixer) = &mut self.mixer {
+            mixer.update()?;
+            if !mixer.playing() {
+                self.active_label = None;
+            }
+            return Ok(());
+        }
         let Some(child) = self.child.as_mut() else {
             return Ok(());
         };
@@ -665,10 +715,16 @@ impl AudioDevice for AlsaAudioDevice {
     }
 
     fn is_playing(&self) -> bool {
-        self.child.is_some()
+        self.mixer
+            .as_ref()
+            .map_or(self.child.is_some(), |mixer| mixer.playing())
     }
 
     fn stop(&mut self) -> Result<()> {
+        if let Some(mixer) = &mut self.mixer {
+            self.active_label = None;
+            return mixer.stop();
+        }
         self.pcm_sender = None;
         if let Some(stop) = self.writer_stop.take() {
             stop.store(true, Ordering::Relaxed);

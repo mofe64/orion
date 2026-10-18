@@ -26,11 +26,13 @@ impl Gateway {
         })
     }
     pub async fn request(&self, path: &str, body: Option<Value>) -> Result<Value, String> {
+        let music = body.as_ref().is_some_and(|body| body["operation"] == "music");
         let request = match body {
             Some(body) => self.client.post(format!("{}{path}", self.url)).json(&body),
             None => self.client.get(format!("{}{path}", self.url)),
         };
         let response = request
+            .timeout(Duration::from_secs(if music {25}else{5}))
             .bearer_auth(&self.token)
             .send()
             .await
@@ -404,6 +406,16 @@ mod tests {
         });
         (gateway, task)
     }
+    #[tokio::test]
+    async fn music_operations_return_the_lamp_result_and_plain_premium_errors() {
+        let (gateway, task) = peer("200 OK", r#"{"accepted":true,"result":{"ok":true,"title":"Requested song"}}"#).await;
+        let result = gateway.robot_operation(json!({"operation":"music","request":{"action":"play","query":"Requested song","kind":"track"}}),"music-test").await.unwrap();
+        assert_eq!(result["title"],"Requested song"); task.await.unwrap();
+        let (gateway, task) = peer("403 Forbidden", r#"{"error":{"message":"Spotify Premium is required to play music on Orion."}}"#).await;
+        assert!(gateway.robot_operation(json!({"operation":"music","request":{"action":"resume"}}),"music-test").await.unwrap_err().contains("Premium"));
+        task.await.unwrap();
+    }
+
     #[tokio::test]
     async fn home_operations_preserve_gateway_success_and_allowlist_refusal() {
         let (gateway, task) = peer("200 OK", r#"{"accepted":true,"result":{"ok":true,"devices":[{"entity_id":"light.desk"}]}}"#).await;

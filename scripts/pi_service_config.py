@@ -7,7 +7,7 @@ from pi_hardware import profile, release_hardware
 
 SERVICES = ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack')
 STOP_ORDER = tuple(reversed(SERVICES))
-MANAGED_SERVICES = (*SERVICES, 'orion-vision')
+MANAGED_SERVICES = (*SERVICES, 'orion-vision', 'orion-spotify')
 MANAGED_STOP_ORDER = tuple(reversed(MANAGED_SERVICES))
 # Discard obsolete values when updating an existing installation.
 REMOVED_VOICE_ENV = frozenset((
@@ -18,7 +18,8 @@ REMOVED_VOICE_ENV = frozenset((
 
 def services_for_release(release):
     camera = profile(release_hardware(release), project=release).get('camera', {})
-    return MANAGED_SERVICES if camera.get('enabled') is True else SERVICES
+    return (*SERVICES, *(('orion-vision',) if camera.get('enabled') is True else ()),
+            *(('orion-spotify',) if (release / 'scripts/spotify_connect.py').is_file() else ()))
 
 REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
 # The reference model proposes candidates. The ASR wake check confirms them;
@@ -37,6 +38,7 @@ PATH_SUFFIXES = (
     'voice/models/wake/hey_orion_reference.rpw',
     'voice/models/verifier',
     'scripts/wait_for_oriond.sh', 'scripts/orion_safe_stop.sh',
+    'scripts/spotify_connect.py', 'native/librespot',
 )
 
 

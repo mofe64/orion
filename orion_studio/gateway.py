@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 
 from system_metrics import SystemMetrics, SystemdProperties
 from home_assistant import HomeAssistant, HomeError
+from spotify import Spotify, SpotifyError
 
 API_VERSION = 2
 # Resolve once so a running gateway stays with its release if a launcher symlink changes.
@@ -322,6 +323,7 @@ class OrionGateway:
             raise ValueError("Hardware must be v1 or v2")
         self.system_metrics = SystemMetrics()
         self.home = HomeAssistant()
+        self.spotify = Spotify()
         self.hardware = hardware
         self.client = client
         self.project_root = project_root
@@ -336,6 +338,20 @@ class OrionGateway:
         self.behaviours_file = self.camera_preference_file.with_name('behaviours.json')
         self.behaviours_lock = threading.Lock()
         self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
+
+    def spotify_request(self, action, payload=None):
+        try:
+            if action == 'start' and isinstance(payload, dict) and set(payload) == {'client_id', 'redirect_uri'}:
+                return self.spotify.begin(**payload)
+            if action == 'finish' and isinstance(payload, dict) and not set(payload)-{'code','state','error'}:
+                return self.spotify.finish(**payload)
+            if action == 'command': return self.spotify.command(payload)
+            if action == 'status': return self.spotify.status()
+            raise SpotifyError('Spotify could not read that request. Please try again.')
+        except SpotifyError as error:
+            raise GatewayError(HTTPStatus(error.status), 'spotify_error', str(error)) from None
+        except OSError:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'spotify_storage', "Orion couldn't save the Spotify sign-in. Please try again.") from None
 
     def home_request(self, method, path, payload=None):
         try:
@@ -852,7 +868,11 @@ class OrionGateway:
         if not isinstance(payload, dict):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
         operation = payload.get("operation")
-        if operation == "volume":
+        if operation == 'music':
+            if set(payload) != {'operation','request'}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music', 'Choose a music action.')
+            response = {"ok":True, **self.spotify_request('command', payload['request'])}
+        elif operation == "volume":
             if set(payload) == {"operation", "level"} and type(payload["level"]) is int and 0 <= payload["level"] <= 100:
                 argument = str(payload["level"])
             elif set(payload) == {"operation", "action"} and payload["action"] in ("louder", "quieter"):
@@ -2110,6 +2130,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _get(self) -> tuple[HTTPStatus, dict[str, Any]] | None:
             path = urlparse(self.path).path
+            if path == '/api/v2/music':
+                return HTTPStatus.OK, gateway.spotify_request('status')
             if path.startswith('/api/v2/home/'):
                 return HTTPStatus.OK, gateway.home_request('GET', path.removeprefix('/api/v2/home/'))
             if path == '/api/v2/system/metrics':
@@ -2155,6 +2177,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
 
         def _post(self) -> tuple[HTTPStatus, dict[str, Any]]:
             path = urlparse(self.path).path
+            if path in ('/api/v2/spotify/auth/start', '/api/v2/spotify/auth/finish'):
+                return HTTPStatus.OK, gateway.spotify_request(path.rsplit('/',1)[-1], self._read_json())
             if path.startswith('/api/v2/home/'):
                 return HTTPStatus.OK, gateway.home_request('POST', path.removeprefix('/api/v2/home/'), self._read_json())
             if path == '/api/v2/behaviours':

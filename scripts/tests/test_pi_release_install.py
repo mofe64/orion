@@ -50,6 +50,17 @@ class Fixture(unittest.TestCase):
 
 
 class ConfigurationTests(Fixture):
+    def test_spotify_service_follows_the_release_and_keeps_assets_separate(self):
+        self.write(self.release / 'scripts/spotify_connect.py', '# receiver')
+        plan = self.plan()
+        unit = plan[self.units / 'orion-spotify.service']
+        self.assertIn(str(self.release / 'scripts/spotify_connect.py'), unit)
+        self.assertIn(str(self.release / 'native/librespot'), unit)
+        self.assertIn(str(self.release / 'orion_studio/.venv/bin/python'), unit)
+        self.assertIn('Environment=HOME='+str(self.home), unit)
+        self.assertIn('WantedBy=multi-user.target', unit)
+        self.assertNotIn('--username',unit)
+
     def test_release_updates_use_the_selected_executable_at_different_install_paths(self):
         template = self.release
         for relative in ('home/alice/.local/share/orion/voice-stack', 'opt/custom-orion', 'srv/robots/bob'):
@@ -118,7 +129,7 @@ class ConfigurationTests(Fixture):
         (self.project / 'scenes/v2').mkdir(parents=True)
         gateway_file = self.release / 'orion_studio/gateway.py'
         gateway_file.parent.mkdir(parents=True)
-        for name in ('gateway.py', 'system_metrics.py', 'home_assistant.py'):
+        for name in ('gateway.py', 'system_metrics.py', 'home_assistant.py', 'spotify.py'):
             shutil.copy2(SCRIPTS.parent / 'orion_studio' / name, gateway_file.parent / name)
         compiler = self.release / 'runtime/target/release/orion-trajectory'
         self.write(compiler, '#!/bin/sh\nexit 0\n'); compiler.chmod(0o755)
@@ -810,6 +821,7 @@ class FakeSystem:
         self.units = units
         self.states = {name: {'active': existing, 'enabled': 'enabled' if existing else 'not-found'} for name in SERVICES}
         self.states['orion-vision'] = {'active': False, 'enabled': 'not-found'}
+        self.states['orion-spotify'] = {'active': False, 'enabled': 'not-found'}
         self.calls = []
         self.failure = None
         self.fail_restore = False
@@ -1231,7 +1243,7 @@ class CommissioningTests(Fixture):
         system = FakeSystem(self.units)
         with patch.object(installer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             folder = installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
-        self.assertTrue(all(state['active'] for state in system.states.values()))
+        self.assertTrue(all(system.states[name]['active'] for name in installer.services_for_release(self.release)))
         self.assertTrue(json.loads((folder / 'state.json').read_text())['services_started'])
 
     def test_old_v2_frame_stays_stopped_even_if_raw_readings_pass_new_limits(self):
@@ -1254,7 +1266,7 @@ class CommissioningTests(Fixture):
             installer.activate(self.root, self.release, self.home, self.plan(), system, commissioning=True)
         self.assertTrue((self.root / 'installation.json').is_file())
         self.assertTrue(all(not state['active'] for state in system.states.values()))
-        self.assertTrue(all(state['enabled'] == 'enabled' for state in system.states.values()))
+        self.assertTrue(all(system.states[name]['enabled'] == 'enabled' for name in installer.services_for_release(self.release)))
         installed = json.loads((self.root / 'installation.json').read_text())
         self.assertNotIn('services_started', json.loads((Path(installed['rollback']) / 'state.json').read_text()))
 
@@ -1267,7 +1279,7 @@ class CommissioningTests(Fixture):
         self.assertNotIn(('start', 'oriond'), system.calls)
         self.assertTrue((self.root / 'installation.json').is_file())
         self.assertTrue(all(not state['active'] for state in system.states.values()))
-        self.assertTrue(all(state['enabled'] == 'enabled' for state in system.states.values()))
+        self.assertTrue(all(system.states[name]['enabled'] == 'enabled' for name in installer.services_for_release(self.release)))
 
     def test_manual_rollback_cannot_restart_the_old_coordinate_frame(self):
         folder = self.root / 'transactions' / ('a' * 32); folder.mkdir(parents=True)

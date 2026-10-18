@@ -1,0 +1,6 @@
+{
+  "version": "0.8.0",
+  "url": "https://codeload.github.com/librespot-org/librespot/tar.gz/refs/tags/v0.8.0",
+  "sha256": "0e4922997e1c67d27b3f50dcc388ecb8a3c08eba23b764879071f6e9e8c07ec7",
+  "features": ["rustls-tls-native-roots", "with-libmdns"]
+}

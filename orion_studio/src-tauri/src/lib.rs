@@ -2,6 +2,7 @@ mod agent;
 mod coordinator;
 mod pairing;
 mod settings;
+mod spotify;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -9,6 +10,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(orion_service::Backend)
         .invoke_handler(tauri::generate_handler![
+            spotify::spotify_sign_in,
             coordinator::start_voice_worker,
             agent::geocode_location,
             agent::load_agent_profile,

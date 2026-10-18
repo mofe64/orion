@@ -660,6 +660,8 @@ def rollback(root, system, before_restore=None):
 def preflight(release, home, files, system):
     required = ['release.json', 'runtime/target/release/oriond', 'runtime/target/release/orion-trajectory',
                 'orion-service/target/release/orion-service', 'speech/.venv/bin/python', 'voice/.venv/bin/orion-listener']
+    if 'orion-spotify' in services_for_release(release):
+        required.extend(['native/librespot', 'native/librespot.sha256', 'orion_studio/.venv/bin/python'])
     for name in required:
         if not (release / name).is_file():
             raise RuntimeError(f'Prepare the complete release first: {name}')

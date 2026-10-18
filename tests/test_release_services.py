@@ -67,7 +67,7 @@ def test_every_rendered_service_starts_from_release_and_catalog_without_a_checko
             shutil.copytree(ROOT / directory, release / directory, ignore=ignore)
         studio_modules = tomllib.loads((ROOT / 'orion_studio/pyproject.toml').read_text())['tool']['setuptools']['py-modules']
         for relative in (*(f'orion_studio/{module}.py' for module in studio_modules), 'runtime/mujoco_bridge.py',
-                         'scripts/home_assistant_install.py', 'scripts/release-home-assistant.json'):
+                         'scripts/home_assistant_install.py', 'scripts/release-home-assistant.json', 'scripts/spotify_connect.py'):
             path = release / relative; path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, path)
         (release / 'release.json').write_text(json.dumps({'revision': 'layout-test', 'hardware': 'v2',
@@ -92,6 +92,18 @@ def test_every_rendered_service_starts_from_release_and_catalog_without_a_checko
                 target = release / component / 'target/release' / name
                 target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(binary(component, name), target)
         interpreters = {c: environment(release, c) for c in ('speech', 'voice', 'vision', 'orion_studio')}
+        # Replace the network receiver, while executing the real launcher and
+        # rendered service command from the isolated release.
+        receiver = release / 'native/librespot'; receiver.parent.mkdir()
+        receiver.write_text(f'#!{interpreters["orion_studio"]}\n' +
+            'import sys,time\n' +
+            'assert sys.argv[sys.argv.index("--backend")+1]=="pipe"\n' +
+            'assert sys.argv[sys.argv.index("--format")+1]=="S16"\n' +
+            'assert sys.argv[sys.argv.index("--volume-ctrl")+1]=="fixed"\n' +
+            'sys.stdout.buffer.write((2000).to_bytes(2,"little",signed=True)*882)\n' +
+            'sys.stdout.buffer.flush()\ntime.sleep(30)\n')
+        receiver.chmod(0o755)
+        receiver.with_suffix('.sha256').write_text(hashlib.sha256(receiver.read_bytes()).hexdigest())
         for component, executable, module in (('voice', 'orion-listener', 'orion_voice.satellite'),
                                               ('vision', 'orion-vision', 'orion_vision.service')):
             script = release / component / '.venv/bin' / executable
@@ -158,6 +170,24 @@ def test_every_rendered_service_starts_from_release_and_catalog_without_a_checko
                     with client.makefile('rb') as response:
                         assert json.loads(response.readline(1024 * 1024))['mode'] in ('observe', 'holding', 'configured')
                 checked.add('oriond')
+                with socket.socket(socket.AF_UNIX) as music:
+                    music_socket = base / 'music.sock'; music.bind(str(music_socket)); music.listen(1); music.settimeout(5)
+                    spotify = subprocess.Popen([*commands['orion-spotify'], '--socket', str(music_socket)],
+                        cwd=catalog, env=environments['orion-spotify'], stdout=output, stderr=output)
+                    try:
+                        with music.accept()[0] as stream:
+                            stream.settimeout(5); pcm = b''
+                            while len(pcm) < 1764:
+                                chunk = stream.recv(1764-len(pcm))
+                                assert chunk, 'Spotify launcher closed before forwarding PCM'
+                                pcm += chunk
+                        assert pcm == (2000).to_bytes(2,'little',signed=True)*882
+                        assert spotify.poll() is None
+                        checked.add('orion-spotify')
+                    finally:
+                        spotify.terminate()
+                        try: spotify.wait(timeout=5)
+                        except subprocess.TimeoutExpired: spotify.kill(); spotify.wait(timeout=5)
                 for name, component in (('orion-studio-gateway', 'orion_studio'), ('orion-listener', 'voice'), ('orion-vision', 'vision')):
                     command_file = base / (name + '.json'); command_file.write_text(json.dumps(commands[name]))
                     result = run([interpreters[component], ROOT / 'tests/release_startup_probe.py', name, release, command_file],

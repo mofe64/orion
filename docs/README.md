@@ -17,6 +17,7 @@
 - [Speech animation](speech-animation-runtime.md)
 - [Release packaging](release-packaging.md)
 - [Wi-Fi fallback](networking.md)
+- [Spotify setup and playback](spotify.md)
 - [Servo tracking tools](servo-tracking.md)
 - [Wake-word training](wake-word-training.md)
 

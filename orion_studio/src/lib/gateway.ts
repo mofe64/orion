@@ -91,6 +91,25 @@ export async function setMasterVolume(connection: GatewayConnection, level: numb
   return response.result.audio;
 }
 
+export interface MusicStatus {
+  signed_in: boolean;
+  client_id: string;
+  name: string;
+  redirect_uri: string;
+  now_playing: {title: string; artist: string; cover: string | null; playing: boolean} | null;
+  error: string | null;
+}
+export async function getMusic(connection: GatewayConnection, signal?: AbortSignal) {
+  try {
+    return await request<MusicStatus>(connection, "/api/v2/music", {signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000), cache:"no-store"});
+  } catch (error) {
+    if (error instanceof GatewayError && error.status === 404) throw new Error("Update Orion to use music in Studio.");
+    throw error;
+  }
+}
+export const musicCommand = (connection: GatewayConnection, value: {action: string; query?: string; kind?: string}) =>
+  request(connection, "/api/v2/operations", {method:"POST", signal:AbortSignal.timeout(25000), body:JSON.stringify({operation:"music",request:value})});
+
 export interface CameraObservation {
   id: string | number;
   class: string;

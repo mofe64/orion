@@ -1,0 +1,24 @@
+[Unit]
+Description=Orion Spotify Connect speaker
+After=network-online.target oriond.service
+Wants=network-online.target oriond.service
+PartOf=oriond.service
+
+[Service]
+Type=simple
+User=@ORION_USER@
+WorkingDirectory=@PROJECT_ROOT@
+Environment=HOME=@USER_HOME@
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStart=@PROJECT_ROOT@/orion_studio/.venv/bin/python @PROJECT_ROOT@/scripts/spotify_connect.py --binary @PROJECT_ROOT@/native/librespot
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

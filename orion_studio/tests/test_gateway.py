@@ -141,6 +141,18 @@ class FakeOrionClient:
 
 
 class GatewayContractTests(unittest.TestCase):
+    def test_music_operations_preserve_status_and_spotify_instructions(self):
+        from spotify import SpotifyError
+        self.gateway.spotify = Mock()
+        self.gateway.spotify.command.return_value = {'signed_in':True,'now_playing':{'title':'Song','artist':'Artist'}}
+        result = self.gateway.submit({'operation':'music','request':{'action':'status'}})[1]['result']
+        self.assertTrue(result['ok']); self.assertEqual(result['now_playing']['title'],'Song')
+        self.gateway.spotify.command.side_effect = SpotifyError('Spotify Premium is required to play music on Orion.',403)
+        with self.assertRaisesRegex(GatewayError,'Premium') as error:
+            self.gateway.submit({'operation':'music','request':{'action':'resume'}})
+        self.assertEqual(error.exception.status,403)
+        with self.assertRaises(GatewayError): self.gateway.spotify_request('start',{'client_id':'a'*32,'extra':True})
+
     def test_volume_status_and_validated_operations(self):
         self.assertEqual(self.gateway.status()["audio"]["volume"], 100)
         for payload, expected in [({"operation":"volume","level":40},40), ({"operation":"volume","action":"louder"},50), ({"operation":"volume","action":"quieter"},40)]:
@@ -320,6 +332,12 @@ class GatewayContractTests(unittest.TestCase):
 
 
 class HttpAuthenticationTests(unittest.TestCase):
+    def test_spotify_status_and_sign_in_endpoints_require_authentication(self):
+        for path,document in [('/api/v2/music',None),('/api/v2/spotify/auth/start',{'client_id':'a'*32}),('/api/v2/spotify/auth/finish',{'code':'private-code','state':'state'})]:
+            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(self.request(path,document=document,authorized=False))
+            self.assertEqual(error.exception.code,401)
+
     def setUp(self) -> None:
         self.fake = FakeOrionClient(); self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name); (root / "scenes/v1").mkdir(parents=True)

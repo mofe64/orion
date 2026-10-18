@@ -5,6 +5,7 @@ pub mod look;
 mod routines;
 mod home;
 mod volume;
+mod music;
 use crate::{AgentConfig, memory};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -46,6 +47,7 @@ pub(crate) fn schemas() -> Value {
     schemas.as_array_mut().unwrap().extend(routines::schemas());
     schemas.as_array_mut().unwrap().extend(home::schemas());
     schemas.as_array_mut().unwrap().extend(volume::schemas());
+    schemas.as_array_mut().unwrap().extend(music::schemas());
     schemas.as_array_mut().unwrap().extend(lists::schemas());
     schemas.as_array_mut().unwrap().push(aim_light::schema());
     schemas.as_array_mut().unwrap().push(look::schema());
@@ -73,6 +75,14 @@ pub(crate) async fn execute(
     events: Option<&mpsc::Sender<AgentEvent>>,
 ) -> Result<Value, String> {
     match name {
+        "play_music" | "pause_music" | "resume_music" | "skip_song" | "previous_song" | "whats_playing" => {
+            let parameters = music::resolve(name, arguments)?;
+            let events = events.ok_or("No robot coordinator is attached")?;
+            let (reply, result) = oneshot::channel();
+            events.send(AgentEvent::RobotOperation { parameters, reply }).await.map_err(|_| "Coordinator stopped")?;
+            tokio::time::timeout(std::time::Duration::from_secs(30), result).await
+                .map_err(|_| "Spotify did not answer. Please try again.")?.map_err(|_| "Music request cancelled")?
+        }
         "set_volume" | "louder" | "quieter" => {
             let parameters = volume::resolve(name, arguments)?;
             let events = events.ok_or("No robot coordinator is attached")?;
@@ -255,6 +265,22 @@ fn timezone_label(zone: Option<&str>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn music_tools_wait_for_playback_and_preserve_premium_instructions() {
+        for response in [Ok(json!({"ok":true,"title":"Requested song"})), Err("Spotify Premium is required to play music on Orion.".into())] {
+            let (send, mut receive) = mpsc::channel(1);
+            let config = AgentConfig::default();
+            let call = execute(&config,"play_music",json!({"query":"Requested song","kind":"track"}),Some(&send));
+            let expected = response.clone();
+            let peer = async {
+                let AgentEvent::RobotOperation {parameters,reply} = receive.recv().await.unwrap() else {panic!("Expected music operation")};
+                assert_eq!(parameters,json!({"operation":"music","request":{"action":"play","query":"Requested song","kind":"track"}}));
+                reply.send(response).unwrap();
+            };
+            let (result,()) = tokio::join!(call,peer);
+            assert_eq!(result,expected);
+        }
+    }
     #[tokio::test]
     async fn volume_tools_confirm_the_actual_result_and_preserve_errors() {
         for response in [Ok(json!({"result":{"audio":{"volume":40}}})), Err("Volume storage stopped.".to_string())] {

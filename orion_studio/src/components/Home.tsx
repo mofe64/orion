@@ -19,7 +19,7 @@ import { CameraCard } from "./CameraCard";
 import { AlarmForm } from "./AlarmForm";
 import { ReminderForm } from "./ReminderForm";
 import { alertTime } from "../lib/alertTime";
-import { VolumeControl } from "./VolumeControl";
+import { Music } from "./Music";
 
 const RobotViewport = lazy(() => import("./RobotViewport").then(module => ({ default: module.RobotViewport })));
 export const CHARACTER_MODE_FAILURE = "Studio couldn't change Orion's mode. Please try again.";
@@ -157,7 +157,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         <div className="oh-inputs"><div className="oh-input-control">
           <div className="oh-talk"><span className="oh-mic"><Mic size={19} /></span><span><strong>Listening</strong><small>{voiceLabel}</small></span><button className="studio-switch" role="switch" aria-label="Orion listening" aria-checked={listening} disabled={!voiceAvailable} onClick={onVoice}><span /></button></div>
           {voiceNotice && <p role="status" className="oh-feedback">{voiceNotice}</p>}<FailureNotice value={voiceError ?? null} />
-        </div>{trackingControl}<VolumeControl connection={connection} status={status?.audio} /></div>
+        </div>{trackingControl}</div>
       </div>
       <section className="oh-lamp" aria-label="Lamp controls" aria-busy={pending !== null}>
         <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={lightOn} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled || resting} onClick={() => { commitLamp.cancel(); lampDirty.current = false; applyLight({ enabled: !lightOn, mood, brightness, hue }); }}><span /></button></header>
@@ -174,6 +174,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
         <p className="oh-note" id="lamp-command-help">{status?.rest ? "Rest keeps the light off and saves your setting." : "Idle mode, Lamp mode and speech can briefly take over the light."}</p>
       </section>
     </div>
+    <Music connection={connection} audio={status?.audio}/>
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>See all <ArrowUpRight size={15} /></button></header>
       <div className="oh-expression-list">{quickExpressions(catalog).map(({name}) => <button key={name} disabled={disabled || foregroundBusy} onClick={() => void act(assetDisplayName(name), value => runScene(value, name))}><span className="oh-expression-icon"><Sparkles size={16} /></span>{assetDisplayName(name)}<Play className="oh-arrow" size={14} /></button>)}</div>
       {feedback("expression")}

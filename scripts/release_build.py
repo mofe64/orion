@@ -169,6 +169,8 @@ def shared():
             '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=OFF', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF')
         run('cmake', '--build', source / 'build', '--target', 'llama-server', '-j', '2')
     dest = release / 'native'; dest.mkdir()
+    from build_spotify import build as build_spotify
+    build_spotify(ROOT, dest)
     run('git', 'clone', '--branch', 'pi5', 'https://github.com/jgarff/rpi_ws281x.git', dest / 'rpi_ws281x')
     run('git', '-C', dest / 'rpi_ws281x', 'checkout', '1396df4f35a86de0f7e5eda91d94d4539eef1727')
     shutil.rmtree(dest / 'rpi_ws281x/.git')

@@ -157,7 +157,13 @@ pub(super) fn serve(options: Options) -> crate::Result<i32> {
                     &options.audio_pcm_device,
                     PathBuf::from(ORION_APLAY_PATH),
                 )?
-                .with_volume_path(volume_path())?,
+                .with_volume_path(volume_path())?
+                .with_music_socket(
+                    std::env::var_os("HOME")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from("/tmp"))
+                        .join(".local/share/orion/music.sock"),
+                )?,
             );
             serve_driver(
                 driver,
@@ -373,6 +379,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         if feedback.expire(now_seconds) && had_confirmed_feedback {
             let _ = character.set_reaction("neutral", now_seconds, &mut core);
         }
+        audio.set_music_ducking(
+            feedback.session_active() || speech.is_active() || routines.ringing(),
+        );
         if rest.failed()
             || voice_speech_run.as_ref().is_some_and(|(run, session)| {
                 speech

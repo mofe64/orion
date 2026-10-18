@@ -5,6 +5,7 @@ pub mod release;
 mod remote;
 pub mod rpc;
 pub mod settings;
+pub mod spotify;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

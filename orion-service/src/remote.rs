@@ -19,7 +19,7 @@ fn address_cache() -> &'static Mutex<HashMap<String, Vec<SocketAddr>>> {
 
 /// Build a client pinned to the gateway's addresses. IP-literal hosts need no
 /// lookup. Returns whether the addresses came from the cache.
-async fn gateway_client(base: &str, fresh: bool) -> Result<(reqwest::Client, bool), String> {
+pub(crate) async fn gateway_client(base: &str, fresh: bool) -> Result<(reqwest::Client, bool), String> {
     let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     let url = url::Url::parse(base).map_err(|_| "Invalid Orion address")?;
     let host = match url.host() {
@@ -78,7 +78,7 @@ fn forget_addresses(base: &str) {
     }
 }
 
-async fn json_response(mut response: reqwest::Response) -> Result<Value, String> {
+pub(crate) async fn json_response(mut response: reqwest::Response) -> Result<Value, String> {
     let mut body = Vec::new();
     while let Some(chunk) = response
         .chunk()
