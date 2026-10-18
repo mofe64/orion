@@ -768,6 +768,7 @@ class OrionGateway:
             "rest": character.get("rest"),
             "routines": character.get("routines"),
             "audio": audio.get("audio"),
+            "lamp": runtime.get("lamp"),
         }
 
     def runtime_logs(self) -> dict[str, Any]:
@@ -994,8 +995,10 @@ class OrionGateway:
             response = self._checked("character rest")
         elif operation == "lamp_effect":
             settings = payload.get("settings")
-            if not isinstance(settings, dict) or not settings or set(settings) - {"brightness", "effect", "colors", "transition_seconds"}:
+            if not isinstance(settings, dict) or not settings or set(settings) - {"on", "brightness", "effect", "colors", "transition_seconds"}:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Invalid lamp settings.")
+            if 'on' in settings and type(settings['on']) is not bool:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Choose whether the lamp is on or off.")
             transition = settings.get("transition_seconds")
             if transition is not None and (type(transition) not in {int, float} or not 0 <= transition <= 3600):
                 raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_lamp", "Transition must be 0–3600 seconds.")

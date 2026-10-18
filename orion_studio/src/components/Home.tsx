@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Info, Mic, Moon, Play, Sparkles, Sun, SunDim } from "lucide-react";
-import { restOrion, setCharacterMode, setUserMode, updateRoutines, setLamp, runScene, type GatewayConnection } from "../lib/gateway";
-import { createLampCommitter, hueName, lampChannels, lampPreview, type LampMood, type ManualLampSetting } from "../lib/homeLamp";
+import { ArrowUpRight, Info, Mic, Moon, Play, Sparkles, Sun } from "lucide-react";
+import { restOrion, setCharacterMode, setUserMode, updateRoutines, runScene, type GatewayConnection } from "../lib/gateway";
+import {ownerLampPreview} from "../lib/ownerLamp";
+import {OwnerLamp} from "./OwnerLamp";
 import { acceptedRun, type TrackedRun } from "./RunFeedback";
-import type { GatewayStatus, ProjectCatalog } from "../types";
+import type { GatewayStatus, ProjectCatalog, LampStatus } from "../types";
 import "./Home.css";
 import { failure, forOwner, OwnerRequestError, type Failure } from "../lib/feedback";
 import { FailureNotice } from "./FailureNotice";
@@ -56,16 +57,16 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   const trackingControl = <TrackingControl {...tracking} connected={!!connection} supported={trackingSupported}
     onChange={mode => void tracking.choose?.(mode)} />;
   const [pending, setPending] = useState<string | null>(null);
-  const [mood, setMood] = useState<LampMood>("Warm white");
-  const [hue, setHue] = useState(210);
-  const [brightness, setBrightness] = useState(40);
-  const [brightnessChosen, setBrightnessChosen] = useState(false);
-  const lampDirty = useRef(false);
-  const [appliedLamp, setAppliedLamp] = useState<ManualLampSetting | null>(null);
-  const lightOn = status?.rest?.light_on ?? appliedLamp?.enabled ?? false;
+  const [lampPreviewSetting,setLampPreviewSetting]=useState<LampStatus|null>(null);
+  const [lightTime,setLightTime]=useState(0);
   const resting = status?.rest?.state === "resting" || status?.rest?.state === "going_to_rest";
-  const previewLight = useMemo(() => appliedLamp ? lampPreview({ ...appliedLamp,
-    enabled: status?.rest ? lightOn : appliedLamp.enabled }) : { red: 0, green: 0, blue: 0, white: 0 }, [appliedLamp, lightOn, status?.rest]);
+  const previewSetting=lampPreviewSetting??status?.lamp;
+  const previewLight=ownerLampPreview(previewSetting,lightTime);
+  useEffect(()=>{
+    if(!previewSetting || (previewSetting.effect==='solid' && !previewSetting.fade)) return;
+    const timer=setInterval(()=>setLightTime(performance.now()/1000),100);
+    return ()=>clearInterval(timer);
+  },[previewSetting?.effect,!!previewSetting?.fade]);
   const [result, setResult] = useScopedFeedback<{ text: string; area: FeedbackArea; failure?: Failure } | null>("home", connection);
   const feedback = (area: FeedbackArea) => {
     if (!pending && result?.area === area && result.failure) return <FailureNotice value={result.failure} />;
@@ -75,12 +76,8 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   const request = useRef<symbol | null>(null);
 
   useEffect(() => {
-    // Legacy gateways only report the last requested lamp setting:
-    // The gateway has no lamp telemetry. Never carry a previous session's command into a new connection.
-    // Rest-aware gateways add effective power, but still do not report saved color preferences.
     request.current = null;
-    setPending(null); setAppliedLamp(null); setResult(null);
-    setBrightness(40); setBrightnessChosen(false); setMood("Warm white"); setHue(210); lampDirty.current = false;
+    setPending(null); setLampPreviewSetting(null); setResult(null);
     return () => { request.current = null; };
   }, [connection]);
 
@@ -105,22 +102,9 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
       const message = error instanceof Error ? error.message : String(error);
       setResult({ text: message, area: homeFeedbackArea(label), ...(error instanceof OwnerRequestError ? { failure: failure(message, error) } : {}) });
     } finally {
-      if (request.current === id) { request.current = null; setPending(null); void commitLamp.flush(); }
+      if (request.current === id) { request.current = null; setPending(null); }
     }
     return succeeded;
-  };
-  const applyLight = (setting: ManualLampSetting) => {
-    return act(setting.enabled ? setting.mood === "Warm white" ? "Warm white light" : "Custom color" : "Light off",
-      value => setLamp(value, lampChannels(setting)), () => setAppliedLamp(setting));
-  };
-  // The queued callback receives a complete setting, so it never reads an old slider value.
-  // Recreating/cancelling on connection change prevents a release reaching another Orion.
-  const commitLamp = useMemo(() => createLampCommitter(applyLight), [connection]);
-  useEffect(() => () => commitLamp.cancel(), [commitLamp]);
-  const releaseLight = () => {
-    if (!lampDirty.current) return;
-    lampDirty.current = false;
-    commitLamp.queue({ enabled: true, mood, brightness, hue });
   };
   const disabled = !connection || pending !== null;
   const userMode = status?.routines?.mode ?? status?.rest?.mode ?? "idle";
@@ -159,20 +143,7 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
           {voiceNotice && <p role="status" className="oh-feedback">{voiceNotice}</p>}<FailureNotice value={voiceError ?? null} />
         </div>{trackingControl}</div>
       </div>
-      <section className="oh-lamp" aria-label="Lamp controls" aria-busy={pending !== null}>
-        <header className="oh-panel-heading"><h2>Lamp</h2><button className="oh-switch" role="switch" aria-label="Lamp power" aria-checked={lightOn} aria-describedby="lamp-command-state lamp-command-help" disabled={disabled || resting} onClick={() => { commitLamp.cancel(); lampDirty.current = false; applyLight({ enabled: !lightOn, mood, brightness, hue }); }}><span /></button></header>
-        <p id="lamp-command-state">{!connection ? "Connect to control the light" : resting ? (lightOn ? "Fading off for rest" : "Off while resting · lamp setting saved") : status?.rest ? `Light ${lightOn ? "on" : "off"}` : appliedLamp ? `Last set: ${appliedLamp.enabled ? `${appliedLamp.mood} · On` : "Off"}` : "Not set in this session"}</p>
-        <div className="oh-dial">
-          <svg viewBox="0 0 216 216" aria-hidden="true"><circle className="oh-dial-track" cx="108" cy="108" r="91" fill="none" strokeWidth="8" strokeLinecap="round" strokeDasharray="429 572" />{(brightnessChosen || appliedLamp) && <circle className="oh-dial-value" cx="108" cy="108" r="91" fill="none" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${429 * brightness / 100} 572`} />}</svg>
-          <div><output htmlFor="lamp-brightness">{brightnessChosen || appliedLamp ? <>{brightness}<small>%</small></> : "–"}</output><label htmlFor="lamp-brightness">{brightnessChosen || appliedLamp ? "Brightness" : "Not set in this session"}</label></div>
-        </div>
-        <div className="oh-range"><SunDim size={18} /><input id="lamp-brightness" type="range" min="1" max="100" value={brightness} disabled={!connection} aria-describedby="lamp-brightness-help" aria-valuetext={brightnessChosen || appliedLamp ? `${brightness}%` : "Choose brightness; Orion does not report its current level"} onChange={event => { setBrightness(Number(event.target.value)); setBrightnessChosen(true); lampDirty.current = true; }} onPointerUp={releaseLight} onKeyUp={releaseLight} onBlur={releaseLight} /><Sun size={18} /></div>
-        <fieldset className="oh-light-moods"><legend>Light mood</legend><div>{(["Warm white", "Custom color"] as const).map(value => <button key={value} type="button" aria-pressed={mood === value} disabled={disabled} onClick={() => { setMood(value); commitLamp.queue({ enabled: true, mood: value, brightness, hue }); }}>{value}</button>)}</div></fieldset>
-        {mood === "Custom color" && <div className="oh-color"><div><label htmlFor="lamp-color">Choose your color</label><span className="oh-swatch" style={{ background: `hsl(${hue} 75% 65%)` }} aria-hidden="true" /></div><input className="orion-hue-slider" id="lamp-color" type="range" min="0" max="360" value={hue} aria-valuetext={hueName(hue)} disabled={!connection} onChange={event => { setHue(Number(event.target.value)); lampDirty.current = true; }} onPointerUp={releaseLight} onKeyUp={releaseLight} onBlur={releaseLight} /></div>}
-        {feedback("lamp")}
-        <p className="oh-note" id="lamp-brightness-help">Changes apply when you let go and turn the lamp on. Orion does not report its brightness, so the dial shows what you set here.</p>
-        <p className="oh-note" id="lamp-command-help">{status?.rest ? "Rest keeps the light off and saves your setting." : "Idle mode, Lamp mode and speech can briefly take over the light."}</p>
-      </section>
+      <OwnerLamp key={`${connection.url}:${connection.token}`} connection={connection} status={status?.lamp} resting={resting} onPreview={setLampPreviewSetting}/>
     </div>
     <Music connection={connection} audio={status?.audio}/>
     <section className="oh-expressions" aria-label="Expressions"><header className="oh-panel-heading"><h2>Expressions</h2><button className="oh-text-button" onClick={onCreate}>See all <ArrowUpRight size={15} /></button></header>

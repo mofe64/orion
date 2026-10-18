@@ -1195,7 +1195,30 @@ mod tests {
         let mut startup = DispatchFixture::new(600.);
         startup.ok(r#"lamp-effect {"brightness":0.2,"transition_seconds":30}"#);
         startup.ok("character start");
-        assert!(startup.manual.is_none());
+        assert_eq!(startup.manual.as_ref().unwrap().status()["brightness"], 20.);
+    }
+    #[test]
+    fn owner_lamp_status_survives_scene_takeovers_and_updates_during_them() {
+        let mut h = DispatchFixture::new(600.);
+        h.ok(r#"lamp-effect {"brightness":0.35,"colors":[[255,0,0,0]],"effect":"thinking_drift"}"#);
+        h.ok("configure");
+        h.ok("enable");
+        h.ok("scene start acknowledge_left");
+        let lamp = h.command("status")["lamp"].clone();
+        assert_eq!(lamp["brightness"], 35.);
+        assert_eq!(lamp["takeover"], "scene");
+        h.ok(r#"lamp-effect {"brightness":0.6}"#);
+        let next = h.command("lamp-status")["lamp"].clone();
+        assert_eq!(next["brightness"], 60.);
+        assert_eq!(next["colors"], lamp["colors"]);
+        assert_eq!(next["effect"], lamp["effect"]);
+        assert_eq!(h.command("character status")["lamp"], next);
+        h.ok("lamp 0 0 0 0");
+        let off = h.command("status")["lamp"].clone();
+        assert_eq!(off["on"], false);
+        assert_eq!(off["brightness"], 60.);
+        h.ok(r#"lamp-effect {"on":true}"#);
+        assert_eq!(h.command("status")["lamp"]["on"], true);
     }
     #[test]
     fn wake_candidate_cues_once_and_confirmation_does_not_repeat_it() {

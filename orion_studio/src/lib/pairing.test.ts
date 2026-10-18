@@ -102,14 +102,14 @@ describe("pairing and reconnect", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => pending.promise }));
     const requesting = controller.requestCode("other-orion.local");
     expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities });
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(500);
     expect(probe.status).toHaveBeenCalledTimes(2);
     expect(probe.status).toHaveBeenLastCalledWith(target);
     const result = { api_version: 2, expires_in_seconds: 300 };
     pending.resolve(result);
     expect(await requesting).toEqual(result);
     expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities });
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(500);
     expect(probe.status).toHaveBeenCalledTimes(3);
     expect(probe.capabilities).toHaveBeenCalledTimes(1);
     expect(store.save).not.toHaveBeenCalled();
@@ -121,7 +121,7 @@ describe("pairing and reconnect", () => {
     expect(await controller.requestCode("other-orion.local")).toBeNull();
     expect(controller.current()).toMatchObject({ phase: "connected", connection: target, address: target.url, status, capabilities,
       error: "Orion is busy. Wait 15 seconds, then ask for a new code." });
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(500);
     expect(probe.status).toHaveBeenCalledTimes(2);
     expect(probe.status).toHaveBeenLastCalledWith(target);
     expect(controller.current().phase).toBe("connected");
@@ -172,7 +172,7 @@ describe("pairing and reconnect", () => {
     const { controller, store, probe } = setup();
     await controller.start();
     expect(controller.current()).toMatchObject({ phase: "connected", connection: target, paired: true });
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(500);
     expect(probe.status).toHaveBeenCalledTimes(2);
     expect(probe.capabilities).toHaveBeenCalledTimes(1);
     expect(store.save).not.toHaveBeenCalled();

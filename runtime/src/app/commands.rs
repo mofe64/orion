@@ -577,7 +577,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         };
     }
     if command == "lamp-status" {
-        return serde_json::json!({"ok":true,"lamp":manual_light.as_ref().map(|lamp|lamp.status_at(now_seconds))}).to_string();
+        return serde_json::json!({"ok":true,"lamp":owner_lamp_status(manual_light, routines, character, scenes, speech, feedback, rest, now_seconds)}).to_string();
     }
     if command == "routines status" {
         return serde_json::json!({"ok":true,"routines":routines.status(wall, now_seconds)})
@@ -705,7 +705,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
     }
     if command == "character status" {
-        return serde_json::json!({"ok": true, "character": character.status(), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds)}).to_string();
+        return serde_json::json!({"ok": true, "character": character.status(), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds), "lamp":owner_lamp_status(manual_light,routines,character,scenes,speech,feedback,rest,now_seconds)}).to_string();
     }
     if let Some(fields) = command.strip_prefix("voice ") {
         if fields == "status" {
@@ -886,14 +886,12 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
     }
     if let Some(value) = command.strip_prefix("lamp-effect ") {
-        if scenes.is_active() || speech.is_active() {
-            return serde_json::json!({"ok":false,"error":"Wait for the current scene or speech to finish."}).to_string();
-        }
         let result = serde_json::from_str::<crate::lamp::LampPatch>(value)
             .map_err(|e| e.to_string())
             .and_then(|patch| {
-                manual_light
-                    .clone()
+                routines
+                    .owner_lamp(manual_light)
+                    .cloned()
                     .unwrap_or_default()
                     .updated_at(patch, now_seconds)
                     .map_err(|e| e.to_string())
@@ -914,9 +912,6 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         };
     }
     if let Some(values) = command.strip_prefix("lamp ") {
-        if scenes.is_active() || speech.is_active() {
-            return serde_json::json!({"ok": false, "error": "Wait for the current scene or speech to finish before changing the lamp."}).to_string();
-        }
         let channels: Vec<_> = values.split_whitespace().collect();
         let result = if channels.len() == 4 {
             parse_rgbw(&mut channels.iter().map(|value| value.to_string()), "lamp")
@@ -934,7 +929,22 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 if prior_mode != routines.mode() {
                     rest.set_mode(routines.mode(), now_seconds);
                 }
-                *manual_light = Some(crate::lamp::LampProgram::from_color(color));
+                let maximum = [color.red, color.green, color.blue, color.white]
+                    .into_iter()
+                    .max()
+                    .unwrap();
+                let base = manual_light.clone().unwrap_or_default();
+                let patch = if maximum == 0 {
+                    serde_json::json!({"on":false})
+                } else {
+                    let normalized = [color.red, color.green, color.blue, color.white]
+                        .map(|c| (f64::from(c) * 255. / f64::from(maximum)).round() as u8);
+                    serde_json::json!({"on":true,"brightness":f64::from(maximum)/255.,"effect":"solid","colors":[normalized]})
+                };
+                *manual_light = Some(
+                    base.updated_at(serde_json::from_value(patch).unwrap(), now_seconds)
+                        .expect("validated lamp channels"),
+                );
                 serde_json::json!({"ok": true, "command": "lamp"}).to_string()
             }
             Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
@@ -1012,7 +1022,6 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             .is_ok_and(|value| value["ok"] == true)
     {
         rest.started();
-        *manual_light = None;
     }
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) {
         if value["ok"] == true {
@@ -1026,5 +1035,56 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             }
         }
     }
+    if matches!(command, "status" | "character status") {
+        let mut value: serde_json::Value = serde_json::from_str(&response).expect("runtime status");
+        value["lamp"] = owner_lamp_status(
+            manual_light,
+            routines,
+            character,
+            scenes,
+            speech,
+            feedback,
+            rest,
+            now_seconds,
+        );
+        return value.to_string();
+    }
     response
+}
+
+fn owner_lamp_status(
+    manual: &Option<LampProgram>,
+    routines: &crate::expression::routines::Routines,
+    character: &CharacterCoordinator,
+    scenes: &SceneCoordinator,
+    speech: &SpeechCoordinator,
+    feedback: &VoiceFeedback,
+    rest: &crate::expression::rest::RestCoordinator,
+    now: f64,
+) -> serde_json::Value {
+    let takeover = if rest.dark() {
+        Some("rest")
+    } else if scenes.is_active() {
+        Some("scene")
+    } else if speech.is_active() {
+        Some("speech")
+    } else if feedback.light(now).is_some() {
+        Some("voice")
+    } else if routines.curiosity_quiet() {
+        Some("routine")
+    } else if manual.is_none() && character.status().enabled {
+        Some("idle")
+    } else {
+        None
+    };
+    static FALLBACK: std::sync::OnceLock<LampProgram> = std::sync::OnceLock::new();
+    let fallback = FALLBACK.get_or_init(LampProgram::default);
+    let mut status = routines
+        .owner_lamp(manual)
+        .unwrap_or(fallback)
+        .owner_status_at(now, takeover);
+    if routines.owner_lamp(manual).is_none() && !character.status().enabled {
+        status["on"] = serde_json::json!(false);
+    }
+    status
 }

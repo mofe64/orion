@@ -900,6 +900,20 @@ class HomeOperationTests(unittest.TestCase):
         gateway.submit({"operation": "rest"})
         self.assertEqual(client.commands[-1], "character rest")
 
+    def test_owner_light_status_is_forwarded_and_power_updates_are_validated(self):
+        self.client=FakeOrionClient(); self.gateway=OrionGateway(self.client)
+        original=self.client.request
+        lamp={'on':True,'brightness':40,'colors':[[255,0,0,0]],'mood':'custom','effect':'thinking_drift','fade':{'remaining_seconds':2},'takeover':'speech'}
+        def request(command):
+            result=original(command)
+            if command=='status': result['lamp']=lamp
+            return result
+        self.client.request=request
+        self.assertEqual(self.gateway.status()['lamp'],lamp)
+        self.gateway.submit({'operation':'lamp_effect','settings':{'on':False}})
+        self.assertIn('"on": false',self.client.commands[-1])
+        with self.assertRaises(GatewayError): self.gateway.submit({'operation':'lamp_effect','settings':{'on':'false'}})
+
     def test_lamp_status_reads_manual_state_and_rejects_extra_arguments(self):
         self.client = FakeOrionClient(); self.gateway = OrionGateway(self.client)
         _, value = self.gateway.submit({'operation':'lamp_status'})

@@ -129,7 +129,7 @@ export class PairingController {
       this.target = target;
       this.publish({ phase: "connected", step: null, paired: true, address: target.url,
         connection: target, status, capabilities, error: null });
-      this.schedule(generation, 1000);
+      this.schedule(generation, 500);
       return true;
     } catch (error) {
       if (generation === this.generation) this.offline("error", error instanceof GatewayError && [401, 403].includes(error.status)
@@ -197,7 +197,7 @@ export class PairingController {
       if (generation !== this.generation) return;
       this.failures = 0;
       this.publish({ phase: "connected", step: null, connection: target, status, capabilities, error: null });
-      this.schedule(generation, 1000);
+      this.schedule(generation, 500);
     } catch (error) {
       if (generation !== this.generation) return;
       if (error instanceof GatewayError && [401, 403].includes(error.status)) {

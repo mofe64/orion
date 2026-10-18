@@ -456,6 +456,12 @@ export function restOrion(connection: GatewayConnection): Promise<unknown> {
 export function setLamp(connection: GatewayConnection, rgbw: number[]): Promise<unknown> {
   return request(connection, "/api/v2/operations", { method: "POST", body: JSON.stringify({ operation: "lamp", rgbw }) });
 }
+export type LampUpdate = {on?:boolean;brightness?:number;colors?:import("../types").LampColor[];effect?:string};
+export async function updateLamp(connection:GatewayConnection, settings:LampUpdate):Promise<import("../types").LampStatus> {
+  await request(connection,"/api/v2/operations",{method:"POST",body:JSON.stringify({operation:"lamp_effect",settings})});
+  const response=await request<{result:{lamp:import("../types").LampStatus}}>(connection,"/api/v2/operations",{method:"POST",body:JSON.stringify({operation:"lamp_status"})});
+  return response.result.lamp;
+}
 
 export function uploadSpeechChunk(connection: GatewayConnection, wav: Uint8Array, requestId: string, runId?: number, sequence = 0): Promise<SpeechUploadResult> {
   return request(connection, runId === undefined ? "/api/v2/speech/stream" : `/api/v2/speech/${runId}/chunks/${sequence}`, {

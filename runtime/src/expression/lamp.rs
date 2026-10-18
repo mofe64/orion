@@ -3,10 +3,16 @@ use crate::{
     lighting::{LIGHTING_EFFECT_NAMES, ORION_LIGHT_PIXEL_COUNT, Rgbw8, render_effect_for_pixels},
 };
 use serde::Deserialize;
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
+static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LampPatch {
+    pub on: Option<bool>,
     pub brightness: Option<f64>,
     pub effect: Option<String>,
     pub colors: Option<Vec<[u8; 4]>>,
@@ -14,6 +20,8 @@ pub struct LampPatch {
 }
 #[derive(Clone)]
 pub struct LampProgram {
+    revision: u64,
+    enabled: bool,
     brightness: f64,
     effect: String,
     colors: Vec<Rgbw8>,
@@ -34,6 +42,8 @@ impl Default for LampProgram {
 impl LampProgram {
     pub fn from_color(color: Rgbw8) -> Self {
         Self {
+            revision: NEXT_REVISION.fetch_add(1, Ordering::Relaxed),
+            enabled: color != Rgbw8::OFF,
             brightness: 1.0,
             effect: "solid".into(),
             colors: vec![color],
@@ -51,11 +61,34 @@ impl LampProgram {
             ));
         }
         let current = self.sample(now)?;
-        if patch.brightness.is_none() && patch.effect.is_none() && patch.colors.is_none() {
+        if patch.on.is_none()
+            && patch.brightness.is_none()
+            && patch.effect.is_none()
+            && patch.colors.is_none()
+        {
             return Err(Error::InvalidArgument("Empty lamp update".into()));
         }
-        let mut next = current.clone();
+        let mut next = if patch.on.is_some()
+            && patch.brightness.is_none()
+            && patch.effect.is_none()
+            && patch.colors.is_none()
+        {
+            self.clone()
+        } else {
+            current.clone()
+        };
         next.transition = None;
+        if let Some(on) = patch.on {
+            next.enabled = on;
+            if on && next.effect == "off" {
+                next.effect = "solid".into();
+            }
+            if on && next.brightness == 0. {
+                next.brightness = 1.;
+            }
+        } else if patch.brightness.is_some() || patch.colors.is_some() || patch.effect.is_some() {
+            next.enabled = true;
+        }
         if let Some(brightness) = patch.brightness {
             if !brightness.is_finite() || !(0.0..=1.0).contains(&brightness) {
                 return Err(Error::InvalidArgument("Brightness must be 0–1".into()));
@@ -87,6 +120,7 @@ impl LampProgram {
                 colors: current.colors,
             });
         }
+        next.revision = NEXT_REVISION.fetch_add(1, Ordering::Relaxed);
         Ok(next)
     }
     fn sample(&self, now: f64) -> Result<Self> {
@@ -123,6 +157,46 @@ impl LampProgram {
         serde_json::json!({"brightness":self.brightness * 100.0, "effect":self.effect,
             "colors":self.colors.iter().map(|c| [c.red,c.green,c.blue,c.white]).collect::<Vec<_>>()})
     }
+    /// Owner controls show the chosen target, not a speech frame or fade sample.
+    pub fn owner_status_at(&self, now: f64, takeover: Option<&str>) -> serde_json::Value {
+        let mut status = self.status();
+        static EPOCH: OnceLock<String> = OnceLock::new();
+        status["epoch"] = serde_json::json!(EPOCH.get_or_init(|| {
+            format!(
+                "{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            )
+        }));
+        status["revision"] = serde_json::json!(self.revision);
+        status["on"] = serde_json::json!(
+            self.enabled
+                && self.brightness > 0.
+                && self.effect != "off"
+                && self.colors.iter().any(|c| *c != Rgbw8::OFF)
+        );
+        let palette: Vec<_> = self
+            .colors
+            .iter()
+            .map(|c| [c.red, c.green, c.blue, c.white])
+            .collect();
+        status["mood"] = serde_json::json!(match palette.as_slice() {
+            [[40, 20, 4, 210]] | [[0, 0, 0, 255]] => "warm",
+            [[255, 100, 0, 80]] => "ambient",
+            [[150, 190, 255, 110], [0, 45, 255, 0]] => "cool",
+            [[40, 20, 4, 210], [255, 0, 0, 0]] => "warm_red",
+            _ => "custom",
+        });
+        status["takeover"] = serde_json::json!(takeover);
+        status["fade"] = self.transition.as_ref().filter(|t| now < t.start+t.seconds).map(|t| {
+            let sample=self.status_at(now);
+            serde_json::json!({"remaining_seconds":(t.start+t.seconds-now).max(0.),"brightness":sample["brightness"],"colors":sample["colors"]})
+        }).unwrap_or(serde_json::Value::Null);
+        status
+    }
     pub fn render(&self, now: f64) -> Result<Vec<Rgbw8>> {
         self.render_for_pixels(now, ORION_LIGHT_PIXEL_COUNT)
     }
@@ -130,7 +204,7 @@ impl LampProgram {
         if self.transition.is_some() {
             return self.sample(now)?.render_for_pixels(now, pixel_count);
         }
-        if self.brightness == 0.0 || self.effect == "off" {
+        if !self.enabled || self.brightness == 0.0 || self.effect == "off" {
             return Ok(vec![Rgbw8::OFF; pixel_count]);
         }
         let scale = |color: Rgbw8, gain: f64| {
@@ -165,6 +239,31 @@ mod tests {
     use super::*;
     fn patch(value: serde_json::Value) -> LampPatch {
         serde_json::from_value(value).unwrap()
+    }
+    #[test]
+    fn owner_status_keeps_the_target_during_fades_and_power_preserves_the_palette() {
+        let lamp=LampProgram::default().updated_at(patch(serde_json::json!({"brightness":0.4,"colors":[[255,0,0,0]],"effect":"thinking_drift","transition_seconds":10})),0.).unwrap();
+        let status = lamp.owner_status_at(5., Some("speech"));
+        assert_eq!(status["brightness"], 40.);
+        assert_eq!(status["colors"], serde_json::json!([[255, 0, 0, 0]]));
+        assert_eq!(status["fade"]["brightness"], 70.);
+        assert_eq!(status["fade"]["remaining_seconds"], 5.);
+        assert_eq!(status["takeover"], "speech");
+        assert!(lamp.owner_status_at(11., None)["fade"].is_null());
+        let off = lamp
+            .updated_at(patch(serde_json::json!({"on":false})), 11.)
+            .unwrap();
+        let off_status = off.owner_status_at(11., None);
+        assert_eq!(off_status["epoch"], status["epoch"]);
+        assert!(off_status["revision"].as_u64().unwrap() > status["revision"].as_u64().unwrap());
+        assert_eq!(off.owner_status_at(11., None)["on"], false);
+        assert_eq!(off.status()["brightness"], 40.);
+        assert!(off.render(11.).unwrap().iter().all(|p| *p == Rgbw8::OFF));
+        let on = off
+            .updated_at(patch(serde_json::json!({"on":true})), 12.)
+            .unwrap();
+        assert_eq!(on.owner_status_at(12., None)["on"], true);
+        assert_eq!(on.status(), lamp.status());
     }
     #[test]
     fn transitions_interpolate_and_new_commands_start_from_the_current_frame() {

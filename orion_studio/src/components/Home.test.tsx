@@ -9,6 +9,15 @@ const props = { catalog, theme: "dark" as const, voiceLabel: "Off", connection: 
   onConnect: vi.fn(), onVoice: vi.fn(), onCreate: vi.fn(), onRefresh: async () => {}, onRun: vi.fn() };
 
 describe("Home control availability", () => {
+  it("shows the lamp's chosen brightness, palette and effect during a takeover",()=>{
+    const status={character:{enabled:true},runtime:{motion:null},scene:{active:null},speech:{active:null},lamp:{on:true,brightness:65,mood:"warm_red",colors:[[40,20,4,210],[255,0,0,0]],effect:"thinking_drift",fade:{remaining_seconds:4,brightness:45,colors:[[40,20,4,210]]},takeover:"speech"}} as unknown as GatewayStatus;
+    const html=renderToStaticMarkup(<Home {...props} status={status} connection={{url:"http://test",token:"test"}}/>);
+    expect(html).toContain('value="65"');
+    expect(html).toContain('aria-label="Lamp color 2"');
+    expect(html).toContain('value="thinking_drift" selected=""');
+    expect(html).toContain("Orion is using the light for a moment. Your setting is saved.");
+    expect(html).toContain("Fading to your setting");
+  });
   it("has no duplicate connected notice and keeps listening feedback beside its switch", () => {
     const html = renderToStaticMarkup(<Home {...props} connection={{ url: "http://test", token: "test" }} voiceNotice="Orion listening is off." />);
     expect(html).not.toContain("Connected to Orion.");
@@ -24,7 +33,7 @@ describe("Home control availability", () => {
       rest: { state: "resting", light_on: false, error: null } } as unknown as GatewayStatus;
     const html = renderToStaticMarkup(<Home {...props} status={status} connection={{ url: "http://localhost:7447", token: "test" }} />);
     expect(html).toContain("Resting · torque off");
-    expect(html).toContain("Off while resting · lamp setting saved");
+    expect(html).toContain("Orion is resting. Your light setting is saved.");
     expect(html).toMatch(/aria-label="Lamp power"[^>]*aria-checked="false"[^>]*disabled=""/);
     expect(html).not.toContain("Character off");
     expect(html).toMatch(/disabled=""[^>]*>.*?<strong>Go to rest/s);
@@ -53,13 +62,13 @@ describe("Home control availability", () => {
   it("does not invent a lamp state after connecting and blocks expressions during foreground work", () => {
     const status = { character: { enabled: false }, runtime: { motion: null }, scene: { active: { run_id: 2 } }, speech: { active: null } } as unknown as GatewayStatus;
     const html = renderToStaticMarkup(<Home {...props} status={status} connection={{ url: "http://localhost:7447", token: "test" }} />);
-    expect(html).toContain("Not set in this session");
+    expect(html).toContain("Update Orion to see and change its light settings.");
     const expressions = html.split('class="oh-expression-list"')[1].split("</div>")[0];
     expect(expressions.match(/disabled=""/g)).toHaveLength(2);
-    expect(html).not.toMatch(/id="lamp-brightness"[^>]*disabled/);
+    expect(html).toMatch(/id="lamp-brightness"[^>]*disabled/);
     expect(html).not.toContain('class="oh-dial-value"');
     expect(html).not.toContain('class="oh-apply"');
-    expect(html).toContain("Orion does not report its brightness");
+    expect(html).not.toContain("Orion does not report its brightness");
     expect(html).toContain("Model preview, not live position");
   });
 });

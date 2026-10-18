@@ -248,6 +248,7 @@ export interface AudioStatus {
 }
 
 export interface GatewayStatus {
+  lamp?: LampStatus | null;
   audio?: AudioStatus | null;
   mind?: { energy: number; mood: number; label: string; attention: { kind: "none" | "speaker" | "person" | "hands" | "object"; since: number; track_id?: number; class?: string }; updated_at: number } | null;
   api_version: 2;
@@ -287,6 +288,19 @@ export interface GatewayStatus {
     light_on: boolean;
     error: string | null;
   } | null;
+}
+
+export type LampColor = [number,number,number,number];
+export interface LampStatus {
+  epoch?:string;
+  revision?:number;
+  on:boolean;
+  brightness:number;
+  mood:"warm"|"ambient"|"cool"|"warm_red"|"custom";
+  colors:LampColor[];
+  effect:string;
+  takeover:string|null;
+  fade:{remaining_seconds:number;brightness:number;colors:LampColor[]}|null;
 }
 
 export interface GatewayCapabilities {

@@ -387,6 +387,15 @@ impl Routines {
             self.saved.mode
         }
     }
+    pub fn owner_lamp<'a>(&'a self, manual: &'a Option<LampProgram>) -> Option<&'a LampProgram> {
+        if let Some(run) = &self.light_run {
+            run.previous_lamp.as_ref()
+        } else if let Some(sunrise) = &self.sunrise {
+            sunrise.previous_lamp.as_ref()
+        } else {
+            manual.as_ref()
+        }
+    }
     pub fn start_light(
         &mut self,
         routine: LightRoutine,
