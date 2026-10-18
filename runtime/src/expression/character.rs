@@ -4710,6 +4710,17 @@ mod tests {
             Some("music_performance")
         );
         assert!(core.snapshot().motion.is_some());
+        let run = character.active_idle_run_id;
+        character.set_music_input(None, true);
+        core.tick(8.04).unwrap();
+        character
+            .tick(8.04, &mut core, false, None, false, None, None)
+            .unwrap();
+        assert_eq!(character.active_idle_run_id, run);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("music_performance")
+        );
         core.tick(8.2).unwrap();
         character.set_reaction("listening", 8.2, &mut core).unwrap();
         assert!(character.active_idle_run_id.is_none());

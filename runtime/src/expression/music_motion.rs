@@ -31,7 +31,10 @@ impl MusicMotion {
 impl CharacterCoordinator {
     pub(crate) fn set_music_input(&mut self, pulse: Option<MusicPulse>, context: bool) {
         let beginning = !self.music.pulse.audible || !self.music.context;
-        self.music.pulse = pulse.unwrap_or_default();
+        // None means the mixer lock is busy; only a published pulse can report silence.
+        if let Some(pulse) = pulse {
+            self.music.pulse = pulse;
+        }
         self.music.context = context;
         if beginning && context && self.music.pulse.audible {
             self.music.suspend();
