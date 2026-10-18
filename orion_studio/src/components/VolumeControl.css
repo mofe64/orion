@@ -1,0 +1,10 @@
+.orion-volume { padding-top: 1rem; border-top: 1px solid var(--line); }
+.orion-volume-heading, .orion-volume-row { display: flex; align-items: center; gap: .7rem; }
+.orion-volume-heading { justify-content: space-between; font-size: .8rem; font-weight: 550; }
+.orion-volume-heading output { color: var(--muted); font-variant-numeric: tabular-nums; }
+.orion-volume-row { margin-top: .3rem; }
+.orion-volume-row input { flex: 1; min-width: 0; height: 2.75rem; accent-color: var(--accent); cursor: pointer; }
+.orion-volume-mute { display: grid; place-items: center; width: 2.75rem; min-height: 2.75rem; padding: 0; border: 1px solid var(--line); border-radius: .7rem; color: var(--text); background: var(--surface-2); }
+.orion-volume-mute[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.orion-volume p { margin: .4rem 0 0; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.orion-volume p[role="alert"] { color: var(--danger, #f3a5a5); }

@@ -183,6 +183,7 @@
 .home-dashboard .oh-confirm p { flex-basis: 100%; }
 .home-dashboard .camera-card .camera-picture { border-radius: 1rem; }
 /* V1 has no camera: let the timers and lists cards share the row instead. */
+.home-dashboard .oh-inputs > .orion-volume { grid-column: 1 / -1; }
 .home-dashboard .oh-secondary:not(:has(> .camera-card)) > .oh-column { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 @media (max-width: 900px) {
   .home-dashboard .oh-secondary, .home-dashboard .oh-secondary:not(:has(> .camera-card)) > .oh-column { grid-template-columns: minmax(0, 1fr); }

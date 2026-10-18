@@ -1,4 +1,4 @@
-import type { CompiledTrajectoryPreview, GatewayCapabilities, GatewayStatus } from "../types";
+import type { AudioStatus, CompiledTrajectoryPreview, GatewayCapabilities, GatewayStatus } from "../types";
 import { MultipartJpegParser, type CameraFrame } from "./cameraStream";
 
 export interface GatewayConnection {
@@ -82,6 +82,13 @@ async function request<T>(connection: GatewayConnection, path: string, init?: Re
   const body = await response.json();
   if (!response.ok) throw new GatewayError(body.error?.message ?? `Gateway returned ${response.status}.`, response.status, body.error?.code);
   return body as T;
+}
+
+export async function setMasterVolume(connection: GatewayConnection, level: number): Promise<AudioStatus> {
+  const response = await request<{result: {audio: AudioStatus}}>(connection, "/api/v2/operations", {
+    method: "POST", body: JSON.stringify({operation: "volume", level}),
+  });
+  return response.result.audio;
 }
 
 export interface CameraObservation {

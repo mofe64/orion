@@ -96,6 +96,10 @@ fn configure_mixer(options: &Options) -> crate::Result<()> {
     }
 }
 
+fn volume_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/orion/audio.json"))
+}
+
 pub(super) fn play_cue(options: &Options) -> crate::Result<i32> {
     let cues = CueLibrary::load(&options.audio_cues_directory)?;
     configure_mixer(options)?;
@@ -103,7 +107,8 @@ pub(super) fn play_cue(options: &Options) -> crate::Result<i32> {
         cues,
         &options.audio_pcm_device,
         PathBuf::from(ORION_APLAY_PATH),
-    )?;
+    )?
+    .with_volume_path(volume_path())?;
     audio.play(&options.cue_name)?;
     while audio.is_playing() {
         thread::sleep(Duration::from_millis(10));
@@ -146,11 +151,14 @@ pub(super) fn serve(options: Options) -> crate::Result<i32> {
                 options.hardware.profile().lighting.pixel_count,
             )?);
             configure_mixer(&options)?;
-            let audio = Box::new(AlsaAudioDevice::new(
-                cues,
-                &options.audio_pcm_device,
-                PathBuf::from(ORION_APLAY_PATH),
-            )?);
+            let audio = Box::new(
+                AlsaAudioDevice::new(
+                    cues,
+                    &options.audio_pcm_device,
+                    PathBuf::from(ORION_APLAY_PATH),
+                )?
+                .with_volume_path(volume_path())?,
+            );
             serve_driver(
                 driver,
                 poses,

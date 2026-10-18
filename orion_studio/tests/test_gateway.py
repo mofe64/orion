@@ -86,11 +86,17 @@ class FakeOrionClient:
         self.reject_reload = False
         self.mind = None
         self.mode, self.torque_enabled = "holding", True
+        self.volume = 100
         self.character = {"enabled": False, "state": "off", "active_anchor": None,
                           "active_clip": None, "next_idle_category": None}
 
     def request(self, command: str) -> dict[str, object]:
         self.commands.append(command)
+        if command.startswith("volume "):
+            argument = command.removeprefix("volume ")
+            if argument != "status":
+                self.volume = min(100, self.volume + 10) if argument == "louder" else max(0, self.volume - 10) if argument == "quieter" else int(argument)
+            return {"ok": True, "audio": {"volume": self.volume, "muted": self.volume == 0, "epoch": "test", "revision": len(self.commands), "save_error": None}}
         if command == "character rest" or command.startswith(("lamp ", "lamp-effect ", "routines ", "sleep ")):
             return {"ok": True, "run_id": 99}
         if command == "lamp-status": return {"ok":True,"lamp":{"brightness":35,"effect":"solid","colors":[[255,0,0,0]]}}
@@ -135,6 +141,14 @@ class FakeOrionClient:
 
 
 class GatewayContractTests(unittest.TestCase):
+    def test_volume_status_and_validated_operations(self):
+        self.assertEqual(self.gateway.status()["audio"]["volume"], 100)
+        for payload, expected in [({"operation":"volume","level":40},40), ({"operation":"volume","action":"louder"},50), ({"operation":"volume","action":"quieter"},40)]:
+            self.assertEqual(self.gateway.submit(payload)[1]["result"]["audio"]["volume"], expected)
+        for level in [True, -1, 101, 2.5, "40"]:
+            with self.assertRaises(GatewayError): self.gateway.submit({"operation":"volume","level":level})
+        with self.assertRaises(GatewayError): self.gateway.submit({"operation":"volume","level":40,"action":"louder"})
+
     def setUp(self) -> None:
         self.client = FakeOrionClient(); self.gateway = OrionGateway(self.client)
 

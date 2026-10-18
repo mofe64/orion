@@ -632,6 +632,57 @@ mod tests {
     }
 
     #[test]
+    fn volume_commands_work_during_audio_and_clamp_relative_changes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
+        let library = SceneLibrary::load(root.join("scenes/v2"), &poses, &motions).unwrap();
+        let mut core = RuntimeCore::new(TestDriver, poses, motions).unwrap();
+        let mut scenes = SceneCoordinator::new(library, Rgbw8::OFF);
+        let mut speech = SpeechCoordinator::new(DEFAULT_SPEECH_SPOOL_PATH);
+        let mut audio = RecordingAudioDevice::blocking();
+        audio.start_pcm("speech").unwrap();
+        for (command, expected) in [
+            ("volume 40", 40),
+            ("volume louder", 50),
+            ("volume quieter", 40),
+            ("volume 95", 95),
+            ("volume louder", 100),
+            ("volume 5", 5),
+            ("volume quieter", 0),
+            ("volume status", 0),
+        ] {
+            let response: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+                command,
+                0.,
+                &mut core,
+                &mut scenes,
+                &mut speech,
+                &mut audio,
+            ))
+            .unwrap();
+            assert_eq!(response["ok"], true);
+            assert_eq!(response["audio"]["volume"], expected);
+        }
+        for command in ["volume 101", "volume -1", "volume 2.5", "volume 40 extra"] {
+            let response: serde_json::Value = serde_json::from_str(&handle_daemon_command(
+                command,
+                0.,
+                &mut core,
+                &mut scenes,
+                &mut speech,
+                &mut audio,
+            ))
+            .unwrap();
+            assert_eq!(response["ok"], false);
+        }
+        assert!(audio.is_playing());
+    }
+
+    #[test]
     fn daemon_scene_commands_assign_status_and_retain_cancellation() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

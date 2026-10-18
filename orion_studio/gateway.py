@@ -728,6 +728,7 @@ class OrionGateway:
         scenes = self._checked("scene status")
         speech = self._checked("speech status")
         character = self._checked("character status")
+        audio = self.client.request("volume status")
         return {
             "api_version": API_VERSION,
             "runtime": runtime,
@@ -743,6 +744,7 @@ class OrionGateway:
             "character": character.get("character"),
             "rest": character.get("rest"),
             "routines": character.get("routines"),
+            "audio": audio.get("audio"),
         }
 
     def runtime_logs(self) -> dict[str, Any]:
@@ -850,7 +852,15 @@ class OrionGateway:
         if not isinstance(payload, dict):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
         operation = payload.get("operation")
-        if operation == 'aim_light':
+        if operation == "volume":
+            if set(payload) == {"operation", "level"} and type(payload["level"]) is int and 0 <= payload["level"] <= 100:
+                argument = str(payload["level"])
+            elif set(payload) == {"operation", "action"} and payload["action"] in ("louder", "quieter"):
+                argument = payload["action"]
+            else:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_volume", "Choose a volume from 0 to 100.")
+            response = self._checked(f"volume {argument}")
+        elif operation == 'aim_light':
             response = self.aim_light(payload)
         elif operation == "goto":
             name = self._name(payload.get("name"), "pose")

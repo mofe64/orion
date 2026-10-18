@@ -1140,7 +1140,7 @@ impl Routines {
         }
         let result = (|| {
             if !self.audio_started {
-                audio.start_pcm("orion_alert")?;
+                audio.start_alarm_pcm()?;
                 self.audio_started = true;
                 self.sample = 0;
             }

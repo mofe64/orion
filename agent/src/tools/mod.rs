@@ -4,6 +4,7 @@ mod lists;
 pub mod look;
 mod routines;
 mod home;
+mod volume;
 use crate::{AgentConfig, memory};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -44,6 +45,7 @@ pub(crate) fn schemas() -> Value {
     ]);
     schemas.as_array_mut().unwrap().extend(routines::schemas());
     schemas.as_array_mut().unwrap().extend(home::schemas());
+    schemas.as_array_mut().unwrap().extend(volume::schemas());
     schemas.as_array_mut().unwrap().extend(lists::schemas());
     schemas.as_array_mut().unwrap().push(aim_light::schema());
     schemas.as_array_mut().unwrap().push(look::schema());
@@ -71,6 +73,14 @@ pub(crate) async fn execute(
     events: Option<&mpsc::Sender<AgentEvent>>,
 ) -> Result<Value, String> {
     match name {
+        "set_volume" | "louder" | "quieter" => {
+            let parameters = volume::resolve(name, arguments)?;
+            let events = events.ok_or("No robot coordinator is attached")?;
+            let (reply, result) = oneshot::channel();
+            events.send(AgentEvent::RobotOperation { parameters, reply }).await.map_err(|_| "Coordinator stopped")?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), result).await
+                .map_err(|_| "Volume request timed out")?.map_err(|_| "Volume request cancelled")?
+        }
         "aim_light" => {
             let parameters = aim_light::resolve(arguments)?;
             let events = events.ok_or("No robot coordinator is attached")?;
@@ -245,6 +255,23 @@ fn timezone_label(zone: Option<&str>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn volume_tools_confirm_the_actual_result_and_preserve_errors() {
+        for response in [Ok(json!({"result":{"audio":{"volume":40}}})), Err("Volume storage stopped.".to_string())] {
+            let (send, mut receive) = mpsc::channel(1);
+            let config = AgentConfig::default();
+            let call = execute(&config, "set_volume", json!({"level":40}), Some(&send));
+            let expected = response.clone();
+            let peer = async {
+                let AgentEvent::RobotOperation {parameters, reply} = receive.recv().await.unwrap() else {panic!("Expected volume operation")};
+                assert_eq!(parameters, json!({"operation":"volume","level":40}));
+                reply.send(response).unwrap();
+            };
+            let (result, ()) = tokio::join!(call, peer);
+            assert_eq!(result, expected);
+        }
+    }
+
     #[tokio::test]
     async fn home_tools_wait_for_coordinator_and_preserve_refusals() {
         for response in [Ok(json!({"ok":true,"devices":[]})), Err("That device is not exposed to Orion".to_string())] {

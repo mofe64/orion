@@ -4,6 +4,17 @@
 
 Cue files contain matching left and right channels. The runtime selects playback routing from the hardware profile. Routine idle motion does not play cues.
 
+## Volume
+
+Orion applies one master volume to speech, cues, alarms and music. The range is 0–100.
+The runtime saves this setting in `~/.config/orion/audio.json` and loads it at startup.
+Alarms use at least 25 percent volume, including when Orion is muted.
+The XVF3800 hardware PCM controls stay at unity gain. The runtime scales each source before playback.
+
+Use the Volume slider on the Orion page. Changes apply while you move the slider.
+Say “Volume 40”, “Louder” or “Quieter” to change it by voice.
+Louder and Quieter change the level by 10.
+
 ## Generate cues
 
 Run these steps from the repository root. The generator uses Python's standard library.

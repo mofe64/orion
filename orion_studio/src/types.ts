@@ -239,7 +239,16 @@ export interface CharacterStatus {
   next_idle_category: "micro" | "large" | null;
 }
 
+export interface AudioStatus {
+  volume: number;
+  muted: boolean;
+  epoch: string;
+  revision: number;
+  save_error: string | null;
+}
+
 export interface GatewayStatus {
+  audio?: AudioStatus | null;
   mind?: { energy: number; mood: number; label: string; attention: { kind: "none" | "speaker" | "person" | "hands" | "object"; since: number; track_id?: number; class?: string }; updated_at: number } | null;
   api_version: 2;
   runtime: {

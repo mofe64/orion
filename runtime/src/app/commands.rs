@@ -148,6 +148,25 @@ pub(super) fn handle_daemon_command_inner<D: RuntimeDriver, A: AudioDevice + ?Si
 ) -> crate::Result<String> {
     let (command, cue_value) = speech_cue_argument(command);
     let cues = parse_speech_cues(cue_value)?;
+    if let Some(argument) = command.strip_prefix("volume ") {
+        let current = audio.volume_status().volume;
+        let level = match argument {
+            "status" => None,
+            "louder" => Some(current.saturating_add(10).min(100)),
+            "quieter" => Some(current.saturating_sub(10)),
+            value => Some(
+                value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|level| *level <= 100)
+                    .ok_or_else(|| crate::Error::InvalidArgument("Volume must be 0–100.".into()))?,
+            ),
+        };
+        if let Some(level) = level {
+            audio.set_volume(level)?;
+        }
+        return Ok(serde_json::json!({"ok":true,"audio":audio.volume_status()}).to_string());
+    }
     if let Some(arguments) = command.strip_prefix("camera-rays ") {
         let request = serde_json::from_str(arguments).map_err(|error| {
             crate::Error::InvalidArgument(format!("Invalid camera-rays JSON: {error}"))
