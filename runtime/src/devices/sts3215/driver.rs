@@ -65,12 +65,7 @@ pub fn make_orion_servo_profiles() -> ServoProfiles {
     profiles
 }
 
-/// V2 keeps the factory profile except on its two gravity-loaded arm joints:
-/// at P = 16 they settle outside the completion tolerance under load, so the
-/// shoulder uses P = 32. The extended desk reaches load the elbow to about
-/// 0.4 A; at P = 32 it holds them 0.066–0.076 rad short (measured 2026-10-11),
-/// outside the 0.05 rad completion tolerance, so the elbow uses P = 48.
-/// V2's head pitch holds its poses at the factory gain.
+/// V2 uses higher position gains on the gravity-loaded shoulder and elbow.
 pub fn make_orion_v2_servo_profiles() -> ServoProfiles {
     let mut profiles: ServoProfiles = crate::ORION_JOINT_NAMES
         .iter()
@@ -81,6 +76,14 @@ pub fn make_orion_v2_servo_profiles() -> ServoProfiles {
         .unwrap()
         .p_coefficient = 32;
     profiles.get_mut("elbow_pitch_joint").unwrap().p_coefficient = 48;
+    // D damps corrections. The lower base gain avoids one-count hunting
+    // around a fixed goal while the arm shifts its load.
+    profiles.get_mut("base_yaw_joint").unwrap().d_coefficient = 16;
+    // P holds the head against its load; D damps position corrections.
+    // Keep the head's gains explicit, independent of other joints' defaults.
+    let head = profiles.get_mut("head_pitch_joint").unwrap();
+    head.p_coefficient = 16;
+    head.d_coefficient = 32;
     profiles
 }
 
@@ -1058,15 +1061,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn v2_profile_stiffens_only_the_gravity_loaded_arm() {
+    fn v2_profile_sets_position_and_derivative_gains_per_joint() {
         let profiles = make_orion_v2_servo_profiles();
-        let p = |joint: &str| profiles[joint].p_coefficient;
-        assert_eq!(p("shoulder_pitch_joint"), 32);
-        // Desk reaches hold about 0.4 A on the elbow; P = 32 droops past the
-        // completion tolerance there.
-        assert_eq!(p("elbow_pitch_joint"), 48);
-        for joint in ["base_yaw_joint", "head_roll_joint", "head_pitch_joint"] {
-            assert_eq!(p(joint), JointServoProfile::default().p_coefficient);
+        assert_eq!(profiles.len(), 5);
+        for (joint, position_gain, derivative_gain) in [
+            ("base_yaw_joint", 16, 16),
+            ("shoulder_pitch_joint", 32, 32),
+            ("elbow_pitch_joint", 48, 32),
+            ("head_roll_joint", 16, 32),
+            ("head_pitch_joint", 16, 32),
+        ] {
+            assert_eq!(
+                profiles[joint],
+                JointServoProfile {
+                    p_coefficient: position_gain,
+                    d_coefficient: derivative_gain,
+                    ..JointServoProfile::default()
+                },
+                "{joint}"
+            );
         }
     }
 

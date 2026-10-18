@@ -12,6 +12,46 @@ spec.loader.exec_module(analysis)
 
 
 class TrackingAnalysisTests(unittest.TestCase):
+    def jitter_samples(self):
+        return [{'phase': 'executing', 'sequence': index, 'trajectory_revision': 0,
+                 'runtime_time_seconds': index * .02,
+                 'joints': {'head': {'commanded_position_rad': command,
+                                     'measured_position_rad': command + .04}}}
+                for index in range(101)
+                for command in [abs(index - 50) * .002]]
+
+    def test_directional_jitter_separates_lowering_stutter_from_offset(self):
+        samples = self.jitter_samples()
+        for index, row in enumerate(samples):
+            if index > 55:
+                row['joints']['head']['measured_position_rad'] += .003 * (-1) ** index
+        result = analysis.directional_jitter(samples, 'head')
+        self.assertLess(result['negative']['rms_rad'], 1e-12)
+        self.assertGreater(result['positive']['rms_rad'], .002)
+        self.assertGreater(result['positive']['peak_to_peak_rad'], .004)
+
+    def test_directional_jitter_excludes_discontinuities_and_settling(self):
+        for change in ['missing', 'delayed', 'replacement', 'settling']:
+            with self.subTest(change=change):
+                samples = self.jitter_samples()
+                for row in samples[50:]:
+                    row['joints']['head']['measured_position_rad'] += 1
+                    if change == 'missing': row['sequence'] += 1
+                    if change == 'delayed': row['runtime_time_seconds'] += .1
+                    if change == 'replacement': row['trajectory_revision'] = 1
+                    if change == 'settling': row['phase'] = 'settling'
+                result = analysis.directional_jitter(samples, 'head')
+                self.assertTrue(all(value['rms_rad'] < 1e-12 for value in result.values()))
+
+    def test_directional_jitter_retains_stationary_holding_noise(self):
+        samples = self.jitter_samples()
+        for index, row in enumerate(samples):
+            row['joints']['head'] = {'commanded_position_rad': 0,
+                                     'measured_position_rad': .003 * (-1) ** index}
+        result = analysis.directional_jitter(samples, 'head')
+        self.assertEqual(set(result), {'stationary'})
+        self.assertAlmostEqual(result['stationary']['rms_rad'], .0024)
+
     def test_lag_ignores_bias_and_amplitude_loss(self):
         times = [i * .02 for i in range(251)]
         commanded = [.06 * math.sin(t * math.tau / 3) for t in times]

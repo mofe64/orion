@@ -70,6 +70,38 @@ def category(name):
     return 'other'
 
 
+def directional_jitter(samples, joint):
+    """Five-point (100 ms at 50 Hz) high-pass tracking error, by command sign.
+
+    This separates stutter from slow lag and holding offset. Signs are joint
+    coordinates, not world-space rise/fall. Reject windows spanning a missing
+    cycle, a trajectory replacement, settling, or a control interval over 30 ms.
+    Encoder quantization remains in the result; this is not sub-count accuracy.
+    """
+    values = defaultdict(list)
+    for index in range(2, len(samples) - 2):
+        window = samples[index - 2:index + 3]
+        if any(row['phase'] != 'executing' for row in window):
+            continue
+        if len({row['trajectory_revision'] for row in window}) != 1:
+            continue
+        if any(b['sequence'] != a['sequence'] + 1 or not
+               0 < b['runtime_time_seconds'] - a['runtime_time_seconds'] <= .03
+               for a, b in zip(window, window[1:])):
+            continue
+        command = [row['joints'][joint]['commanded_position_rad'] for row in window]
+        error = [row['joints'][joint]['measured_position_rad'] - target
+                 for row, target in zip(window, command)]
+        delta = command[3] - command[1]
+        direction = 'positive' if delta > 1e-5 else 'negative' if delta < -1e-5 else 'stationary'
+        values[direction].append(error[2] - statistics.fmean(error))
+    return {direction: {
+        'samples': len(residuals),
+        'rms_rad': math.sqrt(statistics.fmean(value * value for value in residuals)),
+        'peak_to_peak_rad': max(residuals) - min(residuals),
+    } for direction, residuals in values.items()}
+
+
 def analyze(path, min_excursion=2 * math.tau / 4096, trial_run_ids=None):
     headers, summaries, ends = [], [], {}
     runs = defaultdict(list)
@@ -165,6 +197,7 @@ def analyze(path, min_excursion=2 * math.tau / 4096, trial_run_ids=None):
                     'outside_command_envelope_rad': max(0, max(m) - max(c), min(c) - min(m)),
                     'max_measured_velocity_rad_s': max(abs(r['joints'][joint]['measured_velocity_rad_s']) for r in samples),
                     'error_square_integral': area, 'error_duration_seconds': duration,
+                    'directional_jitter': directional_jitter(samples, joint),
                 }
             results.append(output)
     if not results:
@@ -238,6 +271,18 @@ def markdown(report):
     losses = [(r, j, v) for r in report['runs'] for j, v in r['joints'].items() if v['loses_over_one_third']]
     lines += [f'- Run {r["run_id"]}, {r["motion_name"]}, {j}: ratio {v["amplitude_ratio"]:.3f}.' for r,j,v in losses] or ['None at the minimum excursion threshold.']
     lines += ['', '### Capture diagnostics', '', '```json', json.dumps(report['diagnostics'], indent=2), '```']
+    lines += ['', '### Directional jitter', '',
+              'Jitter is five-point high-pass tracking error (100 ms at 50 Hz).',
+              'Signs use joint coordinates. Encoder quantization remains in the result.',
+              'Windows with missing cycles, intervals over 30 ms, settling or replacements are excluded.', '',
+              '| Run | Motion | Joint | Direction | Samples | RMS (deg) | Peak-to-peak (deg) |',
+              '| ---: | --- | --- | --- | ---: | ---: | ---: |']
+    for run in report['runs']:
+        for joint, metrics in run['joints'].items():
+            for direction, value in metrics['directional_jitter'].items():
+                lines.append(f'| {run["run_id"]} | {run["motion_name"]} | {joint} | {direction} | '
+                             f'{value["samples"]} | {math.degrees(value["rms_rad"]):.4f} | '
+                             f'{math.degrees(value["peak_to_peak_rad"]):.4f} |')
     lines += [''] + [f'- {w}' for w in report['warnings']]
     return '\n'.join(lines) + '\n'
 

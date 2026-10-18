@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_uses_its_measured_arm_gains_and_factory_defaults_elsewhere() {
+    fn v2_uses_its_arm_gains_and_base_derivative_gain() {
         let options = parse(&["--serve", "--hardware", "v2"]).unwrap();
         let profiles = servo_profiles(&options);
         let factory = crate::JointServoProfile::default();
@@ -352,7 +352,8 @@ mod tests {
             assert_eq!(profiles[name].p_coefficient, expected, "{name}");
             assert_eq!(profiles[name].i_coefficient, 0, "{name}");
             assert_eq!(
-                profiles[name].d_coefficient, factory.d_coefficient,
+                profiles[name].d_coefficient,
+                if name == "base_yaw_joint" { 16 } else { 32 },
                 "{name}"
             );
         }

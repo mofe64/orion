@@ -42,6 +42,12 @@ RMS error is the time-weighted root mean square of commanded-minus-measured posi
 
 Present speed uses counts per second with the configured Phase register. Position derivatives also contain encoder and timing quantization. A compiled waypoint and a measured movement peak are different quantities.
 
+The report separates high-frequency tracking error by positive movement, negative movement and stationary commands. These directions use joint coordinates.
+
+The jitter measure subtracts a five-sample mean from tracking error. This window spans 100 ms at 50 Hz. Encoder quantization remains in this measure.
+
+The measure excludes windows with missing cycles, intervals above 30 ms, trajectory replacements or settling. Use the capture diagnostics to check excluded samples.
+
 ## Gain development
 
 `--experimental-servo-gains JOINT:P:I` permits a tracked shoulder or elbow configuration. It requires hardware serving with `--tracking-log`. It leaves motion assets and completion thresholds unchanged.

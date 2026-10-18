@@ -1032,6 +1032,75 @@ mod tests {
     }
 
     #[test]
+    fn v2_idle_rise_and_return_have_continuous_derivatives_and_settle_at_rest() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let poses = PoseLibrary::load(root.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)
+            .unwrap();
+        let motions = MotionLibrary::load(root.join("motion/motions/v2"), &poses).unwrap();
+        for name in ["idle_breathe", "idle_head_curiosity", "idle_micro_glance"] {
+            let definition = motions.motion(name).unwrap();
+            let sequence =
+                MotionSequence::new(definition, poses.pose("home").unwrap().clone()).unwrap();
+            let boundaries = (0..sequence.keyframe_count()).flat_map(|index| {
+                let arrival = sequence.keyframe_arrival_time(index).unwrap();
+                [arrival, arrival + definition.keyframes[index].hold_seconds]
+            });
+            for arrival in boundaries {
+                let before = sequence.sample_state(arrival - 1e-7).unwrap();
+                let after = sequence.sample_state(arrival + 1e-7).unwrap();
+                for joint in ORION_JOINT_NAMES {
+                    assert!(
+                        (before.positions[joint] - after.positions[joint]).abs() < 1e-6,
+                        "{name} at {arrival}: {joint} position step"
+                    );
+                    assert!(
+                        (before.velocities[joint] - after.velocities[joint]).abs() < 1e-6,
+                        "{name} at {arrival}: {joint} velocity step"
+                    );
+                    assert!(
+                        (before.accelerations[joint] - after.accelerations[joint]).abs() < 1e-5,
+                        "{name} at {arrival}: {joint} acceleration step"
+                    );
+                }
+            }
+            let end = sequence.sample_state(sequence.duration_seconds()).unwrap();
+            assert_eq!(end.positions, *poses.pose("home").unwrap(), "{name}");
+            assert!(end.velocities.values().all(|value| *value == 0.0), "{name}");
+            assert!(
+                end.accelerations.values().all(|value| *value == 0.0),
+                "{name}"
+            );
+
+            let mut mirrored = definition.clone();
+            for keyframe in &mut mirrored.keyframes {
+                for offset in keyframe.target.values_mut() {
+                    *offset = -*offset;
+                }
+            }
+            let home = poses.pose("home").unwrap();
+            let reverse = MotionSequence::new(&mirrored, home.clone()).unwrap();
+            assert_eq!(sequence.duration_seconds(), reverse.duration_seconds());
+            for index in 0..=(sequence.duration_seconds() * 50.0).ceil() as usize {
+                let time = index as f64 / 50.0;
+                let forward = sequence.sample_state(time).unwrap();
+                let backward = reverse.sample_state(time).unwrap();
+                for joint in ORION_JOINT_NAMES {
+                    assert!(
+                        (forward.positions[joint] + backward.positions[joint] - 2.0 * home[joint])
+                            .abs()
+                            < 1e-12
+                    );
+                    assert!((forward.velocities[joint] + backward.velocities[joint]).abs() < 1e-12);
+                    assert!(
+                        (forward.accelerations[joint] + backward.accelerations[joint]).abs()
+                            < 1e-12
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rejects_v1_with_clear_migration_error() {
         let root = tempfile::tempdir().unwrap();
         fs::copy(
