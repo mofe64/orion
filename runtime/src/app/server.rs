@@ -448,6 +448,16 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             character.set_act_settings(settings);
         }
         let rest_status = rest.status(now_seconds);
+        character.set_music_input(
+            audio.music_pulse(),
+            rest.reactions_ready()
+                && !rest_status.sleep_requested
+                && !feedback.session_active()
+                && !speech.is_active()
+                && !scenes.is_active()
+                && !routines.ringing()
+                && !routines.curiosity_quiet(),
+        );
         character.set_act_context(
             rest_status.state == crate::expression::rest::RestState::Awake
                 && !rest_status.sleep_requested

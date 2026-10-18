@@ -27,4 +27,11 @@
 .music-playback button { display: grid; place-items: center; min-width: 2.75rem; min-height: 2.75rem; padding: .5rem; border: 0; border-radius: 50%; background: transparent; }
 .music-playback button:hover:not(:disabled) { background: var(--surface-2); }
 .music-account { margin-top: .6rem; }
+.music-movement { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:1rem; padding-top:1rem; border-top:1px solid var(--line); }
+.music-movement strong { font-size:.8rem; font-weight:550; }
+.music-movement p { margin-top:.2rem; font-size:.75rem; }
+.music-movement .studio-switch { width:2.65rem; height:1.55rem; flex:0 0 auto; padding:.15rem; border:0; border-radius:2rem; background:var(--line); display:flex; align-items:center; }
+.music-movement .studio-switch span { width:1.25rem; height:1.25rem; border-radius:50%; background:#fff; }
+.music-movement .studio-switch[aria-checked="true"] { background:var(--accent); }
+.music-movement .studio-switch[aria-checked="true"] span { transform:translateX(1.1rem); }
 @media (max-width: 700px) { .orion-music { grid-template-columns: minmax(0,1fr); gap: 1.5rem; } .music-volume { border-top: 1px solid var(--line); padding-top: 1.2rem; } }

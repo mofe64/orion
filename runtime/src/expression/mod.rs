@@ -6,6 +6,7 @@ pub mod curiosity;
 pub mod gaze;
 pub mod lamp;
 pub mod mind;
+pub mod music;
 pub mod rest;
 pub mod routines;
 pub mod scene;

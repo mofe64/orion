@@ -44,6 +44,7 @@ export function Music({connection, audio}: {connection: GatewayConnection; audio
         </div>
         <details className="music-account"><summary>Spotify account</summary><p>Signed in for music by voice.</p><button className="quiet-button" disabled={view.pending} onClick={() => void control.command("disconnect")}>Sign out</button></details>
       </> : <><p className="music-connect-hint">Play to Orion from the Spotify app without signing in here.</p><SpotifySetup pending={view.pending} onSignIn={control.signIn}/></>}
+      <div className="music-movement"><div><strong>Move to music</strong><p>Small movements that follow the song.</p></div><button type="button" className="studio-switch" role="switch" aria-label="Move to music" aria-checked={view.status?.move_to_music ?? false} disabled={view.pending || view.status?.move_to_music === undefined} onClick={() => void control.movement(!view.status?.move_to_music)}><span/></button></div>
       {(view.error || view.pollError || view.status?.error) && <p className="music-error" role="alert">{view.error || view.pollError || view.status?.error}</p>}
     </div>
     <div className="music-volume"><VolumeControl connection={connection} status={audio}/></div>

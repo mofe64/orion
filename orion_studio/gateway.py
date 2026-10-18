@@ -346,7 +346,7 @@ class OrionGateway:
             if action == 'finish' and isinstance(payload, dict) and not set(payload)-{'code','state','error'}:
                 return self.spotify.finish(**payload)
             if action == 'command': return self.spotify.command(payload)
-            if action == 'status': return self.spotify.status()
+            if action == 'status': return {**self.spotify.status(), 'move_to_music':self._behaviour_values()['move_to_music']}
             raise SpotifyError('Spotify could not read that request. Please try again.')
         except SpotifyError as error:
             raise GatewayError(HTTPStatus(error.status), 'spotify_error', str(error)) from None
@@ -464,13 +464,16 @@ class OrionGateway:
         return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
 
     BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest',
-                  'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds')
+                  'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds', 'move_to_music')
     BEHAVIOUR_DEFAULTS = dict.fromkeys(BEHAVIOURS, False) | dict.fromkeys(
-        ('mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'act_sounds'), True)
+        ('mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'act_sounds', 'move_to_music'), True)
 
     def get_behaviours(self):
         if self.hardware != 'v2':
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
+        return {'api_version': API_VERSION, 'behaviours':self._behaviour_values()}
+
+    def _behaviour_values(self):
         off = self.BEHAVIOUR_DEFAULTS.copy()
         try:
             value = json.loads(self.behaviours_file.read_text())
@@ -478,14 +481,16 @@ class OrionGateway:
                 value = off
         except (OSError, ValueError):
             value = off
-        return {'api_version': API_VERSION, 'behaviours': {key: value.get(key, self.BEHAVIOUR_DEFAULTS[key]) for key in self.BEHAVIOURS}}
+        return {key:value.get(key,self.BEHAVIOUR_DEFAULTS[key]) for key in self.BEHAVIOURS}
 
     def set_behaviours(self, payload):
         if (not isinstance(payload, dict) or not payload or any(
                 key not in self.BEHAVIOURS or type(value) is not bool for key, value in payload.items())):
             raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_behaviour_setting', 'Supply known behaviour names with boolean values.')
+        if self.hardware != 'v2' and set(payload) != {'move_to_music'}:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
         with self.behaviours_lock:
-            saved = self.get_behaviours()['behaviours']
+            saved = self._behaviour_values()
             saved.update(payload)
             path, temporary = self.behaviours_file, None
             try:
@@ -868,7 +873,12 @@ class OrionGateway:
         if not isinstance(payload, dict):
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
         operation = payload.get("operation")
-        if operation == 'music':
+        if operation == 'music_movement':
+            if set(payload) != {'operation','enabled'} or type(payload['enabled']) is not bool:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music_movement', 'Choose whether Orion moves to music.')
+            saved=self.set_behaviours({'move_to_music':payload['enabled']})
+            response={'ok':True,'enabled':saved['behaviours']['move_to_music']}
+        elif operation == 'music':
             if set(payload) != {'operation','request'}:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music', 'Choose a music action.')
             response = {"ok":True, **self.spotify_request('command', payload['request'])}

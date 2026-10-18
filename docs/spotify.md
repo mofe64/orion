@@ -48,6 +48,16 @@ Say “Hey Orion, play” followed by a song, artist, album or playlist.
 Say “Pause”, “Resume”, “Skip”, “Previous song” or “What’s playing?” to control music.
 Say “Volume 40”, “Louder” or “Quieter” to change volume.
 
+## Move to music
+
+Orion makes small movements with the music. Calm music produces a gentle sway. Stronger music adds small head nods.
+Orion stops these movements during voice requests, speech, tracking, work, rest and alarms.
+Music movement resumes at the next estimated bar. Quiet passages return Orion to its held pose.
+
+Use **Move to music** in Music or Behaviour settings to change this feature. The setting is on by default.
+Say “Stop dancing” to turn it off. Say “Dance” to turn it on.
+Orion stores this setting on the lamp.
+
 ## Correct a sign-in problem
 
 For a wrong redirect URI, copy the complete address from Studio into the Spotify app settings.
@@ -66,3 +76,6 @@ The release includes the binary, its checksum and its licence. The lamp does not
 `orion-spotify.service` starts discovery at boot. It sends raw stereo audio to `oriond` through a private local socket.
 `oriond` owns the only speaker client. It applies volume and ducking before USB playback.
 The XVF3800 receives the mixed audio for echo cancellation. Its PCM controls remain at unity gain.
+
+The mixer estimates beats and energy from music samples before playback. Three filter bands detect sound increases without a network request.
+The character controller generates small relative movements through the normal motion compiler. Existing joint limits and activity priorities apply.

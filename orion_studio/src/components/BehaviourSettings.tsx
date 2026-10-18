@@ -5,6 +5,7 @@ import { FailureNotice } from "./FailureNotice";
 import { SettingToggle } from "./Settings";
 
 const controls: Array<[BehaviourKey, string, string]> = [
+  ["move_to_music", "Move to music", "Small movements that follow the song. Listening and other activities take over."],
   ["mind_idle_rhythm", "Follow shared energy", "Adjust idle timing, movement and background light with Orion’s energy."],
   ["listen_lean_in", "Listening lean", "Lean gently toward the speaker and release when processing starts."],
   ["thinking_beats", "Thinking beats", "Use occasional small gestures during a longer thought."],

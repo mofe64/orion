@@ -14,6 +14,8 @@ use crate::motion::style::MotionStyle;
 mod acts;
 #[path = "aim_light.rs"]
 mod aim_light;
+#[path = "music_motion.rs"]
+mod music_motion;
 #[path = "reactions.rs"]
 mod reactions;
 #[path = "surroundings.rs"]
@@ -277,6 +279,7 @@ struct Attention {
 pub struct CharacterCoordinator {
     pub mind: super::mind::MindState,
     acts: acts::Acts,
+    music: music_motion::MusicMotion,
     pub(crate) behaviour_log: Option<super::behaviour::BehaviourLog>,
     surroundings: surroundings::SurroundingsState,
     gaze: super::gaze::GazeCoordinator,
@@ -409,6 +412,7 @@ impl CharacterCoordinator {
         Self {
             mind: super::mind::MindState::default(),
             acts: acts::Acts::default(),
+            music: music_motion::MusicMotion::default(),
             behaviour_log: None,
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
@@ -1391,6 +1395,7 @@ impl CharacterCoordinator {
         speech_analysis: Option<&SpeechAnalysis>,
         speech_frame: Option<usize>,
     ) -> Result<()> {
+        self.music_priority(now, core)?;
         self.speech_yaw_reference = core
             .camera_kinematics()
             .map(|model| model.joint_reference("base_yaw_joint"))
@@ -1692,7 +1697,7 @@ impl CharacterCoordinator {
         if self.surroundings.reaction.is_some() {
             return Ok(());
         }
-        if self.tick_posture(now, core)? {
+        if !self.music.eligible && self.tick_posture(now, core)? {
             return Ok(());
         }
         if self.status.state == CharacterState::Listening {
@@ -1732,6 +1737,10 @@ impl CharacterCoordinator {
                         .ok();
                 }
             }
+            return Ok(());
+        }
+
+        if self.tick_music(now, core)? {
             return Ok(());
         }
 
@@ -4662,6 +4671,92 @@ mod tests {
         let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let positions = poses.pose("home").unwrap().clone();
         RuntimeCore::new(FollowingDriver { positions }, poses, motions).unwrap()
+    }
+
+    #[test]
+    fn music_uses_the_normal_motion_path_yields_on_wake_and_resumes_at_the_next_bar() {
+        use crate::expression::music::MusicPulse;
+        let mut core = following_core();
+        let mut character = CharacterCoordinator::new(7);
+        character.acts.settings.listen_lean_in = false;
+        character.start(0., &mut core).unwrap();
+        advance(&mut character, &mut core, 0., 8.);
+        let anchor = character.status.active_anchor.clone().unwrap();
+        let mut pulse = MusicPulse {
+            bpm: 120.,
+            beats: 4.2,
+            energy: 0.8,
+            audible: true,
+            streaming: true,
+            locked: true,
+            ..MusicPulse::default()
+        };
+        character.set_music_input(Some(pulse), true);
+        character
+            .tick(8., &mut core, false, None, false, None, None)
+            .unwrap();
+        assert_ne!(
+            character.status.active_clip.as_deref(),
+            Some("music_performance")
+        );
+        pulse.beats = 8.;
+        character.set_music_input(Some(pulse), true);
+        core.tick(8.02).unwrap();
+        character
+            .tick(8.02, &mut core, false, None, false, None, None)
+            .unwrap();
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("music_performance")
+        );
+        assert!(core.snapshot().motion.is_some());
+        core.tick(8.2).unwrap();
+        character.set_reaction("listening", 8.2, &mut core).unwrap();
+        assert!(character.active_idle_run_id.is_none());
+        assert!(
+            !core
+                .snapshot()
+                .motion
+                .as_ref()
+                .is_some_and(|motion| motion.name == "music_performance")
+        );
+        character.set_music_input(Some(pulse), false);
+        character
+            .tick(8.22, &mut core, false, None, false, None, None)
+            .unwrap();
+        character.set_reaction("neutral", 8.24, &mut core).unwrap();
+        pulse.beats = 10.;
+        character.set_music_input(Some(pulse), true);
+        core.tick(8.26).unwrap();
+        character
+            .tick(8.26, &mut core, false, None, false, None, None)
+            .unwrap();
+        assert_ne!(
+            character.status.active_clip.as_deref(),
+            Some("music_performance")
+        );
+        pulse.beats = 12.;
+        character.set_music_input(Some(pulse), true);
+        core.tick(8.28).unwrap();
+        character
+            .tick(8.28, &mut core, false, None, false, None, None)
+            .unwrap();
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("music_performance")
+        );
+        pulse.audible = false;
+        pulse.energy = 0.;
+        character.set_music_input(Some(pulse), true);
+        advance(&mut character, &mut core, 8.28, 10.28);
+        assert!(core.snapshot().motion.is_none());
+        assert_ne!(
+            character.status.active_clip.as_deref(),
+            Some("music_performance")
+        );
+        for joint in &core.snapshot().joints {
+            assert!((joint.position - anchor[&joint.name]).abs() < 1e-6);
+        }
     }
 
     fn advance<D: RuntimeDriver>(

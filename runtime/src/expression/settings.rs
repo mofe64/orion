@@ -10,6 +10,7 @@ pub(crate) struct ActSettings {
     pub wake_sleep_acts: bool,
     pub posture_drift: bool,
     pub act_sounds: bool,
+    pub move_to_music: bool,
 }
 impl Default for ActSettings {
     fn default() -> Self {
@@ -20,6 +21,7 @@ impl Default for ActSettings {
             wake_sleep_acts: true,
             posture_drift: false,
             act_sounds: true,
+            move_to_music: true,
         }
     }
 }
@@ -57,5 +59,16 @@ mod tests {
                 && value.posture_drift
         );
         assert!(!value.act_sounds);
+        assert!(value.move_to_music);
+    }
+    #[test]
+    fn music_preference_restores_from_the_shared_behaviour_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("behaviours.json");
+        assert!(ActSettings::load(&path).move_to_music);
+        std::fs::write(&path, r#"{"move_to_music":false,"act_sounds":true}"#).unwrap();
+        let settings = ActSettings::load(&path);
+        assert!(!settings.move_to_music);
+        assert!(settings.act_sounds);
     }
 }

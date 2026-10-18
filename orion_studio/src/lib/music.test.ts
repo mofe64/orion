@@ -15,7 +15,7 @@ describe("Spotify Studio flow", () => {
     const get = vi.fn().mockResolvedValue(status());
     let complete!: () => void;
     const signIn = vi.fn(() => new Promise<void>(resolve => {complete=resolve;}));
-    const control = createMusicControl(connection,{get,signIn,command:vi.fn()});
+    const control = createMusicControl(connection,{get,signIn,command:vi.fn(),movement:vi.fn()});
     control.start(); await tick();
     const signingIn = control.signIn("a".repeat(32));
     expect(control.snapshot().pending).toBe(true); expect(control.snapshot().status?.signed_in).toBe(false);
@@ -24,14 +24,31 @@ describe("Spotify Studio flow", () => {
   });
   it("shows Spotify's plain instructions and preserves the last known song on command failure", async () => {
     const initial = {...status(true),now_playing:{title:"Song",artist:"Artist",cover:null,playing:true}};
-    const control = createMusicControl(connection,{get:vi.fn().mockResolvedValue(initial),signIn:vi.fn(),command:vi.fn().mockRejectedValue(new Error("Spotify Premium is required to play music on Orion."))});
+    const control = createMusicControl(connection,{get:vi.fn().mockResolvedValue(initial),signIn:vi.fn(),movement:vi.fn(),command:vi.fn().mockRejectedValue(new Error("Spotify Premium is required to play music on Orion."))});
     control.start(); await tick(); await control.command("pause");
     expect(control.snapshot().error).toContain("Premium"); expect(control.snapshot().status?.now_playing?.title).toBe("Song"); control.stop();
   });
   it("ignores a sign-in result after the connection changes", async () => {
     let complete!: () => void;
-    const control = createMusicControl(connection,{get:vi.fn().mockResolvedValue(status()),signIn:() => new Promise<void>(resolve => {complete=resolve;}),command:vi.fn()});
+    const control = createMusicControl(connection,{get:vi.fn().mockResolvedValue(status()),signIn:() => new Promise<void>(resolve => {complete=resolve;}),command:vi.fn(),movement:vi.fn()});
     control.start(); await tick(); const signingIn=control.signIn("a".repeat(32)); control.stop(); complete(); await signingIn;
     expect(control.snapshot().status?.signed_in).toBe(false);
+  });
+  it("restores the shared movement setting after a change and after reopening", async () => {
+    let enabled = true;
+    const get = vi.fn(async () => ({...status(),move_to_music:enabled}));
+    const movement = vi.fn(async (_connection, value:boolean) => { enabled=value; return {ok:true,enabled}; });
+    const services = {get,movement,command:vi.fn(),signIn:vi.fn()};
+    const control = createMusicControl(connection,services);
+    control.start(); await tick();
+    expect(control.snapshot().status?.move_to_music).toBe(true);
+    await control.movement(false);
+    expect(movement).toHaveBeenCalledWith(connection,false);
+    expect(control.snapshot().status?.move_to_music).toBe(false);
+    control.stop();
+    const reopened=createMusicControl(connection,services);
+    reopened.start(); await tick();
+    expect(reopened.snapshot().status?.move_to_music).toBe(false);
+    reopened.stop();
   });
 });

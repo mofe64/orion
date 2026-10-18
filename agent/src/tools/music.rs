@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 pub(super) fn schemas() -> Vec<Value> {
-    ["play_music", "pause_music", "resume_music", "skip_song", "previous_song", "whats_playing"].into_iter().map(|name| json!({
+    let mut schemas=["play_music", "pause_music", "resume_music", "skip_song", "previous_song", "whats_playing"].into_iter().map(|name| json!({
         "type":"function", "name":name,
         "description": match name {
             "play_music" => "Search Spotify and play a requested song, artist, album or playlist on Orion. Choose the matching kind; use track for a song. Requires Spotify Premium and sign-in in Studio. Report errors plainly; confirm only after success.",
@@ -11,11 +11,21 @@ pub(super) fn schemas() -> Vec<Value> {
         },
         "inputSchema": if name == "play_music" {json!({"type":"object","additionalProperties":false,"required":["query","kind"],"properties":{"query":{"type":"string","minLength":1,"maxLength":500},"kind":{"type":"string","enum":["track","artist","album","playlist"]}}})}
             else {json!({"type":"object","additionalProperties":false,"properties":{},"required":[]})}
-    })).collect()
+    })).collect::<Vec<_>>();
+    for name in ["dance", "stop_dancing"] {
+        schemas.push(json!({"type":"function","name":name,"description":if name=="dance" {"Enable Orion's gentle movement while music plays. It stays still in silence and yields to listening and other activities. Confirm only after success."}else{"Turn off Orion's movement to music. Confirm only after success."},"inputSchema":{"type":"object","additionalProperties":false,"properties":{},"required":[]}}));
+    }
+    schemas
 }
 
 pub(super) fn resolve(name: &str, arguments: Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("Choose a music action.")?;
+    if matches!(name, "dance" | "stop_dancing") {
+        if !args.is_empty() {
+            return Err("Invalid music movement request.".into());
+        }
+        return Ok(json!({"operation":"music_movement","enabled":name=="dance"}));
+    }
     let request = if name == "play_music" {
         let query = args
             .get("query")
@@ -53,6 +63,13 @@ mod tests {
     use super::*;
     #[test]
     fn playback_tools_are_strict_and_select_the_requested_kind() {
+        for (name, enabled) in [("dance", true), ("stop_dancing", false)] {
+            assert_eq!(
+                resolve(name, json!({})).unwrap(),
+                json!({"operation":"music_movement","enabled":enabled})
+            );
+            assert!(resolve(name, json!({"force":true})).is_err());
+        }
         for kind in ["track", "artist", "album", "playlist"] {
             assert_eq!(
                 resolve("play_music", json!({"query":"test","kind":kind})).unwrap()["request"],

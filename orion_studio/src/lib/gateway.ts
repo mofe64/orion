@@ -92,6 +92,7 @@ export async function setMasterVolume(connection: GatewayConnection, level: numb
 }
 
 export interface MusicStatus {
+  move_to_music?: boolean;
   signed_in: boolean;
   client_id: string;
   name: string;
@@ -109,6 +110,8 @@ export async function getMusic(connection: GatewayConnection, signal?: AbortSign
 }
 export const musicCommand = (connection: GatewayConnection, value: {action: string; query?: string; kind?: string}) =>
   request(connection, "/api/v2/operations", {method:"POST", signal:AbortSignal.timeout(25000), body:JSON.stringify({operation:"music",request:value})});
+export const setMusicMovement = (connection: GatewayConnection, enabled: boolean) =>
+  request(connection, "/api/v2/operations", {method:"POST", body:JSON.stringify({operation:"music_movement",enabled})});
 
 export interface CameraObservation {
   id: string | number;
@@ -485,10 +488,10 @@ export function agentLists(connection: GatewayConnection, list: ListName, change
   return request(connection, "/api/v2/voice/request", { method: "POST", body: JSON.stringify({ method: "lists", params: { list, change: change ?? null } }) });
 }
 
-export const behaviourKeys = ["object_glances", "mutual_gaze", "arrival_notice", "new_object_peek", "presence_defers_rest", "mind_idle_rhythm", "listen_lean_in", "thinking_beats", "wake_sleep_acts", "posture_drift", "act_sounds"] as const;
+export const behaviourKeys = ["object_glances", "mutual_gaze", "arrival_notice", "new_object_peek", "presence_defers_rest", "mind_idle_rhythm", "listen_lean_in", "thinking_beats", "wake_sleep_acts", "posture_drift", "act_sounds", "move_to_music"] as const;
 export type BehaviourKey = typeof behaviourKeys[number];
 export type BehaviourSettings = Record<BehaviourKey, boolean>;
-export const behaviourDefaults: BehaviourSettings = { object_glances:false, mutual_gaze:false, arrival_notice:false, new_object_peek:false, presence_defers_rest:false, mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true };
+export const behaviourDefaults: BehaviourSettings = { object_glances:false, mutual_gaze:false, arrival_notice:false, new_object_peek:false, presence_defers_rest:false, mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, move_to_music:true };
 export interface BehaviourResponse { behaviours: BehaviourSettings }
 export const getBehaviours = (connection: GatewayConnection, signal?: AbortSignal) =>
   request<BehaviourResponse>(connection, "/api/v2/behaviours", { signal });

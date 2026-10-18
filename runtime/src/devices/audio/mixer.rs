@@ -1,4 +1,5 @@
 use super::{AudioSource, PcmFormat, invalid_audio};
+use crate::expression::music::{BeatTracker, MusicPulse};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
@@ -43,6 +44,7 @@ pub(super) struct Mixer {
     worker: Option<JoinHandle<()>>,
     loaders: Vec<JoinHandle<()>>,
     player: Child,
+    pulse: Arc<Mutex<MusicPulse>>,
 }
 
 impl Mixer {
@@ -92,11 +94,13 @@ impl Mixer {
         let duck = Arc::new(AtomicBool::new(false));
         let music = Arc::new(AtomicBool::new(false));
         let error = Arc::new(Mutex::new(None));
+        let pulse = Arc::new(Mutex::new(MusicPulse::default()));
         let shared = (
             Arc::clone(&active),
             Arc::clone(&duck),
             Arc::clone(&music),
             Arc::clone(&error),
+            Arc::clone(&pulse),
         );
         let worker = thread::Builder::new()
             .name("orion-audio-mixer".into())
@@ -109,6 +113,7 @@ impl Mixer {
                     &shared.0,
                     &shared.1,
                     &shared.2,
+                    &shared.4,
                 );
                 if let Err(reason) = result {
                     *shared.3.lock().unwrap() = Some(format!("Audio playback stopped: {reason}"));
@@ -128,6 +133,7 @@ impl Mixer {
             worker: Some(worker),
             loaders: vec![],
             player: child,
+            pulse,
         })
     }
     fn start(&mut self, source: AudioSource, input: Input) -> crate::Result<u64> {
@@ -198,6 +204,9 @@ impl Mixer {
     }
     pub fn music_playing(&self) -> bool {
         self.music.load(Ordering::Relaxed)
+    }
+    pub fn pulse(&self) -> Option<MusicPulse> {
+        self.pulse.try_lock().ok().map(|pulse| *pulse)
     }
     pub fn duck(&self, value: bool) {
         self.duck.store(value, Ordering::Relaxed);
@@ -379,7 +388,9 @@ fn run(
     active: &AtomicU64,
     duck: &AtomicBool,
     music: &AtomicBool,
+    pulse: &Mutex<MusicPulse>,
 ) -> std::io::Result<()> {
+    let mut tracker = BeatTracker::default();
     let mut foreground: Option<Foreground> = None;
     let mut connection: Option<UnixStream> = None;
     let mut resampler = Resampler::default();
@@ -454,6 +465,18 @@ fn run(
         let target = f64::from(volume.load(Ordering::Relaxed)) / 100.;
         let alarm_target = target.max(0.25);
         let should_duck = duck.load(Ordering::Relaxed) || foreground.is_some();
+        let streaming = !resampler.input.is_empty();
+        let song: [Frame; FRAMES] =
+            std::array::from_fn(|_| resampler.take(44_100).unwrap_or([0.; 2]));
+        let mut analysis = tracker.process(&song);
+        analysis.streaming = streaming;
+        if target == 0. {
+            analysis.audible = false;
+            analysis.energy = 0.;
+        }
+        if let Ok(mut current) = pulse.try_lock() {
+            *current = analysis;
+        }
         let mut audible_music = false;
         let mut bytes = [0_u8; FRAMES * 4];
         for index in 0..FRAMES {
@@ -461,7 +484,7 @@ fn run(
             let master_gain = master + (target - master) * progress;
             let alarm_gain = alarm + (alarm_target - alarm) * progress;
             ducking = duck_gain(ducking, should_duck);
-            let song = resampler.take(44_100).unwrap_or([0.; 2]);
+            let song = song[index];
             audible_music |= song.iter().any(|sample| sample.abs() > 0.0001);
             let voice = foreground
                 .as_mut()
@@ -520,9 +543,13 @@ mod tests {
         let song = thread::spawn(move || {
             let _ = stream.write_all(&2000_i16.to_le_bytes().repeat(44_100 * 2 * 2));
         });
-        let ready_by = Instant::now()+Duration::from_secs(3);
+        let ready_by = Instant::now() + Duration::from_secs(3);
         while !directory.path().join("player.pcm").exists() {
-            assert!(Instant::now()<ready_by, "fake player did not start: {:?}", mixer.player.try_wait());
+            assert!(
+                Instant::now() < ready_by,
+                "fake player did not start: {:?}",
+                mixer.player.try_wait()
+            );
             thread::sleep(Duration::from_millis(10));
         }
         let tail = || {

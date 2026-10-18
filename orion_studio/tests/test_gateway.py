@@ -141,6 +141,22 @@ class FakeOrionClient:
 
 
 class GatewayContractTests(unittest.TestCase):
+    def test_music_movement_is_shared_with_behaviours_and_persists_without_a_camera(self):
+        for hardware in ('v1','v2'):
+            with self.subTest(hardware=hardware), tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/'camera.json'
+                gateway=OrionGateway(self.client,hardware=hardware,camera_preference_file=path)
+                gateway.spotify=Mock(); gateway.spotify.status.return_value={'signed_in':False}
+                self.assertTrue(gateway.spotify_request('status')['move_to_music'])
+                result=gateway.submit({'operation':'music_movement','enabled':False})[1]['result']
+                self.assertFalse(result['enabled'])
+                reopened=OrionGateway(self.client,hardware=hardware,camera_preference_file=path)
+                reopened.spotify=Mock(); reopened.spotify.status.return_value={'signed_in':False}
+                self.assertFalse(reopened.spotify_request('status')['move_to_music'])
+                if hardware=='v2': self.assertFalse(reopened.get_behaviours()['behaviours']['move_to_music'])
+                self.assertTrue(json.loads(path.with_name('behaviours.json').read_text())['act_sounds'])
+                with self.assertRaises(GatewayError): gateway.submit({'operation':'music_movement','enabled':'false'})
+
     def test_music_operations_preserve_status_and_spotify_instructions(self):
         from spotify import SpotifyError
         self.gateway.spotify = Mock()

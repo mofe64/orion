@@ -42,6 +42,9 @@ pub const ORION_AMIXER_PATH: &str = "/usr/bin/amixer";
 pub const ORION_APLAY_PATH: &str = "/usr/bin/aplay";
 
 pub trait AudioDevice {
+    fn music_pulse(&self) -> Option<crate::expression::music::MusicPulse> {
+        None
+    }
     fn set_music_ducking(&mut self, _duck: bool) {}
     fn music_playing(&self) -> bool {
         false
@@ -626,6 +629,9 @@ impl AlsaAudioDevice {
 }
 
 impl AudioDevice for AlsaAudioDevice {
+    fn music_pulse(&self) -> Option<crate::expression::music::MusicPulse> {
+        self.mixer.as_ref().and_then(|mixer| mixer.pulse())
+    }
     fn set_music_ducking(&mut self, duck: bool) {
         if let Some(mixer) = &self.mixer {
             mixer.duck(duck);
