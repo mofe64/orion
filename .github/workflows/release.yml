@@ -49,9 +49,11 @@ jobs:
           path: |
             .release-cache/cargo
             .release-cache/target
-          key: cargo-arm64-${{ hashFiles('scripts/Release.Dockerfile', '**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          # The post step hashes again after the build fills .release-cache
+          # with root-owned crate sources, so only Orion's own files are hashed.
+          key: cargo-arm64-${{ hashFiles('scripts/Release.Dockerfile', '**/Cargo.lock', '!.release-cache/**', '!**/target/**') }}-${{ hashFiles('**/*.rs', '!.release-cache/**', '!**/target/**') }}
           restore-keys: |
-            cargo-arm64-${{ hashFiles('scripts/Release.Dockerfile', '**/Cargo.lock') }}-
+            cargo-arm64-${{ hashFiles('scripts/Release.Dockerfile', '**/Cargo.lock', '!.release-cache/**', '!**/target/**') }}-
       - name: Cache pinned Spotify source
         if: needs.plan.outputs.kind == 'app'
         uses: actions/cache@v4
