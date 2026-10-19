@@ -611,6 +611,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
                 response
             }
         })?;
+        rest.render_failure_light(&mut lighting, now_seconds)?;
         rest.light_on = lighting.is_on();
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }

@@ -96,10 +96,19 @@ awake → going_to_rest → resting
   ↑                        │ confirmed wake
   └──────── waking ─────────┘
 
-failed descent, wake or torque release → fault
+failed sleep step → direct rest → resting
+                         │ failed
+                         └──────→ awake, light on
+
+failed wake → fault, light on
 ```
 
-The rest coordinator tracks descent by movement run ID. It releases torque only after measured completion. Timeout, cancellation or torque-release failure enters `fault`.
+The rest coordinator tracks descent by movement run ID. It releases torque only after measured completion.
+
+A failed sleep step starts direct rest once. If direct rest fails, Orion returns home and keeps the light on. Status retains the failure reason.
+If the home return also fails, Orion reports `fault` and keeps the light on.
+The desk comfort envelope limits normal desk movements. Home and rest returns start from the measured pose. They use calibrated joint limits without requiring a start inside this envelope.
+New home and foreground anchors replace the previous desk and posture-drift settings.
 
 A confirmed wake at rest starts home. Confirmation during descent waits for descent to finish. Capture continues while the body moves. Queued reply playback waits for home and accepted attention movement.
 

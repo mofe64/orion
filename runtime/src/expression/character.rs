@@ -1005,6 +1005,8 @@ impl CharacterCoordinator {
         let duration = if rest_frame && at_rest { 4.0 } else { 1.6 };
         let response = checked(core.handle_command(&format!("goto home {duration:.6}"), now))?;
         self.work_anchor = false;
+        self.acts.drifted = false;
+        core.set_character_comfort(false);
         // Do not clear Stop if startup was rejected by a foreground owner or
         // failed to restore torque/home. Explicit --gaze off stays off.
         if self.gaze.is_stopped() {
@@ -1065,7 +1067,7 @@ impl CharacterCoordinator {
         } else {
             // if we're not in holding mode, we can immediately call finish_stop()
             // finish_stop() clears the character’s status and movement tracking:
-            self.finish_stop();
+            self.finish_stop(core);
         }
         // return the updated status
         Ok(self.status.clone())
@@ -1085,7 +1087,7 @@ impl CharacterCoordinator {
             checked(core.handle_command("stop", now))?;
         }
         // clears the character's status and movement tracking:
-        self.finish_stop();
+        self.finish_stop(core);
 
         // if in observe mode, we run the configure comand, which will ask the driver to apply the servo settings
         // after successful configuration, the runtime enters configured mode
@@ -1432,20 +1434,20 @@ impl CharacterCoordinator {
                 //if we are shutting down
                 if self.status.state == CharacterState::ShuttingDown {
                     // initiate the finish stop procedure and return
-                    self.finish_stop();
+                    self.finish_stop(core);
                     return Ok(());
                 }
                 // if we get here this means we are not in shutdown mode, we are starting mode
                 // we check to see if the phase is not completed, this means this is a terminal non completed like cancelled or timed out
                 // in that case we initiate the finish stop procedure and return
                 if phase != MovementPhase::Completed {
-                    self.finish_stop();
+                    self.finish_stop(core);
                     return Ok(());
                 }
 
                 // if we get here this means we are in starting mode and the phase is completed
                 // we capture the anchor, set the state to home idle, and reset the timers
-                self.capture_anchor(core);
+                self.capture_foreground_anchor(core);
                 self.status.state = CharacterState::HomeIdle;
                 self.status.active_clip = None;
                 self.reset_timers(now);
@@ -1479,7 +1481,7 @@ impl CharacterCoordinator {
             // we check to see if it completed
             if completed {
                 // if it completed, we capture the anchor so that we establish a new reference pose for subsequent character behaviors
-                self.capture_anchor(core);
+                self.capture_foreground_anchor(core);
             }
             // clear the foreground scene run id, state, and reset the timers
             self.foreground_scene_run_id = None;
@@ -1497,7 +1499,7 @@ impl CharacterCoordinator {
             .as_ref()
             .is_some_and(|anchor| closest_pose_is_shutdown_only(core, anchor))
         {
-            self.finish_stop();
+            self.finish_stop(core);
             return Ok(());
         }
 
@@ -1772,7 +1774,7 @@ impl CharacterCoordinator {
         // we check to see that we have a pending foreground movement, and the runtime no longer reports an active movement
         // so we can safely capture the anchor and reset the foreground pending flag
         if self.foreground_pending && core.snapshot().motion.is_none() {
-            self.capture_anchor(core);
+            self.capture_foreground_anchor(core);
             self.foreground_pending = false;
             // set to settling and then idle
             self.status.state = CharacterState::Settling;
@@ -3146,6 +3148,32 @@ impl CharacterCoordinator {
         unreachable!("positive speech weights always select a candidate")
     }
 
+    fn capture_foreground_anchor<D: RuntimeDriver>(&mut self, core: &mut RuntimeCore<D>) {
+        // A replacement posture ends the old drift/desk ownership. Mere gaze
+        // release keeps the held desk anchor and its fitting until this point.
+        self.work_anchor = false;
+        self.work_category = None;
+        self.acts.drifted = false;
+        core.set_character_comfort(false);
+        self.capture_anchor(core);
+    }
+
+    pub(crate) fn remain_awake_after_rest_failure<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<()> {
+        self.preempt_for_foreground(now, core)?;
+        if core.mode() == RuntimeMode::Moving {
+            checked(core.handle_command("stop", now))?;
+        }
+        self.finish_stop(core);
+        // A failed torque release can leave us at the shutdown-only rest pose.
+        // Use the normal awake return rather than trying to idle at that anchor.
+        self.start(now, core)?;
+        Ok(())
+    }
+
     fn capture_anchor<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) {
         self.status.active_anchor = Some(
             core.snapshot()
@@ -3215,7 +3243,9 @@ impl CharacterCoordinator {
         });
     }
 
-    fn finish_stop(&mut self) {
+    fn finish_stop<D: RuntimeDriver>(&mut self, core: &mut RuntimeCore<D>) {
+        core.set_character_comfort(false);
+        self.work = None;
         self.work_category = None;
         self.acts.lifecycle = None;
         self.acts.drift = None;

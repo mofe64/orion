@@ -248,7 +248,9 @@ impl BehaviourLog {
         if state.rest != rest.state {
             use super::rest::RestState::*;
             let interrupted = match state.rest {
-                GoingToRest if !matches!(rest.state, Resting | Fault) => Some("sleep"),
+                GoingToRest if !matches!(rest.state, Resting | Fault) && rest.error.is_none() => {
+                    Some("sleep")
+                }
                 Waking if !matches!(rest.state, Awake | Fault) => Some("wake"),
                 _ => None,
             };
@@ -263,7 +265,9 @@ impl BehaviourLog {
                 PreparingRest => ("sleep_prepare", "started"),
                 GoingToRest => ("sleep", "started"),
                 Resting => ("sleep", "completed"),
+                Waking if rest.error.is_some() => ("sleep_recovery", "started"),
                 Waking => ("wake", "started"),
+                Awake if rest.error.is_some() => ("sleep", "failed"),
                 Awake => ("wake", "completed"),
                 Fault => (
                     match state.rest {

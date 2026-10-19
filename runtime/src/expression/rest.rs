@@ -66,6 +66,7 @@ pub struct RestCoordinator {
     presence_deferred: bool,
     last_confirmed_at: Option<f64>,
     rest_run: Option<u64>,
+    direct_rest_fallback: bool,
     wake_session: Option<String>,
     attention: Option<PendingAttention>,
     error: Option<String>,
@@ -88,6 +89,7 @@ impl RestCoordinator {
             presence_deferred: false,
             last_confirmed_at: None,
             rest_run: None,
+            direct_rest_fallback: false,
             wake_session: None,
             attention: None,
             error: None,
@@ -147,6 +149,7 @@ impl RestCoordinator {
         self.presence_deferred = false;
         self.deadline = None;
         self.rest_run = None;
+        self.direct_rest_fallback = false;
         self.wake_session = None;
         self.attention = None;
         self.error = None;
@@ -229,10 +232,7 @@ impl RestCoordinator {
     }
 
     pub fn dark(&self) -> bool {
-        matches!(
-            self.state,
-            RestState::GoingToRest | RestState::Resting | RestState::Fault
-        )
+        matches!(self.state, RestState::GoingToRest | RestState::Resting)
     }
 
     pub fn reactions_ready(&self) -> bool {
@@ -271,13 +271,24 @@ impl RestCoordinator {
         if self.state == RestState::PreparingRest {
             return Ok(serde_json::json!({"ok":true,"state":"preparing_rest"}));
         }
+        self.direct_rest_fallback = false;
+        self.error = None;
+        self.prepare_rest(now, core, character)
+            .or_else(|error| self.recover_rest(error, now, core, character))
+    }
+
+    fn prepare_rest<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        character: &mut CharacterCoordinator,
+    ) -> Result<serde_json::Value> {
         if character.drifted() {
             let run = character.return_home_before_rest(now, core)?;
             self.prelude = Some((run, true));
         } else if character.status().enabled && character.wake_sleep_acts_enabled(core) {
-            if let Ok(run) = character.play_lifecycle_act("sleep_settle", now, core) {
-                self.prelude = Some((run, false));
-            }
+            let run = character.play_lifecycle_act("sleep_settle", now, core)?;
+            self.prelude = Some((run, false));
         }
         if self.prelude.is_some() {
             self.state = RestState::PreparingRest;
@@ -302,12 +313,65 @@ impl RestCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
         character: &mut CharacterCoordinator,
-    ) -> Result<()> {
+    ) -> Result<serde_json::Value> {
         let wake = self.wake_session.clone();
         character.finish_lifecycle_act();
         let response = character.rest(now, core)?;
         self.track_rest(&response)?;
         self.wake_session = wake;
+        Ok(response)
+    }
+
+    fn recover_rest<D: RuntimeDriver>(
+        &mut self,
+        error: Error,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+        character: &mut CharacterCoordinator,
+    ) -> Result<serde_json::Value> {
+        let mut reason = self.error.take().map_or_else(
+            || error.to_string(),
+            |first| format!("{first}; direct rest failed: {error}"),
+        );
+        if !self.direct_rest_fallback {
+            eprintln!("oriond: rest step failed; trying direct rest: {reason}");
+            self.direct_rest_fallback = true;
+            match self.descend(now, core, character) {
+                Ok(response) => {
+                    self.error = Some(reason);
+                    return Ok(response);
+                }
+                Err(error) => reason = format!("{reason}; direct rest failed: {error}"),
+            }
+        }
+        self.prelude = None;
+        self.wake_act = None;
+        self.rest_run = None;
+        self.deadline = None;
+        self.wake_session = None;
+        self.attention = None;
+        if self.transition_session_id.is_none() {
+            self.transition_session_id = self.sleep_session.take();
+        }
+        self.sleep_session = None;
+        self.state = RestState::Waking;
+        self.wake_act_attempted = true;
+        if let Err(error) = character.remain_awake_after_rest_failure(now, core) {
+            reason = format!("{reason}; awake home return failed: {error}");
+            self.state = RestState::Fault;
+        }
+        self.error = Some(reason.clone());
+        eprintln!("oriond: sleep failed; keeping Orion lit: {reason}");
+        Err(Error::Runtime(reason))
+    }
+
+    /// A failed sleep remains visible even when the saved owner light is off.
+    /// This output does not replace the owner's saved light setting.
+    pub fn render_failure_light(&self, lighting: &mut RestLighting, now: f64) -> Result<()> {
+        if self.error.is_some() && !self.dark() {
+            lighting.update(false, now)?;
+            lighting.render_uniform(Rgbw8::new(40, 20, 4, 80))?;
+        }
         Ok(())
     }
 
@@ -325,12 +389,22 @@ impl RestCoordinator {
             && self.deadline.is_some_and(|deadline| now >= deadline)
             && character.presence_defers_rest(now, core);
         if let Err(error) = self.advance(now, core, character, feedback, foreground_busy) {
-            self.state = RestState::Fault;
-            self.error = Some(error.to_string());
-            self.deadline = None;
-            self.wake_session = None;
-            self.attention = None;
-            eprintln!("oriond: rest lifecycle failed; awaiting explicit recovery: {error}");
+            if matches!(
+                self.state,
+                RestState::PreparingRest | RestState::GoingToRest
+            ) {
+                let _ = self.recover_rest(error, now, core, character);
+            } else {
+                self.state = RestState::Fault;
+                self.error = Some(self.error.take().map_or_else(
+                    || error.to_string(),
+                    |reason| format!("{reason}; awake home return failed: {error}"),
+                ));
+                self.deadline = None;
+                self.wake_session = None;
+                self.attention = None;
+                eprintln!("oriond: wake lifecycle failed; awaiting explicit recovery: {error}");
+            }
         }
         self.presence_deferred &= self.state == RestState::Awake;
     }
@@ -373,12 +447,14 @@ impl RestCoordinator {
                         ));
                     }
                     character.commit_rest_home(core);
-                    if character.wake_sleep_acts_enabled(core)
-                        && let Ok(run) = character.play_lifecycle_act("sleep_settle", now, core)
-                    {
+                    if character.wake_sleep_acts_enabled(core) {
+                        let run = character.play_lifecycle_act("sleep_settle", now, core)?;
                         self.prelude = Some((run, false));
                         return Ok(());
                     }
+                }
+                if !completed {
+                    return Err(Error::Runtime("Sleep preparation did not complete.".into()));
                 }
                 self.descend(now, core, character)?;
             }
@@ -410,6 +486,7 @@ impl RestCoordinator {
                 } else {
                     checked(core.handle_command("disable", now))?;
                     self.state = RestState::Resting;
+                    self.error = None;
                 }
             }
             RestState::Resting if self.wake_session.is_some() => {
@@ -453,7 +530,9 @@ impl RestCoordinator {
                     }
                 }
                 self.state = RestState::Awake;
-                self.deadline.get_or_insert(now + self.timeout);
+                if self.error.is_none() {
+                    self.deadline.get_or_insert(now + self.timeout);
+                }
                 self.wake_session = None;
                 character.set_reaction(feedback.reaction(), now, core)?;
             }
@@ -473,7 +552,8 @@ impl RestCoordinator {
                     && !feedback.confirmed_activity()
                     && character.can_auto_rest(core)
                 {
-                    self.begin_rest(now, core, character)?;
+                    // begin_rest handles planning failures and its direct-rest fallback.
+                    let _ = self.begin_rest(now, core, character);
                     if self.transition_session_id.is_none() {
                         self.transition_reason = Some("inactivity".into());
                     }
@@ -697,6 +777,7 @@ mod tests {
     struct FollowingDriver {
         positions: JointPositions,
         stall: Rc<Cell<bool>>,
+        reject_targets: Rc<Cell<usize>>,
         release_fails: Rc<Cell<bool>>,
         releases: Rc<Cell<usize>>,
     }
@@ -746,6 +827,10 @@ mod tests {
                 .collect())
         }
         fn validate_positions(&self, _: &JointPositions) -> Result<()> {
+            if self.reject_targets.get() > 0 {
+                self.reject_targets.set(self.reject_targets.get() - 1);
+                return Err(Error::Runtime("Injected target rejection".into()));
+            }
             Ok(())
         }
         fn clamp_positions_to_safe_range(
@@ -760,6 +845,7 @@ mod tests {
         core: RuntimeCore<FollowingDriver>,
         character: CharacterCoordinator,
         stall: Rc<Cell<bool>>,
+        reject_targets: Rc<Cell<usize>>,
         release_fails: Rc<Cell<bool>>,
         releases: Rc<Cell<usize>>,
     }
@@ -774,11 +860,13 @@ mod tests {
                     .unwrap();
             let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
             let stall = Rc::new(Cell::new(false));
+            let reject_targets = Rc::new(Cell::new(0));
             let release_fails = Rc::new(Cell::new(false));
             let releases = Rc::new(Cell::new(0));
             let driver = FollowingDriver {
                 positions: poses.pose("home").unwrap().clone(),
                 stall: stall.clone(),
+                reject_targets: reject_targets.clone(),
                 release_fails: release_fails.clone(),
                 releases: releases.clone(),
             };
@@ -786,6 +874,7 @@ mod tests {
                 core: RuntimeCore::new(driver, poses, motions).unwrap(),
                 character: CharacterCoordinator::new(42),
                 stall,
+                reject_targets,
                 release_fails,
                 releases,
             };
@@ -818,6 +907,18 @@ mod tests {
                 &VoiceFeedback::default(),
                 busy,
             );
+        }
+
+        fn finish_awake_return(&mut self, rest: &mut RestCoordinator, from: f64) {
+            for step in 1..=250 {
+                let now = from + step as f64 * 0.02;
+                self.core.tick(now).unwrap();
+                self.character
+                    .tick(now, &mut self.core, false, None, false, None, None)
+                    .unwrap();
+                self.policy_tick(rest, now, false);
+            }
+            assert_eq!(rest.state, RestState::Awake);
         }
 
         fn armed(&mut self, timeout: f64) -> RestCoordinator {
@@ -885,7 +986,17 @@ mod tests {
             None,
             20.,
         );
-        assert_eq!(rest.state, RestState::Fault);
+        assert_eq!(rest.state, RestState::GoingToRest);
+        fixture.advance_motion(20., 30.);
+        fixture.policy_tick(&mut rest, 30., false);
+        fixture.finish_awake_return(&mut rest, 30.);
+        log.observe_state(
+            &fixture.character.gaze_status(),
+            &rest.status(30.),
+            None,
+            30.,
+        );
+        assert_eq!(rest.state, RestState::Awake);
         drop(writer);
         let page = orion_history::Store::new(directory.path().into())
             .behaviours(None, None)
@@ -949,7 +1060,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_cancellation_release_failure_and_wrong_run_never_claim_resting() {
+    fn failed_rest_retries_direct_then_either_rests_or_stays_awake_lit() {
         for failure in ["timeout", "cancel", "release", "wrong_run"] {
             let mut f = Fixture::home();
             let mut rest = f.armed(1.0);
@@ -965,13 +1076,83 @@ mod tests {
             }
             f.advance_motion(3.0, 13.0);
             f.policy_tick(&mut rest, 13.0, false);
-            assert_eq!(rest.state, RestState::Fault, "{failure}");
-            assert!(f.core.snapshot().torque_enabled, "{failure}");
-            assert_eq!(f.releases.get(), 0, "{failure}");
-            assert!(rest.status(13.0).error.is_some());
-            rest.confirmed("session", 14.0);
-            assert!(rest.wake_session.is_none());
-            assert!(!rest.speech_ready(&f.character));
+            assert_eq!(rest.state, RestState::GoingToRest, "{failure}");
+            f.advance_motion(13., 23.);
+            f.policy_tick(&mut rest, 23., false);
+            if matches!(failure, "timeout" | "release") {
+                f.finish_awake_return(&mut rest, 23.);
+                assert_eq!(rest.state, RestState::Awake, "{failure}");
+                assert!(f.core.snapshot().torque_enabled, "{failure}");
+                assert!(f.core.snapshot().motion.is_none());
+                assert_eq!(f.releases.get(), 0, "{failure}");
+                assert!(f.character.status().enabled);
+                assert!(
+                    rest.status(23.)
+                        .error
+                        .as_ref()
+                        .unwrap()
+                        .contains("direct rest failed")
+                );
+                assert!(!rest.dark());
+                let mut lighting = RestLighting::new(Box::new(RecordingLightingDevice::orion()));
+                lighting.update(true, 23.).unwrap();
+                lighting.update(true, 24.).unwrap();
+                assert!(!lighting.is_on());
+                rest.render_failure_light(&mut lighting, 24.).unwrap();
+                assert!(lighting.is_on());
+                f.policy_tick(&mut rest, 100., false);
+                assert_eq!(rest.state, RestState::Awake);
+            } else {
+                assert_eq!(rest.state, RestState::Resting, "{failure}");
+                assert!(!f.core.snapshot().torque_enabled);
+                assert_eq!(f.releases.get(), 1);
+                assert!(rest.status(23.).error.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn planning_failure_retries_direct_and_two_failures_leave_orion_awake() {
+        for rejected in [1, 2, 3] {
+            let mut f = Fixture::home();
+            let mut rest = f.armed(1800.);
+            f.reject_targets.set(rejected);
+            let result = rest.begin_rest(3., &mut f.core, &mut f.character);
+            if rejected == 1 {
+                result.unwrap();
+                assert_eq!(rest.state, RestState::GoingToRest);
+                f.advance_motion(3., 12.);
+                f.policy_tick(&mut rest, 12., false);
+                assert_eq!(rest.state, RestState::Resting);
+                assert_eq!(f.releases.get(), 1);
+                assert!(!f.core.snapshot().torque_enabled);
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("direct rest failed")
+                );
+                if rejected == 2 {
+                    f.finish_awake_return(&mut rest, 3.);
+                    assert_eq!(rest.state, RestState::Awake);
+                } else {
+                    assert_eq!(rest.state, RestState::Fault);
+                    assert!(
+                        rest.status(3.)
+                            .error
+                            .unwrap()
+                            .contains("awake home return failed")
+                    );
+                    let mut light = RestLighting::new(Box::new(RecordingLightingDevice::orion()));
+                    rest.render_failure_light(&mut light, 3.).unwrap();
+                    assert!(light.is_on());
+                }
+                assert!(!rest.dark());
+                assert_eq!(f.character.status().enabled, rejected == 2);
+                assert!(f.core.snapshot().torque_enabled);
+                assert!(f.core.snapshot().motion.is_none());
+            }
         }
     }
 

@@ -826,7 +826,24 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         anchor: JointPositions,
         now_seconds: f64,
     ) -> Result<u64> {
-        self.install_character_performance(definition, anchor, now_seconds, None)
+        self.install_character_performance(
+            definition,
+            anchor,
+            now_seconds,
+            None,
+            self.character_comfort,
+        )
+    }
+
+    /// Home and rest returns recover from the measured pose, including poses
+    /// outside the desk comfort envelope. Calibration and authored timing still apply.
+    pub(crate) fn play_character_return(
+        &mut self,
+        definition: MotionDefinition,
+        anchor: JointPositions,
+        now_seconds: f64,
+    ) -> Result<u64> {
+        self.install_character_performance(definition, anchor, now_seconds, None, false)
     }
 
     /// Remaining commanded travel to a keyframe in the character-owned run.
@@ -855,7 +872,13 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         anchor: JointPositions,
         now_seconds: f64,
     ) -> Result<u64> {
-        self.install_character_performance(definition, anchor, now_seconds, Some(run_id))
+        self.install_character_performance(
+            definition,
+            anchor,
+            now_seconds,
+            Some(run_id),
+            self.character_comfort,
+        )
     }
 
     fn install_character_performance(
@@ -864,6 +887,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         anchor: JointPositions,
         now_seconds: f64,
         replacing: Option<u64>,
+        character_comfort: bool,
     ) -> Result<u64> {
         if replacing.is_some()
             && !self.active_movement.as_ref().is_some_and(|m| {
@@ -944,7 +968,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     amplitude_scale,
                     &limits,
                 )?;
-                if self.character_comfort {
+                if character_comfort {
                     self.comfort
                         .as_ref()
                         .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
@@ -956,7 +980,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         // At a desk anchor, first keep the clip's authored flow and shrink it
         // uniformly. Only a curve that still bows outside the comfort box
         // falls back to stopping at every keyframe.
-        let (sequence, targets) = if self.character_comfort {
+        let (sequence, targets) = if character_comfort {
             let mut scaled = definition.clone();
             self.scale_character_comfort(&mut scaled, &anchor)?;
             match compile(&scaled) {
@@ -1364,6 +1388,63 @@ mod tests {
         assert_eq!(status["mode"], "observe");
         assert!(status["bus_fault"].is_null());
         assert_eq!(status["bus_error_count"], 1_000);
+    }
+
+    #[test]
+    fn lifecycle_returns_keep_measured_start_and_authored_timing_outside_comfort() {
+        let (mut core, anchor, _) = crate::expression::gaze::tests::following();
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
+        core.set_character_comfort(true);
+        for clip in ["sleep_settle", "wake_stretch"] {
+            core.driver().offset_feedback(-0.2, 0.);
+            core.tick(0.).unwrap();
+            let start = core.measured_positions();
+            let definition = core.motions().motion(clip).unwrap().clone();
+            assert!(
+                core.play_generated_anchored_relative(definition.clone(), anchor.clone(), 0.)
+                    .is_err()
+            );
+            let limits = core.driver.joint_limits().unwrap();
+            let scale = definition
+                .uniform_amplitude_scale(&anchor, &limits)
+                .unwrap();
+            let expected = MotionSequence::compile_scaled_calibrated(
+                &definition,
+                start.clone(),
+                core.measured_velocities(),
+                None,
+                anchor.clone(),
+                scale,
+                &limits,
+            )
+            .unwrap();
+            core.play_character_return(definition, anchor.clone(), 0.)
+                .unwrap();
+            let sequence = core.motion_sequence.as_ref().unwrap();
+            assert_eq!(sequence.sample(0.).unwrap(), start);
+            assert_eq!(sequence.duration_seconds(), expected.duration_seconds());
+            for keyframe in 0..sequence.keyframe_count() {
+                assert_eq!(
+                    sequence.keyframe_arrival_time(keyframe),
+                    expected.keyframe_arrival_time(keyframe)
+                );
+            }
+            core.driver().offset_feedback(0., 0.);
+            core.handle_command("stop", 0.);
+        }
+        for command in ["goto rest 3.0", "goto home 4.0"] {
+            let response: serde_json::Value =
+                serde_json::from_str(&core.handle_command(command, 0.)).unwrap();
+            assert_eq!(response["ok"], true);
+            core.handle_command("stop", 0.);
+        }
     }
 
     #[test]

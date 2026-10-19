@@ -94,16 +94,18 @@ class RestDaemonTests(DaemonTestCase):
             self.wait_for_rest(path, 'resting')
             self.assertFalse(request(path, 'status')['torque_enabled'])
 
-    def test_native_mujoco_rest_contact_timeout_retains_torque_and_reports_fault(self):
+    def test_native_mujoco_rest_timeout_retries_then_stays_awake_and_lit(self):
         with daemon(automatic_character=True, rest_after_seconds=2) as path:
             self.wait_for_rest(path, 'awake')
-            self.wait_for_rest(path, 'fault')
+            awake = self.wait_for(path, 'character status', lambda s: s['rest']['state'] == 'awake' and s['rest']['error'], timeout=22)
             runtime = request(path, 'status')
-            self.assertEqual(runtime['last_motion']['name'], 'rest')
-            self.assertEqual(runtime['last_motion']['state'], 'timed_out')
-            self.assertGreater(runtime['last_motion']['max_position_error_rad'], 0.05)
+            self.assertEqual(runtime['last_motion']['name'], 'home')
+            self.assertEqual(runtime['last_motion']['state'], 'completed')
             self.assertTrue(runtime['torque_enabled'])
-            self.assertIn('torque has not been released', request(path, 'character status')['rest']['error'])
+            self.assertIn('direct rest failed', awake['rest']['error'])
+            self.assertIn('torque has not been released', awake['rest']['error'])
+            self.assertTrue(awake['character']['enabled'])
+            self.assertTrue(awake['rest']['light_on'])
 
     def test_cancelled_reply_stays_cancelled_after_waking(self):
         with daemon(automatic_character=True, following=True) as path:
@@ -275,18 +277,21 @@ class RestDaemonTests(DaemonTestCase):
             self.assertFalse(wav.exists())
             self.assertNotEqual(fault['character'].get('active_clip'), 'attention_right')
 
-    def test_torque_release_failure_reports_fault_and_refuses_automatic_wake(self):
+    def test_torque_release_failure_retries_then_stays_awake_with_light_on(self):
         with daemon(automatic_character=True, following=True) as path:
             self.wait_for_rest(path, 'awake')
             self.driver_control(path, release_fails=True)
             self.ok(path, 'character rest')
-            self.wait_for_rest(path, 'fault')
+            awake = self.wait_for(path, 'character status', lambda s: s['rest']['state'] == 'awake' and s['rest']['error'], timeout=18)
             runtime = request(path, 'status')
             self.assertEqual(runtime['last_motion']['state'], 'completed')
             self.assertTrue(runtime['torque_enabled'])
+            self.assertTrue(awake['rest']['light_on'])
+            self.assertTrue(awake['character']['enabled'])
+            self.assertIn('direct rest failed', awake['rest']['error'])
             self.voice(path, 'a' * 32, 'wake', 'endpoint', 'confirmed')
-            self.assertEqual(request(path, 'character status')['rest']['state'], 'fault')
-            self.assertEqual(self.torque_events(path).count('deactivate'), 1)
+            self.assertEqual(request(path, 'character status')['rest']['state'], 'awake')
+            self.assertEqual(self.torque_events(path).count('deactivate'), 2)
 
     def test_maintenance_and_explicit_stop_do_not_automatically_wake(self):
         for started in (False, True):

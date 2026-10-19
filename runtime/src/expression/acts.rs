@@ -67,7 +67,8 @@ impl CharacterCoordinator {
             .active_anchor
             .clone()
             .ok_or_else(|| Error::InvalidState("No act anchor".into()))?;
-        let run = core.play_anchored_relative(clip, anchor, now)?;
+        let definition = core.motions().motion(clip)?.clone();
+        let run = core.play_character_return(definition, anchor, now)?;
         self.acts.lifecycle = Some(run);
         self.status.active_clip = Some(clip.into());
         if let Some(log) = &self.behaviour_log {
@@ -86,8 +87,7 @@ impl CharacterCoordinator {
         }
         let home = core.poses().pose("home")?.clone();
         let definition = posture_motion();
-        core.validate_curiosity_motion(&definition, &home, None)?;
-        let run = core.play_generated_anchored_relative(definition, home, now)?;
+        let run = core.play_character_return(definition, home, now)?;
         self.acts.lifecycle = Some(run);
         self.status.active_clip = Some("posture_home".into());
         if let Some(log) = &self.behaviour_log {
@@ -95,9 +95,8 @@ impl CharacterCoordinator {
         }
         Ok(run)
     }
-    pub(crate) fn commit_rest_home<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) {
-        self.capture_anchor(core);
-        self.acts.drifted = false;
+    pub(crate) fn commit_rest_home<D: RuntimeDriver>(&mut self, core: &mut RuntimeCore<D>) {
+        self.capture_foreground_anchor(core);
         self.finish_lifecycle_act();
     }
     pub(super) fn schedule_drift(&mut self, now: f64) {
@@ -733,6 +732,185 @@ mod tests {
             assert!(core.snapshot().torque_enabled);
         }
     }
+    #[test]
+    fn interrupted_sleep_preparation_falls_back_to_direct_rest() {
+        for home_return in [false, true] {
+            let (mut core, mut character) = fixture();
+            let feedback = VoiceFeedback::default();
+            let mut rest = RestCoordinator::new(1800.);
+            rest.started();
+            rest.tick(0., &mut core, &mut character, &feedback, false);
+            if home_return {
+                character.acts.allowed = true;
+                character.acts.settings.posture_drift = true;
+                character.acts.drift_at = 0.;
+                character.mind.label = "sleepy".into();
+                character.tick_posture(0., &mut core).unwrap();
+                advance(&mut core, &mut character, 0., 6.);
+            }
+            rest.begin_rest(6., &mut core, &mut character).unwrap();
+            assert_eq!(rest.status(6.).state, RestState::PreparingRest);
+            checked(core.handle_command("stop", 6.)).unwrap();
+            rest.tick(6.02, &mut core, &mut character, &feedback, false);
+            assert_eq!(rest.status(6.02).state, RestState::GoingToRest);
+            assert_eq!(core.snapshot().motion.as_ref().unwrap().name, "rest");
+            for step in 302..=900 {
+                let now = step as f64 * 0.02;
+                core.tick(now).unwrap();
+                character
+                    .tick(now, &mut core, false, None, false, None, None)
+                    .unwrap();
+                rest.tick(now, &mut core, &mut character, &feedback, false);
+            }
+            assert_eq!(rest.status(18.).state, RestState::Resting);
+            assert!(!core.snapshot().torque_enabled);
+        }
+    }
+
+    #[test]
+    fn home_before_rest_accepts_a_measured_start_outside_comfort() {
+        let (mut core, mut character) = fixture();
+        core.set_character_comfort(true);
+        core.driver().offset_feedback(-0.2, 0.);
+        core.tick(0.).unwrap();
+        let run = character.return_home_before_rest(0., &mut core).unwrap();
+        core.driver().offset_feedback(0., 0.);
+        advance(&mut core, &mut character, 0., 6.);
+        assert_eq!(terminal_phase(&core, run), Some(MovementPhase::Completed));
+    }
+
+    #[test]
+    fn sleep_after_aim_hold_face_hand_and_music_releases_torque() {
+        use crate::expression::{gaze::GazeTarget, music::MusicPulse};
+        for activity in ["aim", "face", "hand", "music"] {
+            let (mut core, mut character) = fixture();
+            let feedback = VoiceFeedback::default();
+            let mut rest = RestCoordinator::new(1800.);
+            rest.started();
+            rest.tick(0., &mut core, &mut character, &feedback, false);
+            match activity {
+                "aim" => {
+                    let token = "a".repeat(32);
+                    character
+                        .work_request(
+                            WorkRequest::Begin {
+                                token: token.clone(),
+                            },
+                            0.,
+                            &mut core,
+                        )
+                        .unwrap();
+                    character
+                        .work_request(
+                            WorkRequest::Target {
+                                token: token.clone(),
+                                point: [0., -0.28, 0.],
+                                lean: 0.8,
+                                class: None,
+                            },
+                            0.,
+                            &mut core,
+                        )
+                        .unwrap();
+                    advance(&mut core, &mut character, 0., 6.);
+                    character
+                        .work_request(WorkRequest::End { token }, 6., &mut core)
+                        .unwrap();
+                    assert!(character.work_anchor);
+                }
+                "face" | "hand" => {
+                    assert!(
+                        character
+                            .queue_gaze_target(
+                                GazeTarget {
+                                    track_id: 1,
+                                    capture_boottime_ns: 1_000_000_000,
+                                    azimuth: 0.4,
+                                    elevation: 0.1,
+                                    confidence: 0.95,
+                                    category: Some(activity.into()),
+                                    range: None,
+                                },
+                                0.,
+                                &mut core
+                            )
+                            .unwrap()
+                    );
+                    advance(&mut core, &mut character, 0., 1.);
+                    assert!(character.gaze_status().run_id.is_some());
+                    character.clear_gaze(1., &mut core).unwrap();
+                    advance(&mut core, &mut character, 1., 6.);
+                }
+                _ => {
+                    let mut pulse = MusicPulse {
+                        bpm: 120.,
+                        beats: 4.,
+                        energy: 0.8,
+                        audible: true,
+                        streaming: true,
+                        locked: true,
+                        ..MusicPulse::default()
+                    };
+                    character.set_music_input(Some(pulse), true);
+                    character
+                        .tick(0., &mut core, false, None, false, None, None)
+                        .unwrap();
+                    pulse.beats = 8.;
+                    character.set_music_input(Some(pulse), true);
+                    advance(&mut core, &mut character, 0., 0.5);
+                    assert_eq!(
+                        character.status.active_clip.as_deref(),
+                        Some("music_performance")
+                    );
+                    character.set_music_input(None, false);
+                    advance(&mut core, &mut character, 0.5, 6.);
+                }
+            }
+            rest.begin_rest(6., &mut core, &mut character).unwrap();
+            for step in 301..=1300 {
+                let now = step as f64 * 0.02;
+                core.tick(now).unwrap();
+                character
+                    .tick(now, &mut core, false, None, false, None, None)
+                    .unwrap();
+                rest.tick(now, &mut core, &mut character, &feedback, false);
+            }
+            assert_eq!(
+                rest.status(26.).state,
+                RestState::Resting,
+                "{activity}: {:?}",
+                rest.status(26.).error
+            );
+            assert!(!core.snapshot().torque_enabled, "{activity}");
+            assert!(!character.status.enabled, "{activity}");
+            assert!(core.snapshot().motion.is_none(), "{activity}");
+        }
+    }
+
+    #[test]
+    fn foreground_home_clears_the_completed_posture_drift() {
+        let (mut core, mut character) = fixture();
+        character.acts.allowed = true;
+        character.acts.settings.posture_drift = true;
+        character.acts.drift_at = 0.;
+        character.mind.label = "sleepy".into();
+        character.tick_posture(0., &mut core).unwrap();
+        advance(&mut core, &mut character, 0., 6.);
+        assert!(character.drifted());
+        character.preempt_for_foreground(6., &mut core).unwrap();
+        checked(core.handle_command("goto home 1.6", 6.)).unwrap();
+        character.note_foreground_started(6.);
+        advance(&mut core, &mut character, 6., 10.);
+        assert_eq!(
+            character.status.active_anchor.as_ref(),
+            Some(core.poses().pose("home").unwrap())
+        );
+        assert!(
+            !character.drifted(),
+            "the new home anchor replaces the old drift"
+        );
+    }
+
     #[test]
     fn drift_returns_home_before_sleep_and_journals_both_outcomes() {
         let (mut core, mut character) = fixture();

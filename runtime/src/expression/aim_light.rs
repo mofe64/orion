@@ -327,6 +327,73 @@ mod tests {
     }
 
     #[test]
+    fn foreground_home_releases_the_aim_hold_comfort_context() {
+        let (mut core, home, _) = following();
+        core.configure_comfort_box(
+            crate::HardwareVersion::V2
+                .profile()
+                .comfort_box
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
+        let mut character = CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        let advance = |core: &mut RuntimeCore<_>,
+                       character: &mut CharacterCoordinator,
+                       from: f64,
+                       to: f64| {
+            for step in 1..=((to - from) * 50.).round() as usize {
+                let now = from + step as f64 * 0.02;
+                core.tick(now).unwrap();
+                character
+                    .tick(now, core, false, None, false, None, None)
+                    .unwrap();
+            }
+        };
+        advance(&mut core, &mut character, 0., 5.);
+        let token = "a".repeat(32);
+        character
+            .work_request(
+                WorkRequest::Begin {
+                    token: token.clone(),
+                },
+                5.,
+                &mut core,
+            )
+            .unwrap();
+        character
+            .work_request(
+                WorkRequest::Target {
+                    token: token.clone(),
+                    point: [0., -0.28, 0.],
+                    lean: 0.8,
+                    class: None,
+                },
+                5.,
+                &mut core,
+            )
+            .unwrap();
+        advance(&mut core, &mut character, 5., 15.);
+        character
+            .work_request(WorkRequest::End { token }, 15., &mut core)
+            .unwrap();
+        assert!(character.work_anchor);
+        character.preempt_for_foreground(15., &mut core).unwrap();
+        checked(core.handle_command("goto home 1.6", 15.)).unwrap();
+        character.note_foreground_started(15.);
+        advance(&mut core, &mut character, 15., 19.);
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&home));
+        assert!(!character.work_anchor);
+        // Ordinary home clips must no longer inherit the old desk envelope.
+        core.driver().offset_feedback(-0.2, 0.);
+        core.tick(19.02).unwrap();
+        core.play_anchored_relative("idle_breathe", home, 19.02)
+            .unwrap();
+    }
+
+    #[test]
     fn end_and_expiry_keep_fitted_reach_through_soft_stop_and_confirmed_wake() {
         for expired in [false, true] {
             let (mut core, _, _) = following();
