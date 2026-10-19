@@ -87,7 +87,7 @@ def write_index(output, tracks, rows):
                   f'Excerpt with a fade and a silent tail. {track["bpm"]} BPM in the source catalogue.')
         if track.get('gain', 1.) != 1.:
             credit += ' Playback level is reduced for the calm example.'
-        note = f'<p>{escape(row["tracker_note"])}</p>' if row.get('tracker_note') else ''
+        note = f'<p>Tracked tempo: {row["tracked_bpm"]:.1f} BPM.</p>'
         cards.append(f'<article><h2>{escape(track["title"])} · {track["bpm"]} BPM</h2>'
             f'<video controls preload="metadata" src="{escape(row["video"])}"></video>'
             f'<img alt="Five joint angles over the excerpt" src="{escape(row["plots"][0])}">'
@@ -126,7 +126,13 @@ def main():
     for item, track in zip(items, tracks):
         if 'error' in item:
             raise RuntimeError(f'{track["name"]}: {item["error"]}')
+        tempos = np.array([s['bpm'] for s in item['samples'] if s['clip'] == 'music_performance'])
+        if not len(tempos) or np.max(np.abs(tempos / track['bpm'] - 1)) > 0.03:
+            raise RuntimeError(f'{track["name"]}: tracked tempo does not match the recording')
+        item['tempo_summary'] = {'source_bpm': track['bpm'], 'median_bpm': float(np.median(tempos)),
+                                 'min_bpm': float(tempos.min()), 'max_bpm': float(tempos.max())}
         item['plots'] = joint_plot(item, output, f'Orion · {track["title"]} · {track["bpm"]} BPM recording')
+    (output / 'tempo-summary.json').write_text(json.dumps({i['name']: i['tempo_summary'] for i in items}, indent=2))
     if args.samples_only:
         return
     # The catalogue exporter owns the calibrated conversion to radians.
@@ -146,9 +152,8 @@ def main():
         subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', str(source), '-i',
             str(output / f'{item["name"]}.wav'), '-c:v', 'copy', '-c:a', 'aac', '-shortest',
             '-metadata', f'comment={credit}', '-movflags', '+faststart', str(movie)], check=True)
-        bpm = float(np.median([s['bpm'] for s in item['samples'] if s['clip'] == 'music_performance']))
-        note = 'The existing beat tracker follows a double pulse in this recording.' if 1.8 < bpm / track['bpm'] < 2.2 else ''
-        row.update(video=movie.name, plots=item['plots'], tracked_bpm=bpm, tracker_note=note)
+        row.update(video=movie.name, plots=item['plots'], tracked_bpm=item['tempo_summary']['median_bpm'],
+                   tempo_summary=item['tempo_summary'])
         rows.append(row)
     (output / 'checks.json').write_text(json.dumps(rows, indent=2))
     (output / 'recordings.json').write_text(json.dumps(tracks, indent=2))

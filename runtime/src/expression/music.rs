@@ -29,6 +29,14 @@ pub struct BeatTracker {
     previous: [f64; 3],
     flux: VecDeque<f64>,
     onsets: VecDeque<f64>,
+    tempo_flux: VecDeque<f64>,
+    low_flux: VecDeque<f64>,
+    tempo_onsets: VecDeque<f64>,
+    tempo_tail: [f64; 4],
+    tempo_mean: f64,
+    tempo_target: f64,
+    tempo_locked: bool,
+    pending_tempo: Option<(f64, f64)>,
     seconds: f64,
     quiet: f64,
     period: f64,
@@ -44,6 +52,14 @@ impl Default for BeatTracker {
             previous: [0.; 3],
             flux: VecDeque::new(),
             onsets: VecDeque::new(),
+            tempo_flux: VecDeque::new(),
+            low_flux: VecDeque::new(),
+            tempo_onsets: VecDeque::new(),
+            tempo_tail: [0.; 4],
+            tempo_mean: 0.,
+            tempo_target: 0.5,
+            tempo_locked: false,
+            pending_tempo: None,
             seconds: 0.,
             quiet: 0.,
             period: 0.5,
@@ -83,9 +99,11 @@ impl BeatTracker {
         let count = (pcm.len() * 2).max(1) as f64;
         let rms = (power / count).sqrt();
         let mut flux = 0.;
+        let mut changes = [0.; 3];
         for (index, band) in bands.into_iter().enumerate() {
             let level = (band / count).sqrt();
-            flux += (level - self.previous[index]).max(0.);
+            changes[index] = (level - self.previous[index]).max(0.);
+            flux += changes[index];
             self.previous[index] = level;
         }
         self.seconds += dt;
@@ -116,9 +134,44 @@ impl BeatTracker {
         {
             self.onsets.pop_front();
         }
+        // Tempo has its own kick-led evidence. Keep the original onset stream
+        // for energy, audibility and phase so the dance's energy input is intact.
+        let weighted = changes[0] * 4. + changes[1] * 0.5 + changes[2] * 0.125;
+        let tempo_onset = weighted > (self.tempo_mean * 2.).max(0.0001)
+            && rms > 0.001
+            && self
+                .tempo_onsets
+                .back()
+                .is_none_or(|last| self.seconds - last > 0.22);
+        if tempo_onset {
+            self.tempo_onsets.push_back(self.seconds);
+        }
+        self.tempo_mean += (weighted - self.tempo_mean) * 0.01;
+        while self
+            .tempo_onsets
+            .front()
+            .is_some_and(|time| self.seconds - time > 12.)
+        {
+            self.tempo_onsets.pop_front();
+        }
+        // Compression tolerates unequal drum strength; a short triangular
+        // window tolerates a few milliseconds of onset timing variation.
+        let root = weighted.powf(0.4);
+        let smooth = (root
+            + 2. * self.tempo_tail[0]
+            + 3. * self.tempo_tail[1]
+            + 2. * self.tempo_tail[2]
+            + self.tempo_tail[3])
+            / 9.;
+        self.tempo_tail.rotate_right(1);
+        self.tempo_tail[0] = root;
         self.flux.push_back(flux);
+        self.tempo_flux.push_back(smooth);
+        self.low_flux.push_back(changes[0]);
         if self.flux.len() > 1200 {
             self.flux.pop_front();
+            self.tempo_flux.pop_front();
+            self.low_flux.pop_front();
         }
         if self.frames % 25 == 0 && self.onsets.len() >= 4 {
             self.track_tempo();
@@ -145,6 +198,14 @@ impl BeatTracker {
         if self.quiet >= 2. {
             self.onsets.clear();
             self.flux.clear();
+            self.tempo_flux.clear();
+            self.low_flux.clear();
+            self.tempo_onsets.clear();
+            self.tempo_tail = [0.; 4];
+            self.tempo_mean = 0.;
+            self.tempo_target = 0.5;
+            self.tempo_locked = false;
+            self.pending_tempo = None;
             self.beats = 0.;
             self.period = 0.5;
         }
@@ -155,16 +216,20 @@ impl BeatTracker {
             onset_strength: flux,
             audible,
             streaming: false,
-            locked: self.onsets.len() >= 4,
+            locked: self.tempo_locked && self.onsets.len() >= 4,
             sampled_at: Some(Instant::now()),
         }
     }
 
     fn track_tempo(&mut self) {
-        let mut intervals: Vec<f64> = self
-            .onsets
+        let onsets = if self.tempo_onsets.len() >= 4 {
+            &self.tempo_onsets
+        } else {
+            &self.onsets
+        };
+        let mut intervals: Vec<f64> = onsets
             .iter()
-            .zip(self.onsets.iter().skip(1))
+            .zip(onsets.iter().skip(1))
             .map(|(a, b)| b - a)
             .filter(|gap| (0.3..=1.01).contains(gap))
             .collect();
@@ -173,34 +238,163 @@ impl BeatTracker {
         }
         intervals.sort_by(f64::total_cmp);
         let hint = intervals[intervals.len() / 2];
-        let history: Vec<_> = self.flux.iter().copied().collect();
-        let mut best = (f64::NEG_INFINITY, (hint * 100.).round() as usize);
-        // Lag correlation runs four times a second over twelve seconds.
-        // Prefer the observed inter-onset period to avoid octave jumps.
+        let history: Vec<_> = self.tempo_flux.iter().copied().collect();
+        let mut correlations = [0_f64; 101];
+        let mut best = (f64::NEG_INFINITY, 50);
+        // Same lag range, window and update cadence as the original tracker.
         for lag in 30..=100 {
-            let mut cross = 0.;
-            let mut left = 0.;
-            let mut right = 0.;
-            for index in lag..history.len() {
-                cross += history[index] * history[index - lag];
-                left += history[index] * history[index];
-                right += history[index - lag] * history[index - lag];
-            }
-            let correlation = cross / (left * right).sqrt().max(1e-12);
+            correlations[lag] = correlation(&history, lag);
             let proximity = (-((lag as f64 / 100. - hint) / 0.08).powi(2)).exp();
-            let score = correlation * 0.75 + proximity * 0.25;
+            let score = correlations[lag] * 0.75 + proximity * 0.25;
             if score > best.0 {
                 best = (score, lag);
             }
         }
-        let candidate = if (best.1 as f64 / 100. - hint).abs() < 0.025 {
-            hint
-        } else {
-            best.1 as f64 / 100.
+        let peak = |at: f64| {
+            let centre = at.round() as usize;
+            (centre.saturating_sub(2).max(30)..=(centre + 2).min(100))
+                .max_by(|a, b| correlations[*a].total_cmp(&correlations[*b]))
+                .unwrap()
         };
-        // Change tempo without resetting the continuous beat/bar counter.
-        self.period += (candidate - self.period) * 0.35;
+        let base = peak(best.1 as f64);
+        let mut selected = base;
+        let mut selected_preference = tempo_preference(60. / refined_period(&correlations, base));
+        let base_support = self.low_alignment(refined_period(&correlations, base));
+        let base_evidence = correlations[base] * (0.75 + 0.25 * (base_support / 3.).min(1.));
+        // A syncopated kick can suggest a three-eighth-note gap. The original
+        // attacks nominate a candidate too, subject to the same bass support.
+        let mut raw_intervals: Vec<_> = self
+            .onsets
+            .iter()
+            .zip(self.onsets.iter().skip(1))
+            .map(|(a, b)| b - a)
+            .filter(|gap| (0.3..=1.01).contains(gap))
+            .collect();
+        raw_intervals.sort_by(f64::total_cmp);
+        let raw_hint = raw_intervals
+            .get(raw_intervals.len() / 2)
+            .copied()
+            .unwrap_or(hint);
+        for suggestion in [base as f64 * 2., base as f64 / 2., raw_hint * 100.] {
+            if !(30. ..=100.).contains(&suggestion) {
+                continue;
+            }
+            let lag = peak(suggestion);
+            let period = refined_period(&correlations, lag);
+            let support = self.low_alignment(period);
+            let evidence = correlations[lag] * (0.75 + 0.25 * (support / 3.).min(1.));
+            let preference = tempo_preference(60. / period);
+            if evidence >= base_evidence * 0.8 && support >= 1.5 && preference > selected_preference
+            {
+                selected = lag;
+                selected_preference = preference;
+            }
+        }
+        // Refine only the chosen peak against the uncompressed attacks. This
+        // retains sub-frame tempo precision without another complete lag scan.
+        let raw: Vec<_> = self.flux.iter().copied().collect();
+        let mut local = [0_f64; 101];
+        for lag in selected.saturating_sub(2).max(30)..=(selected + 2).min(100) {
+            local[lag] = correlation(&raw, lag);
+        }
+        let refined = (selected.saturating_sub(1).max(30)..=(selected + 1).min(100))
+            .max_by(|a, b| local[*a].total_cmp(&local[*b]))
+            .unwrap();
+        let mut candidate = refined_period(&local, refined);
+        // Average nearby observed gaps to remove the 10 ms frame rounding
+        // bias when the attacks already agree with the selected beat period.
+        let nearby: Vec<_> = raw_intervals
+            .iter()
+            .copied()
+            .filter(|gap| (gap - raw_hint).abs() <= 0.03)
+            .collect();
+        if nearby.len() >= 4 {
+            let observed = nearby.iter().sum::<f64>() / nearby.len() as f64;
+            if (observed / candidate).ln().abs() < 0.08 {
+                candidate = observed;
+            }
+        }
+        let incumbent = peak(self.tempo_target * 100.);
+        let wins = selected_preference > tempo_preference(60. / self.tempo_target) * 1.08
+            || correlations[incumbent] < correlations[selected] * 0.75;
+        self.follow_tempo(candidate, wins);
     }
+
+    fn follow_tempo(&mut self, candidate: f64, wins: bool) {
+        let close = (candidate / self.tempo_target).ln().abs() < 0.12;
+        if !self.tempo_locked || (!close && wins) {
+            let pending = self.pending_tempo.get_or_insert((candidate, self.seconds));
+            if (candidate / pending.0).ln().abs() > 0.06 {
+                *pending = (candidate, self.seconds);
+            }
+            if !self.tempo_locked {
+                self.tempo_target = candidate;
+            }
+            let required = if self.tempo_locked { 3. } else { 1.5 };
+            if self.seconds - pending.1 >= required {
+                self.tempo_target = candidate;
+                self.tempo_locked = true;
+                self.pending_tempo = None;
+            }
+        } else {
+            self.pending_tempo = None;
+            if close {
+                self.tempo_target = candidate;
+            }
+        }
+        // Beat/bar phase stays continuous, including an accepted octave change.
+        self.period += (self.tempo_target - self.period) * 0.35;
+    }
+
+    fn low_alignment(&self, period: f64) -> f64 {
+        let total = self.low_flux.iter().sum::<f64>();
+        if total < 1e-9 || total < self.flux.iter().sum::<f64>() * 0.12 {
+            return 0.;
+        }
+        let bins = (period * 100.).round() as usize;
+        let mut phases = [0_f64; 101];
+        for (i, onset) in self.low_flux.iter().enumerate() {
+            let phase = (i as f64 / (period * 100.) * bins as f64).round() as usize % bins;
+            phases[phase] += onset;
+        }
+        let peak = (0..bins)
+            .map(|i| (0..7).map(|j| phases[(i + j) % bins]).sum::<f64>())
+            .fold(0_f64, f64::max);
+        peak / total / (7. / bins as f64)
+    }
+}
+
+fn correlation(history: &[f64], lag: usize) -> f64 {
+    let (mut cross, mut left, mut right) = (0., 0., 0.);
+    for i in lag..history.len() {
+        cross += history[i] * history[i - lag];
+        left += history[i] * history[i];
+        right += history[i - lag] * history[i - lag];
+    }
+    cross / (left * right).sqrt().max(1e-12)
+}
+
+fn refined_period(correlations: &[f64; 101], lag: usize) -> f64 {
+    let offset = if (31..100).contains(&lag) {
+        let [left, centre, right] = [
+            correlations[lag - 1],
+            correlations[lag],
+            correlations[lag + 1],
+        ];
+        let curvature = left - 2. * centre + right;
+        if curvature < -1e-9 {
+            (0.5 * (left - right) / curvature).clamp(-0.5, 0.5)
+        } else {
+            0.
+        }
+    } else {
+        0.
+    };
+    (lag as f64 + offset) / 100.
+}
+
+fn tempo_preference(bpm: f64) -> f64 {
+    (-0.5 * ((bpm / 108.).ln() / 0.4).powi(2)).exp()
 }
 
 fn ease(value: f64) -> f64 {
@@ -533,7 +727,13 @@ mod tests {
     use super::*;
     #[test]
     fn click_tracks_establish_tempo_and_silence_has_no_energy_or_beat_lock() {
-        for bpm in [60., 90., 120., 150., 180.] {
+        for (bpm, expected) in [
+            (60., 60.),
+            (90., 90.),
+            (120., 120.),
+            (150., 150.),
+            (180., 90.),
+        ] {
             let mut tracker = BeatTracker::default();
             let mut pulse = MusicPulse::default();
             for block in 0..1600 {
@@ -553,8 +753,8 @@ mod tests {
             }
             assert!(pulse.locked, "{bpm}");
             assert!(
-                (pulse.bpm - bpm).abs() < 2.,
-                "wanted {bpm}, got {}",
+                (pulse.bpm - expected).abs() < 2.,
+                "input {bpm}, wanted {expected}, got {}",
                 pulse.bpm
             );
             for _ in 0..400 {
@@ -564,6 +764,103 @@ mod tests {
             assert!(pulse.energy < 0.005);
         }
     }
+    fn drums(bpm: f64, broken: bool, seconds: usize) -> Vec<MusicPulse> {
+        use std::f64::consts::TAU;
+        let mut tracker = BeatTracker::default();
+        (0..seconds * 100)
+            .map(|block| {
+                let pcm: Vec<_> = (0..480)
+                    .map(|i| {
+                        let time = (block * 480 + i) as f64 / 48_000.;
+                        let beats = time * bpm / 60.;
+                        let beat = beats.floor() as usize;
+                        let kick_phase = if broken {
+                            let bar = beats.rem_euclid(4.);
+                            if bar >= 2.5 { bar - 2.5 } else { bar }
+                        } else {
+                            beats.fract()
+                        };
+                        let kick_time = kick_phase * 60. / bpm;
+                        let kick = 0.7 * (TAU * 62. * kick_time).sin() * (-kick_time * 32.).exp();
+                        let hat_time = (beats * 2.).fract() * 30. / bpm;
+                        let hats = 0.45 * (TAU * 7100. * time).sin() * (-hat_time * 150.).exp();
+                        let snare_time = beats.fract() * 60. / bpm;
+                        let snare = if broken && beat % 2 == 1 {
+                            (0.25 * (TAU * 220. * time).sin() + 0.15 * (TAU * 2800. * time).sin())
+                                * (-snare_time * 45.).exp()
+                        } else {
+                            0.
+                        };
+                        [(kick + hats + snare) as f32; 2]
+                    })
+                    .collect();
+                tracker.process(&pcm)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn slow_kicks_with_eighth_note_hats_keep_the_true_beat() {
+        for bpm in [70., 80., 90.] {
+            let pulses = drums(bpm, false, 24);
+            for p in &pulses[1400..] {
+                assert!(p.locked, "{bpm}: no lock");
+                assert!((p.bpm - bpm).abs() < 2., "{bpm}: got {}", p.bpm);
+            }
+        }
+    }
+
+    #[test]
+    fn four_on_the_floor_keeps_120_and_128_bpm() {
+        for bpm in [120., 128.] {
+            let pulses = drums(bpm, false, 24);
+            for p in &pulses[1400..] {
+                assert!(p.locked);
+                assert!((p.bpm - bpm).abs() < 2., "{bpm}: got {}", p.bpm);
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_drum_and_bass_uses_consistent_half_time() {
+        for bpm in [160., 165., 170.] {
+            let pulses = drums(bpm, true, 30);
+            for p in &pulses[1800..] {
+                assert!(p.locked);
+                assert!((p.bpm - bpm / 2.).abs() < 2., "{bpm}: got {}", p.bpm);
+            }
+        }
+    }
+
+    #[test]
+    fn octave_changes_need_sustained_evidence_and_keep_the_beat_counter() {
+        let mut tracker = BeatTracker {
+            tempo_locked: true,
+            tempo_target: 0.375,
+            period: 0.375,
+            beats: 57.25,
+            ..Default::default()
+        };
+        for i in 0..12 {
+            tracker.seconds = i as f64 * 0.25;
+            tracker.follow_tempo(0.75, true);
+            assert_eq!(tracker.tempo_target, 0.375);
+            assert_eq!(tracker.beats, 57.25);
+        }
+        tracker.follow_tempo(0.75, false);
+        assert!(tracker.pending_tempo.is_none());
+        for i in 12..=24 {
+            tracker.seconds = i as f64 * 0.25;
+            tracker.follow_tempo(0.75, true);
+            if i < 24 {
+                assert_eq!(tracker.tempo_target, 0.375);
+            }
+            assert_eq!(tracker.beats, 57.25);
+        }
+        assert_eq!(tracker.tempo_target, 0.75);
+        assert!(tracker.period > 0.375 && tracker.period < 0.75);
+    }
+
     #[test]
     fn body_marks_every_beat_and_wrist_marks_only_strong_beats() {
         for beat in 32..40 {

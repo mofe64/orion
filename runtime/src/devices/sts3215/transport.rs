@@ -644,7 +644,8 @@ mod tests {
     #[test]
     fn serial_open_is_exclusive() {
         use serialport::SerialPort;
-        let (_master, slave) = serialport::TTYPort::pair().unwrap();
+        let (_master, mut slave) = serialport::TTYPort::pair().unwrap();
+        slave.set_exclusive(true).unwrap();
         let path = slave.name().unwrap();
         let mut transport = RustypotTransport::default();
         assert!(transport.open(&path, 1_000_000).is_err());

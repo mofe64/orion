@@ -149,6 +149,10 @@ The dance blends from the current pose over a beat. When the dance ends, Orion r
 
 `Off` disables dancing. `Sometimes` alternates dance stretches with ordinary idle movement. `Always` permits dancing while music plays. Dancing starts at a phrase boundary after the beat tracker finds the beat. Speech, tracking and foreground actions keep their existing priority.
 
+The beat tracker gives kick and bass attacks more weight than higher sounds. It compares each rhythm with half and double its tempo. Similar rhythms favor a moderate dance tempo. Ambiguous fast drum rhythms use half time.
+
+A locked tempo changes only after a stronger pattern continues for several seconds. The beat counter continues through the change.
+
 ## Trajectory compiler
 
 The compiler connects targets with quintic segments. A quintic segment is a fifth-degree polynomial with position, velocity and acceleration boundary conditions.
