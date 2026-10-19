@@ -3,6 +3,7 @@ use crate::expression::music::{BeatTracker, MusicPulse};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::{
     fs::PermissionsExt,
     net::{UnixListener, UnixStream},
@@ -57,7 +58,7 @@ impl Mixer {
     ) -> crate::Result<Self> {
         let mut listener = listen(&socket)?;
         let mut child = spawn_player(player, device)?;
-        let mut output = child.stdin.take().expect("piped mixer output");
+        let mut output = PlayerOutput::new(child.stdin.take().expect("piped mixer output"))?;
         let player_path = player.to_owned();
         let device = device.to_owned();
         let player = Arc::new(Mutex::new(Some(child)));
@@ -288,13 +289,54 @@ fn spawn_player(player: &Path, device: &str) -> std::io::Result<Child> {
         .spawn()
 }
 
+// A child can remain alive while USB/ALSA stops consuming its pipe. A
+// nonblocking pipe keeps both recovery and shutdown bounded in that case.
+struct PlayerOutput(ChildStdin);
+impl PlayerOutput {
+    fn new(pipe: ChildStdin) -> std::io::Result<Self> {
+        let fd = pipe.as_raw_fd();
+        // SAFETY: fd belongs to the live pipe; fcntl does not retain it.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        Ok(Self(pipe))
+    }
+}
+impl Write for PlayerOutput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let mut written = 0;
+        while written < bytes.len() {
+            match self.0.write(&bytes[written..]) {
+                Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(count) => written += count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(std::io::ErrorKind::TimedOut.into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn restart_output(
     path: &Path,
     device: &str,
     socket: &Path,
     player: &Mutex<Option<Child>>,
     stopping: &AtomicBool,
-) -> Option<(ChildStdin, UnixListener)> {
+) -> Option<(PlayerOutput, UnixListener)> {
     if let Some(mut child) = player.lock().unwrap().take() {
         let _ = child.kill();
         let _ = child.wait();
@@ -310,7 +352,16 @@ fn restart_output(
             .and_then(|listener| spawn_player(path, device).map(|child| (child, listener)))
         {
             Ok((mut child, listener)) => {
-                let output = child.stdin.take().expect("piped mixer output");
+                let output =
+                    match PlayerOutput::new(child.stdin.take().expect("piped mixer output")) {
+                        Ok(output) => output,
+                        Err(error) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            eprintln!("Audio pipe setup failed: {error}");
+                            continue;
+                        }
+                    };
                 *current = Some(child);
                 return Some((output, listener));
             }
@@ -539,7 +590,7 @@ fn run(
         let target = f64::from(volume.load(Ordering::Relaxed)) / 100.;
         let alarm_target = target.max(0.25);
         let should_duck = duck.load(Ordering::Relaxed) || foreground.is_some();
-        let streaming = !resampler.input.is_empty();
+        let streaming = resampler.input.len() >= 2;
         let song: [Frame; FRAMES] =
             std::array::from_fn(|_| resampler.take(44_100).unwrap_or([0.; 2]));
         let mut analysis = tracker.process(&song);
@@ -744,6 +795,50 @@ mod tests {
         wait(&|| !mixer.playing());
         mixer.update().unwrap();
     }
+    #[test]
+    fn stalled_player_restarts_without_losing_speech_and_music_can_return() {
+        let directory = tempfile::tempdir().unwrap();
+        let player = directory.path().join("player");
+        // The first process stays alive but never reads stdin, like a stuck
+        // ALSA write. Its replacement consumes the same raw PCM stream.
+        fs::write(&player,"#!/bin/sh\nif test ! -f \"$0.once\"; then touch \"$0.once\"; exec sleep 30; fi\nexec cat > \"$0.pcm\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = directory.path().join("music.sock");
+        let mut mixer = Mixer::open(
+            &player,
+            "test",
+            socket.clone(),
+            Arc::new(AtomicU8::new(100)),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !directory.path().join("player.pcm").exists() {
+            assert!(Instant::now() < deadline, "stalled writer did not restart");
+            thread::sleep(Duration::from_millis(10));
+        }
+        mixer.stream(AudioSource::Speech).unwrap();
+        mixer.queue(&1000_i16.to_le_bytes().repeat(2400)).unwrap();
+        mixer.finish();
+        while mixer.playing() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut music = UnixStream::connect(socket).unwrap();
+        music
+            .write_all(&2000_i16.to_le_bytes().repeat(4410))
+            .unwrap();
+        while !mixer.music_playing() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Leave the socket connected, as librespot does between songs. Its
+        // resampler tail must not keep streaming or suppress idle behaviour.
+        thread::sleep(Duration::from_millis(400));
+        let pulse = mixer.pulse().unwrap();
+        assert!(!pulse.streaming && !pulse.audible);
+        mixer.update().unwrap();
+    }
+
     #[test]
     fn ducking_reaches_one_quarter_smoothly_and_returns_after_voice() {
         let mut gain = 1.;

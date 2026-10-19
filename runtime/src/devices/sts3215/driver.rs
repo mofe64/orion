@@ -94,6 +94,8 @@ pub struct Sts3215Driver<T: Sts3215Transport> {
     configured: bool,
     profile_applied: bool,
     active: bool,
+    port: String,
+    baud_rate: i32,
 }
 
 impl<T: Sts3215Transport> Sts3215Driver<T> {
@@ -109,6 +111,8 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
             configured: false,
             profile_applied: false,
             active: false,
+            port: String::new(),
+            baud_rate: 1_000_000,
         }
     }
 
@@ -128,7 +132,7 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
         baud_rate: i32,
         calibrations: Vec<JointCalibration>,
     ) -> Result<()> {
-        if port.is_empty() || baud_rate <= 0 || calibrations.is_empty() {
+        if baud_rate <= 0 || calibrations.is_empty() {
             return Err(Error::InvalidArgument(
                 "Port, baud rate, and calibrations are required.".into(),
             ));
@@ -145,7 +149,15 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
         }
 
         self.close();
-        self.transport.open(port, baud_rate)?;
+        self.port = if port.starts_with("/dev/ttyACM") {
+            String::new()
+        } else {
+            port.to_owned()
+        };
+        self.baud_rate = baud_rate;
+        let ids: Vec<_> = calibrations.iter().map(|joint| joint.servo_id).collect();
+        let resolved = self.transport.resolve_port(port, baud_rate, &ids)?;
+        self.transport.open(&resolved, baud_rate)?;
         let validation = (|| {
             let mut firmware = None;
             for joint in &calibrations {
@@ -186,6 +198,61 @@ impl<T: Sts3215Transport> Sts3215Driver<T> {
         self.calibrations = calibrations;
         self.configured = true;
         Ok(())
+    }
+
+    pub fn connect_daemon(
+        &mut self,
+        port: &str,
+        baud_rate: i32,
+        calibrations: Vec<JointCalibration>,
+    ) -> Result<()> {
+        let ids: Vec<_> = calibrations.iter().map(|joint| joint.servo_id).collect();
+        let resolved = self.transport.resolve_port(port, baud_rate, &ids)?;
+        self.transport.open(&resolved, baud_rate)?;
+        for id in &ids {
+            if self.transport.read_register(*id, Register::ModelNumber)? != STS3215_MODEL_NUMBER {
+                self.transport.close();
+                return Err(Error::Runtime("Unexpected servo model".into()));
+            }
+        }
+        self.transport.set_torque(&ids, false)?;
+        self.transport.close();
+        self.connect(port, baud_rate, calibrations)
+    }
+
+    fn reconnect_bus(&mut self) -> Result<Option<Vec<JointState>>> {
+        // Preserve intent across failed attempts; do not let a closed handle
+        // change whether the owner had torque enabled before the USB outage.
+        let enabled = self.active;
+        self.transport.close();
+        let attempt = (|| {
+            let ids = self.servo_ids();
+            let port = self
+                .transport
+                .resolve_port(&self.port, self.baud_rate, &ids)?;
+            self.transport.open(&port, self.baud_rate)?;
+            for id in &ids {
+                if self.transport.read_register(*id, Register::ModelNumber)? != STS3215_MODEL_NUMBER
+                {
+                    return Err(Error::Runtime(
+                        "Unexpected servo model after reconnect".into(),
+                    ));
+                }
+            }
+            self.transport.set_torque(&ids, false)?;
+            self.active = false;
+            self.apply_servo_profile()?;
+            if enabled {
+                self.activate()
+            } else {
+                self.read()
+            }
+        })();
+        if attempt.is_err() {
+            self.transport.close();
+            self.active = enabled;
+        }
+        attempt.map(Some)
     }
 
     pub fn apply_servo_profile(&mut self) -> Result<()> {
@@ -616,6 +683,10 @@ impl<T: Sts3215Transport> Drop for Sts3215Driver<T> {
 }
 
 impl<T: Sts3215Transport> RuntimeDriver for Sts3215Driver<T> {
+    fn reconnect(&mut self) -> Result<Option<Vec<JointState>>> {
+        self.reconnect_bus()
+    }
+
     fn apply_servo_profile(&mut self) -> Result<()> {
         Sts3215Driver::apply_servo_profile(self)
     }
@@ -668,6 +739,9 @@ pub(crate) mod tests {
         failed_readback: Option<(u8, Register)>,
         pub(crate) fail_zero_verify: bool,
         pub(crate) drift: i32,
+        disappeared: bool,
+        current_name: Option<String>,
+        opened_name: String,
         pub(crate) fail_write_once: Option<(u8, Register)>,
     }
 
@@ -709,8 +783,19 @@ pub(crate) mod tests {
     }
 
     impl Sts3215Transport for FakeTransport {
+        fn resolve_port(&mut self, requested: &str, _baud: i32, _ids: &[u8]) -> Result<String> {
+            Ok(self
+                .current_name
+                .clone()
+                .unwrap_or_else(|| requested.to_owned()))
+        }
+
         fn open(&mut self, port: &str, baud_rate: i32) -> Result<()> {
             self.calls.push(format!("open:{port}:{baud_rate}"));
+            if self.disappeared {
+                return Err(Error::Runtime("USB adapter missing".into()));
+            }
+            self.opened_name = port.to_owned();
             self.open = true;
             Ok(())
         }
@@ -800,6 +885,14 @@ pub(crate) mod tests {
         }
         fn read_states(&mut self, _ids: &[u8]) -> Result<BTreeMap<u8, Sts3215RawState>> {
             self.calls.push("read_states".into());
+            if self.disappeared
+                || self
+                    .current_name
+                    .as_ref()
+                    .is_some_and(|name| *name != self.opened_name)
+            {
+                return Err(Error::Runtime("I/O error".into()));
+            }
             Ok(self.states.clone())
         }
         fn write_positions(&mut self, values: &BTreeMap<u8, i32>) -> Result<()> {
@@ -812,6 +905,10 @@ pub(crate) mod tests {
             Ok(())
         }
         fn set_torque(&mut self, _ids: &[u8], enabled: bool) -> Result<()> {
+            for id in _ids {
+                self.registers
+                    .insert((*id, Register::TorqueEnable), i32::from(enabled));
+            }
             self.calls
                 .push(if enabled { "torque_on" } else { "torque_off" }.into());
             Ok(())
@@ -1407,6 +1504,62 @@ pub(crate) mod tests {
                 ]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn reconnect_follows_a_renamed_adapter_and_restores_only_previous_torque() {
+        for enabled in [false, true] {
+            let mut transport = FakeTransport::default();
+            transport.add_servo(1, 904);
+            transport.add_servo(5, 3547);
+            transport.current_name = Some("/dev/ttyACM0".into());
+            let mut driver = Sts3215Driver::new(transport);
+            driver
+                .configure("/dev/ttyACM0", 1_000_000, calibrations())
+                .unwrap();
+            if enabled {
+                driver.activate().unwrap();
+            }
+            driver.transport_mut().disappeared = true;
+            assert!(driver.read().is_err());
+            assert!(driver.reconnect().is_err());
+            assert!(driver.reconnect().is_err());
+            let transport = driver.transport_mut();
+            transport.disappeared = false;
+            transport.current_name = Some("/dev/ttyACM1".into());
+            transport.states.get_mut(&1).unwrap().position = 1000;
+            transport.calls.clear();
+            let states = driver.reconnect().unwrap().unwrap();
+            assert!(states.iter().all(|joint| joint.position.is_finite()));
+            assert_eq!(driver.is_active(), enabled);
+            assert!(
+                driver
+                    .transport()
+                    .calls
+                    .contains(&"open:/dev/ttyACM1:1000000".into())
+            );
+            assert_eq!(
+                driver.transport().calls.contains(&"torque_on".into()),
+                enabled
+            );
+            if enabled {
+                assert_eq!(driver.transport().position_writes.last().unwrap()[&1], 1000);
+            }
+        }
+    }
+
+    #[test]
+    fn daemon_restart_adopts_a_bus_whose_servos_still_have_torque() {
+        let mut transport = FakeTransport::default();
+        transport.add_servo(1, 904);
+        transport.add_servo(5, 3547);
+        transport.registers.insert((1, Register::TorqueEnable), 1);
+        let mut driver = Sts3215Driver::new(transport);
+        driver
+            .connect_daemon("/dev/fake", 1_000_000, calibrations())
+            .unwrap();
+        assert!(!driver.is_active());
+        assert!(driver.read().is_ok());
     }
 
     #[test]

@@ -35,3 +35,9 @@
 .music-movement .studio-switch[aria-checked="true"] { background:var(--accent); }
 .music-movement .studio-switch[aria-checked="true"] span { transform:translateX(1.1rem); }
 @media (max-width: 700px) { .orion-music { grid-template-columns: minmax(0,1fr); gap: 1.5rem; } .music-volume { border-top: 1px solid var(--line); padding-top: 1.2rem; } }
+
+.dance-setting {border:0;padding:16px 0;margin:0;display:grid;gap:10px;text-align:left}
+.dance-setting legend {font-weight:600;padding:0 0 8px}
+.dance-setting label {display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.dance-setting small {display:block;font-size:12px;opacity:.75;margin-top:3px}
+.dance-setting input {margin-top:3px;accent-color:var(--accent,#e9ab65)}

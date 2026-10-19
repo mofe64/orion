@@ -15,6 +15,10 @@ pub struct JointLimit {
 /// Keeping this boundary in joint-space lets the same daemon logic drive the
 /// real STS3215 bus, deterministic tests, and the MuJoCo validation backend.
 pub trait RuntimeDriver {
+    fn reconnect(&mut self) -> Result<Option<Vec<JointState>>> {
+        Ok(None)
+    }
+
     fn apply_servo_profile(&mut self) -> Result<()>;
     fn activate(&mut self) -> Result<Vec<JointState>>;
     fn deactivate(&mut self) -> Result<()>;

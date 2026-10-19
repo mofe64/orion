@@ -168,6 +168,43 @@ mod movement_review {
             json!({"kind":"motion","name":name,"start_pose":start_name,"anchor":anchor_name,"planner":request["planner"],"anchor_source":request["source"],"samples":samples,"keyframes":keyframes,"expected_end":targets.last().unwrap(),"clamped_samples":[],"amplitude_scale":scale}),
         )
     }
+    fn music(root: &Path, assets: &Path, request: &Value) -> Result<Value> {
+        let poses=PoseLibrary::load(assets.join("motion/config/v2/poses.yaml"),&ORION_JOINT_NAMES)?;
+        let motions=MotionLibrary::load(assets.join("motion/motions/v2"),&poses)?;
+        let anchor=poses.pose("home")?.clone();
+        let hardware=HardwareVersion::V2;
+        let limits=hardware.load_calibration(root.join("hardware/profiles/v2-joints.json"))?.iter()
+            .map(|c|{let (lower_rad,upper_rad)=c.safe_range_radians();JointLimit{name:c.name.clone(),lower_rad,upper_rad}}).collect();
+        let mut core=RuntimeCore::new(Driver{positions:anchor.clone(),limits},poses,motions)?;
+        core.configure_comfort_box(hardware.profile().comfort_box.clone().unwrap())?;
+        let mut character=crate::expression::character::CharacterCoordinator::new(7);
+        character.set_act_settings(crate::expression::settings::ActSettings {
+            move_to_music:crate::expression::settings::DanceMode::Always,
+            ..Default::default()
+        });
+        character.start(0.,&mut core)?;
+        for tick in 1..=250 {let now=tick as f64*0.02;core.tick(now)?;character.tick(now,&mut core,false,None,false,None,None)?;}
+        let bytes=std::fs::read(request["pcm"].as_str().unwrap())?;
+        let mut tracker=crate::expression::music::BeatTracker::default();
+        let mut samples=Vec::new();let mut pulses=Vec::new();
+        for (tick,block) in bytes.chunks_exact(960*8).enumerate() {
+            let time=tick as f64*0.02;let now=5.+time;
+            let pcm:Vec<[f32;2]>=block.chunks_exact(8).map(|frame|[f32::from_le_bytes(frame[..4].try_into().unwrap()),f32::from_le_bytes(frame[4..].try_into().unwrap())]).collect();
+            let mut pulse=crate::expression::music::MusicPulse::default();
+            for chunk in pcm.chunks(480) {pulse=tracker.process(chunk);}
+            pulse.streaming=true;
+            core.tick(now)?;character.set_music_input(Some(pulse),true);
+            character.tick(now,&mut core,false,None,false,None,None)?;
+            let velocities=core.snapshot().motion.as_ref().and_then(|m|core.character_commanded_state(m.run_id,now))
+                .map(|state|state.velocities).unwrap_or_else(||anchor.keys().map(|n|(n.clone(),0.)).collect());
+            samples.push(json!({"time":time,"positions":core.driver().positions,"velocities":velocities}));
+            if tick%25==0 {pulses.push(json!({"time":time,"pulse":pulse,"clip":character.status().active_clip}));}
+        }
+        let end=core.driver().positions.clone();
+        Ok(json!({"kind":"tracking","name":request["name"],"start_pose":"home","anchor":"home",
+            "anchor_source":"Music PCM through the mixer beat tracker and character planner",
+            "samples":samples,"keyframes":[],"expected_end":end,"clamped_samples":[],"amplitude_scale":1.,"pulses":pulses}))
+    }
     fn hands(root: &Path, assets: &Path) -> Result<Value> {
         let poses = PoseLibrary::load(assets.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)?;
         let motions = MotionLibrary::load(assets.join("motion/motions/v2"), &poses)?;
@@ -228,8 +265,8 @@ mod movement_review {
         let root = Path::new(&args[1]);
         let assets = Path::new(&args[2]);
         let requests: Value = serde_json::from_slice(&std::fs::read(&args[3])?)?;
-        let mut items:Vec<_>=requests.as_array().unwrap().iter().map(|r|match item(root,assets,r){Ok(v)=>v,Err(e)=>json!({"kind":"motion","name":r["name"],"start_pose":r["start"],"anchor":r["anchor"],"error":e.to_string()})}).collect();
-        items.push(match hands(root, assets) {Ok(v)=>v,Err(e)=>json!({"kind":"tracking","name":"hands_bearing","start_pose":"home","anchor":"home","error":e.to_string()})});
+        let mut items:Vec<_>=requests.as_array().unwrap().iter().map(|r|match if r["planner"]=="music" {music(root,assets,r)} else {item(root,assets,r)}{Ok(v)=>v,Err(e)=>json!({"kind":"motion","name":r["name"],"start_pose":r["start"],"anchor":r["anchor"],"error":e.to_string()})}).collect();
+        if !requests.as_array().unwrap().iter().any(|r| r["planner"]=="music") { items.push(match hands(root, assets) {Ok(v)=>v,Err(e)=>json!({"kind":"tracking","name":"hands_bearing","start_pose":"home","anchor":"home","error":e.to_string()})}); }
         println!("{}", json!(items));
         Ok(())
     }

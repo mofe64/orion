@@ -1,8 +1,16 @@
 import {describe,it,expect,vi} from "vitest";
 import {createOwnerLamp,ownerLampPreview} from "./ownerLamp";
+import table from "../generated/lampEffects.json";
 import type {LampStatus} from "../types";
 const initial:LampStatus={on:true,brightness:40,mood:'warm',colors:[[40,20,4,210]],effect:'solid',takeover:null,fade:null};
 describe('authoritative owner lamp',()=>{
+  it('matches Rust owner frames for each effect, palette and hardware layout',()=>{
+    for(const example of table.examples) {
+      const setting:LampStatus={...initial,on:example.effect!=="off",effect:example.effect,brightness:65,colors:[[40,20,4,210],[255,0,0,0]]};
+      const frame=ownerLampPreview(setting,example.time,example.count as 24|40);
+      expect(frame.pixels?.map(p=>[p.red,p.green,p.blue,p.white]),`${example.effect} ${example.count} ${example.time}`).toEqual(example.pixels);
+    }
+  });
   it('rejects status captured before an edit and responses from a retired runtime',async()=>{
     const start={...initial,epoch:'one',revision:1};
     const control=createOwnerLamp(async()=>({...start,brightness:70,revision:3}),start);
@@ -52,8 +60,8 @@ describe('authoritative owner lamp',()=>{
     expect(control.snapshot().error).toContain("couldn't change the light");
   });
   it('renders the chosen palette, power and changing effect',()=>{
-    expect(ownerLampPreview({...initial,on:false})).toEqual({red:0,green:0,blue:0,white:0});
-    expect(ownerLampPreview(initial)).toEqual({red:16,green:8,blue:1.6,white:84});
+    expect(ownerLampPreview({...initial,on:false})).toMatchObject({red:0,green:0,blue:0,white:0});
+    expect(ownerLampPreview(initial)).toMatchObject({red:16,green:8,blue:2,white:84});
     expect(ownerLampPreview({...initial,effect:'thinking_drift'},0)).not.toEqual(ownerLampPreview({...initial,effect:'thinking_drift'},1));
   });
 });

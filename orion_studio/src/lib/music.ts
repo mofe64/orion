@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { type GatewayConnection, getMusic, musicCommand, setMusicMovement } from "./gateway";
+import { type GatewayConnection, type DanceMode, getMusic, musicCommand, setMusicMovement } from "./gateway";
 
 export const SPOTIFY_REDIRECT_URI = "http://127.0.0.1:49687/callback";
 export const SPOTIFY_DASHBOARD = "https://developer.spotify.com/dashboard";
@@ -38,6 +38,6 @@ export function createMusicControl(connection: GatewayConnection,
     stop: () => { generation++; clearTimeout(timer); abort?.abort(); },
     command: (action: "pause" | "resume" | "next" | "previous" | "disconnect") => act(() => services.command(connection,{action})),
     signIn: (clientId: string) => act(() => services.signIn(clientId)),
-    movement: (enabled: boolean) => act(() => services.movement(connection,enabled)),
+    movement: (mode: DanceMode) => act(() => services.movement(connection,mode)),
   };
 }

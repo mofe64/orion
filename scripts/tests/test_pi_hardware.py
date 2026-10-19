@@ -35,12 +35,13 @@ class HardwareDeploymentTests(unittest.TestCase):
                 shutil.copy2(SCRIPTS / name, release / 'scripts' / name)
             (release / 'release.json').write_text('{"revision":"test","hardware":"v2"}')
             override = units / 'oriond.service.d/99-local.conf'; override.parent.mkdir()
-            override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234 --character-on-start off\n')
+            override.write_text('[Service]\nExecStart=\nExecStart=/old/runtime/target/release/oriond --serve --port /dev/ttyACM1 --hardware v1 --audio-card seeed2micvoicec --poses /old/v1.yaml --rest-after-seconds 1234 --character-on-start off\n')
             plan = render_plan(release, base / 'stack', project, home, 'pi', units)
             start = plan[override]
             for expected in ('--hardware v2', '--audio-card Array', '--rest-after-seconds 1234', '--character-on-start on', 'v2-joints.json', 'motion/config/v2/poses.yaml', 'motion/motions/v2'):
                 self.assertIn(expected, start)
             self.assertNotIn('--hardware v1', start)
+            self.assertNotIn('/dev/ttyACM', start)
             # Earlier V2 releases wrote maintenance startup into the unit.
             self.assertNotIn('--character-on-start off', start)
             listener = plan[units / 'orion-listener.service']
@@ -50,7 +51,8 @@ class HardwareDeploymentTests(unittest.TestCase):
             self.assertIn('--hardware v2', gateway)
             self.assertIn('v2-joints.json', gateway)
             self.assertIn('Requires=orion-neopixel-pin.service', plan[units / 'oriond.service'])
-            self.assertIn('ExecStartPre=', plan[units / 'oriond.service'])
+            self.assertNotIn('oriond --check', plan[units / 'oriond.service'])
+            self.assertIn('StartLimitIntervalSec=0', plan[units / 'oriond.service'])
 
     def test_v2_smoke_rests_before_any_scene_because_character_mode_starts_at_boot(self):
         # The runtime rejects scenes while character startup is moving home, so

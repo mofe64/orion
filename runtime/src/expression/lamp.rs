@@ -24,6 +24,7 @@ pub struct LampProgram {
     enabled: bool,
     brightness: f64,
     effect: String,
+    effect_started_at: f64,
     colors: Vec<Rgbw8>,
     transition: Option<Transition>,
 }
@@ -46,6 +47,7 @@ impl LampProgram {
             enabled: color != Rgbw8::OFF,
             brightness: 1.0,
             effect: "solid".into(),
+            effect_started_at: 0.,
             colors: vec![color],
             transition: None,
         }
@@ -80,6 +82,9 @@ impl LampProgram {
         next.transition = None;
         if let Some(on) = patch.on {
             next.enabled = on;
+            if on && !self.enabled {
+                next.effect_started_at = now;
+            }
             if on && next.effect == "off" {
                 next.effect = "solid".into();
             }
@@ -100,6 +105,7 @@ impl LampProgram {
                 return Err(Error::InvalidArgument("Unknown lamp effect".into()));
             }
             next.effect = effect;
+            next.effect_started_at = now;
         }
         if let Some(colors) = patch.colors {
             if colors.is_empty() || colors.len() > 2 {
@@ -171,6 +177,8 @@ impl LampProgram {
                     .as_nanos()
             )
         }));
+        status["effect_elapsed_seconds"] =
+            serde_json::json!((now - self.effect_started_at).max(0.));
         status["revision"] = serde_json::json!(self.revision);
         status["on"] = serde_json::json!(
             self.enabled
@@ -223,11 +231,12 @@ impl LampProgram {
                 pixel_count
             ]);
         }
-        render_effect_for_pixels(&self.effect, now, 1.0, pixel_count)?
+        let elapsed = (now - self.effect_started_at).max(0.);
+        render_effect_for_pixels(&self.effect, elapsed, 1.0, pixel_count)?
             .into_iter()
             .enumerate()
             .map(|(index, pixel)| {
-                let blend = 0.5 + 0.5 * (now * 0.6 + index as f64 * 0.12).sin();
+                let blend = 0.5 + 0.5 * (elapsed * 0.6 + index as f64 * 0.12).sin();
                 let gain = (f64::from(pixel.white) / 191.0).min(1.0) * self.brightness;
                 Ok(scale(first.interpolate(second, blend)?, gain))
             })
@@ -240,6 +249,37 @@ mod tests {
     fn patch(value: serde_json::Value) -> LampPatch {
         serde_json::from_value(value).unwrap()
     }
+    #[test]
+    fn selected_pulses_start_bright_even_after_a_long_daemon_uptime() {
+        for effect in ["acknowledge_pulse", "settle_glow"] {
+            let lamp = LampProgram::default()
+                .updated_at(patch(serde_json::json!({"effect":effect})), 7001.25)
+                .unwrap();
+            assert_eq!(
+                lamp.owner_status_at(7001.25, None)["effect_elapsed_seconds"],
+                0.
+            );
+            for count in [24, 40] {
+                let first: u32 = lamp
+                    .render_for_pixels(7001.25, count)
+                    .unwrap()
+                    .iter()
+                    .map(|p| u32::from(p.white))
+                    .sum();
+                let later: u32 = lamp
+                    .render_for_pixels(7002.25, count)
+                    .unwrap()
+                    .iter()
+                    .map(|p| u32::from(p.white))
+                    .sum();
+                assert!(
+                    first > later + count as u32 * 50,
+                    "{effect} must start its own visible pulse"
+                );
+            }
+        }
+    }
+
     #[test]
     fn owner_status_keeps_the_target_during_fades_and_power_preserves_the_palette() {
         let lamp=LampProgram::default().updated_at(patch(serde_json::json!({"brightness":0.4,"colors":[[255,0,0,0]],"effect":"thinking_drift","transition_seconds":10})),0.).unwrap();

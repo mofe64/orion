@@ -48,15 +48,25 @@ Say “Hey Orion, play” followed by a song, artist, album or playlist.
 Say “Pause”, “Resume”, “Skip”, “Previous song” or “What’s playing?” to control music.
 Say “Volume 40”, “Louder” or “Quieter” to change volume.
 
-## Move to music
+## Dance to music
 
-Orion makes small movements with the music. Calm music produces a gentle sway. Stronger music adds small head nods.
-Orion stops these movements during voice requests, speech, tracking, work, rest and alarms.
-Music movement resumes at the next estimated bar. Quiet passages return Orion to its held pose.
+Orion sways and turns with music phrases. Strong beats can add a head accent and small arm movements.
+Calm music produces smaller movements. Voice requests, speech, tracking, work, rest and alarms take priority.
+Orion returns to its held pose during silence. Its usual idle movements continue when it does not dance.
 
-Use **Move to music** in Music or Behaviour settings to change this feature. The setting is on by default.
-Say “Stop dancing” to turn it off. Say “Dance” to turn it on.
-Orion stores this setting on the lamp.
+Use **Dance to music** in Music or Behaviour settings.
+
+| Setting | Function |
+| --- | --- |
+| Off | Keep usual movements while music plays. |
+| Sometimes | Dance for 20–40 seconds, then take a 1–3 minute break. |
+| Always | Dance while music has a clear beat. |
+
+Sometimes is the default. Higher energy music produces more frequent dance stretches.
+Say “Dance sometimes”, “Always dance to music” or “Stop dancing” to change the setting.
+Orion stores the setting on the lamp.
+
+The speaker reconnects after a USB interruption. Spotify remains available while the speaker returns.
 
 ## Correct a sign-in problem
 

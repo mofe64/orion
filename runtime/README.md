@@ -248,3 +248,13 @@ Viewing permission expires unless the gateway renews it. Detection polling canno
 | `src/ipc/` | Local socket transport |
 
 See [motion controls](../docs/motion-reference.md), [configuration](../docs/configuration.md) and [tracking tools](../docs/servo-tracking.md).
+
+## Servo USB recovery
+
+The daemon finds the adapter that answers for the configured STS3215 servo IDs.
+It uses `/dev/serial/by-id` when available. It can also find an adapter on a system with only a numbered serial port.
+
+The daemon closes a failed port and retries with increasing delays.
+After reconnection, it reads the joint positions and restores the previous torque state.
+Character movements restart from the measured pose.
+The service can restart while the adapter returns.

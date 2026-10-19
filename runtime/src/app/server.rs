@@ -80,12 +80,11 @@ pub(super) fn connect_driver(options: &Options) -> crate::Result<Sts3215Driver<R
         );
     }
     let mut driver = Sts3215Driver::with_profiles(RustypotTransport::default(), profiles);
-    let port = if options.port.is_empty() {
-        crate::devices::sts3215::setup::detect_port()?
+    if options.operation == super::Operation::Serve {
+        driver.connect_daemon(&options.port, options.baud_rate, calibrations)?;
     } else {
-        options.port.clone()
-    };
-    driver.connect(&port, options.baud_rate, calibrations)?;
+        driver.connect(&options.port, options.baud_rate, calibrations)?;
+    }
     Ok(driver)
 }
 
@@ -318,6 +317,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
+        if core.take_bus_reconnected() {
+            character.resume_after_bus_reconnect(now_seconds, &mut core);
+        }
         if let Some(log) = &behaviour_log {
             log.observe_motion(&core.snapshot(), now_seconds);
         }

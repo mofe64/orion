@@ -28,6 +28,7 @@ function previewColor(light: LightPreview): THREE.Color {
 let savedCamera: { position: THREE.Vector3; target: THREE.Vector3 } | null = null;
 
 export function RobotViewport({ catalog, joints, light, mode = "editor", theme = "dark" }: RobotViewportProps) {
+  const pixelCount=light.pixels?.length===40 || (!light.pixels && !!catalog.meshUrls["diffuser.stl"]) ? 40 : 24;
   const hostRef = useRef<HTMLDivElement>(null);
   const robotRef = useRef<URDFRobot | null>(null);
   const invalidateRef = useRef<() => void>(() => {});
@@ -121,15 +122,22 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
     };
     themeUpdateRef.current();
 
-    const diffusers: THREE.MeshStandardMaterial[] = [];
+    const diffusers: {material:THREE.MeshStandardMaterial; texture:THREE.DataTexture; count:number}[] = [];
     lightUpdateRef.current = () => {
       const current = lightRef.current;
       const color = previewColor(current);
       lampLight.color.copy(color);
       lampLight.intensity = Math.max(current.red, current.green, current.blue, current.white) / 180;
-      for (const material of diffusers) {
-        material.emissive.copy(color);
-        material.emissiveIntensity = Math.max(current.red, current.green, current.blue, current.white) / 255 * 1.8;
+      for (const {material,texture,count} of diffusers) {
+        const bytes=texture.image.data as Uint8Array;
+        for(let i=0;i<count;i++) {
+          const pixel=current.pixels?.[i]??current;
+          const c=previewColor(pixel);
+          bytes[i*4]=Math.round(c.r*255);bytes[i*4+1]=Math.round(c.g*255);bytes[i*4+2]=Math.round(c.b*255);bytes[i*4+3]=255;
+        }
+        texture.needsUpdate=true;
+        material.emissive.set(0xffffff);
+        material.emissiveIntensity=1.8;
       }
       invalidateRef.current();
     };
@@ -177,12 +185,36 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
             geometry.computeBoundingBox();
             const bounds = geometry.boundingBox!;
             const center = bounds.getCenter(new THREE.Vector3());
-            // The diffuser is a thin XY surface in its CAD mesh. Its outward
-            // face is local -Z; parenting follows all calibrated head joints.
-            lampLight.position.set(center.x, center.y, bounds.min.z - .003);
-            lampLight.target.position.set(center.x, center.y, bounds.min.z - .15);
-            mesh.add(lampLight, lampLight.target);
-            diffusers.push(mesh.material);
+            const count=pixelCount;
+            const size=bounds.getSize(new THREE.Vector3());
+            // V1's diffuser lies in XY; V2's annulus lies in XZ. Keep the
+            // optical surface in mesh coordinates so head joints carry it.
+            const ringPlane=size.y<size.z;
+            if(ringPlane) {
+              lampLight.position.set(center.x,bounds.min.y-.003,center.z);
+              lampLight.target.position.set(center.x,bounds.min.y-.15,center.z);
+            } else {
+              lampLight.position.set(center.x,center.y,bounds.min.z-.003);
+              lampLight.target.position.set(center.x,center.y,bounds.min.z-.15);
+            }
+            mesh.add(lampLight,lampLight.target);
+            const texture=new THREE.DataTexture(new Uint8Array(count*4),count,1,THREE.RGBAFormat);
+            texture.magFilter=texture.minFilter=THREE.NearestFilter;
+            mesh.material.onBeforeCompile=shader=>{
+              shader.uniforms.lampPixels={value:texture};
+              shader.uniforms.lampBounds={value:new THREE.Vector4(bounds.min.x,ringPlane?bounds.min.z:bounds.min.y,size.x,ringPlane?size.z:size.y)};
+              shader.vertexShader='varying vec2 vLampXY;\n'+shader.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>\nvLampXY=position.${ringPlane?'xz':'xy'};`);
+              const index=count===24
+                ? 'mod(floor((atan(uv.y-.5,uv.x-.5)+6.28318530718)/6.28318530718*24.),24.)'
+                : 'min(7.,floor(uv.x*8.))+min(4.,floor(uv.y*5.))*8.';
+              shader.fragmentShader='uniform sampler2D lampPixels;\nuniform vec4 lampBounds;\nvarying vec2 vLampXY;\n'+shader.fragmentShader.replace('#include <emissivemap_fragment>',`
+                vec2 uv=clamp((vLampXY-lampBounds.xy)/lampBounds.zw,0.,.99999);
+                float pixelIndex=${index};
+                totalEmissiveRadiance*=texture2D(lampPixels,vec2((pixelIndex+.5)/${count}.,.5)).rgb;
+              `);
+            };
+            mesh.material.customProgramCacheKey=()=>`lamp-pixels-${count}`;
+            diffusers.push({material:mesh.material,texture,count});
             lightUpdateRef.current();
           }
           done(mesh);
@@ -255,6 +287,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
       cancelAnimationFrame(frame);
       document.removeEventListener("visibilitychange", invalidate);
       controls.removeEventListener("change", invalidate);
+      diffusers.forEach(({texture})=>texture.dispose());
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
         mesh.geometry?.dispose();
@@ -270,7 +303,7 @@ export function RobotViewport({ catalog, joints, light, mode = "editor", theme =
       renderer.domElement.remove();
       robotRef.current = null;
     };
-  }, [catalog, mode]);
+  }, [catalog, mode, pixelCount]);
 
   useEffect(() => {
     const robot = robotRef.current;

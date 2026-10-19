@@ -61,12 +61,15 @@ export function Home({ catalog, theme, voiceLabel, listening = false, voiceAvail
   const [lightTime,setLightTime]=useState(0);
   const resting = status?.rest?.state === "resting" || status?.rest?.state === "going_to_rest";
   const previewSetting=lampPreviewSetting??status?.lamp;
-  const previewLight=ownerLampPreview(previewSetting,lightTime);
+  const previewLight=ownerLampPreview(previewSetting,lightTime,trackingSupported ? 24 : 40);
   useEffect(()=>{
     if(!previewSetting || (previewSetting.effect==='solid' && !previewSetting.fade)) return;
-    const timer=setInterval(()=>setLightTime(performance.now()/1000),100);
+    const received=performance.now()/1000;
+    const elapsed=previewSetting.effect_elapsed_seconds??0;
+    setLightTime(elapsed);
+    const timer=setInterval(()=>setLightTime(elapsed+performance.now()/1000-received),40);
     return ()=>clearInterval(timer);
-  },[previewSetting?.effect,!!previewSetting?.fade]);
+  },[previewSetting?.effect,previewSetting?.effect_elapsed_seconds,!!previewSetting?.fade]);
   const [result, setResult] = useScopedFeedback<{ text: string; area: FeedbackArea; failure?: Failure } | null>("home", connection);
   const feedback = (area: FeedbackArea) => {
     if (!pending && result?.area === area && result.failure) return <FailureNotice value={result.failure} />;

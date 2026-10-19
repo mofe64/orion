@@ -173,6 +173,7 @@ export interface StoredSceneDocument {
 }
 
 export interface LightPreview {
+  pixels?: Array<{red:number;green:number;blue:number;white:number}>;
   red: number;
   green: number;
   blue: number;
@@ -292,6 +293,7 @@ export interface GatewayStatus {
 
 export type LampColor = [number,number,number,number];
 export interface LampStatus {
+  effect_elapsed_seconds?:number;
   epoch?:string;
   revision?:number;
   on:boolean;

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { BehaviourPreference } from "./behaviourPreference";
 import type { BehaviourResponse } from "./gateway";
 const connection = { url: "http://orion", token: "secret" };
-const off: BehaviourResponse = { behaviours: { move_to_music:true, mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, object_glances: false, mutual_gaze: false, arrival_notice: false, new_object_peek: false, presence_defers_rest: false } };
+const off: BehaviourResponse = { behaviours: { move_to_music:"sometimes", mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, object_glances: false, mutual_gaze: false, arrival_notice: false, new_object_peek: false, presence_defers_rest: false } };
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
 it("optimistically saves one key, reverts on failure, and retains the useful error", async () => {

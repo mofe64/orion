@@ -15,11 +15,23 @@ pub(super) fn schemas() -> Vec<Value> {
     for name in ["dance", "stop_dancing"] {
         schemas.push(json!({"type":"function","name":name,"description":if name=="dance" {"Enable Orion's gentle movement while music plays. It stays still in silence and yields to listening and other activities. Confirm only after success."}else{"Turn off Orion's movement to music. Confirm only after success."},"inputSchema":{"type":"object","additionalProperties":false,"properties":{},"required":[]}}));
     }
+    schemas.push(json!({"type":"function","name":"set_dance_mode","description":"Choose how often Orion dances to music: off, sometimes or always. Confirm only after success.","inputSchema":{"type":"object","additionalProperties":false,"required":["mode"],"properties":{"mode":{"type":"string","enum":["off","sometimes","always"]}}}}));
     schemas
 }
 
 pub(super) fn resolve(name: &str, arguments: Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("Choose a music action.")?;
+    if name == "set_dance_mode" {
+        let mode = args
+            .get("mode")
+            .and_then(Value::as_str)
+            .filter(|mode| ["off", "sometimes", "always"].contains(mode))
+            .ok_or("Choose off, sometimes or always.")?;
+        if args.len() != 1 {
+            return Err("Invalid dance setting".into());
+        }
+        return Ok(json!({"operation":"music_movement","mode":mode}));
+    }
     if matches!(name, "dance" | "stop_dancing") {
         if !args.is_empty() {
             return Err("Invalid music movement request.".into());
@@ -70,6 +82,13 @@ mod tests {
             );
             assert!(resolve(name, json!({"force":true})).is_err());
         }
+        for mode in ["off", "sometimes", "always"] {
+            assert_eq!(
+                resolve("set_dance_mode", json!({"mode":mode})).unwrap(),
+                json!({"operation":"music_movement","mode":mode})
+            );
+        }
+        assert!(resolve("set_dance_mode", json!({"mode":"invalid"})).is_err());
         for kind in ["track", "artist", "album", "playlist"] {
             assert_eq!(
                 resolve("play_music", json!({"query":"test","kind":kind})).unwrap()["request"],

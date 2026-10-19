@@ -193,6 +193,9 @@ pub struct Sts3215RawState {
 }
 
 pub trait Sts3215Transport {
+    fn resolve_port(&mut self, requested: &str, _baud_rate: i32, _ids: &[u8]) -> Result<String> {
+        Ok(requested.to_owned())
+    }
     fn open(&mut self, port: &str, baud_rate: i32) -> Result<()>;
     fn close(&mut self);
     fn is_open(&self) -> bool;
@@ -237,6 +240,46 @@ impl RustypotTransport {
 }
 
 impl Sts3215Transport for RustypotTransport {
+    fn resolve_port(&mut self, requested: &str, baud_rate: i32, ids: &[u8]) -> Result<String> {
+        if !requested.is_empty() && !requested.starts_with("/dev/ttyACM") {
+            return Ok(requested.to_owned());
+        }
+        // Probe the expected servo IDs, not the USB product label. Audio and
+        // other USB devices can enumerate alongside the servo adapter.
+        let mut candidates = std::fs::read_dir("/dev/serial/by-id")
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            candidates = serialport::available_ports()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|port| port.port_name)
+                .filter(|name| name.starts_with("/dev/ttyACM") || name.starts_with("/dev/ttyUSB"))
+                .collect();
+        }
+        let mut matches = Vec::new();
+        for port in candidates {
+            if self.open(&port, baud_rate).is_ok()
+                && ids
+                    .iter()
+                    .all(|id| self.read_register(*id, Register::ModelNumber).ok() == Some(777))
+            {
+                matches.push(port);
+            }
+            self.close();
+        }
+        match matches.as_slice() {
+            [port] => Ok(port.clone()),
+            _ => Err(Error::Runtime(format!(
+                "Expected one matching STS adapter, found {}",
+                matches.len()
+            ))),
+        }
+    }
+
     fn open(&mut self, port: &str, baud_rate: i32) -> Result<()> {
         if port.is_empty() || baud_rate <= 0 {
             return Err(Error::InvalidArgument(

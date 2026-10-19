@@ -16,6 +16,13 @@ pub struct MusicPulse {
     pub sampled_at: Option<Instant>,
 }
 
+impl MusicPulse {
+    pub fn fresh(self) -> bool {
+        self.sampled_at
+            .is_some_and(|at| at.elapsed().as_secs_f64() <= 0.5)
+    }
+}
+
 pub struct BeatTracker {
     low: [f64; 2],
     mid: [f64; 2],
@@ -197,32 +204,72 @@ impl BeatTracker {
 }
 
 pub fn offsets(beats: f64, energy: f64, seed: u64) -> crate::JointPositions {
-    let variation = (beats / 19.3 + seed as f64 % 17.).sin();
-    let sway = (std::f64::consts::TAU * beats / 8.).sin();
-    let scale = energy.clamp(0., 1.);
-    let turn = 0.025 * scale * (0.8 + 0.2 * variation) * sway;
-    let beat = beats.round() as u64;
-    let hash = beat.wrapping_add(seed).wrapping_mul(0x9e3779b97f4a7c15);
-    let bob = if energy >= 0.55 && hash.rotate_left(13) % 5 != 0 {
-        (std::f64::consts::TAU * beats).cos().max(0.).powi(2) * 0.045 * scale
-    } else {
-        0.
+    use std::f64::consts::TAU;
+    let energy = energy.clamp(0., 1.);
+    let phrase = (beats / 16.).floor() as u64;
+    let phase = beats.rem_euclid(16.);
+    let motif = |phrase: u64| {
+        let hash = phrase.wrapping_add(seed).wrapping_mul(0x9e3779b97f4a7c15);
+        let kind = if energy < 0.45 {
+            0
+        } else if energy < 0.7 {
+            if hash.rotate_left(17) % 2 == 0 { 0 } else { 2 }
+        } else {
+            (hash.rotate_left(17) % 3) as usize
+        };
+        let sign = if hash & 1 == 0 { 1. } else { -1. };
+        let sway = (TAU * beats / [16., 8., 16.][kind]).sin();
+        let neck = (TAU * beats / 16. + [0.85, -0.7, 1.4][kind]).sin();
+        // Accent only selected strong beats. The neck follows a different
+        // phrase arc from the base; the arm opens and closes with the groove.
+        let beat = beats.floor() as u64;
+        let accent = if energy > 0.5 && beat % 4 == [0, 2, 0][kind] {
+            (std::f64::consts::PI * beats.fract()).sin().powi(2)
+        } else {
+            0.
+        };
+        [
+            sign * 0.18 * sway,
+            sign * 0.13 * neck,
+            0.025 * (TAU * beats / 8. + kind as f64).sin() + 0.055 * accent,
+            0.032 * (TAU * beats / 8.).sin(),
+            -0.045 * (TAU * beats / 8. + 0.5).sin(),
+        ]
     };
+    let previous = motif(phrase.saturating_sub(1));
+    let current = motif(phrase);
+    let blend = (phase / 2.).clamp(0., 1.);
+    let blend = blend * blend * (3. - 2. * blend);
+    let scale = energy * energy.sqrt();
     [
-        ("base_yaw_joint", turn),
-        ("head_roll_joint", -turn * 0.8),
-        ("head_pitch_joint", bob - 0.015 * scale * sway),
-        ("shoulder_pitch_joint", 0.005 * scale * sway),
-        ("elbow_pitch_joint", -0.008 * scale * sway),
+        "base_yaw_joint",
+        "head_roll_joint",
+        "head_pitch_joint",
+        "shoulder_pitch_joint",
+        "elbow_pitch_joint",
     ]
     .into_iter()
-    .map(|(name, value)| (name.into(), value))
+    .enumerate()
+    .map(|(i, name)| {
+        (
+            name.into(),
+            (previous[i] + (current[i] - previous[i]) * blend) * scale,
+        )
+    })
     .collect()
 }
 
 pub fn performance(pulse: MusicPulse, seed: u64) -> (crate::MotionDefinition, f64) {
     use crate::{KeyframeArrival, MotionDefinition, MotionKeyframe, MotionSpace, MotionStyle};
-    let span = if pulse.energy >= 0.55 { 4. } else { 8. };
+    let pulse = MusicPulse {
+        bpm: if pulse.bpm.is_finite() && pulse.bpm > 0. {
+            pulse.bpm
+        } else {
+            120.
+        },
+        ..pulse
+    };
+    let span = 16.;
     let end = (pulse.beats / span).floor() * span + span;
     let mut previous = pulse.beats;
     let mut next = (pulse.beats * 4.).floor() / 4. + 0.25;
@@ -259,7 +306,9 @@ pub fn performance(pulse: MusicPulse, seed: u64) -> (crate::MotionDefinition, f6
     (
         MotionDefinition {
             name: "music_performance".into(),
-            description: "Sway gently and nod with the music, then return to the held pose.".into(),
+            description:
+                "Sway, turn and breathe with each music phrase, then return to the held pose."
+                    .into(),
             space: MotionSpace::AnchorRelative,
             style,
             return_to_anchor: true,
@@ -315,13 +364,13 @@ mod tests {
                 assert!(
                     value.abs()
                         <= if name == "head_pitch_joint" {
-                            0.06
+                            0.09
                         } else {
-                            0.03
+                            0.19
                         }
                 );
             }
-            assert!(calm.values().all(|value| value.abs() < 0.02));
+            assert!(calm.values().all(|value| value.abs() < 0.025));
             assert!(offsets(t, 0., 7).values().all(|value| *value == 0.));
         }
         assert_ne!(offsets(1., 0.9, 7), offsets(9., 0.9, 7));
@@ -340,7 +389,7 @@ mod tests {
                 .iter()
                 .map(|frame| frame.duration_seconds)
                 .sum::<f64>()
-                - 2.45)
+                - 4.45)
                 .abs()
                 < 1e-9
         );

@@ -15,7 +15,7 @@ export class BehaviourPreference {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private update(patch: Partial<BehaviourState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()); }
   private validate(value: BehaviourResponse) {
-    if (!value.behaviours || behaviourKeys.some(key => typeof value.behaviours[key] !== "boolean"))
+    if (!value.behaviours || behaviourKeys.some(key => key === "move_to_music" ? !["off","sometimes","always"].includes(value.behaviours[key]) : typeof value.behaviours[key] !== "boolean"))
       throw new Error("The gateway returned invalid character behaviours.");
     return value.behaviours;
   }
@@ -42,7 +42,7 @@ export class BehaviourPreference {
     // instead of preserving its optimistic value or leaving controls pending.
     if (this.state.pending) this.update({ values: null, pending: false, notice: "" });
   }
-  choose = async (key: BehaviourKey, value: boolean) => {
+  choose = async <K extends BehaviourKey>(key: K, value: import("./gateway").BehaviourSettings[K]) => {
     const controller = this.controller, previous = this.state.values;
     if (!controller || this.state.pending || !previous || previous[key] === value) return;
     this.revision++; this.saveFailure = null;

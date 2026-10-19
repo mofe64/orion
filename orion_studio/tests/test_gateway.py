@@ -147,15 +147,30 @@ class GatewayContractTests(unittest.TestCase):
                 path=Path(directory)/'camera.json'
                 gateway=OrionGateway(self.client,hardware=hardware,camera_preference_file=path)
                 gateway.spotify=Mock(); gateway.spotify.status.return_value={'signed_in':False}
-                self.assertTrue(gateway.spotify_request('status')['move_to_music'])
+                self.assertEqual(gateway.spotify_request('status')['move_to_music'], 'sometimes')
                 result=gateway.submit({'operation':'music_movement','enabled':False})[1]['result']
-                self.assertFalse(result['enabled'])
+                self.assertEqual(result['mode'], 'off')
                 reopened=OrionGateway(self.client,hardware=hardware,camera_preference_file=path)
                 reopened.spotify=Mock(); reopened.spotify.status.return_value={'signed_in':False}
-                self.assertFalse(reopened.spotify_request('status')['move_to_music'])
-                if hardware=='v2': self.assertFalse(reopened.get_behaviours()['behaviours']['move_to_music'])
+                self.assertEqual(reopened.spotify_request('status')['move_to_music'], 'off')
+                if hardware=='v2': self.assertEqual(reopened.get_behaviours()['behaviours']['move_to_music'], 'off')
                 self.assertTrue(json.loads(path.with_name('behaviours.json').read_text())['act_sounds'])
                 with self.assertRaises(GatewayError): gateway.submit({'operation':'music_movement','enabled':'false'})
+
+    def test_dance_modes_migrate_booleans_and_persist_on_both_lamps(self):
+        for hardware in ('v1','v2'):
+            with tempfile.TemporaryDirectory() as directory:
+                camera=Path(directory)/'camera.json'
+                gateway=OrionGateway(self.client,hardware=hardware,camera_preference_file=camera)
+                path=camera.with_name('behaviours.json')
+                for legacy,mode in [(True,'sometimes'),(False,'off')]:
+                    path.write_text(json.dumps({'move_to_music':legacy,'act_sounds':False}))
+                    self.assertEqual(gateway.get_behaviours()['behaviours']['move_to_music'],mode)
+                    self.assertFalse(gateway.get_behaviours()['behaviours']['act_sounds'])
+                for mode in ('off','sometimes','always'):
+                    gateway.submit({'operation':'music_movement','mode':mode})
+                    self.assertEqual(json.loads(path.read_text())['move_to_music'],mode)
+                    self.assertEqual(gateway.get_behaviours()['behaviours']['move_to_music'],mode)
 
     def test_music_operations_preserve_status_and_spotify_instructions(self):
         from spotify import SpotifyError

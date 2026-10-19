@@ -1,4 +1,5 @@
 [Unit]
+StartLimitIntervalSec=0
 Description=Orion hardware runtime
 Documentation=file://@PROJECT_ROOT@/runtime/README.md
 Wants=orion-neopixel-pin.service orion-listener.service
@@ -10,7 +11,7 @@ User=@ORION_USER@
 WorkingDirectory=@PROJECT_ROOT@
 Environment=HOME=@USER_HOME@
 UMask=0077
-ExecStart=@PROJECT_ROOT@/runtime/target/release/oriond --serve --backend hardware --port /dev/ttyACM0 --baud-rate 1000000 --calibration @USER_HOME@/.config/orion/servo_calibration.json
+ExecStart=@PROJECT_ROOT@/runtime/target/release/oriond --serve --backend hardware --baud-rate 1000000 --calibration @USER_HOME@/.config/orion/servo_calibration.json
 ExecStop=@PROJECT_ROOT@/scripts/orion_safe_stop.sh @PROJECT_ROOT@/runtime/target/release/oriond /tmp/oriond.sock
 Restart=on-failure
 RestartSec=2

@@ -48,29 +48,53 @@ def main():
     cache = Path.home() / '.local/share/orion/spotify'
     cache.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(cache, 0o700)
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as output:
-        output.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
-        output.connect(str(args.socket))
-        with subprocess.Popen(command(args.binary, name, cache), stdout=subprocess.PIPE, env=environment(settings)) as process:
-            def stop(_signal, _frame):
-                process.terminate()
-                raise SystemExit(0)
-            signal.signal(signal.SIGTERM, stop)
-            signal.signal(signal.SIGINT, stop)
-            try:
-                while process.poll() is None:
-                    ready, _, _ = select.select([process.stdout], [], [], 1)
-                    if ready:
-                        data = process.stdout.read1(4096)
-                        if not data: break
-                        output.sendall(data)
-                    if read_settings(settings_file).get('connect_revision') != settings.get('connect_revision'):
-                        break  # systemd restarts with the newly signed-in account.
-            finally:
-                if process.poll() is None: process.terminate()
-                try: process.wait(timeout=5)
-                except subprocess.TimeoutExpired: process.kill(); process.wait()
-            if process.returncode: raise SystemExit(process.returncode)
+    with subprocess.Popen(command(args.binary, name, cache), stdout=subprocess.PIPE, env=environment(settings)) as process:
+        def stop(_signal, _frame):
+            process.terminate()
+            raise SystemExit(0)
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+        try:
+            forward_pcm(process, args.socket, settings_file, settings)
+        finally:
+            if process.poll() is None: process.terminate()
+            try: process.wait(timeout=5)
+            except subprocess.TimeoutExpired: process.kill(); process.wait()
+        if process.returncode: raise SystemExit(process.returncode)
+
+
+def forward_pcm(process, path, settings_file, settings):
+    output, retry_at, backoff = None, 0., 0.1
+    try:
+        while process.poll() is None:
+            if output is None and time.monotonic() >= retry_at:
+                candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                candidate.settimeout(0.25)
+                candidate.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+                try:
+                    candidate.connect(str(path))
+                    output, backoff = candidate, 0.1
+                except OSError:
+                    candidate.close()
+                    retry_at = time.monotonic() + backoff
+                    backoff = min(backoff * 2, 2.)
+            ready, _, _ = select.select([process.stdout], [], [], 0.1)
+            if ready:
+                data = process.stdout.read1(4096)
+                if not data: break
+                # Drain PCM during an outage so Connect remains responsive and
+                # reconnect starts with current audio rather than an old song.
+                if output is not None:
+                    try: output.sendall(data)
+                    except OSError:
+                        output.close()
+                        output = None
+                        retry_at = time.monotonic() + backoff
+                        backoff = min(backoff * 2, 2.)
+            if read_settings(settings_file).get('connect_revision') != settings.get('connect_revision'):
+                break
+    finally:
+        if output is not None: output.close()
 
 
 if __name__ == '__main__': main()

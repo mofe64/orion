@@ -4,15 +4,27 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 SCRIPTS=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(SCRIPTS))
-from spotify_connect import command, environment
+from spotify_connect import command, environment, forward_pcm
 from pi_service_config import services_for_release
 
 
 class SpotifyConnectTests(unittest.TestCase):
+    def test_pcm_bridge_reconnects_after_a_stall_without_stopping_librespot(self):
+        process=Mock();process.poll.side_effect=[None,None,None,None,0]
+        process.stdout.read1.side_effect=[b'old',b'during-outage',b'new',b'last']
+        first,second=Mock(),Mock()
+        first.sendall.side_effect=TimeoutError('USB audio stalled')
+        with patch('spotify_connect.socket.socket',side_effect=[first,second]), patch('spotify_connect.select.select',return_value=([process.stdout],[],[])), patch('spotify_connect.time.monotonic',side_effect=[0.,0.,1.,2.]), patch('spotify_connect.read_settings',return_value={}):
+            forward_pcm(process,Path('/music.sock'),Path('/settings'),{})
+        first.close.assert_called_once()
+        second.connect.assert_called_once_with('/music.sock')
+        self.assertTrue(second.sendall.called)
+        process.terminate.assert_not_called()
+
     def test_service_allows_interface_discovery_in_its_address_family_sandbox(self):
         template = (SCRIPTS / 'systemd/orion-spotify.service.in').read_text()
         families = next(line.split('=', 1)[1].split() for line in template.splitlines()

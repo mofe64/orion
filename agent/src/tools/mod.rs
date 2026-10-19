@@ -75,7 +75,7 @@ pub(crate) async fn execute(
     events: Option<&mpsc::Sender<AgentEvent>>,
 ) -> Result<Value, String> {
     match name {
-        "play_music" | "pause_music" | "resume_music" | "skip_song" | "previous_song" | "whats_playing" | "dance" | "stop_dancing" => {
+        "play_music" | "pause_music" | "resume_music" | "skip_song" | "previous_song" | "whats_playing" | "dance" | "stop_dancing" | "set_dance_mode" => {
             let parameters = music::resolve(name, arguments)?;
             let events = events.ok_or("No robot coordinator is attached")?;
             let (reply, result) = oneshot::channel();

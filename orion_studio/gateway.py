@@ -468,27 +468,33 @@ class OrionGateway:
     BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest',
                   'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds', 'move_to_music')
     BEHAVIOUR_DEFAULTS = dict.fromkeys(BEHAVIOURS, False) | dict.fromkeys(
-        ('mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'act_sounds', 'move_to_music'), True)
+        ('mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'act_sounds'), True) | {'move_to_music':'sometimes'}
 
     def get_behaviours(self):
-        if self.hardware != 'v2':
-            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
         return {'api_version': API_VERSION, 'behaviours':self._behaviour_values()}
 
     def _behaviour_values(self):
         off = self.BEHAVIOUR_DEFAULTS.copy()
         try:
             value = json.loads(self.behaviours_file.read_text())
-            if not isinstance(value, dict) or any(type(item) is not bool for item in value.values()):
-                value = off
+            if not isinstance(value, dict) or any(
+                    item not in ('off','sometimes','always') and type(item) is not bool if key == 'move_to_music'
+                    else type(item) is not bool for key,item in value.items()): value = off
         except (OSError, ValueError):
             value = off
-        return {key:value.get(key,self.BEHAVIOUR_DEFAULTS[key]) for key in self.BEHAVIOURS}
+        result = off.copy()
+        for key in self.BEHAVIOURS:
+            item = value.get(key, off[key])
+            if key == 'move_to_music':
+                if type(item) is bool: item = 'sometimes' if item else 'off'
+                if item in ('off', 'sometimes', 'always'): result[key] = item
+            elif type(item) is bool: result[key] = item
+        return result
 
     def set_behaviours(self, payload):
         if (not isinstance(payload, dict) or not payload or any(
-                key not in self.BEHAVIOURS or type(value) is not bool for key, value in payload.items())):
-            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_behaviour_setting', 'Supply known behaviour names with boolean values.')
+                key not in self.BEHAVIOURS or (value not in ('off', 'sometimes', 'always') if key == 'move_to_music' else type(value) is not bool) for key, value in payload.items())):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_behaviour_setting', 'Choose a valid behaviour setting.')
         if self.hardware != 'v2' and set(payload) != {'move_to_music'}:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
         with self.behaviours_lock:
@@ -877,10 +883,16 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_request", "Expected a JSON object.")
         operation = payload.get("operation")
         if operation == 'music_movement':
-            if set(payload) != {'operation','enabled'} or type(payload['enabled']) is not bool:
-                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music_movement', 'Choose whether Orion moves to music.')
-            saved=self.set_behaviours({'move_to_music':payload['enabled']})
-            response={'ok':True,'enabled':saved['behaviours']['move_to_music']}
+            mode = payload.get('mode')
+            # Older voice clients can still turn dance on and off.
+            if set(payload) == {'operation','enabled'} and type(payload['enabled']) is bool:
+                mode = 'sometimes' if payload['enabled'] else 'off'
+            elif set(payload) != {'operation','mode'}:
+                mode = None
+            if mode not in ('off','sometimes','always'):
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music_movement', 'Choose Off, Sometimes or Always.')
+            saved=self.set_behaviours({'move_to_music':mode})
+            response={'ok':True,'mode':saved['behaviours']['move_to_music']}
         elif operation == 'music':
             if set(payload) != {'operation','request'}:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music', 'Choose a music action.')

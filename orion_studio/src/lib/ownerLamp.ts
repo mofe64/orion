@@ -1,3 +1,4 @@
+import effectTable from "../generated/lampEffects.json";
 import type { LampColor, LampStatus, LightPreview } from "../types";
 import type { LampUpdate } from "./gateway";
 
@@ -11,7 +12,7 @@ export const lampEffects:Record<string,string> = {solid:"Steady",warm_idle_breat
 
 function project(actual:LampStatus|null, patch:LampUpdate):LampStatus|null {
   if (!actual) return null;
-  return {...actual,...patch,brightness:patch.brightness===undefined ? actual.brightness : patch.brightness*100,
+  return {...actual,...patch,...(patch.effect!==undefined || (patch.on && !actual.on) ? {effect_elapsed_seconds:0} : {}),brightness:patch.brightness===undefined ? actual.brightness : patch.brightness*100,
     ...(patch.colors ? {mood:"custom" as const} : {}),...(Object.keys(patch).length ? {fade:null} : {})};
 }
 
@@ -54,16 +55,26 @@ export function createOwnerLamp(send:(patch:LampUpdate)=>Promise<LampStatus>, in
   };
 }
 
-export function ownerLampPreview(setting:LampStatus|null|undefined, seconds=0):LightPreview {
-  if(!setting || (!setting.on && !setting.fade) || setting.effect==='off') return {red:0,green:0,blue:0,white:0};
+export function ownerLampPreview(setting:LampStatus|null|undefined, seconds=0, pixelCount:24|40=24):LightPreview {
+  const off={red:0,green:0,blue:0,white:0};
+  if(!setting || (!setting.on && !setting.fade) || setting.effect==='off') return {...off,pixels:Array.from({length:pixelCount},()=>({...off}))};
   const colors=setting.fade?.colors ?? setting.colors;
   const brightness=(setting.fade?.brightness ?? setting.brightness)/100;
   const first=colors[0],last=colors[colors.length-1];
-  const blend=setting.effect==='solid' ? .5 : .5+.5*Math.sin(seconds*.6);
-  const gain=brightness*(setting.effect==='solid' ? 1 : .55+.35*Math.cos(seconds*2));
-  const channels=first.map((value,index)=>(value+(last[index]-value)*blend)*gain);
-  return {red:channels[0],green:channels[1],blue:channels[2],white:channels[3]};
+  const effects=effectTable.layouts[String(pixelCount) as "24"|"40"];
+  const frames=effects[setting.effect as keyof typeof effects];
+  const tick=Math.floor(((seconds%effectTable.period)+effectTable.period)%effectTable.period*effectTable.fps+1e-7);
+  const pixels=Array.from({length:pixelCount},(_,index)=>{
+    const blend=setting.effect==='solid' ? .5 : .5+.5*Math.sin(seconds*.6+index*.12);
+    // Rust rounds the palette before applying brightness and the RGBW level.
+    const gain=brightness*(setting.effect==='solid' ? 1 : Math.min(1,(frames?.[tick]?.[index]??0)/191));
+    const c=first.map((value,i)=>Math.round(Math.round(value+(last[i]-value)*blend)*gain));
+    return {red:c[0],green:c[1],blue:c[2],white:c[3]};
+  });
+  const average=(key:"red"|"green"|"blue"|"white")=>pixels.reduce((sum,p)=>sum+p[key],0)/pixelCount;
+  return {red:average("red"),green:average("green"),blue:average("blue"),white:average("white"),pixels};
 }
+
 export function lampColorHex([r,g,b,w]:LampColor):string {
   return '#'+[r+w,g+w*.84,b+w*.6].map(v=>Math.min(255,Math.round(v)).toString(16).padStart(2,'0')).join('');
 }

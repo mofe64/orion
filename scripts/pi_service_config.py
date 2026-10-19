@@ -178,6 +178,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
         text = path.read_text() if existing else (release / f'scripts/systemd/{name}.service.in').read_text()
         for key, value in {'PROJECT_ROOT': runtime_project, 'USER_HOME': home, 'ORION_USER': user}.items():
             text = text.replace('@' + key + '@', str(value))
+        if name == 'oriond' and 'StartLimitIntervalSec=0' not in text:
+            text = text.replace('[Unit]', '[Unit]\nStartLimitIntervalSec=0', 1)
         if name == 'oriond' and 'Requires=orion-neopixel-pin.service' not in text:
             text = text.replace('[Unit]', '[Unit]\nRequires=orion-neopixel-pin.service', 1)
         overrides = sorted((unit_dir / f'{name}.service.d').glob('*.conf'))
@@ -195,7 +197,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
                 if name == 'orion-studio-gateway':
                     start = set_option(start, '--project-root', runtime_project)
                 if name == 'oriond':
-                    start = start.replace(' --port /dev/ttyACM0', '')
+                    start = re.sub(r' --port(?:=|\s+)/dev/tty(?:ACM|USB)\d+\b', '', start)
                     # The runtime now always uses ~/.config/orion/routines.json.
                     start = re.sub(r'(?<!\S)--routines-file(?:\s+|=)(?:"[^"]*"|\'[^\']*\'|\S+)', '', start)
                     start = set_option(start, '--poses', runtime_project / selected['poses'])
@@ -255,22 +257,14 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
             if additions:
                 p, value = contents[0]
                 contents[0] = (p, value.replace('[Service]', '[Service]\n' + '\n'.join(additions), 1))
-        check_command = [str(release / 'runtime/target/release/oriond'), '--check', '--hardware', hardware, '--calibration', str(calibration)]
-        if name == 'oriond':
-            start_arguments = shlex.split(effective_start(contents))
-            for flag in ('--port', '--baud-rate'):
-                for i, argument in enumerate(start_arguments):
-                    if argument == flag and i + 1 < len(start_arguments):
-                        check_command.extend((flag, start_arguments[i + 1]))
-                    elif argument.startswith(flag + '='):
-                        check_command.extend((flag, argument.partition('=')[2]))
         for p, value in contents:
             value = rebase_commands(value, release)
             if name == 'orion-studio-gateway':
                 value = value.replace('/usr/bin/python3 ', str(release / 'orion_studio/.venv/bin/python') + ' ')
             if name == 'oriond' and p == path:
                 value = re.sub(r'^ExecStartPre=.*oriond --check.*\n?', '', value, flags=re.M)
-                value = value.replace('[Service]', '[Service]\nExecStartPre=' + shlex.join(check_command), 1)
+                # The daemon validates the bus itself. A separate pre-start
+                # check prevents systemd from starting recovery during USB loss.
 
             if name in ('orion-listener', 'orion-voice-stack'):
                 directory = release / 'voice' if name == 'orion-listener' else release

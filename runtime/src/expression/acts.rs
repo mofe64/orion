@@ -849,13 +849,14 @@ mod tests {
                         audible: true,
                         streaming: true,
                         locked: true,
+                        sampled_at: Some(std::time::Instant::now()),
                         ..MusicPulse::default()
                     };
                     character.set_music_input(Some(pulse), true);
                     character
                         .tick(0., &mut core, false, None, false, None, None)
                         .unwrap();
-                    pulse.beats = 8.;
+                    pulse.beats = 16.;
                     character.set_music_input(Some(pulse), true);
                     advance(&mut core, &mut character, 0., 0.5);
                     assert_eq!(

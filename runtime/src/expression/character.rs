@@ -1397,6 +1397,11 @@ impl CharacterCoordinator {
         speech_analysis: Option<&SpeechAnalysis>,
         speech_frame: Option<usize>,
     ) -> Result<()> {
+        // Keep character intent while feedback is unavailable. Reconnection
+        // installs the measured anchor before any planner resumes.
+        if core.snapshot().bus_fault.is_some() {
+            return Ok(());
+        }
         self.music_priority(now, core)?;
         self.speech_yaw_reference = core
             .camera_kinematics()
@@ -3174,6 +3179,23 @@ impl CharacterCoordinator {
         Ok(())
     }
 
+    pub(crate) fn resume_after_bus_reconnect<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) {
+        let enabled = self.status.enabled;
+        self.finish_stop(core);
+        self.music = music_motion::MusicMotion::default();
+        self.gaze.clear();
+        if enabled && core.snapshot().torque_enabled {
+            self.status.enabled = true;
+            self.capture_anchor(core);
+            self.status.state = self.idle_state();
+            self.reset_timers(now);
+        }
+    }
+
     fn capture_anchor<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) {
         self.status.active_anchor = Some(
             core.snapshot()
@@ -4099,6 +4121,7 @@ mod tests {
         let mut core = RuntimeCore::new(
             FollowingDriver {
                 positions: anchor.clone(),
+                ..Default::default()
             },
             assets.poses().clone(),
             assets.motions().clone(),
@@ -4523,6 +4546,7 @@ mod tests {
         let mut core = RuntimeCore::new(
             FollowingDriver {
                 positions: anchor.clone(),
+                ..Default::default()
             },
             assets.poses().clone(),
             assets.motions().clone(),
@@ -4654,10 +4678,21 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
     struct FollowingDriver {
         positions: JointPositions,
+        unplugged: std::cell::Cell<bool>,
+        returning: std::cell::Cell<bool>,
     }
     impl RuntimeDriver for FollowingDriver {
+        fn reconnect(&mut self) -> Result<Option<Vec<JointState>>> {
+            if !self.returning.get() {
+                return Ok(None);
+            }
+            self.unplugged.set(false);
+            self.read().map(Some)
+        }
+
         fn apply_servo_profile(&mut self) -> Result<()> {
             Ok(())
         }
@@ -4668,6 +4703,9 @@ mod tests {
             Ok(())
         }
         fn read(&mut self) -> Result<Vec<JointState>> {
+            if self.unplugged.get() {
+                return Err(Error::Runtime("USB adapter missing".into()));
+            }
             let mut states = CharacterTestDriver.read()?;
             for state in &mut states {
                 state.position = self.positions[&state.name];
@@ -4700,11 +4738,44 @@ mod tests {
             .unwrap();
         let motions = MotionLibrary::load(root.join("motion/motions/v1"), &poses).unwrap();
         let positions = poses.pose("home").unwrap().clone();
-        RuntimeCore::new(FollowingDriver { positions }, poses, motions).unwrap()
+        RuntimeCore::new(
+            FollowingDriver {
+                positions,
+                ..Default::default()
+            },
+            poses,
+            motions,
+        )
+        .unwrap()
     }
 
     #[test]
-    fn music_uses_the_normal_motion_path_yields_on_wake_and_resumes_at_the_next_bar() {
+    fn usb_drop_during_startup_keeps_character_intent_and_resumes_from_measurement() {
+        let mut core = following_core();
+        let mut character = CharacterCoordinator::new(7);
+        character.start(0., &mut core).unwrap();
+        core.driver().unplugged.set(true);
+        advance(&mut character, &mut core, 0., 1.);
+        assert!(character.status.enabled);
+        core.driver().returning.set(true);
+        core.tick(2.).unwrap();
+        assert!(core.take_bus_reconnected());
+        character.resume_after_bus_reconnect(2., &mut core);
+        let measured: JointPositions = core
+            .snapshot()
+            .joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.position))
+            .collect();
+        assert_eq!(character.status.active_anchor, Some(measured));
+        assert!(character.status.enabled);
+        assert!(character.starting_run_id.is_none());
+        advance(&mut character, &mut core, 2., 10.);
+        assert!(character.status.enabled);
+    }
+
+    #[test]
+    fn music_uses_the_normal_motion_path_yields_on_wake_and_resumes_at_the_next_phrase() {
         use crate::expression::music::MusicPulse;
         let mut core = following_core();
         let mut character = CharacterCoordinator::new(7);
@@ -4719,6 +4790,7 @@ mod tests {
             audible: true,
             streaming: true,
             locked: true,
+            sampled_at: Some(std::time::Instant::now()),
             ..MusicPulse::default()
         };
         character.set_music_input(Some(pulse), true);
@@ -4729,7 +4801,7 @@ mod tests {
             character.status.active_clip.as_deref(),
             Some("music_performance")
         );
-        pulse.beats = 8.;
+        pulse.beats = 16.;
         character.set_music_input(Some(pulse), true);
         core.tick(8.02).unwrap();
         character
@@ -4766,7 +4838,7 @@ mod tests {
             .tick(8.22, &mut core, false, None, false, None, None)
             .unwrap();
         character.set_reaction("neutral", 8.24, &mut core).unwrap();
-        pulse.beats = 10.;
+        pulse.beats = 18.;
         character.set_music_input(Some(pulse), true);
         core.tick(8.26).unwrap();
         character
@@ -4776,7 +4848,7 @@ mod tests {
             character.status.active_clip.as_deref(),
             Some("music_performance")
         );
-        pulse.beats = 12.;
+        pulse.beats = 32.;
         character.set_music_input(Some(pulse), true);
         core.tick(8.28).unwrap();
         character
@@ -4798,6 +4870,91 @@ mod tests {
         for joint in &core.snapshot().joints {
             assert!((joint.position - anchor[&joint.name]).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn silence_and_stale_pulses_release_music_within_one_second() {
+        use crate::expression::music::MusicPulse;
+        for stale in [false, true] {
+            let mut core = following_core();
+            let mut character = CharacterCoordinator::new(9);
+            character.start(0., &mut core).unwrap();
+            advance(&mut character, &mut core, 0., 8.);
+            let mut pulse = MusicPulse {
+                bpm: 120.,
+                beats: 15.,
+                energy: 0.9,
+                audible: true,
+                streaming: true,
+                locked: true,
+                sampled_at: Some(std::time::Instant::now()),
+                ..MusicPulse::default()
+            };
+            character.set_music_input(Some(pulse), true);
+            character
+                .tick(8., &mut core, false, None, false, None, None)
+                .unwrap();
+            pulse.beats = 16.;
+            character.set_music_input(Some(pulse), true);
+            character
+                .tick(8.02, &mut core, false, None, false, None, None)
+                .unwrap();
+            assert!(character.status.active_clip.as_deref() == Some("music_performance"));
+            if stale {
+                pulse.sampled_at =
+                    Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+            } else {
+                pulse.audible = false;
+                pulse.streaming = false;
+            }
+            character.set_music_input(Some(pulse), true);
+            advance(&mut character, &mut core, 8.02, 8.98);
+            assert!(character.status.active_clip.as_deref() != Some("music_performance"));
+            assert!(!character.music.eligible);
+            assert!(!character.tick_music(8.98, &mut core).unwrap());
+        }
+    }
+
+    #[test]
+    fn sometimes_dances_then_leaves_a_full_idle_break_and_off_never_claims_music() {
+        use crate::expression::{music::MusicPulse, settings::DanceMode};
+        let mut core = following_core();
+        let mut character = CharacterCoordinator::new(11);
+        character.start(0., &mut core).unwrap();
+        advance(&mut character, &mut core, 0., 8.);
+        let mut danced = false;
+        let mut break_started = None;
+        let mut idled = false;
+        for tick in 0..3500 {
+            let now = 8. + tick as f64 * 0.02;
+            let pulse = MusicPulse {
+                bpm: 120.,
+                beats: 15. + tick as f64 * 0.04,
+                energy: 0.9,
+                audible: true,
+                streaming: true,
+                locked: true,
+                sampled_at: Some(std::time::Instant::now()),
+                ..MusicPulse::default()
+            };
+            core.tick(now).unwrap();
+            character.set_music_input(Some(pulse), true);
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            if character.status.active_clip.as_deref() == Some("music_performance") {
+                danced = true;
+            } else if danced {
+                let at = *break_started.get_or_insert(now);
+                assert!(now - at < 60.);
+                assert!(!character.music.eligible);
+                idled |= character.active_idle_run_id.is_some();
+            }
+        }
+        assert!(danced && break_started.is_some() && idled);
+        character.acts.settings.move_to_music = DanceMode::Off;
+        character.music_priority(90., &mut core).unwrap();
+        assert!(!character.music.eligible);
     }
 
     fn advance<D: RuntimeDriver>(

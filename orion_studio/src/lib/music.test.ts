@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMusicControl, validSpotifyClientId } from "./music";
-import type { MusicStatus } from "./gateway";
+import type { MusicStatus, DanceMode } from "./gateway";
 
 const connection = {url:"http://lamp",token:"test"};
 const status = (signed_in = false): MusicStatus => ({signed_in,client_id:"a".repeat(32),name:"Orion",redirect_uri:"http://127.0.0.1:49687/callback",now_playing:null,error:null});
@@ -35,20 +35,20 @@ describe("Spotify Studio flow", () => {
     expect(control.snapshot().status?.signed_in).toBe(false);
   });
   it("restores the shared movement setting after a change and after reopening", async () => {
-    let enabled = true;
+    let enabled: DanceMode = "sometimes";
     const get = vi.fn(async () => ({...status(),move_to_music:enabled}));
-    const movement = vi.fn(async (_connection, value:boolean) => { enabled=value; return {ok:true,enabled}; });
+    const movement = vi.fn(async (_connection, value:DanceMode) => { enabled=value; return {ok:true,enabled}; });
     const services = {get,movement,command:vi.fn(),signIn:vi.fn()};
     const control = createMusicControl(connection,services);
     control.start(); await tick();
-    expect(control.snapshot().status?.move_to_music).toBe(true);
-    await control.movement(false);
-    expect(movement).toHaveBeenCalledWith(connection,false);
-    expect(control.snapshot().status?.move_to_music).toBe(false);
+    expect(control.snapshot().status?.move_to_music).toBe("sometimes");
+    await control.movement("off");
+    expect(movement).toHaveBeenCalledWith(connection,"off");
+    expect(control.snapshot().status?.move_to_music).toBe("off");
     control.stop();
     const reopened=createMusicControl(connection,services);
     reopened.start(); await tick();
-    expect(reopened.snapshot().status?.move_to_music).toBe(false);
+    expect(reopened.snapshot().status?.move_to_music).toBe("off");
     reopened.stop();
   });
 });

@@ -2,10 +2,10 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { BehaviourKey, GatewayConnection } from "../lib/gateway";
 import { BehaviourPreference, emptyBehaviours } from "../lib/behaviourPreference";
 import { FailureNotice } from "./FailureNotice";
+import { DanceSetting } from "./DanceSetting";
 import { SettingToggle } from "./Settings";
 
-const controls: Array<[BehaviourKey, string, string]> = [
-  ["move_to_music", "Move to music", "Small movements that follow the song. Listening and other activities take over."],
+const controls: Array<[Exclude<BehaviourKey,"move_to_music">, string, string]> = [
   ["mind_idle_rhythm", "Follow shared energy", "Adjust idle timing, movement and background light with Orion’s energy."],
   ["listen_lean_in", "Listening lean", "Lean gently toward the speaker and release when processing starts."],
   ["thinking_beats", "Thinking beats", "Use occasional small gestures during a longer thought."],
@@ -21,12 +21,14 @@ const controls: Array<[BehaviourKey, string, string]> = [
 const noSubscription = () => () => {};
 const emptySnapshot = () => emptyBehaviours;
 export function BehaviourSettings({ connection, supported, active = true }: { active?: boolean; connection: GatewayConnection | null; supported: boolean }) {
-  const preference = useMemo(() => connection && supported ? new BehaviourPreference(connection) : null, [connection, supported]);
+  const preference = useMemo(() => connection ? new BehaviourPreference(connection) : null, [connection]);
   const state = useSyncExternalStore(preference?.subscribe ?? noSubscription, preference?.snapshot ?? emptySnapshot, preference?.snapshot ?? emptySnapshot);
   useEffect(() => { if (active) preference?.start(); return () => preference?.stop(); }, [preference, active]);
   return <section className="settings-card"><header><div><h2>Character behaviours</h2><p>Choose how Orion moves and responds. Visual behaviours also need the camera and tracking.</p></div></header>
-    {!connection ? <p className="settings-help">Connect Orion to change its behaviours.</p> : !supported ? <p className="settings-help">These behaviours need Orion’s V2 camera.</p> : <>
-      {controls.map(([key, label, help]) => <SettingToggle key={key} label={label} help={help} checked={state.values?.[key] ?? false}
+    {!connection ? <p className="settings-help">Connect Orion to change its behaviours.</p> : <>
+      <DanceSetting value={state.values?.move_to_music} disabled={state.pending} onChange={mode=>void preference?.choose("move_to_music",mode)}/>
+      {!supported && <p className="settings-help">The other behaviours need Orion’s V2 camera.</p>}
+      {supported && controls.map(([key, label, help]) => <SettingToggle key={key} label={label} help={help} checked={state.values?.[key] ?? false}
         disabled={!state.values || state.pending} onChange={value => void preference?.choose(key, value)} />)}
       {!state.values && !state.error && <p role="status">Loading character behaviours…</p>}
       {state.notice && <p role="status">{state.notice}</p>}<FailureNotice value={state.error} />

@@ -89,6 +89,9 @@ pub struct RuntimeCore<D: RuntimeDriver> {
     bus_failures: u32,
     bus_error_count: u64,
     bus_fault: Option<String>,
+    reconnect_at: f64,
+    reconnect_delay: f64,
+    bus_reconnected: bool,
 }
 
 impl<D: RuntimeDriver> RuntimeCore<D> {
@@ -133,6 +136,9 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             bus_failures: 0,
             bus_error_count: 0,
             bus_fault: None,
+            reconnect_at: 0.,
+            reconnect_delay: 0.1,
+            bus_reconnected: false,
         })
     }
 
@@ -216,6 +222,26 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         // Preserve C++ behavior: telemetry is sampled before this cycle's goal
         // is written, then published with the movement metadata for this tick.
         let tracking_tick = self.tracking.as_ref().map(|_| Instant::now());
+        if self.bus_failures >= BUS_FAULT_TOLERANCE_CYCLES && now_seconds >= self.reconnect_at {
+            self.reconnect_at = now_seconds + self.reconnect_delay;
+            self.reconnect_delay = (self.reconnect_delay * 2.).min(2.);
+            match self.driver.reconnect() {
+                Ok(Some(states)) => {
+                    self.trajectory = None;
+                    self.motion_sequence = None;
+                    if self.active_movement.is_some() {
+                        self.finish_active_movement(MovementPhase::Cancelled)?;
+                    }
+                    self.last_commanded_state = None;
+                    self.record_bus_success();
+                    self.bus_reconnected = true;
+                    self.publish_snapshot(states)?;
+                    return Ok(());
+                }
+                Err(error) => return self.record_bus_failure("reopen", error),
+                Ok(None) => {}
+            }
+        }
         let states = match self.driver.read() {
             Ok(states) => states,
             Err(error) => return self.record_bus_failure("read", error),
@@ -348,9 +374,19 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 "oriond: servo bus recovered after {} consecutive failures",
                 self.bus_failures
             );
+            self.reconnect_delay = 0.1;
+            self.reconnect_at = 0.;
             self.bus_failures = 0;
             self.bus_fault = None;
         }
+    }
+
+    pub(crate) fn has_comfort_box(&self) -> bool {
+        self.comfort.is_some()
+    }
+
+    pub(crate) fn take_bus_reconnected(&mut self) -> bool {
+        std::mem::take(&mut self.bus_reconnected)
     }
 
     pub fn handle_command(&mut self, command: &str, now_seconds: f64) -> String {
@@ -1161,6 +1197,7 @@ mod tests {
         velocity_rad_s: f64,
         failing_reads: u32,
         failing_writes: u32,
+        reconnect_available: bool,
     }
 
     impl FakeDriver {
@@ -1185,11 +1222,20 @@ mod tests {
                 velocity_rad_s: 0.0,
                 failing_reads: 0,
                 failing_writes: 0,
+                reconnect_available: false,
             }
         }
     }
 
     impl RuntimeDriver for FakeDriver {
+        fn reconnect(&mut self) -> Result<Option<Vec<JointState>>> {
+            if !self.reconnect_available {
+                return Ok(None);
+            }
+            self.failing_reads = 0;
+            self.read().map(Some)
+        }
+
         fn apply_servo_profile(&mut self) -> Result<()> {
             self.configured = true;
             Ok(())
@@ -1297,6 +1343,32 @@ mod tests {
             serde_json::from_str(&core.handle_command("goto home 1.0", 0.0)).unwrap();
         assert_eq!(response["ok"], true);
         response["run_id"].as_u64().unwrap()
+    }
+
+    #[test]
+    fn a_reopened_bus_publishes_measurements_without_replaying_an_old_goal() {
+        let mut core = core();
+        start_goto_home(&mut core);
+        core.driver.failing_reads = 100;
+        for tick in 1..=5 {
+            core.tick(tick as f64 * 0.02).unwrap();
+        }
+        core.driver.positions.values_mut().for_each(|q| *q = 0.3);
+        core.driver.reconnect_available = true;
+        let writes = core.driver.writes.len();
+        core.tick(1.).unwrap();
+        assert!(core.take_bus_reconnected());
+        assert_eq!(core.driver.writes.len(), writes);
+        assert!(
+            core.snapshot
+                .joints
+                .iter()
+                .all(|joint| joint.position == 0.3)
+        );
+        assert!(core.snapshot.torque_enabled);
+        assert!(core.snapshot.bus_fault.is_none());
+        core.tick(1.02).unwrap();
+        assert_eq!(core.driver.writes.len(), writes);
     }
 
     #[test]

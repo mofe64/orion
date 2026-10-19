@@ -41,7 +41,7 @@ The default asset project is `~/.local/share/orion/voice-stack/catalog/`. User a
 Saved timestamps preserve activity and mood decay across restarts. A missing or invalid file selects default state.
 The agent omits state older than ten minutes. Studio Debug shows the state through `/api/v2/status`.
 
-`behaviours.json` accepts the boolean keys in this table. Missing keys use the listed defaults.
+`behaviours.json` stores the settings in this table. Missing keys use the listed defaults.
 
 | Key | Default | Function |
 | --- | --- | --- |
@@ -56,8 +56,11 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 | `wake_sleep_acts` | true | Stretch after confirmed wake and settle before rest |
 | `posture_drift` | false | Change the held posture during quiet idle periods |
 | `act_sounds` | true | Play sounds at wake, sleep and yawn markers |
+| `move_to_music` | `sometimes` | Select `off`, `sometimes` or `always` for dance |
 
-Studio provides these switches under **Character behaviours**. The runtime reads act settings independently of camera observations.
+Older boolean dance settings become `sometimes` for true and `off` for false.
+
+Studio provides these settings under **Character behaviours**. The runtime reads act settings independently of camera observations.
 The new act clips require the V2 catalogue. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
 
 ## Camera privacy and tracking profile

@@ -1,6 +1,30 @@
 use serde::Deserialize;
 use std::{io::Read, path::Path};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DanceMode {
+    Off,
+    #[default]
+    Sometimes,
+    Always,
+}
+impl<'de> Deserialize<'de> for DanceMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Bool(true) => Ok(Self::Sometimes),
+            serde_json::Value::Bool(false) => Ok(Self::Off),
+            serde_json::Value::String(mode) => match mode.as_str() {
+                "off" => Ok(Self::Off),
+                "sometimes" => Ok(Self::Sometimes),
+                "always" => Ok(Self::Always),
+                _ => Err(serde::de::Error::custom("Choose off, sometimes or always")),
+            },
+            _ => Err(serde::de::Error::custom("Invalid dance setting")),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub(crate) struct ActSettings {
@@ -10,7 +34,7 @@ pub(crate) struct ActSettings {
     pub wake_sleep_acts: bool,
     pub posture_drift: bool,
     pub act_sounds: bool,
-    pub move_to_music: bool,
+    pub move_to_music: DanceMode,
 }
 impl Default for ActSettings {
     fn default() -> Self {
@@ -21,7 +45,7 @@ impl Default for ActSettings {
             wake_sleep_acts: true,
             posture_drift: false,
             act_sounds: true,
-            move_to_music: true,
+            move_to_music: DanceMode::Sometimes,
         }
     }
 }
@@ -59,16 +83,16 @@ mod tests {
                 && value.posture_drift
         );
         assert!(!value.act_sounds);
-        assert!(value.move_to_music);
+        assert_eq!(value.move_to_music, DanceMode::Sometimes);
     }
     #[test]
     fn music_preference_restores_from_the_shared_behaviour_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("behaviours.json");
-        assert!(ActSettings::load(&path).move_to_music);
+        assert_eq!(ActSettings::load(&path).move_to_music, DanceMode::Sometimes);
         std::fs::write(&path, r#"{"move_to_music":false,"act_sounds":true}"#).unwrap();
         let settings = ActSettings::load(&path);
-        assert!(!settings.move_to_music);
+        assert_eq!(settings.move_to_music, DanceMode::Off);
         assert!(settings.act_sounds);
     }
 }
