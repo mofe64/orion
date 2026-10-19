@@ -92,6 +92,7 @@ pub struct RuntimeCore<D: RuntimeDriver> {
     reconnect_at: f64,
     reconnect_delay: f64,
     bus_reconnected: bool,
+    music_handoff: Option<f64>,
 }
 
 impl<D: RuntimeDriver> RuntimeCore<D> {
@@ -139,6 +140,7 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             reconnect_at: 0.,
             reconnect_delay: 0.1,
             bus_reconnected: false,
+            music_handoff: None,
         })
     }
 
@@ -379,6 +381,10 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
             self.bus_failures = 0;
             self.bus_fault = None;
         }
+    }
+
+    pub(crate) fn set_music_clock(&mut self, beat_seconds: f64) {
+        self.music_handoff = Some(beat_seconds);
     }
 
     pub(crate) fn has_comfort_box(&self) -> bool {
@@ -964,6 +970,18 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 definition.name
             )));
         }
+        let from_music = self
+            .active_movement
+            .as_ref()
+            .is_some_and(|m| m.status.name.starts_with("music_"))
+            || (replacing.is_none()
+                && matches!(
+                    definition.name.as_str(),
+                    "gaze_performance" | "speaking_performance"
+                )
+                && self.last_movement.as_ref().is_some_and(|m| {
+                    m.name.starts_with("music_") && m.state == MovementPhase::Cancelled
+                }));
         let state = if replacing.is_some() {
             Some(
                 self.motion_sequence
@@ -971,11 +989,28 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                     .ok_or_else(|| Error::InvalidState("No character spline to extend.".into()))?
                     .sample_state((now_seconds - self.movement_started_at).max(0.0))?,
             )
-        } else if definition.name == "gaze_performance" {
+        } else if definition.name == "gaze_performance" || from_music {
             self.last_commanded_state.clone()
         } else {
             None
         };
+        if from_music
+            && !definition.name.starts_with("music_")
+            && let (Some(state), Some(beat)) = (&state, self.music_handoff.take())
+        {
+            let mut elapsed = 0.;
+            for frame in &mut definition.keyframes {
+                elapsed += frame.duration_seconds;
+                let t = (elapsed / beat).clamp(0., 1.);
+                let release = 1. - t * t * t * (10. + t * (-15. + 6. * t));
+                if release > 0. {
+                    for (name, position) in &state.positions {
+                        *frame.target.entry(name.clone()).or_default() +=
+                            (position - anchor[name]) * release;
+                    }
+                }
+            }
+        }
         let start = match &state {
             Some(state) => state.positions.clone(),
             None => self
@@ -1013,9 +1048,8 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 }
                 Ok((sequence, targets))
             };
-        // At a desk anchor, first keep the clip's authored flow and shrink it
-        // uniformly. Only a curve that still bows outside the comfort box
-        // falls back to stopping at every keyframe.
+        // Fit the drawing uniformly first. Music retains its through targets;
+        // other clips can use settle fitting if the curve still bows outside.
         let (sequence, targets) = if character_comfort {
             let mut scaled = definition.clone();
             self.scale_character_comfort(&mut scaled, &anchor)?;
@@ -1023,6 +1057,25 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
                 Ok(result) => {
                     definition = scaled;
                     result
+                }
+                Err(error) if definition.name.starts_with("music_") => {
+                    // Dance keeps flowing through every internal target. Fit
+                    // its entire drawing uniformly; never turn beats into stops.
+                    let mut fitted = None;
+                    for gain in [0.85, 0.65, 0.45, 0.25, 0.] {
+                        let mut candidate = scaled.clone();
+                        for frame in &mut candidate.keyframes {
+                            for value in frame.target.values_mut() {
+                                *value *= gain;
+                            }
+                        }
+                        if let Ok(result) = compile(&candidate) {
+                            definition = candidate;
+                            fitted = Some(result);
+                            break;
+                        }
+                    }
+                    fitted.ok_or(error)?
                 }
                 Err(_) => {
                     self.fit_character_comfort(&mut definition, &anchor)?;
@@ -1543,6 +1596,214 @@ mod tests {
             assert!((first.velocities[name] - expected).abs() < 1e-12);
             assert!(first.velocities[name].abs() < STS3215_MAX_SPEED_RAD_S);
         }
+    }
+
+    #[test]
+    fn music_fits_the_desk_without_turning_internal_targets_into_stops() {
+        use crate::expression::music::{MusicPulse, performance};
+        for bpm in [80., 110., 128.] {
+            for energy in [0.2, 0.55, 0.9] {
+                let (mut core, anchor, _) = crate::expression::gaze::tests::following();
+                core.configure_comfort_box(
+                    crate::HardwareVersion::V2
+                        .profile()
+                        .comfort_box
+                        .clone()
+                        .unwrap(),
+                )
+                .unwrap();
+                core.set_character_comfort(true);
+                let (definition, _) = performance(
+                    MusicPulse {
+                        bpm,
+                        beats: 16.,
+                        energy,
+                        ..Default::default()
+                    },
+                    7,
+                );
+                let expected = definition
+                    .keyframes
+                    .iter()
+                    .map(|f| f.duration_seconds)
+                    .sum::<f64>();
+                core.play_generated_anchored_relative(definition, anchor.clone(), 0.)
+                    .unwrap();
+                let sequence = core.motion_sequence.as_ref().unwrap();
+                assert!(
+                    (sequence.duration_seconds() - expected).abs() < 1e-7,
+                    "{bpm}/{energy}: beat timing changed"
+                );
+                core.comfort
+                    .as_ref()
+                    .unwrap()
+                    .1
+                    .validate_measured_sequence(sequence, COMPLETION_POSITION_TOLERANCE_RAD)
+                    .unwrap();
+                let mut moving = 0;
+                let mut swing = 0_f64;
+                for i in 0..sequence.keyframe_count() - 1 {
+                    let at = sequence.keyframe_arrival_time(i).unwrap();
+                    let state = sequence.sample_state(at).unwrap();
+                    moving += usize::from(state.velocities.values().any(|v| v.abs() > 1e-4));
+                    swing = swing
+                        .max((state.positions["base_yaw_joint"] - anchor["base_yaw_joint"]).abs());
+                }
+                assert!(
+                    moving > sequence.keyframe_count() / 2,
+                    "Dance stopped at its internal targets"
+                );
+                if energy > 0.8 {
+                    assert!(
+                        swing.to_degrees() > 12.,
+                        "High-energy sway was lost: {}",
+                        swing.to_degrees()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn music_stays_inside_comfort_at_other_powered_anchors() {
+        use crate::expression::music::{MusicPulse, plan_with_shape};
+        for name in [
+            "attentive",
+            "delight",
+            "home_low",
+            "home_attentive",
+            "home_window",
+            "lean_reach_low",
+            "lean_reach_left",
+            "lean_reach_right",
+        ] {
+            let (mut core, _, _) = crate::expression::gaze::tests::following();
+            let anchor = core.poses.pose(name).unwrap().clone();
+            core.driver.positions = anchor.clone();
+            core.tick(0.).unwrap();
+            core.configure_comfort_box(
+                crate::HardwareVersion::V2
+                    .profile()
+                    .comfort_box
+                    .clone()
+                    .unwrap(),
+            )
+            .unwrap();
+            core.set_character_comfort(true);
+            let (definition, _) = plan_with_shape(
+                MusicPulse {
+                    bpm: 128.,
+                    beats: 16.,
+                    energy: 0.9,
+                    ..Default::default()
+                },
+                7,
+                0.9,
+                Some(&JointPositions::new()),
+                core.music_dance_shape(&anchor).unwrap(),
+            );
+            core.play_generated_anchored_relative(definition, anchor.clone(), 0.)
+                .unwrap();
+            let sequence = core.motion_sequence.as_ref().unwrap();
+            core.comfort
+                .as_ref()
+                .unwrap()
+                .1
+                .validate_measured_sequence(sequence, COMPLETION_POSITION_TOLERANCE_RAD)
+                .unwrap();
+            let swing = (0..500)
+                .map(|i| {
+                    (sequence.sample(i as f64 * 0.02).unwrap()["base_yaw_joint"]
+                        - anchor["base_yaw_joint"])
+                        .abs()
+                })
+                .fold(0_f64, f64::max);
+            assert!(swing.to_degrees() > 2., "Dance collapsed at {name}");
+        }
+    }
+
+    #[test]
+    fn speech_and_gaze_take_over_music_from_its_commanded_state() {
+        use crate::expression::music::{MusicPulse, performance};
+        for cancelled in [false, true] {
+            let (mut core, anchor, _) = crate::expression::gaze::tests::following();
+            let (motion, _) = performance(
+                MusicPulse {
+                    bpm: 110.,
+                    beats: 16.,
+                    energy: 0.9,
+                    ..Default::default()
+                },
+                7,
+            );
+            let run = core
+                .play_generated_anchored_relative(motion, anchor.clone(), 0.)
+                .unwrap();
+            core.set_music_clock(60. / 110.);
+            core.tick(1.23).unwrap();
+            let before = core.character_commanded_state(run, 1.23).unwrap();
+            let mut next = core
+                .motions()
+                .motion("speak_reflective_tilt")
+                .unwrap()
+                .clone();
+            if cancelled {
+                next.name = "gaze_performance".into();
+                core.handle_command("stop", 1.23);
+                core.play_generated_anchored_relative(next, anchor, 1.23)
+                    .unwrap();
+            } else {
+                next.name = "speaking_performance".into();
+                core.extend_character_performance(run, next, anchor, 1.23)
+                    .unwrap();
+            }
+            let after = core
+                .motion_sequence
+                .as_ref()
+                .unwrap()
+                .sample_state(0.)
+                .unwrap();
+            for name in ORION_JOINT_NAMES {
+                assert!((before.positions[name] - after.positions[name]).abs() < 1e-9);
+                assert!((before.velocities[name] - after.velocities[name]).abs() < 1e-9);
+                assert!((before.accelerations[name] - after.accelerations[name]).abs() < 1e-9);
+            }
+            assert_eq!(core.movement_started_at, 1.23);
+        }
+    }
+
+    #[test]
+    fn an_ordinary_idle_after_stop_does_not_resume_old_dance_derivatives() {
+        use crate::expression::music::{MusicPulse, performance};
+        let (mut core, anchor, _) = crate::expression::gaze::tests::following();
+        let (dance, _) = performance(
+            MusicPulse {
+                bpm: 110.,
+                beats: 16.,
+                energy: 0.9,
+                ..Default::default()
+            },
+            7,
+        );
+        core.play_generated_anchored_relative(dance, anchor.clone(), 0.)
+            .unwrap();
+        core.set_music_clock(60. / 110.);
+        core.tick(1.23).unwrap();
+        core.handle_command("stop", 1.23);
+        core.driver.offset_feedback(0.04, -0.02);
+        core.tick(3.).unwrap();
+        let held = core.measured_positions();
+        let idle = core.motions().motion("idle_breathe").unwrap().clone();
+        core.play_generated_anchored_relative(idle, anchor, 3.)
+            .unwrap();
+        let start = core
+            .motion_sequence
+            .as_ref()
+            .unwrap()
+            .sample_state(0.)
+            .unwrap();
+        assert_eq!(start.positions, held);
+        assert!(start.velocities.values().all(|v| v.abs() < 1e-9));
     }
 
     #[test]

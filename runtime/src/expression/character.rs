@@ -1148,8 +1148,11 @@ impl CharacterCoordinator {
         if self.release_listening(reaction, now, core) {
             return Ok(self.status.clone());
         }
-        // Interrupt any idle or thinking movement and reset timers for idle movement.
-        self.preempt_idle_or_thinking(now, core)?;
+        // Listening receives the current dance immediately; the body releases
+        // its groove while speech or gaze can replace that same flowing run.
+        if !self.release_music(now, core)? {
+            self.preempt_idle_or_thinking(now, core)?;
+        }
         self.reset_timers(now);
 
         // If attention is active, we use the reaction to determine the attention wait time.
@@ -4825,24 +4828,24 @@ mod tests {
         );
         core.tick(8.2).unwrap();
         character.set_reaction("listening", 8.2, &mut core).unwrap();
-        assert!(character.active_idle_run_id.is_none());
-        assert!(
-            !core
-                .snapshot()
-                .motion
-                .as_ref()
-                .is_some_and(|motion| motion.name == "music_performance")
+        assert_eq!(character.active_idle_run_id, run);
+        assert_eq!(character.status.state, CharacterState::Listening);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("music_release")
         );
         character.set_music_input(Some(pulse), false);
         character
             .tick(8.22, &mut core, false, None, false, None, None)
             .unwrap();
-        character.set_reaction("neutral", 8.24, &mut core).unwrap();
+        advance(&mut character, &mut core, 8.22, 9.);
+        assert!(character.active_idle_run_id.is_none());
+        character.set_reaction("neutral", 9., &mut core).unwrap();
         pulse.beats = 18.;
         character.set_music_input(Some(pulse), true);
-        core.tick(8.26).unwrap();
+        core.tick(9.02).unwrap();
         character
-            .tick(8.26, &mut core, false, None, false, None, None)
+            .tick(9.02, &mut core, false, None, false, None, None)
             .unwrap();
         assert_ne!(
             character.status.active_clip.as_deref(),
@@ -4850,9 +4853,9 @@ mod tests {
         );
         pulse.beats = 32.;
         character.set_music_input(Some(pulse), true);
-        core.tick(8.28).unwrap();
+        core.tick(9.04).unwrap();
         character
-            .tick(8.28, &mut core, false, None, false, None, None)
+            .tick(9.04, &mut core, false, None, false, None, None)
             .unwrap();
         assert_eq!(
             character.status.active_clip.as_deref(),
@@ -4861,7 +4864,7 @@ mod tests {
         pulse.audible = false;
         pulse.energy = 0.;
         character.set_music_input(Some(pulse), true);
-        advance(&mut character, &mut core, 8.28, 10.28);
+        advance(&mut character, &mut core, 9.04, 11.04);
         assert!(core.snapshot().motion.is_none());
         assert_ne!(
             character.status.active_clip.as_deref(),
@@ -4942,7 +4945,10 @@ mod tests {
             character
                 .tick(now, &mut core, false, None, false, None, None)
                 .unwrap();
-            if character.status.active_clip.as_deref() == Some("music_performance") {
+            if matches!(
+                character.status.active_clip.as_deref(),
+                Some("music_performance" | "music_release")
+            ) {
                 danced = true;
             } else if danced {
                 let at = *break_started.get_or_insert(now);

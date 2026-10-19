@@ -1,5 +1,5 @@
-use super::{CharacterCoordinator, CharacterState, NextIdleCategory, checked, terminal_phase};
-use crate::expression::music::{MusicPulse, performance};
+use super::{CharacterCoordinator, CharacterState, NextIdleCategory, terminal_phase};
+use crate::expression::music::{DanceShape, MusicPulse, plan_with_shape, release};
 use crate::expression::settings::DanceMode;
 use crate::{MovementPhase, RuntimeCore, RuntimeDriver, RuntimeMode};
 
@@ -15,6 +15,9 @@ pub(super) struct MusicMotion {
     variation: u64,
     dance_until: f64,
     next_dance_at: f64,
+    energy: f64,
+    bpm: f64,
+    shape: DanceShape,
 }
 impl MusicMotion {
     fn next_phrase(&self) -> u64 {
@@ -81,46 +84,74 @@ impl CharacterCoordinator {
             if self.active_idle_run_id != Some(run) {
                 self.music.run = None;
                 self.music.suspend();
-            } else if !self.music.eligible {
-                if core
-                    .snapshot()
-                    .motion
-                    .as_ref()
-                    .is_some_and(|motion| motion.run_id == run)
-                {
-                    checked(core.handle_command("stop", now))?;
-                }
-                self.active_idle_run_id = None;
-                self.active_idle_category = None;
-                self.status.active_clip = None;
-                self.music.run = None;
-                self.music.suspend();
-            } else if (!playable || (mode == DanceMode::Sometimes && now >= self.music.dance_until))
+            } else if (!self.music.eligible
+                || !playable
+                || (mode == DanceMode::Sometimes && now >= self.music.dance_until))
                 && !self.music.returning
             {
                 if mode == DanceMode::Sometimes {
                     self.music.next_dance_at =
                         now + self.rng.range(60., 180. - 60. * self.music.pulse.energy);
                 }
-                if core.snapshot().motion.as_ref().is_some_and(|motion| {
-                    motion.run_id == run && motion.state == MovementPhase::Executing
-                }) && let Some(anchor) = self.status.active_anchor.clone()
-                {
-                    let (mut motion, _) = performance(self.music.pulse, self.music.variation);
-                    motion.keyframes = vec![motion.keyframes.pop().expect("final return")];
-                    core.set_character_comfort(core.has_comfort_box());
-                    let result = core.extend_character_performance(run, motion, anchor, now);
-                    core.set_character_comfort(self.work_anchor);
-                    result?;
+                self.release_music(now, core)?;
+            }
+            if self.music.returning && terminal_phase(core, run).is_some() {
+                if self.active_idle_run_id == Some(run) {
+                    self.active_idle_run_id = None;
+                    self.active_idle_category = None;
+                    self.status.active_clip = None;
                 }
-                self.music.returning = true;
-                self.music.resume_phrase = Some(self.music.next_phrase());
+                self.music.run = None;
+                self.music.suspend();
+                self.music.eligible = false;
             }
         }
+
         if !self.music.eligible || !self.music.pulse.audible {
             self.music.resume_phrase = Some(self.music.next_phrase());
         }
         Ok(())
+    }
+
+    pub(super) fn release_music<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> crate::Result<bool> {
+        let Some(run) = self
+            .music
+            .run
+            .filter(|run| self.active_idle_run_id == Some(*run))
+        else {
+            return Ok(false);
+        };
+        if self.music.returning {
+            return Ok(true);
+        }
+        let Some(state) = core.character_commanded_state(run, now) else {
+            return Ok(false);
+        };
+        let Some(anchor) = self.status.active_anchor.clone() else {
+            return Ok(false);
+        };
+        let offsets = state
+            .positions
+            .iter()
+            .map(|(name, q)| (name.clone(), q - anchor[name]))
+            .collect();
+        let pulse = MusicPulse {
+            bpm: self.music.bpm,
+            ..self.music.pulse
+        };
+        let motion = release(pulse, &offsets);
+        core.set_character_comfort(core.has_comfort_box());
+        let result = core.extend_character_performance(run, motion, anchor, now);
+        core.set_character_comfort(self.work_anchor);
+        result?;
+        self.music.returning = true;
+        self.music.resume_phrase = Some(self.music.next_phrase());
+        self.status.active_clip = Some("music_release".into());
+        Ok(true)
     }
 
     pub(super) fn tick_music<D: RuntimeDriver>(
@@ -146,7 +177,16 @@ impl CharacterCoordinator {
                     })
                     && let Some(anchor) = self.status.active_anchor.clone()
                 {
-                    let (motion, next) = performance(self.music.pulse, self.music.variation);
+                    let (motion, next) = plan_with_shape(
+                        self.music.pulse,
+                        self.music.variation,
+                        self.music.energy,
+                        None,
+                        self.music.shape,
+                    );
+                    self.music.energy = self.music.pulse.energy;
+                    self.music.bpm = self.music.pulse.bpm;
+                    core.set_music_clock(60. / self.music.bpm);
                     core.set_character_comfort(core.has_comfort_box());
                     let result = core.extend_character_performance(run, motion, anchor, now);
                     core.set_character_comfort(self.work_anchor);
@@ -178,7 +218,31 @@ impl CharacterCoordinator {
         };
         self.music.variation = self.music.variation.wrapping_add(1);
         self.music.dance_until = now + self.rng.range(20., 40.);
-        let (motion, next) = performance(self.music.pulse, self.music.variation);
+        let current = core
+            .gaze_commanded_state()
+            .map(|s| s.positions)
+            .unwrap_or_else(|| {
+                core.snapshot()
+                    .joints
+                    .iter()
+                    .map(|j| (j.name.clone(), j.position))
+                    .collect()
+            });
+        let start = current
+            .iter()
+            .map(|(name, q)| (name.clone(), q - anchor[name]))
+            .collect();
+        self.music.energy = self.music.pulse.energy;
+        self.music.bpm = self.music.pulse.bpm;
+        self.music.shape = core.music_dance_shape(&anchor)?;
+        let (motion, next) = plan_with_shape(
+            self.music.pulse,
+            self.music.variation,
+            self.music.energy,
+            Some(&start),
+            self.music.shape,
+        );
+        core.set_music_clock(60. / self.music.bpm);
         // Use the same geometric comfort fitting as desk movements.
         core.set_character_comfort(core.has_comfort_box());
         let result = core.play_generated_anchored_relative(motion, anchor, now);

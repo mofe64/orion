@@ -255,10 +255,66 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
     pub(crate) fn set_character_comfort(&mut self, enabled: bool) {
         self.character_comfort = enabled;
     }
+
+    pub(crate) fn music_dance_shape(
+        &self,
+        anchor: &JointPositions,
+    ) -> Result<crate::expression::music::DanceShape> {
+        use crate::expression::music::DanceShape;
+        let mut shape = DanceShape::default();
+        let Some((config, comfort)) = &self.comfort else {
+            return Ok(shape);
+        };
+        let mut raised = anchor.clone();
+        raised.insert(
+            "shoulder_pitch_joint".into(),
+            anchor["shoulder_pitch_joint"] + shape.arm[0] * 1.2,
+        );
+        raised.insert(
+            "elbow_pitch_joint".into(),
+            anchor["elbow_pitch_joint"] + shape.arm[1] * 1.2,
+        );
+        if comfort.project(anchor, &raised)?.1 < 0.8 {
+            // At a polygon corner, draw the body pulse toward its interior.
+            // Breathing follows the same ray, so it cannot flatten the dance.
+            let poses: Vec<_> = config
+                .poses
+                .iter()
+                .map(|name| self.poses.pose(name))
+                .collect::<Result<_>>()?;
+            let delta: Vec<_> = ["shoulder_pitch_joint", "elbow_pitch_joint"]
+                .iter()
+                .map(|name| {
+                    poses.iter().map(|p| p[*name]).sum::<f64>() / poses.len() as f64 - anchor[*name]
+                })
+                .collect();
+            let size = (delta[0].abs() / 0.14).max(delta[1].abs() / 0.11).max(1e-9);
+            shape.arm = [delta[0] / size, delta[1] / size];
+        }
+        for (name, offset) in ["shoulder_pitch_joint", "elbow_pitch_joint"]
+            .into_iter()
+            .zip(shape.arm)
+        {
+            raised.insert(name.into(), anchor[name] + offset);
+        }
+        if let Some(geometry) = &self.camera_geometry {
+            shape.lift_between = geometry.kinematics.fk(&raised)?.light.position[2]
+                > geometry.kinematics.fk(anchor)?.light.position[2];
+        }
+        let head_max = config
+            .poses
+            .iter()
+            .map(|name| self.poses.pose(name).map(|p| p["head_pitch_joint"]))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .fold(f64::NEG_INFINITY, f64::max);
+        shape.head = ((head_max - anchor["head_pitch_joint"]) / 0.2).clamp(0., 1.);
+        Ok(shape)
+    }
     /// Shrink every offset by one factor so each keyframe lies inside the
     /// comfort box. The clip keeps its shape, arrivals, overlap and overshoot;
-    /// the caller still validates the compiled curve and falls back to
-    /// `fit_character_comfort` when the curve bows outside.
+    /// the caller still validates the compiled curve and chooses uniform or
+    /// settle fitting when the curve bows outside.
     pub(crate) fn scale_character_comfort(
         &self,
         definition: &mut MotionDefinition,

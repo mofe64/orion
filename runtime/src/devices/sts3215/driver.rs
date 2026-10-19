@@ -739,6 +739,7 @@ pub(crate) mod tests {
         failed_readback: Option<(u8, Register)>,
         pub(crate) fail_zero_verify: bool,
         pub(crate) drift: i32,
+        pub(crate) probe_fail_once: BTreeSet<u8>,
         disappeared: bool,
         current_name: Option<String>,
         opened_name: String,
@@ -810,6 +811,9 @@ pub(crate) mod tests {
         }
         fn read_register(&mut self, id: u8, register: Register) -> Result<i32> {
             self.calls.push("read_register".into());
+            if register == Register::ModelNumber && self.probe_fail_once.remove(&id) {
+                return Err(Error::Runtime("Lost probe reply".into()));
+            }
             if register == Register::PresentPosition {
                 if self.fail_zero_verify && self.register_writes.len() >= 5 {
                     self.fail_zero_verify = false;

@@ -239,45 +239,104 @@ impl RustypotTransport {
     }
 }
 
+#[derive(Clone, Debug)]
+struct PortCandidate {
+    path: String,
+    known: bool,
+}
+impl PortCandidate {
+    fn new(path: String, info: Option<&serialport::SerialPortInfo>) -> Self {
+        // Waveshare Bus Servo Adapter (A) uses the WCH CH343, VID:PID 1a86:55d3.
+        // Other WCH converters are not equivalent board identities.
+        let usb = info.and_then(|port| match &port.port_type {
+            serialport::SerialPortType::UsbPort(usb) => Some(usb),
+            _ => None,
+        });
+        let label = path.to_ascii_lowercase();
+        let known = usb.is_some_and(|usb| usb.vid == 0x1a86 && usb.pid == 0x55d3)
+            || label.contains("ch343")
+            || label.contains("bus_servo_adapter");
+        Self { path, known }
+    }
+}
+
+fn find_adapter<T: Sts3215Transport>(
+    transport: &mut T,
+    candidates: Vec<PortCandidate>,
+    baud: i32,
+    ids: &[u8],
+) -> Result<String> {
+    if ids.is_empty() {
+        return Err(Error::InvalidArgument(
+            "Servo IDs are required for discovery".into(),
+        ));
+    }
+    let known_present = candidates.iter().any(|port| port.known);
+    let mut matches = Vec::new();
+    for port in candidates
+        .into_iter()
+        .filter(|port| !known_present || port.known)
+    {
+        if transport.open(&port.path, baud).is_ok()
+            && ids.iter().all(|id| {
+                (0..2)
+                    .any(|_| transport.read_register(*id, Register::ModelNumber).ok() == Some(777))
+            })
+        {
+            matches.push(port.path);
+        }
+        transport.close();
+    }
+    match matches.as_slice() {
+        [port] => Ok(port.clone()),
+        _ => Err(Error::Runtime(format!(
+            "Expected one matching STS adapter, found {}",
+            matches.len()
+        ))),
+    }
+}
+
 impl Sts3215Transport for RustypotTransport {
     fn resolve_port(&mut self, requested: &str, baud_rate: i32, ids: &[u8]) -> Result<String> {
         if !requested.is_empty() && !requested.starts_with("/dev/ttyACM") {
             return Ok(requested.to_owned());
         }
-        // Probe the expected servo IDs, not the USB product label. Audio and
-        // other USB devices can enumerate alongside the servo adapter.
-        let mut candidates = std::fs::read_dir("/dev/serial/by-id")
+        let ports = serialport::available_ports()
+            .map_err(|e| Error::Runtime(format!("Listing serial adapters failed: {e}")))?;
+        let mut candidates = Vec::new();
+        // Preserve by-id names, but use the enumerated USB metadata to select
+        // the shipping CH343 adapter before any legacy fallback probing.
+        for entry in std::fs::read_dir("/dev/serial/by-id")
             .into_iter()
             .flatten()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        if candidates.is_empty() {
-            candidates = serialport::available_ports()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|port| port.port_name)
-                .filter(|name| name.starts_with("/dev/ttyACM") || name.starts_with("/dev/ttyUSB"))
-                .collect();
+            .flatten()
+        {
+            let path = entry.path();
+            let target = std::fs::canonicalize(&path).ok();
+            let info = ports.iter().find(|port| {
+                target.as_ref().is_some_and(|target| {
+                    std::fs::canonicalize(&port.port_name).ok().as_ref() == Some(target)
+                })
+            });
+            candidates.push(PortCandidate::new(
+                path.to_string_lossy().into_owned(),
+                info,
+            ));
         }
-        let mut matches = Vec::new();
-        for port in candidates {
-            if self.open(&port, baud_rate).is_ok()
-                && ids
-                    .iter()
-                    .all(|id| self.read_register(*id, Register::ModelNumber).ok() == Some(777))
+        for port in &ports {
+            if matches!(port.port_type, serialport::SerialPortType::UsbPort(_))
+                || port.port_name.starts_with("/dev/ttyACM")
+                || port.port_name.starts_with("/dev/ttyUSB")
             {
-                matches.push(port);
+                let canonical = std::fs::canonicalize(&port.port_name).ok();
+                if !candidates.iter().any(|candidate| {
+                    canonical.is_some() && std::fs::canonicalize(&candidate.path).ok() == canonical
+                }) {
+                    candidates.push(PortCandidate::new(port.port_name.clone(), Some(port)));
+                }
             }
-            self.close();
         }
-        match matches.as_slice() {
-            [port] => Ok(port.clone()),
-            _ => Err(Error::Runtime(format!(
-                "Expected one matching STS adapter, found {}",
-                matches.len()
-            ))),
-        }
+        find_adapter(self, candidates, baud_rate, ids)
     }
 
     fn open(&mut self, port: &str, baud_rate: i32) -> Result<()> {
@@ -289,6 +348,7 @@ impl Sts3215Transport for RustypotTransport {
         self.close();
         let serial = serialport::new(port, baud_rate as u32)
             .timeout(self.timeout)
+            .exclusive(true)
             .open()
             .map_err(|error| {
                 Error::Runtime(format!(
@@ -501,6 +561,95 @@ pub(super) fn decode_sign_magnitude(value: i32, sign_bit: u32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_adapters_exclude_other_serial_devices_even_when_unavailable() {
+        use crate::devices::sts3215::driver::tests::FakeTransport;
+        for replies in [true, false] {
+            let mut transport = FakeTransport::default();
+            if replies {
+                transport.add_servo(1, 2047);
+            }
+            let result = find_adapter(
+                &mut transport,
+                vec![
+                    PortCandidate {
+                        path: "/zigbee".into(),
+                        known: false,
+                    },
+                    PortCandidate {
+                        path: "/servo".into(),
+                        known: true,
+                    },
+                ],
+                1_000_000,
+                &[1],
+            );
+            assert_eq!(result.is_ok(), replies);
+            assert!(transport.calls.contains(&"open:/servo:1000000".into()));
+            assert!(!transport.calls.iter().any(|call| call.contains("zigbee")));
+            assert!(!transport.is_open());
+        }
+    }
+
+    #[test]
+    fn discovery_retries_each_model_read_and_supports_legacy_single_ports() {
+        use crate::devices::sts3215::driver::tests::FakeTransport;
+        let mut transport = FakeTransport::default();
+        transport.add_servo(1, 2047);
+        transport.add_servo(2, 2047);
+        transport.probe_fail_once.extend([1, 2]);
+        let found = find_adapter(
+            &mut transport,
+            vec![PortCandidate {
+                path: "/dev/ttyACM1".into(),
+                known: false,
+            }],
+            1_000_000,
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(found, "/dev/ttyACM1");
+        assert_eq!(
+            transport
+                .calls
+                .iter()
+                .filter(|call| call.as_str() == "read_register")
+                .count(),
+            4
+        );
+        assert!(!transport.is_open());
+    }
+
+    #[test]
+    fn shipping_usb_identity_does_not_include_other_wch_or_zigbee_chips() {
+        for (pid, known) in [(0x55d3, true), (0x55d4, false), (0x7523, false)] {
+            let info = serialport::SerialPortInfo {
+                port_name: "/dev/ttyACM0".into(),
+                port_type: serialport::SerialPortType::UsbPort(serialport::UsbPortInfo {
+                    vid: 0x1a86,
+                    pid,
+                    serial_number: None,
+                    manufacturer: None,
+                    product: None,
+                }),
+            };
+            assert_eq!(
+                PortCandidate::new(info.port_name.clone(), Some(&info)).known,
+                known
+            );
+        }
+    }
+
+    #[test]
+    fn serial_open_is_exclusive() {
+        use serialport::SerialPort;
+        let (_master, slave) = serialport::TTYPort::pair().unwrap();
+        let path = slave.name().unwrap();
+        let mut transport = RustypotTransport::default();
+        assert!(transport.open(&path, 1_000_000).is_err());
+        assert!(!transport.is_open());
+    }
 
     #[test]
     fn preserves_orion_register_widths_and_signed_telemetry() {

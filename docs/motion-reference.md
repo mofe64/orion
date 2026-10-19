@@ -137,6 +137,18 @@ resolved = anchor + style.amplitude × runtime_scale × offsets
 
 One runtime scale fits the complete relative clip inside limits. Absolute targets do not receive amplitude scaling. An invalid absolute target fails.
 
+## Music movement
+
+Orion dances around the current anchor pose. The shoulder and elbow lower the body on each beat, then lift it with a softer return. The head moves with the body.
+
+The base sways from side to side across a musical phrase. The neck starts each turn before the base. A small opposite movement prepares the turn. The neck moves past its target, then settles. Head pitch adds downward accents on selected strong beats.
+
+Quiet music produces a gentle sway and small breathing movements. Stronger music adds body bounces, side movements, looking turns and a larger phrase ending. Orion selects a movement pattern at a phrase boundary. It blends the patterns while the dance continues.
+
+The dance blends from the current pose over a beat. When the dance ends, Orion returns to the anchor with a small final movement. Speech and tracking take control from the current movement. Dance targets flow through their intermediate positions. One scale fits the drawing inside joint limits and the desk comfort box.
+
+`Off` disables dancing. `Sometimes` alternates dance stretches with ordinary idle movement. `Always` permits dancing while music plays. Dancing starts at a phrase boundary after the beat tracker finds the beat. Speech, tracking and foreground actions keep their existing priority.
+
 ## Trajectory compiler
 
 The compiler connects targets with quintic segments. A quintic segment is a fifth-degree polynomial with position, velocity and acceleration boundary conditions.

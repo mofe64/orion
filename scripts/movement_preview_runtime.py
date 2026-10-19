@@ -187,23 +187,35 @@ mod movement_review {
         let bytes=std::fs::read(request["pcm"].as_str().unwrap())?;
         let mut tracker=crate::expression::music::BeatTracker::default();
         let mut samples=Vec::new();let mut pulses=Vec::new();
+        let clip_start=request["start"].as_f64().unwrap_or(0.);
+        let mut dancing=false;
         for (tick,block) in bytes.chunks_exact(960*8).enumerate() {
             let time=tick as f64*0.02;let now=5.+time;
             let pcm:Vec<[f32;2]>=block.chunks_exact(8).map(|frame|[f32::from_le_bytes(frame[..4].try_into().unwrap()),f32::from_le_bytes(frame[4..].try_into().unwrap())]).collect();
             let mut pulse=crate::expression::music::MusicPulse::default();
             for chunk in pcm.chunks(480) {pulse=tracker.process(chunk);}
             pulse.streaming=true;
-            core.tick(now)?;character.set_music_input(Some(pulse),true);
-            character.tick(now,&mut core,false,None,false,None,None)?;
+            // Warm the real tracker with the recording before the excerpt.
+            // Music ownership begins at the excerpt, so its entrance is visible.
+            core.tick(now)?;character.set_music_input(Some(pulse),time>=clip_start);
+            // Hold the completed return for the silent end of the preview.
+            // Otherwise an unrelated ordinary idle can obscure the dance ending.
+            if !(dancing && !pulse.audible && core.snapshot().motion.is_none()) {
+                character.tick(now,&mut core,false,None,false,None,None)?;
+            }
+            if time+1e-8<clip_start {continue;}
             let velocities=core.snapshot().motion.as_ref().and_then(|m|core.character_commanded_state(m.run_id,now))
                 .map(|state|state.velocities).unwrap_or_else(||anchor.keys().map(|n|(n.clone(),0.)).collect());
-            samples.push(json!({"time":time,"positions":core.driver().positions,"velocities":velocities}));
-            if tick%25==0 {pulses.push(json!({"time":time,"pulse":pulse,"clip":character.status().active_clip}));}
+            let clip=character.status().active_clip.clone();
+            dancing |= clip.as_deref()==Some("music_performance");
+            samples.push(json!({"time":time-clip_start,"positions":core.driver().positions,"velocities":velocities,
+                "beats":pulse.beats,"bpm":pulse.bpm,"energy":pulse.energy,"clip":clip}));
+            if tick%25==0 {pulses.push(json!({"time":time-clip_start,"pulse":pulse,"clip":clip}));}
         }
-        let end=core.driver().positions.clone();
+        if !dancing {return Err(Error::InvalidState("Recording never started a music performance".into()));}
         Ok(json!({"kind":"tracking","name":request["name"],"start_pose":"home","anchor":"home",
             "anchor_source":"Music PCM through the mixer beat tracker and character planner",
-            "samples":samples,"keyframes":[],"expected_end":end,"clamped_samples":[],"amplitude_scale":1.,"pulses":pulses}))
+            "samples":samples,"keyframes":[],"expected_end":anchor,"clamped_samples":[],"amplitude_scale":1.,"pulses":pulses}))
     }
     fn hands(root: &Path, assets: &Path) -> Result<Value> {
         let poses = PoseLibrary::load(assets.join("motion/config/v2/poses.yaml"), &ORION_JOINT_NAMES)?;

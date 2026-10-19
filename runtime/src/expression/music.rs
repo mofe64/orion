@@ -203,44 +203,146 @@ impl BeatTracker {
     }
 }
 
-pub fn offsets(beats: f64, energy: f64, seed: u64) -> crate::JointPositions {
-    use std::f64::consts::TAU;
-    let energy = energy.clamp(0., 1.);
-    let phrase = (beats / 16.).floor() as u64;
-    let phase = beats.rem_euclid(16.);
-    let motif = |phrase: u64| {
-        let hash = phrase.wrapping_add(seed).wrapping_mul(0x9e3779b97f4a7c15);
-        let kind = if energy < 0.45 {
-            0
-        } else if energy < 0.7 {
-            if hash.rotate_left(17) % 2 == 0 { 0 } else { 2 }
+fn ease(value: f64) -> f64 {
+    let t = value.clamp(0., 1.);
+    t * t * t * (10. + t * (-15. + 6. * t))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Motif {
+    Gentle,
+    Bounce,
+    SideGroove,
+    LookAround,
+    Finish,
+}
+
+pub fn motif(phrase: u64, energy: f64, seed: u64) -> Motif {
+    let choice = phrase
+        .wrapping_add(seed)
+        .wrapping_mul(0x9e3779b97f4a7c15)
+        .rotate_left(17);
+    if energy < 0.28 {
+        Motif::Gentle
+    } else if energy < 0.55 {
+        if choice % 2 == 0 {
+            Motif::Bounce
         } else {
-            (hash.rotate_left(17) % 3) as usize
-        };
-        let sign = if hash & 1 == 0 { 1. } else { -1. };
-        let sway = (TAU * beats / [16., 8., 16.][kind]).sin();
-        let neck = (TAU * beats / 16. + [0.85, -0.7, 1.4][kind]).sin();
-        // Accent only selected strong beats. The neck follows a different
-        // phrase arc from the base; the arm opens and closes with the groove.
-        let beat = beats.floor() as u64;
-        let accent = if energy > 0.5 && beat % 4 == [0, 2, 0][kind] {
-            (std::f64::consts::PI * beats.fract()).sin().powi(2)
-        } else {
-            0.
-        };
+            Motif::SideGroove
+        }
+    } else {
         [
-            sign * 0.18 * sway,
-            sign * 0.13 * neck,
-            0.025 * (TAU * beats / 8. + kind as f64).sin() + 0.055 * accent,
-            0.032 * (TAU * beats / 8.).sin(),
-            -0.045 * (TAU * beats / 8. + 0.5).sin(),
-        ]
+            Motif::Bounce,
+            Motif::SideGroove,
+            Motif::LookAround,
+            Motif::Finish,
+        ][choice as usize % 4]
+    }
+}
+
+// One full sway lasts two bars. Each reversal has a small outward preparation;
+// only the neck overshoots the destination and then settles there.
+fn turn(beats: f64, overshoot: f64) -> f64 {
+    let phase = beats.rem_euclid(8.);
+    let (time, direction) = if phase < 4. {
+        (phase, 1.)
+    } else {
+        (phase - 4., -1.)
     };
-    let previous = motif(phrase.saturating_sub(1));
-    let current = motif(phrase);
-    let blend = (phase / 2.).clamp(0., 1.);
-    let blend = blend * blend * (3. - 2. * blend);
-    let scale = energy * energy.sqrt();
+    let knots = [
+        (0., -1.),
+        (0.35, -1.035),
+        (2.8, 1. + overshoot),
+        (3.45, 1.),
+        (4., 1.),
+    ];
+    let pair = knots.windows(2).find(|pair| time <= pair[1].0).unwrap();
+    direction
+        * (pair[0].1 + (pair[1].1 - pair[0].1) * ease((time - pair[0].0) / (pair[1].0 - pair[0].0)))
+}
+
+fn body_beat(beats: f64) -> f64 {
+    let phase = (beats + 0.18).rem_euclid(1.);
+    if phase < 0.18 {
+        ease(phase / 0.18)
+    } else {
+        1. - ease((phase - 0.18) / 0.82)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DanceShape {
+    pub arm: [f64; 2],
+    pub lift_between: bool,
+    pub head: f64,
+}
+impl Default for DanceShape {
+    fn default() -> Self {
+        Self {
+            arm: [0.14, -0.11],
+            lift_between: true,
+            head: 1.,
+        }
+    }
+}
+
+fn drawing(beats: f64, energy: f64, bpm: f64, kind: Motif, shape: DanceShape) -> [f64; 5] {
+    use std::f64::consts::{PI, TAU};
+    let e = energy.clamp(0., 1.);
+    let drive = e.powf(0.65);
+    let (sway, bounce, glance, accent) = match kind {
+        Motif::Gentle => (0.14, 0.12, 0.025, 0.),
+        Motif::Bounce => (0.27, 1., 0., 0.10),
+        Motif::SideGroove => (0.33, 0.85, 0.035, 0.12),
+        Motif::LookAround => (0.29, 0.72, 0.09, 0.09),
+        Motif::Finish => (0.35, 1., 0.045, 0.14),
+    };
+    // This arm direction raises the V2 head. Recover upward between beats,
+    // then return quickly to the lower held pose on the beat.
+    let body = if shape.lift_between {
+        1. - body_beat(beats)
+    } else {
+        body_beat(beats)
+    };
+    let lift = body * (e / 0.8).clamp(0., 1.).powf(0.8) * bounce;
+    let breathing = (0.5 + 0.5 * (TAU * beats / 8.).sin()) * 0.014 * drive;
+    let strong = (0.5 + 0.5 * (TAU * beats / 4.).cos()).powi(12);
+    let phrase = beats.rem_euclid(16.);
+    let finish = if kind == Motif::Finish && phrase >= 12. {
+        (PI * (phrase - 12.) / 4.).sin().powi(2) * drive
+    } else {
+        0.
+    };
+    // Positive V2 wrist pitch looks down. The body pulse carries the head on
+    // every beat; wrist accents occur only on selected strong beats.
+    [
+        sway * drive * turn(beats, 0.),
+        0.19 * drive * turn(beats + bpm * 0.2 / 60., 0.12)
+            + glance * drive * (TAU * beats / 16.).sin(),
+        shape.head * (accent * drive * strong + finish * 0.07 + breathing * 0.6),
+        shape.arm[0] * (lift + breathing / 0.14 + finish * 0.025 / 0.14),
+        shape.arm[1] * (lift + breathing / 0.14 + finish * 0.025 / 0.14),
+    ]
+}
+
+fn offsets_from(
+    beats: f64,
+    energy: f64,
+    previous_energy: f64,
+    bpm: f64,
+    seed: u64,
+    shape: DanceShape,
+) -> crate::JointPositions {
+    let phrase = (beats / 16.).floor().max(0.) as u64;
+    let blend = ease(beats.rem_euclid(16.) / 4.);
+    let previous = drawing(
+        beats,
+        previous_energy,
+        bpm,
+        motif(phrase.saturating_sub(1), previous_energy, seed),
+        shape,
+    );
+    let current = drawing(beats, energy, bpm, motif(phrase, energy, seed), shape);
     [
         "base_yaw_joint",
         "head_roll_joint",
@@ -253,68 +355,176 @@ pub fn offsets(beats: f64, energy: f64, seed: u64) -> crate::JointPositions {
     .map(|(i, name)| {
         (
             name.into(),
-            (previous[i] + (current[i] - previous[i]) * blend) * scale,
+            previous[i] + (current[i] - previous[i]) * blend,
         )
     })
     .collect()
 }
 
-pub fn performance(pulse: MusicPulse, seed: u64) -> (crate::MotionDefinition, f64) {
-    use crate::{KeyframeArrival, MotionDefinition, MotionKeyframe, MotionSpace, MotionStyle};
-    let pulse = MusicPulse {
-        bpm: if pulse.bpm.is_finite() && pulse.bpm > 0. {
-            pulse.bpm
-        } else {
-            120.
-        },
-        ..pulse
-    };
-    let span = 16.;
-    let end = (pulse.beats / span).floor() * span + span;
-    let mut previous = pulse.beats;
-    let mut next = (pulse.beats * 4.).floor() / 4. + 0.25;
-    let mut keyframes = vec![];
-    while next <= end + 1e-9 {
-        // The audio is queued ahead of the speaker; the head leads by the
-        // existing speech stroke interval to account for its physical response.
-        let phase = next + (0.12 - 0.04) * pulse.bpm / 60.;
-        keyframes.push(MotionKeyframe {
-            pose_name: None,
-            target: offsets(phase, pulse.energy, seed),
-            duration_seconds: (next - previous) * 60. / pulse.bpm,
-            arrival: KeyframeArrival::Through,
-            hold_seconds: 0.,
-            marker: None,
-        });
-        previous = next;
-        next += 0.25;
+pub fn offsets(beats: f64, energy: f64, seed: u64) -> crate::JointPositions {
+    offsets_from(beats, energy, energy, 120., seed, DanceShape::default())
+}
+
+fn tempo(pulse: MusicPulse) -> f64 {
+    if pulse.bpm.is_finite() && pulse.bpm > 0. {
+        pulse.bpm
+    } else {
+        120.
     }
-    keyframes.push(MotionKeyframe {
-        pose_name: None,
-        target: crate::JointPositions::new(),
-        duration_seconds: 0.45,
-        arrival: KeyframeArrival::Settle,
-        hold_seconds: 0.,
-        marker: Some("music_still".into()),
-    });
-    let style = MotionStyle {
-        tempo: 1.,
-        amplitude: 1.,
-        settle_character: 0.5,
-        ..MotionStyle::named("living_idle").expect("idle style")
-    };
-    (
-        MotionDefinition {
-            name: "music_performance".into(),
-            description:
-                "Sway, turn and breathe with each music phrase, then return to the held pose."
-                    .into(),
-            space: MotionSpace::AnchorRelative,
-            style,
-            return_to_anchor: true,
-            keyframes,
+}
+
+fn definition(frames: Vec<crate::MotionKeyframe>, name: &str) -> crate::MotionDefinition {
+    crate::MotionDefinition {
+        name: name.into(),
+        description: if name == "music_release" {
+            "Return to the held pose with a small final neck movement."
+        } else {
+            "Bounce with the beat, sway from side to side, then settle at the held pose."
+        }
+        .into(),
+        space: crate::MotionSpace::AnchorRelative,
+        return_to_anchor: true,
+        // Timing and overlap are drawn into the targets, rather than added by
+        // an idle style after the beat clock has scheduled them.
+        style: crate::MotionStyle {
+            tempo: 1.,
+            amplitude: 1.,
+            joint_lag: 0.,
+            overshoot_scale: 0.,
+            tangent_tension: 0.6,
+            settle_character: 0.5,
+            ..crate::MotionStyle::named("living_idle").unwrap()
         },
-        end - 0.5,
+        keyframes: frames,
+    }
+}
+
+pub fn release(pulse: MusicPulse, offsets: &crate::JointPositions) -> crate::MotionDefinition {
+    let beat = 60. / tempo(pulse);
+    let mut previous = 0.;
+    let frames = [(0.28, 0.62), (0.8, -0.055), (1., 0.)]
+        .into_iter()
+        .map(|(at, gain)| {
+            let target = offsets
+                .iter()
+                .map(|(name, offset)| {
+                    let gain = if gain < 0.
+                        && !matches!(name.as_str(), "base_yaw_joint" | "head_roll_joint")
+                    {
+                        0.035
+                    } else {
+                        gain
+                    };
+                    (name.clone(), offset * gain)
+                })
+                .collect();
+            let frame = crate::MotionKeyframe {
+                pose_name: None,
+                target,
+                duration_seconds: (at - previous) * beat,
+                arrival: if at == 1. {
+                    crate::KeyframeArrival::Settle
+                } else {
+                    crate::KeyframeArrival::Through
+                },
+                hold_seconds: 0.,
+                marker: if at == 1. {
+                    Some("music_still".into())
+                } else {
+                    None
+                },
+            };
+            previous = at;
+            frame
+        })
+        .collect();
+    definition(frames, "music_release")
+}
+
+pub fn plan(
+    pulse: MusicPulse,
+    seed: u64,
+    previous_energy: f64,
+    entrance: Option<&crate::JointPositions>,
+) -> (crate::MotionDefinition, f64) {
+    plan_with_shape(
+        pulse,
+        seed,
+        previous_energy,
+        entrance,
+        DanceShape::default(),
+    )
+}
+
+pub(crate) fn plan_with_shape(
+    pulse: MusicPulse,
+    seed: u64,
+    previous_energy: f64,
+    entrance: Option<&crate::JointPositions>,
+    shape: DanceShape,
+) -> (crate::MotionDefinition, f64) {
+    let bpm = tempo(pulse);
+    let boundary = (pulse.beats / 16.).floor() * 16. + 16.;
+    let extending = entrance.is_none() && boundary - pulse.beats <= 1.;
+    let end = boundary + if extending { 16. } else { 0. };
+    let mut times = Vec::new();
+    let mut next = (pulse.beats * 8.).floor() / 8. + 0.125;
+    while next <= end + 1e-8 {
+        times.push(next);
+        next += 0.125;
+    }
+    // Draw the short compression exactly; a quarter-beat grid would miss it.
+    for beat in pulse.beats.floor() as i64..=end as i64 {
+        let at = beat as f64 + 0.82;
+        if at > pulse.beats + 1e-7 && at < end {
+            times.push(at);
+        }
+    }
+    if entrance.is_some() && pulse.beats + 1. < end {
+        times.push(pulse.beats + 1.);
+    }
+    times.sort_by(f64::total_cmp);
+    times.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+    let mut previous = pulse.beats;
+    let mut frames = Vec::new();
+    for at in times {
+        let energy = if extending && at < boundary {
+            previous_energy
+        } else {
+            pulse.energy
+        };
+        let mut target = offsets_from(at, energy, previous_energy, bpm, seed, shape);
+        if let Some(start) = entrance {
+            let weight = ease(at - pulse.beats);
+            for (name, value) in &mut target {
+                *value = start.get(name).copied().unwrap_or(0.) * (1. - weight) + *value * weight;
+            }
+        }
+        frames.push(crate::MotionKeyframe {
+            pose_name: None,
+            target,
+            duration_seconds: (at - previous) * 60. / bpm,
+            arrival: crate::KeyframeArrival::Through,
+            hold_seconds: 0.,
+            marker: if entrance.is_some() && (at - pulse.beats - 1.).abs() < 1e-7 {
+                Some("music_entered".into())
+            } else {
+                None
+            },
+        });
+        previous = at;
+    }
+    let end_offset = frames.last().map(|f| f.target.clone()).unwrap_or_default();
+    frames.extend(release(pulse, &end_offset).keyframes);
+    (definition(frames, "music_performance"), end - 0.5)
+}
+
+pub fn performance(pulse: MusicPulse, seed: u64) -> (crate::MotionDefinition, f64) {
+    plan(
+        pulse,
+        seed,
+        pulse.energy,
+        Some(&crate::JointPositions::new()),
     )
 }
 
@@ -355,48 +565,77 @@ mod tests {
         }
     }
     #[test]
-    fn energy_mapping_is_small_varied_and_motionless_at_zero() {
-        for beat in 0..320 {
-            let t = beat as f64 / 8.;
-            let calm = offsets(t, 0.25, 7);
-            let upbeat = offsets(t, 0.9, 7);
-            for (name, value) in upbeat {
-                assert!(
-                    value.abs()
-                        <= if name == "head_pitch_joint" {
-                            0.09
-                        } else {
-                            0.19
-                        }
-                );
+    fn body_marks_every_beat_and_wrist_marks_only_strong_beats() {
+        for beat in 32..40 {
+            let down = offsets(beat as f64, 0.8, 7);
+            let up = offsets(beat as f64 + 0.8, 0.8, 7);
+            assert!(up["shoulder_pitch_joint"] - down["shoulder_pitch_joint"] > 0.06);
+            assert!(up["elbow_pitch_joint"] - down["elbow_pitch_joint"] < -0.04);
+            if beat % 4 == 0 {
+                assert!(down["head_pitch_joint"] > 0.05);
+            } else {
+                assert!(down["head_pitch_joint"].abs() < 0.04);
             }
-            assert!(calm.values().all(|value| value.abs() < 0.025));
-            assert!(offsets(t, 0., 7).values().all(|value| *value == 0.));
         }
-        assert_ne!(offsets(1., 0.9, 7), offsets(9., 0.9, 7));
-        let (motion, _) = performance(
-            MusicPulse {
-                bpm: 120.,
-                beats: 8.,
-                energy: 0.8,
-                ..MusicPulse::default()
-            },
-            7,
-        );
+    }
+    #[test]
+    fn neck_leads_the_base_and_all_five_motifs_are_available() {
+        let mut kinds = std::collections::BTreeSet::new();
+        for phrase in 0..16 {
+            for energy in [0.1, 0.4, 0.9] {
+                kinds.insert(format!("{:?}", motif(phrase, energy, 7)));
+            }
+        }
+        assert_eq!(kinds.len(), 5);
+        for bpm in [80., 110., 128.] {
+            let crossing = |joint: usize| {
+                (1..3000)
+                    .map(|i| i as f64 / 1000.)
+                    .find(|beat| {
+                        drawing(*beat, 1., bpm, Motif::Bounce, DanceShape::default())[joint] >= 0.
+                    })
+                    .unwrap()
+            };
+            let lead = (crossing(0) - crossing(1)) * 60. / bpm;
+            assert!((lead - 0.2).abs() < 0.06, "{bpm}: neck lead {lead}");
+        }
+    }
+
+    #[test]
+    fn motifs_blend_without_sign_flips_and_starts_take_a_full_beat() {
+        let pulse = MusicPulse {
+            bpm: 128.,
+            beats: 16.12,
+            energy: 0.9,
+            ..MusicPulse::default()
+        };
+        let start = offsets(10., 0.4, 8);
+        let (motion, _) = plan(pulse, 7, 0.2, Some(&start));
+        let mut time = 0.;
+        let mut entered = 0.;
+        for frame in &motion.keyframes {
+            time += frame.duration_seconds;
+            if frame.marker.as_deref() == Some("music_entered") {
+                entered = time;
+            }
+        }
+        assert!((entered - 60. / 128.).abs() < 1e-8);
+        let first = &motion.keyframes[0];
+        for (joint, value) in &first.target {
+            assert!((value - start[joint]).abs() < 0.002);
+        }
+        for boundary in [16., 32., 48.] {
+            for joint in ["base_yaw_joint", "head_roll_joint"] {
+                let before = offsets(boundary - 1e-5, 0.9, 7)[joint];
+                let after = offsets(boundary + 1e-5, 0.9, 7)[joint];
+                assert!((after - before).abs() < 1e-4);
+            }
+        }
+        assert!(offsets(5., 0., 7).values().all(|value| *value == 0.));
         assert!(
-            (motion
-                .keyframes
+            motion.keyframes[..motion.keyframes.len() - 1]
                 .iter()
-                .map(|frame| frame.duration_seconds)
-                .sum::<f64>()
-                - 4.45)
-                .abs()
-                < 1e-9
-        );
-        assert_eq!(motion.style.tempo, 1.);
-        assert_eq!(
-            motion.keyframes.last().unwrap().arrival,
-            crate::KeyframeArrival::Settle
+                .all(|f| f.arrival == crate::KeyframeArrival::Through)
         );
     }
 }
