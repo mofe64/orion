@@ -1,3 +1,5 @@
+import ast
+import inspect
 import os
 from pathlib import Path
 import sys
@@ -11,6 +13,14 @@ import release_build
 
 
 class NativeBindingTests(unittest.TestCase):
+    def test_llama_cmake_targets_pi5_without_runner_native_instructions(self):
+        calls = [node for node in ast.walk(ast.parse(inspect.getsource(release_build.shared)))
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'run']
+        arguments = [[arg.value for arg in call.args if isinstance(arg, ast.Constant)] for call in calls]
+        configure, = [args for args in arguments if args[:2] == ['cmake', '-S']]
+        self.assertIn('-DGGML_NATIVE=OFF', configure)
+        self.assertIn('-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16', configure)
+
     def wheel(self, folder, module):
         path = Path(folder) / 'rpi_libcamera-0.1a11-cp312-cp312-linux_aarch64.whl'
         with zipfile.ZipFile(path, 'w') as archive:

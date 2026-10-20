@@ -166,7 +166,8 @@ def shared():
         source.parent.mkdir(parents=True, exist_ok=True)
         run('git', 'clone', '--depth', '1', '--branch', LLAMA_VERSION, 'https://github.com/ggml-org/llama.cpp.git', source)
         run('cmake', '-S', source, '-B', source / 'build', '-DCMAKE_BUILD_TYPE=Release',
-            '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=OFF', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF')
+            '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=OFF',
+            '-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF')
         run('cmake', '--build', source / 'build', '--target', 'llama-server', '-j', '2')
     dest = release / 'native'; dest.mkdir()
     from build_spotify import build as build_spotify

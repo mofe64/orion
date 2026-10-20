@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 pub const DEFAULT_MODEL: &str = "gpt-6-luna";
-pub const DEFAULT_EFFORT: &str = "medium";
+pub const DEFAULT_EFFORT: &str = "low";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentConfig {
     pub model: String,

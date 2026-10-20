@@ -72,7 +72,7 @@ describe("Pi speech settings", () => {
     expect(html).not.toContain('aria-label="Character mode"');
     expect(html).not.toContain("Stored on this computer.");
     expect(html).toContain("Saved reply model · saved");
-    expect(html).toContain("Medium · saved");
+    expect(html).toContain("Low · saved");
   });
 });
 
@@ -87,7 +87,7 @@ describe("character mode failures", () => {
 it("preserves saved raw IDs while displaying friendly model and effort names", () => {
   const html = markup({ ...voice, models: [{ model: DEFAULT_VOICE_SETTINGS.model, name: "GPT-6 Luna", efforts: ["low", "medium", "high"] }] });
   expect(html).toContain(`value="${DEFAULT_VOICE_SETTINGS.model}" selected="">GPT-6 Luna</option>`);
-  expect(html).toContain('value="medium" selected="">Medium</option>');
+  expect(html).toContain('value="low" selected="">Low</option>');
   expect(html).not.toContain("Active agent:");
   expect(html).not.toContain("API key");
   expect(html).toContain("CC BY 4.0");

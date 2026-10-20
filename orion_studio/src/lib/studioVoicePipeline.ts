@@ -68,7 +68,7 @@ export interface StudioVoiceSnapshot {
 }
 
 export interface VoiceSettings { model: string; effort: string; provider?: "codex"; asrModel?: string; ttsModel?: string; asrPath?: string; ttsPath?: string; }
-export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-6-luna", effort: "medium", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "piper-alba-medium", asrPath: "", ttsPath: "" };
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = { provider: "codex", model: "gpt-6-luna", effort: "low", asrModel: "Qwen/Qwen3-ASR-0.6B", ttsModel: "piper-alba-medium", asrPath: "", ttsPath: "" };
 
 export interface StudioVoicePipelineOptions {
   settings?: VoiceSettings;

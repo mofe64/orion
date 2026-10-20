@@ -35,6 +35,21 @@ WAKE_PREFIX_BYTES = 2 * 32000
 WAKE_PREFIX_TAIL_MS = 200
 
 
+def shorten_pauses(audio, speech_frames):
+    """Shorten only known non-speech runs; unknown pre-roll stays intact."""
+    result = bytearray()
+    start = 0
+    while start < len(speech_frames):
+        end = start + 1
+        while end < len(speech_frames) and speech_frames[end] is speech_frames[start]:
+            end += 1
+        # Capture frames are 20 ms. Keep 300 ms when a pause exceeds 600 ms.
+        keep = 15 if speech_frames[start] is False and end - start > 30 else end - start
+        result.extend(audio[start * FRAME_BYTES:(start + keep) * FRAME_BYTES])
+        start = end
+    return bytes(result)
+
+
 def boottime_ns():
     """Same suspend-aware clock as camera captures and runtime pose history."""
     if hasattr(time, "CLOCK_BOOTTIME"):
@@ -133,9 +148,12 @@ class SatelliteSession:
         self.phase = "listening"
         if not preserve_listening:
             self.pre_roll = bytearray()
+            self.pre_roll_speech = []
             self.noise = ListeningNoise()
         self.utterance = bytearray()
+        self.utterance_speech = []
         self.followup = bytearray()
+        self.followup_speech = []
         self.followup_done = False
         self.prefix = bytearray()
         self.prefix_pending = False
@@ -192,6 +210,16 @@ class SatelliteSession:
     def message(self, kind, **fields):
         return {"type": kind, "sessionId": self.session_id, **fields}
 
+    def append_pre_roll(self, audio, speech=None, limit=3 * 32000):
+        self.pre_roll.extend(audio)
+        self.pre_roll_speech.append(speech)
+        del self.pre_roll[:-limit]
+        del self.pre_roll_speech[:-(limit // FRAME_BYTES)]
+
+    def clear_pre_roll(self):
+        self.pre_roll.clear()
+        self.pre_roll_speech.clear()
+
     def verifier_active(self):
         """Whether verification is fast enough to authorize playback barge-in."""
         return self.verifier is not None and self.verifier.healthy
@@ -233,10 +261,10 @@ class SatelliteSession:
             if not verdict.accepted:
                 return []
             interrupted = [self.message("session.interrupted", reason="barge_in")]
-            pre_roll, noise = self.pre_roll, self.noise
+            pre_roll, pre_roll_speech, noise = self.pre_roll, self.pre_roll_speech, self.noise
             candidate = self.verifier_candidate
             self.reset()
-            self.pre_roll, self.noise = pre_roll, noise
+            self.pre_roll, self.pre_roll_speech, self.noise = pre_roll, pre_roll_speech, noise
             self.barge_in_session = True
             interrupted.extend(self.start_wake(detection, already_verified=True))
             self.verifier_candidate = candidate
@@ -254,7 +282,7 @@ class SatelliteSession:
             # stay continuous so another wake can start immediately.
             self.reset(preserve_listening=True)
             return [message]
-        self.pre_roll.clear()
+        self.clear_pre_roll()
         # An endpoint that arrived during verification was held back, like a
         # pending ASR prefix; release it after the verdict so ordering holds.
         pending, self.pending_utterance = self.pending_utterance, []
@@ -273,6 +301,7 @@ class SatelliteSession:
         if not self.barge_in_session:
             self.update_direction()
         self.utterance = bytearray(self.pre_roll)
+        self.utterance_speech = list(self.pre_roll_speech)
         verifying = already_verified or self.verifier is not None
         if verifying and not already_verified:
             self.verifier.begin()
@@ -284,7 +313,7 @@ class SatelliteSession:
             self.prefix = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
             self.prefix_pending = True
         if not self.acoustic_pending:
-            self.pre_roll.clear()
+            self.clear_pre_roll()
         self.endpoint.prime_detected_speech()
         return [self.message("wake.candidate", name=detection.name, score=detection.score,
                              direction=self.observation, acousticVerification=verifying)]
@@ -304,8 +333,7 @@ class SatelliteSession:
             self.reset()
             return [event]
         if self.announcement_id is not None and self.phase == "processing":
-            self.pre_roll.extend(audio)
-            del self.pre_roll[:-3 * 32000]
+            self.append_pre_roll(audio)
             detection = self.wake.process(audio)
             if detection is not None:
                 interrupted = self.message("session.interrupted", reason="announcement_wake")
@@ -316,8 +344,7 @@ class SatelliteSession:
             if self.announcement_id is not None and self.wake.process(audio) is not None:
                 return [self.message("announcement.dismiss", id=self.announcement_id)]
             if self.barge_in and self.verifier_active():
-                self.pre_roll.extend(audio)
-                del self.pre_roll[:-3 * 32000]
+                self.append_pre_roll(audio)
                 if self.barge_candidate is None:
                     detection = self.wake.process(audio)
                     if detection is not None:
@@ -330,14 +357,12 @@ class SatelliteSession:
         if self.acoustic_pending:
             # Keep the listening stream warm while holding one candidate's
             # endpoint. Extra detections cannot overlap the pending verdict.
-            self.pre_roll.extend(audio)
-            del self.pre_roll[:-3 * 32000]
+            self.append_pre_roll(audio)
             self.wake.process(audio)
         if self.phase == "listening":
             self.noise.accept(audio)
             self.direction.accept(stereo)
-            self.pre_roll.extend(audio)
-            del self.pre_roll[:-3 * 32000]
+            self.append_pre_roll(audio)
             detection = self.wake.process(audio)
             if detection is None:
                 return []
@@ -354,14 +379,17 @@ class SatelliteSession:
                     self.prefix.clear()
                     self.prefix_sent = True
                     messages = [self.message("utterance", purpose="wake_prefix", bytes=len(prefix),
-                                             captureMs=round(len(prefix) / 32)), prefix]
-            if self.endpoint.accept(audio):
+                                             captureMs=round(len(prefix) / 32), sentMs=round(len(prefix) / 32)), prefix]
+            ended = self.endpoint.accept(audio)
+            self.utterance_speech.append(self.endpoint.last_speech)
+            if ended:
                 messages.extend(self.finish_utterance())
             return messages
         elif self.phase == "confirming" and not self.followup_done:
             # Preserve speech spoken while Qwen is confirming a bare wake phrase.
             self.followup.extend(audio)
             self.followup_done = self.followup_endpoint.accept(audio)
+            self.followup_speech.append(self.followup_endpoint.last_speech)
         return []
 
     def accept_conversation(self, audio):
@@ -379,9 +407,9 @@ class SatelliteSession:
             return []
         if now >= self.expires_at and self.onset_ms == 0:
             return self.close_conversation("timeout")
-        self.pre_roll.extend(audio)
-        del self.pre_roll[:-int(0.3 * 32000)]
-        self.onset_ms = self.onset_ms + 20 if self.activity.is_speech(audio) else 0
+        speech = self.activity.is_speech(audio)
+        self.append_pre_roll(audio, speech, limit=int(0.3 * 32000))
+        self.onset_ms = self.onset_ms + 20 if speech else 0
         if self.onset_ms < FOLLOWUP_ONSET_MS:
             return []
         previous = self.session_id
@@ -389,7 +417,8 @@ class SatelliteSession:
         self.phase = "command"
         self.expires_at = now + 120
         self.utterance = bytearray(self.pre_roll)
-        self.pre_roll.clear()
+        self.utterance_speech = list(self.pre_roll_speech)
+        self.clear_pre_roll()
         self.endpoint = self.endpoint_factory(self.endpoint.config)
         self.endpoint.prime_detected_speech()
         return [self.message("command.candidate", previousSessionId=previous)]
@@ -412,15 +441,17 @@ class SatelliteSession:
         if self.phase == "wake" and not self.barge_in_session:
             self.update_direction()
         purpose = "wake_and_command" if self.phase == "wake" else "command"
+        audio = shorten_pauses(self.utterance, self.utterance_speech)
+        sent_ms = round(len(audio) / 32)
         print(json.dumps({"event": "voice.endpoint", "session_id": self.session_id,
                           "purpose": purpose, "reason": self.endpoint.end_reason,
                           "threshold_rms": round(self.endpoint.config.speech_rms, 1),
-                          "capture_ms": self.endpoint.capture_ms}), flush=True)
-        audio = bytes(self.utterance)
+                          "capture_ms": self.endpoint.capture_ms, "sentMs": sent_ms}), flush=True)
         self.utterance.clear()
+        self.utterance_speech.clear()
         self.phase = "confirming" if purpose == "wake_and_command" else "processing"
         messages = [self.message("utterance", purpose=purpose, bytes=len(audio), captureMs=self.endpoint.capture_ms,
-                                 endReason=self.endpoint.end_reason), audio]
+                                 sentMs=sent_ms, endReason=self.endpoint.end_reason), audio]
         if purpose == "wake_and_command" and (self.prefix_pending or self.acoustic_pending):
             # Keep capturing follow-up speech while the short ASR pass finishes.
             # Only one ASR request can own this session at a time.
@@ -452,9 +483,11 @@ class SatelliteSession:
             self.guard_started = self.clock()
             self.quiet_ms = self.onset_ms = 0
             self.activity = self.endpoint_factory(self.endpoint.config)
-            self.pre_roll.clear()
+            self.clear_pre_roll()
             self.followup.clear()
+            self.followup_speech.clear()
             self.utterance.clear()
+            self.utterance_speech.clear()
             return []
         if kind in {"session.finish", "session.reject", "session.cancel"}:
             announcement = self.announcement_id is not None
@@ -468,13 +501,16 @@ class SatelliteSession:
             if followup:
                 self.phase = "command"
                 self.utterance = self.followup
+                self.utterance_speech = self.followup_speech
                 self.endpoint = self.followup_endpoint
                 self.followup = bytearray()
+                self.followup_speech = []
                 if self.followup_done:
                     return self.finish_utterance()
             else:
                 self.phase = "processing"
                 self.followup.clear()
+                self.followup_speech.clear()
             return []
         if kind == "session.keepalive" and self.phase in {"processing", "playing"}:
             if self.clock() >= self.expires_at:
@@ -484,13 +520,13 @@ class SatelliteSession:
         if kind == "session.processing" and self.phase in {"processing", "playing"}:
             self.barge_candidate = None
             if self.verifier is not None: self.verifier.cancel()
-            self.pre_roll.clear()
+            self.clear_pre_roll()
             self.phase = "processing"
             self.expires_at = self.clock() + 180
             return []
         if kind == "session.playing" and self.phase in {"processing", "playing"}:
             if self.phase != "playing":
-                self.pre_roll.clear()
+                self.clear_pre_roll()
                 self.wake.reset()
             self.phase = "playing"
             self.expires_at = self.clock() + 180

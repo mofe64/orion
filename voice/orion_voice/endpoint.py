@@ -62,6 +62,7 @@ class EnergyEndpointDetector:
         self._silence_ms = 0
         self._total_ms = 0
         self._speech_run_ms = 0
+        self.last_speech: bool | None = None
         self.end_reason: str | None = None
 
     @property
@@ -82,7 +83,8 @@ class EnergyEndpointDetector:
             del self._pending[:frame_bytes]
             self._total_ms += frame_ms
             self._silence_ms += frame_ms
-            if self.is_speech(frame):
+            self.last_speech = self.is_speech(frame)
+            if self.last_speech:
                 self._speech_run_ms += frame_ms
                 if self._speech_run_ms >= self.config.speech_confirmation_ms:
                     self._speech_ms += (self._speech_run_ms

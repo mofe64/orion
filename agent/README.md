@@ -8,6 +8,8 @@
 
 The first status or model request starts `codex app-server`. Orion checks account access and the model catalogue before creating conversation context. An installed Codex executable and login are required.
 
+The default reasoning effort is Low. Saved voice settings override this default.
+
 Completed turns can reuse provider context. Uncertain protocol state retires that context. A replacement provider receives bounded text recovery context. See [conversation policy](../docs/voice-architecture.md#agent-conversation-and-memory).
 
 ## Source layout
