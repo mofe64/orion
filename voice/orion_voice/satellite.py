@@ -43,9 +43,12 @@ def shorten_pauses(audio, speech_frames):
         end = start + 1
         while end < len(speech_frames) and speech_frames[end] is speech_frames[start]:
             end += 1
-        # Capture frames are 20 ms. Keep 300 ms when a pause exceeds 600 ms.
-        keep = 15 if speech_frames[start] is False and end - start > 30 else end - start
-        result.extend(audio[start * FRAME_BYTES:(start + keep) * FRAME_BYTES])
+        if speech_frames[start] is False and end - start > 30:
+            # Keep 160 ms at each edge: delayed VAD decisions can hide word onsets.
+            result.extend(audio[start * FRAME_BYTES:(start + 8) * FRAME_BYTES])
+            result.extend(audio[(end - 8) * FRAME_BYTES:end * FRAME_BYTES])
+        else:
+            result.extend(audio[start * FRAME_BYTES:end * FRAME_BYTES])
         start = end
     return bytes(result)
 
@@ -300,8 +303,8 @@ class SatelliteSession:
         self.expires_at = self.clock() + 120
         if not self.barge_in_session:
             self.update_direction()
-        self.utterance = bytearray(self.pre_roll)
-        self.utterance_speech = list(self.pre_roll_speech)
+        self.utterance = bytearray(self.pre_roll[-WAKE_PREFIX_BYTES:])
+        self.utterance_speech = self.pre_roll_speech[-(WAKE_PREFIX_BYTES // FRAME_BYTES):]
         verifying = already_verified or self.verifier is not None
         if verifying and not already_verified:
             self.verifier.begin()

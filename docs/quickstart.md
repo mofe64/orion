@@ -1,6 +1,6 @@
 # Orion quickstart
 
-Orion requires a Raspberry Pi 5 with Raspberry Pi OS Lite 64-bit Bookworm or Trixie. Studio runs on your computer.
+Orion requires a Raspberry Pi 5 because the speech server uses instructions specific to its CPU. Orion supports Raspberry Pi OS Lite 64-bit Bookworm and Trixie. Studio runs on your computer.
 
 ## Prepare the Pi
 
@@ -15,8 +15,6 @@ Orion requires a Raspberry Pi 5 with Raspberry Pi OS Lite 64-bit Bookworm or Tri
    ```
 
 ## Install Orion
-
-Orion needs a Raspberry Pi 5. The speech server uses Pi 5 CPU instructions.
 
 The login user needs sudo access. Models share storage across releases. Allow space for models, the active release and one previous release.
 

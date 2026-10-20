@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from orion_voice.satellite import FRAME_BYTES, SatelliteSession
+from orion_voice.satellite import FRAME_BYTES, WAKE_PREFIX_BYTES, SatelliteSession
 from orion_voice.verifier import CHUNK, RATE, AcousticVerifier, sha256
 
 from test_satellite import Wake, frame
@@ -190,7 +190,7 @@ class SessionVerifierTests(unittest.TestCase):
             self.assertEqual(accepted[0]['sessionId'], accepted[1]['sessionId'])
             self.assertTrue(accepted[0]['acousticVerification'])
             self.assertFalse(session.prefix_pending)
-            self.assertEqual(session.utterance[:-FRAME_BYTES], pre_roll[FRAME_BYTES:])
+            self.assertEqual(session.utterance[:-FRAME_BYTES], pre_roll[-(WAKE_PREFIX_BYTES - FRAME_BYTES):])
             self.assertEqual(self.verifier.position, position + RATE)
             self.assertIs(session.noise, noise)
             reset.assert_not_called()

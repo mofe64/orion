@@ -41,9 +41,9 @@ Full command capture continues while Qwen checks the prefix. A slow or missing a
 
 Qwen transcribes the complete utterance before dispatch. Prefix confirmation alone cannot supply agent command text. A wake-only utterance opens another capture opportunity.
 
-Recognition receives speech with pauses longer than 600 ms shortened to 300 ms. The listener keeps all speech frames in their original order.
+Recognition receives speech with pauses longer than 600 ms shortened to 320 ms. The listener keeps both ends of each pause and all speech frames in their original order.
 
-Capture permits 30 seconds after wake detection, or 33 seconds including pre-roll. A recording that reaches the limit is rejected. Empty commands also stop before agent dispatch.
+The command clip keeps 2 seconds from before wake detection. Capture permits 30 seconds after wake detection, or 32 seconds including pre-roll. A recording that reaches the limit is rejected. Empty commands also stop before agent dispatch.
 
 ### Speech boundaries
 

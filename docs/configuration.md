@@ -75,7 +75,7 @@ The new act clips require the V2 catalogue. See [behavior ownership](motion-arch
 
 ## Voice settings
 
-`voice-settings.json` overrides startup defaults after a save. The default agent effort is Low. The default agent model and effort come from `agent/src/config.rs`. Speech defaults select `Qwen/Qwen3-ASR-0.6B` and `piper-alba-medium`.
+`voice-settings.json` overrides startup defaults after a save. The default agent model and effort come from `agent/src/config.rs`. Speech defaults select `Qwen/Qwen3-ASR-0.6B` and `piper-alba-medium`.
 
 Changing `voice-stack.env` does not replace saved choices. Studio's Voice settings change those choices.
 
