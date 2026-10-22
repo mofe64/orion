@@ -1022,6 +1022,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             .is_ok_and(|value| value["ok"] == true)
     {
         rest.started();
+        manual_light.get_or_insert_with(LampProgram::default);
     }
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) {
         if value["ok"] == true {

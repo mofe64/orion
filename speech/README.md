@@ -8,6 +8,8 @@ The [release installer](../docs/quickstart.md) supplies Python 3.12, workers and
 
 Qwen receives an English transcription prefix. Its private HTTP endpoint uses a random loopback port and a process key. Linux terminates the server when its Python owner exits.
 
+Qwen transcribes each recording independently. Orion disables the server's prompt RAM cache. Completed requests reuse loaded model weights without retaining previous request states in that cache.
+
 Piper uses the Alba Medium British English voice. `ORION_PIPER_MODEL_DIR` selects its directory. The worker resamples output to mono 24 kHz PCM16 and sends chunks of at most two seconds.
 
 PCM16 represents each audio sample with a signed 16-bit integer. The [Alba model card](https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_GB/alba/medium/MODEL_CARD) gives its license.

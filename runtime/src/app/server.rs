@@ -310,7 +310,10 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     rest.set_mode(routines.mode(), 0.0);
     let mut next_sample = started_at;
     let mut speaking_light_intensity = 0.0;
-    let mut manual_light: Option<crate::lamp::LampProgram> = None;
+    let mut manual_light = character
+        .status()
+        .enabled
+        .then(crate::lamp::LampProgram::default);
     let mut light_mode = routines.mode();
     let mut camera_viewer = super::camera_viewer::CameraViewer::default();
     while !stopping.load(Ordering::Relaxed) {

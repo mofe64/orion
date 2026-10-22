@@ -156,6 +156,8 @@ The character rest coordinator performs descent and torque release together. Stu
 
 RGBW means red, green, blue and white channels. Each channel accepts an integer from 0 to 255. Pixel indices depend on the selected hardware profile.
 
+Automatic character startup selects steady lighting. Starting character mode from maintenance also selects steady lighting when no owner setting exists. Existing owner settings survive character restarts. Scenes, speech and rest can temporarily override owner lighting.
+
 `oriond` keeps the speaker open while it runs. Standalone `--play-cue` opens the speaker directly and requires the daemon to stop first.
 
 1. Set a low warm light level.

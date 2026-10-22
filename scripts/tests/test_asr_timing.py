@@ -106,7 +106,7 @@ class AsrTimingTests(unittest.TestCase):
         self.assertGreater(int(command[command.index("--port") + 1]), 0)
         self.assertEqual(len(command[command.index("--api-key") + 1]), 64)
         self.assertEqual(command[command.index("-t"):], [
-            "-t", "3", "-tb", "3", "-ngl", "0", "-c", "4096", "-np", "1",
+            "-t", "3", "-tb", "3", "-ngl", "0", "-c", "4096", "-np", "1", "--cache-ram", "0",
             "--no-warmup", "--log-disable"])
         self.assertEqual([call.args[0] for call in request.call_args_list],
                          ["/health", "/v1/chat/completions", "/v1/chat/completions"])

@@ -51,23 +51,38 @@ class DaemonTests(DaemonTestCase):
             self.assertEqual(request(path, 'status')['mode'], 'holding')
             self.assertTrue(request(path, 'disable')['ok'])
 
-    def test_lamp_status_exposes_manual_changes_and_character_clears_them(self):
-        with daemon() as path:
-            self.assertIsNone(request(path, 'lamp-status')['lamp'])
+    def test_lamp_status_exposes_owner_changes_and_character_preserves_them(self):
+        with daemon(following=True) as path:
+            self.assertFalse(request(path, 'lamp-status')['lamp']['on'])
             settings = {'brightness':0.35,'effect':'solid','colors':[[255,0,0,0]]}
             self.assertTrue(request(path, 'lamp-effect ' + json.dumps(settings))['ok'])
-            self.assertEqual(request(path, 'lamp-status')['lamp'],
-                             {'brightness':35,'effect':'solid','colors':[[255,0,0,0]]})
+            lamp = request(path, 'lamp-status')['lamp']
+            expected = {'brightness':35,'effect':'solid','colors':[[255,0,0,0]]}
+            self.assertEqual({key:lamp[key] for key in expected}, expected)
             self.assertTrue(request(path, 'configure')['ok'])
             self.assertTrue(request(path, 'enable')['ok'])
             self.assertTrue(request(path, 'character start')['ok'])
-            self.assertIsNone(request(path, 'lamp-status')['lamp'])
+            started = request(path, 'lamp-status')['lamp']
+            self.assertEqual({key:started[key] for key in expected}, expected)
+            self.assertEqual(started['revision'], lamp['revision'])
+            self.assertIsNone(started['takeover'])
 
     def test_default_startup_enables_character_and_stop_finishes(self):
         with daemon(automatic_character=True) as path:
             self.wait_for_character(path, 'home_idle', True)
             self.assertTrue(request(path, 'character stop')['ok'])
             self.wait_for_character(path, 'off', False)
+
+    def test_v2_automatic_startup_owns_the_steady_light(self):
+        with daemon(automatic_character=True, following=True, hardware='v2', gaze=False) as path:
+            lamp = request(path, 'lamp-status')['lamp']
+            self.assertTrue(lamp['on'])
+            self.assertEqual(lamp['effect'], 'solid')
+            self.assertIsNone(lamp['takeover'])
+            self.wait_for_character(path, 'home_idle', True)
+            settled = request(path, 'status')['lamp']
+            self.assertEqual(settled['effect'], 'solid')
+            self.assertIsNone(settled['takeover'])
 
 
 if __name__ == '__main__':

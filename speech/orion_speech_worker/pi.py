@@ -42,11 +42,14 @@ class QwenGgufTranscriber:
         threads = int(os.environ.get("ORION_ASR_THREADS", "3"))
         if not 1 <= threads <= 4:
             raise ValueError("ASR threads must be between one and four")
+        # The server's cross-request RAM cache defaults to 8 GiB and saves
+        # old prompts even when an individual request sets cache_prompt=False.
         self.process = subprocess.Popen([
             sys.executable, "-m", "orion_speech_worker.native", str(binary),
             "-m", str(weights), "--mmproj", str(projector), "--host", "127.0.0.1",
             "--port", str(port), "--api-key", self.key, "-t", str(threads), "-tb", str(threads),
-            "-ngl", "0", "-c", "4096", "-np", "1", "--no-warmup", "--log-disable",
+            "-ngl", "0", "-c", "4096", "-np", "1", "--cache-ram", "0",
+            "--no-warmup", "--log-disable",
         ], stdout=sys.stderr, stderr=sys.stderr)
         deadline = time.monotonic() + 120
         try:

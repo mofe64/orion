@@ -1,6 +1,8 @@
 import base64
 import io
 import os
+from pathlib import Path
+import tempfile
 import unittest
 import wave
 from unittest.mock import patch
@@ -9,6 +11,23 @@ from orion_speech_worker.pi import QwenGgufTranscriber
 
 
 class PiAsrTests(unittest.TestCase):
+    def test_native_server_disables_the_cross_request_ram_cache(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('model.gguf', 'mmproj.gguf', 'llama-server'):
+                (root / name).touch()
+            with patch.dict(os.environ, {'ORION_LLAMA_SERVER': str(root / 'llama-server')}), \
+                    patch('orion_speech_worker.pi.socket.socket') as socket_factory, \
+                    patch('orion_speech_worker.pi.subprocess.Popen') as start, \
+                    patch.object(QwenGgufTranscriber, 'request', return_value={'status': 'ok'}):
+                socket_factory.return_value.__enter__.return_value.getsockname.return_value = ('127.0.0.1', 12345)
+                start.return_value.poll.return_value = None
+                transcriber = QwenGgufTranscriber(root)
+                self.addCleanup(transcriber.close)
+                arguments = start.call_args.args[0]
+                self.assertIn('--cache-ram', arguments)
+                self.assertEqual(arguments[arguments.index('--cache-ram') + 1], '0')
+
     def transcribe(self, output):
         transcriber = object.__new__(QwenGgufTranscriber)
         requests = []

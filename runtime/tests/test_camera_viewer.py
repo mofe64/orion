@@ -10,7 +10,11 @@ class CameraViewerTests(DaemonTestCase):
             character = request(path, 'character status')
             self.ok(path, 'camera-viewer 3')
             self.assertFalse(request(path, 'camera-viewer 100')['ok'])
-            self.assertEqual(request(path, 'lamp-status'), lamp)
+            after_lamp = request(path, 'lamp-status')
+            elapsed = lamp['lamp'].pop('effect_elapsed_seconds')
+            after_elapsed = after_lamp['lamp'].pop('effect_elapsed_seconds')
+            self.assertGreaterEqual(after_elapsed, elapsed)
+            self.assertEqual(after_lamp, lamp)
             after = request(path, 'status')
             for field in ('mode', 'torque_enabled', 'motion'):
                 self.assertEqual(after[field], before[field])

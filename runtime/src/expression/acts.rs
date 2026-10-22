@@ -134,6 +134,9 @@ impl CharacterCoordinator {
             && !self.foreground_pending
             && self.foreground_scene_run_id.is_none()
             && self.speech_motion_run_id.is_none()
+            // Retire the previous idle before another run can replace its
+            // terminal result in the core's single last-motion slot.
+            && self.active_idle_run_id.is_none()
             && self.surroundings.reaction.is_none()
             && matches!(
                 self.status.state,
@@ -553,6 +556,43 @@ mod tests {
         character.mind.energy = 0.2;
         assert!(character.sleepy_idle(5., &core));
         assert!(!character.sleepy_idle(101., &core));
+    }
+
+    #[test]
+    fn posture_drift_cannot_lose_a_completed_idle_and_idles_resume_afterward() {
+        let (mut core, mut character) = fixture();
+        character.acts.allowed = true;
+        character.acts.settings.posture_drift = true;
+        character.acts.drift_at = f64::INFINITY;
+        character.next_micro_at = 0.;
+        character.next_large_at = f64::INFINITY;
+        character
+            .tick(0., &mut core, false, None, false, None, None)
+            .unwrap();
+        let idle = character.active_idle_run_id.unwrap();
+        // Make drift due during the idle, so its first opportunity is the
+        // tick on which the core publishes the idle's terminal result.
+        character.acts.drift_at = 0.;
+        let mut drift_started = false;
+        let mut drift_finished = false;
+        let mut resumed_idle = false;
+        for step in 1..=6000 {
+            let now = step as f64 * 0.02;
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            drift_started |= character.acts.drift.is_some();
+            drift_finished |= drift_started && character.acts.drift.is_none();
+            resumed_idle |=
+                drift_finished && character.active_idle_run_id.is_some_and(|run| run != idle);
+        }
+        assert!(drift_started && drift_finished);
+        assert!(
+            resumed_idle,
+            "ordinary idles must resume after posture drift"
+        );
+        assert_ne!(character.active_idle_run_id, Some(idle));
     }
     #[test]
     fn drift_never_turns_to_the_window_while_a_person_is_in_view() {

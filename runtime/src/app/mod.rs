@@ -1197,6 +1197,19 @@ mod tests {
         startup.ok("character start");
         assert_eq!(startup.manual.as_ref().unwrap().status()["brightness"], 20.);
     }
+
+    #[test]
+    fn character_start_installs_a_steady_owner_light_from_maintenance() {
+        let mut h = DispatchFixture::new(600.);
+        assert_eq!(h.command("lamp-status")["lamp"]["on"], false);
+        h.ok("character start");
+        let lamp = h.command("lamp-status")["lamp"].clone();
+        assert_eq!(lamp["on"], true);
+        assert_eq!(lamp["effect"], "solid");
+        assert!(lamp["takeover"].is_null());
+        let program = h.manual.as_ref().expect("startup needs an owner program");
+        assert_eq!(program.render(0.).unwrap(), program.render(1.).unwrap());
+    }
     #[test]
     fn owner_lamp_status_survives_scene_takeovers_and_updates_during_them() {
         let mut h = DispatchFixture::new(600.);
