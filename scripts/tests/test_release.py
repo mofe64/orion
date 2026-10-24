@@ -25,18 +25,33 @@ from pi_release_platform import TARGET_PLATFORM, builder_image, check_platform
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_wifi_fallback_without_existing_config_does_not_change_the_system(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(receiver.subprocess, 'run') as run:
+            receiver.update_wifi_fallback(Path('/release'), Path(folder) / 'wifi-fallback.env')
+        run.assert_not_called()
+
     def test_existing_wifi_fallback_gets_the_updated_helper_and_timer_without_enabling_it(self):
         for active in (False, True):
-            with tempfile.TemporaryDirectory() as folder:
+            with self.subTest(active=active), tempfile.TemporaryDirectory() as folder:
                 config = Path(folder) / 'wifi-fallback.env'
-                with patch.object(receiver, 'run') as run:
-                    receiver.update_wifi_fallback(Path('/release'), config)
-                    run.assert_not_called()
                 config.touch()
-                with patch.object(receiver, 'run', return_value=subprocess.CompletedProcess([], 0 if active else 3)) as run:
+                probe = ['systemctl', 'is-active', '--quiet', 'orion-wifi-fallback.timer']
+
+                def fake_run(command, *, check):
+                    if command == probe:
+                        self.assertFalse(check)
+                        return subprocess.CompletedProcess(command, 0 if active else 3)
+                    self.assertTrue(check)
+                    return subprocess.CompletedProcess(command, 0)
+
+                with patch.object(receiver.subprocess, 'run', side_effect=fake_run) as run:
                     receiver.update_wifi_fallback(Path('/release'), config)
-                commands = [call.args for call in run.call_args_list]
-                self.assertIn(('sudo', 'install', '-m', '0755', Path('/release/scripts/orion_wifi_fallback.py'), '/usr/local/sbin/orion-wifi-fallback'), commands)
+                run.assert_any_call(probe, check=False)
+                commands = [tuple(call.args[0]) for call in run.call_args_list]
+                self.assertIn(('sudo', 'install', '-m', '0755', '/release/scripts/orion_wifi_fallback.py', '/usr/local/sbin/orion-wifi-fallback'), commands)
+                for name in ('orion-wifi-fallback.service', 'orion-wifi-fallback.timer'):
+                    self.assertIn(('sudo', 'install', '-m', '0644', '/release/scripts/systemd/' + name + '.in', '/etc/systemd/system/' + name), commands)
+                self.assertIn(('sudo', 'systemctl', 'daemon-reload'), commands)
                 self.assertEqual(('sudo', 'systemctl', 'restart', 'orion-wifi-fallback.timer') in commands, active)
                 self.assertFalse(any('enable' in command for command in commands))
 

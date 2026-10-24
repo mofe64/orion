@@ -147,7 +147,7 @@ def update_wifi_fallback(release, config=Path('/etc/orion/wifi-fallback.env')):
     for name in ('orion-wifi-fallback.service', 'orion-wifi-fallback.timer'):
         run('sudo', 'install', '-m', '0644', release / 'scripts/systemd' / (name + '.in'), '/etc/systemd/system/' + name)
     run('sudo', 'systemctl', 'daemon-reload')
-    if run('systemctl', 'is-active', '--quiet', 'orion-wifi-fallback.timer', check=False).returncode == 0:
+    if subprocess.run(['systemctl', 'is-active', '--quiet', 'orion-wifi-fallback.timer'], check=False).returncode == 0:
         run('sudo', 'systemctl', 'restart', 'orion-wifi-fallback.timer')
 
 
