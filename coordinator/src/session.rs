@@ -9,13 +9,26 @@ pub(crate) fn valid_session(id: &str) -> bool {
 }
 pub(crate) fn after_wake(text: &str) -> Option<String> {
     static WAKE: OnceLock<Regex> = OnceLock::new();
-    // Qwen sometimes spells a spoken "Hey" as "Hay", "He", "Hei" or "Oi"; accept
-    // those spellings of the wake phrase, never other greetings.
-    WAKE.get_or_init(|| {
-        Regex::new(r"(?i)^\s*(?:hey|hay|he|hei|oi)[\s,.:;!?-]+orion\b[\s,.:;!?-]*(.*)$").unwrap()
+    let phrase = WAKE.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:heyorion|(?:hey|hay|he|hei|hi|a|oi)[\s\p{P}]+(?:orion|orien|o['’]ryan|oryan|o-rion|arion))\b").unwrap()
+    }).find(text)?;
+    // Count words before the match, rather than anchoring at the clip boundary.
+    // Both words of a spaced phrase must fit within the first eight words.
+    let words = text[..phrase.end()].split_whitespace().count();
+    (words <= 8).then(|| {
+        text[phrase.end()..]
+            .trim_start_matches(|c: char| c.is_whitespace() || ",.:;!?-".contains(c))
+            .trim()
+            .to_owned()
     })
-    .captures(text)
-    .map(|capture| capture[1].trim().to_owned())
+}
+
+pub(crate) fn useful_followup(text: &str) -> bool {
+    text.split_whitespace()
+        .filter(|word| word.chars().any(char::is_alphanumeric))
+        .count()
+        >= 2
+        && !after_wake(text).is_some_and(|command| command.is_empty())
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Phase {
@@ -30,6 +43,7 @@ pub(crate) struct Session {
     pub id: String,
     pub phase: Phase,
     pub wake_verified: bool,
+    pub continuation: bool,
     prefix_attempted: bool,
 }
 impl Session {
@@ -41,6 +55,7 @@ impl Session {
             id: id.into(),
             phase,
             wake_verified: false,
+            continuation: false,
             prefix_attempted: false,
         })
     }
@@ -65,7 +80,7 @@ impl Session {
         if self.id != id
             || self.phase != expected
             || size == 0
-            || size > 33 * 32000
+            || size > 18 * 32000
             || !size.is_multiple_of(2)
         {
             return Err("Stale, overlapping, or invalid Pi utterance".into());
@@ -83,20 +98,29 @@ impl Session {
 mod tests {
     use super::*;
     #[test]
-    fn wake_must_be_at_start_with_word_boundary() {
+    fn wake_is_found_in_the_first_eight_words_with_word_boundaries() {
         assert_eq!(after_wake(" Hey, Orion! Hello "), Some("Hello".into()));
         assert_eq!(after_wake("Hey Orion"), Some(String::new()));
-        for text in ["That is an onion", "I said Hey Orion", "Hey Orionized"] {
+        for text in [
+            "That is an onion",
+            "Hey Orionized",
+            "one two three four five six seven Hey Orion",
+        ] {
             assert_eq!(after_wake(text), None);
         }
     }
     #[test]
     fn wake_accepts_asr_spellings_of_hey_but_not_other_greetings() {
-        for text in ["He Orion", "Oi Orion.", "Hay, Orion", "Hei Orion"] {
+        for text in [
+            "He Orion",
+            "Oi Orion.",
+            "Hay, Orion",
+            "Hei Orion",
+            "Hi Orion",
+        ] {
             assert_eq!(after_wake(text), Some(String::new()), "{text}");
         }
         for text in [
-            "Hi Orion",
             "Hello Orion",
             "Okay Orion",
             "Here, Orion",
@@ -105,6 +129,27 @@ mod tests {
         ] {
             assert_eq!(after_wake(text), None, "{text}");
         }
+    }
+    #[test]
+    fn wake_phrase_examples_and_followup_filter() {
+        for (text, command) in [
+            ("Hey Orion, what time is it?", "what time is it?"),
+            ("OK so, hey Orion, lights on", "lights on"),
+            ("So. Hey Orion.", ""),
+            ("HeyOrion stop", "stop"),
+            ("Hay Orien what's up", "what's up"),
+            ("a O'Ryan, stop", "stop"),
+            ("hey o-rion stop", "stop"),
+        ] {
+            assert_eq!(after_wake(text).as_deref(), Some(command), "{text}");
+        }
+        for text in ["Orion is a constellation", "Hey Ryan", "hello there"] {
+            assert_eq!(after_wake(text), None);
+        }
+        for text in ["", "So.", "Orion.", "Hey Orion", "Hey Orion.", "HeyOrion"] {
+            assert!(!useful_followup(text), "{text}");
+        }
+        assert!(useful_followup("lights on"));
     }
     #[test]
     fn acoustic_verdict_replaces_prefix_once() {

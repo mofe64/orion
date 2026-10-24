@@ -206,7 +206,7 @@ impl Process {
         match job {
             Job::Info => Ok(Reply::Info(self.info.clone())),
             Job::Transcribe(pcm) => {
-                if pcm.is_empty() || pcm.len() > 33 * 32000 || !pcm.len().is_multiple_of(2) {
+                if pcm.is_empty() || pcm.len() > 18 * 32000 || !pcm.len().is_multiple_of(2) {
                     return Err("Invalid ASR PCM16".into());
                 }
                 self.send(

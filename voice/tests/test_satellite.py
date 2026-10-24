@@ -25,10 +25,8 @@ class ListenerDefaultsTests(unittest.TestCase):
         wheel_module = release / 'voice/.venv/lib/python3.12/site-packages/orion_voice/satellite.py'
         with patch.object(satellite, '__file__', str(wheel_module)):
             args = satellite.parse_args(shlex.split(command)[1:])
-        self.assertEqual(args.wake_model, release / 'voice/models/wake/hey_orion_reference.rpw')
-        # The ASR wake check confirms candidates; the acoustic verifier is off.
-        self.assertIsNone(args.verifier_dir)
-        self.assertTrue(args.wake_model.is_file())
+        self.assertEqual(args.wake_engine, 'openwakeword')
+        self.assertEqual(args.verifier_dir, release / 'voice/models/verifier')
 
     def test_standalone_listener_uses_reference_wake_profile(self):
         seen = []
@@ -172,10 +170,10 @@ class SatelliteTests(unittest.TestCase):
     def prefix(self):
         self.session.early_wake = True
         sid = self.trigger()
-        for _ in range(10):
+        for _ in range(15):
             result = self.session.accept_stereo(frame(2100))
         self.assertEqual(result[0]['purpose'], 'wake_prefix')
-        self.assertLessEqual(len(result[1]), int(2.2 * 32000))
+        self.assertLessEqual(len(result[1]), int(3.3 * 32000))
         return sid
 
     def test_prefix_verification_preserves_continuous_command_recording(self):
@@ -291,7 +289,7 @@ class SatelliteTests(unittest.TestCase):
             self.now += .02
             self.assertEqual(self.session.accept_stereo(frame(9000)), [])
         self.assertEqual(self.ready_window()[0]['type'], 'conversation.ready')
-        for _ in range(9):
+        for _ in range(20):
             self.now += .02
             events = self.session.accept_stereo(frame(2345))
         self.assertEqual(events[0]['type'], 'command.candidate')
@@ -333,7 +331,7 @@ class SatelliteTests(unittest.TestCase):
     def test_onset_before_window_deadline_reserves_the_whole_utterance(self):
         self.open_window(); self.ready_window()
         self.now = self.session.expires_at - .08
-        for _ in range(9):
+        for _ in range(20):
             self.now += .02
             events = self.session.accept_stereo(frame())
         self.assertEqual(events[0]['type'], 'command.candidate')

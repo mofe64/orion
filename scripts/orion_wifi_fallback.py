@@ -13,8 +13,8 @@ IDLE = {30, 120}
 
 
 def nmcli(*arguments):
-    # Bound even a wedged D-Bus client; two activations plus state reads fit 50s.
-    timeout = 21 if '--wait' in arguments else 2
+    # Bound a wedged D-Bus client; two activations plus state reads fit 60 s.
+    timeout = 21 if '--wait' in arguments else 5
     return subprocess.run(['nmcli', *arguments], capture_output=True, text=True,
                           timeout=timeout, env=dict(os.environ, LC_ALL='C'))
 
@@ -56,7 +56,7 @@ def recover(interface, home, hotspot, run=nmcli, log=print, attempt_file=None):
             result = run('--wait', '20', 'connection', 'up', 'uuid', home, 'ifname', interface)
         except subprocess.TimeoutExpired:
             # The client timing out does not establish that NM has stopped trying.
-            result = None
+            return 0
         if result is not None and result.returncode == 0:
             forget_attempt()
             log('Home Wi-Fi reconnected')
@@ -90,7 +90,9 @@ def main():
             raise ValueError('Home and hotspot profiles must differ')
         return recover(interface, home, hotspot,
                        attempt_file=Path('/run/orion-wifi-fallback/home-attempt'))
-    except (KeyError, ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+    except subprocess.TimeoutExpired:
+        return 0
+    except (KeyError, ValueError, RuntimeError, OSError) as error:
         print(f'orion-wifi-fallback: {error}', file=sys.stderr)
         return 1
 

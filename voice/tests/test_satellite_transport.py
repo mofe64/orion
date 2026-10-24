@@ -257,6 +257,22 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.01)
         self.fail(f'Missing {command}: {expressions}')
 
+    async def test_failed_runtime_confirmation_cancels_only_the_turn_and_keeps_the_socket(self):
+        client, identity, expressions = await self.acoustic_session({2: .9})
+        self.assertTrue(json.loads(await client.recv())['accepted'])
+        utterance = json.loads(await client.recv())
+        self.assertEqual(utterance['purpose'], 'wake_and_command')
+        await client.recv()
+        async def reject(command, path):
+            return {'ok': False} if command.endswith(' confirmed') else {'ok': True}
+        with patch('orion_voice.satellite.daemon_command', reject):
+            await client.send(json.dumps({'type':'wake.confirmed','sessionId':identity,'followup':False}))
+            cancelled = json.loads(await asyncio.wait_for(client.recv(), 2))
+        self.assertEqual(cancelled, {'type':'session.cancel', 'sessionId':identity})
+        await client.send(json.dumps({'type':'session.playing','sessionId':identity}))
+        pong = await client.ping()
+        await asyncio.wait_for(pong, 1)
+
     async def test_keepalives_are_forwarded_without_repeating_phase_transitions(self):
         directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
         token_file = Path(directory.name) / 'token'; token_file.write_text('a' * 32)
@@ -374,7 +390,7 @@ class ListenerTransportTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(client.recv(), .15)
         self.assertGreater(capture.frames, before)
         tail = [e for e in expressions if e.startswith(f'voice {sid} ')]
-        self.assertEqual(tail, [f'voice {sid} cancel'])
+        self.assertEqual(tail, [f'voice {sid} capture', f'voice {sid} cancel'])
 
     async def test_unmute_waits_until_microphone_startup_finishes(self):
         opening, finish = threading.Event(), threading.Event()

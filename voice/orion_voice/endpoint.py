@@ -49,7 +49,7 @@ class EndpointConfig:
     min_capture_ms: int = 1_200
     trailing_silence_ms: int = 1_000
     speech_confirmation_ms: int = 60
-    max_utterance_ms: int = 30_000
+    max_utterance_ms: int = 15_000
 
 
 class EnergyEndpointDetector:

@@ -11,6 +11,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+from avahi_config import configure_avahi
 
 NAME = 'orion-home-assistant'
 
@@ -100,6 +101,7 @@ def install(home, uid, gid, manifest, update=False, run=execute, which=shutil.wh
         os.chown(lock, uid, gid)
         fcntl.flock(guard, fcntl.LOCK_EX)
         ensure_docker(run, which)
+        configure_avahi(run)
         inspected = run('docker', 'container', 'inspect', NAME, capture_output=True, text=True, check=False)
         previous = json.loads(inspected.stdout)[0] if inspected.returncode == 0 else None
         if previous and (not update or previous['Config']['Image'] == image):

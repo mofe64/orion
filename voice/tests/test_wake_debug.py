@@ -14,12 +14,36 @@ import numpy as np
 
 from orion_voice.satellite import SatelliteSession
 from orion_voice.verifier import Verdict
-from orion_voice.wake_debug import CaptureReadStats, WakeDebugRecorder
+from orion_voice.wake_debug import CaptureReadStats, WakeDebugRecorder, WakePrefixClips
 from test_satellite import Wake, frame
 from test_verifier import verifier
 
 
 class WakeDebugTests(unittest.TestCase):
+    def test_prefix_clips_stay_off_by_default_and_worker_enforces_both_limits(self):
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertIsNone(WakePrefixClips.from_environment())
+        with tempfile.TemporaryDirectory() as root:
+            writer = WakePrefixClips(root)
+            writer.max_files = 4
+            writer.max_bytes = 3000
+            try:
+                for i in range(8):
+                    writer.submit(f'{i:032x}', b'\0' * 640, i % 2 == 0, 12.5)
+                    writer._queue.join()
+            finally:
+                writer.close()
+            files = list(Path(root).iterdir())
+            self.assertLessEqual(len(files), 4)
+            self.assertLessEqual(sum(p.stat().st_size for p in files), 3000)
+            entries = [json.loads(line) for line in (Path(root) / 'clips.jsonl').read_text().splitlines()]
+            self.assertEqual(len(entries), len(files)-1)
+            self.assertEqual(entries[-1]['session_id'], f'{7:032x}')
+            self.assertFalse(entries[-1]['accepted'])
+            self.assertNotIn('text', entries[-1])
+            with wave.open(str(Path(root) / entries[-1]['file'])) as audio:
+                self.assertEqual((audio.getnchannels(), audio.getsampwidth(), audio.getframerate()), (1,2,16000))
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

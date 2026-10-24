@@ -13,7 +13,7 @@ Environment=PYTHONUNBUFFERED=1
 UMask=0077
 ExecStart=@PROJECT_ROOT@/orion_studio/.venv/bin/python @PROJECT_ROOT@/scripts/spotify_connect.py --binary @PROJECT_ROOT@/native/librespot
 Restart=always
-RestartSec=2
+RestartSec=15
 TimeoutStopSec=10
 NoNewPrivileges=true
 ProtectSystem=full

@@ -27,7 +27,9 @@ Run these steps from the repository root. The generator uses Python's standard l
 
 2. Rebuild the runtime after changing embedded alarm audio.
 
-The cue vocabulary includes `notice_warm`, `acknowledge_warm`, `curious_rise`, `agree_soft`, `delight_warm`, `settle_soft` and `error_muted`. `voice_wake` and `voice_processing` provide voice-entry feedback. `VOICE_CUE_GAIN` controls their generator level.
+The cue vocabulary includes `notice_warm`, `acknowledge_warm`, `curious_rise`, `agree_soft`, `delight_warm`, `settle_soft` and `error_muted`.
+`voice_wake` uses rising 880 Hz and 1320 Hz notes at a -12 dBFS peak.
+`voice_processing` uses a 660 Hz note at a -18 dBFS peak.
 
 `wake_chirp`, `sleep_sigh` and `yawn_hum` accompany rare character acts at their motion markers.
 These sounds use a lower generator gain than `voice_wake`. `act_sounds` controls these sounds.
@@ -35,7 +37,9 @@ See [character behaviors](../docs/configuration.md#character-behaviors) for swit
 
 ## Alarm audio
 
-`audio/alarms/` contains MP3 sources and embedded PCM files. The runtime offers Two-tone, Club alarm and Funny alarm. Studio stores separate alarm and timer choices.
+`audio/alarms/` contains MP3 sources and embedded PCM files. The runtime offers Soft chime, Two-tone, Club alarm and Funny alarm.
+Soft chime is the default. It repeats three notes with a listening pause and increases volume over 30 seconds.
+Studio stores separate alarm and timer choices.
 
 The PCM format is mono, 24 kHz, signed 16-bit little-endian audio. Playback does not require ffmpeg. Regeneration requires ffmpeg.
 

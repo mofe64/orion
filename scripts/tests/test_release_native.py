@@ -13,6 +13,13 @@ import release_build
 
 
 class NativeBindingTests(unittest.TestCase):
+    def test_local_shared_checks_do_not_build_release_payloads(self):
+        with patch.object(release_build, 'run') as run, patch.object(release_build.shutil, 'rmtree') as remove:
+            release_build.shared(check_only=True)
+        commands = [call.args for call in run.call_args_list]
+        self.assertTrue(any(command[:2] == ('cargo', 'test') for command in commands))
+        self.assertFalse(any('--release' in command or 'wheel' in command for command in commands))
+        remove.assert_not_called()
     def test_llama_cmake_targets_pi5_without_runner_native_instructions(self):
         calls = [node for node in ast.walk(ast.parse(inspect.getsource(release_build.shared)))
                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'run']

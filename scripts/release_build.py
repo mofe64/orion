@@ -108,7 +108,36 @@ def native(codename):
     (out / 'abi.json').write_text(json.dumps(pins, indent=2) + '\n')
 
 
-def shared():
+def shared(*, check_only=False):
+    if check_only:
+        # Local validation uses existing environments and debug binaries. It
+        # never creates a release, installs wheels, or changes build symlinks.
+        root = Path(__file__).resolve().parents[1]
+        checks = []
+        for component in ('history', 'agent', 'coordinator', *BINARY_COMPONENTS):
+            checks.append(('cargo', 'test', '--locked', '--manifest-path', root / component / 'Cargo.toml', '--', '--include-ignored'))
+        checks.append(('cargo', 'build', '--locked', '--manifest-path', root / 'runtime/Cargo.toml'))
+        for component in COMPONENTS:
+            python = root / component / '.venv/bin/python'
+            if component == 'motion':
+                checks.append((python, '-m', 'pytest', root / component / 'test', '-q'))
+            else:
+                checks.append((python, '-m', 'unittest', 'discover', '-s', root / component / 'tests'))
+        python = root / '.venv/bin/python'
+        checks.extend(((python, '-m', 'unittest', 'discover', '-s', root / 'runtime/tests'),
+                       (python, '-m', 'unittest', 'discover', '-s', root / 'scripts/tests'),
+                       (python, '-m', 'pytest', root / 'tests', '-q'),
+                       ('pnpm', '--dir', root / 'orion_studio', 'test'),
+                       ('pnpm', '--dir', root / 'orion_studio', 'typecheck')))
+        failures = []
+        for command in checks:
+            try:
+                run(*command, cwd=root)
+            except subprocess.CalledProcessError:
+                failures.append(' '.join(map(str, command)))
+        if failures:
+            raise RuntimeError('Shared checks failed:\n' + '\n'.join(failures))
+        return
     payload = OUT / 'payload'
     if payload.exists(): shutil.rmtree(payload)
     release = payload / 'release'

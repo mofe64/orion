@@ -1,5 +1,6 @@
 """Install verified release files with offline venvs and the existing rollback transaction."""
 import argparse
+from avahi_config import configure_avahi
 import json
 import os
 from pathlib import Path
@@ -139,6 +140,17 @@ def configure_hailo(present, boot=Path('/boot/firmware/config.txt')):
 JOURNAL_SETTINGS = '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n'
 
 
+def update_wifi_fallback(release, config=Path('/etc/orion/wifi-fallback.env')):
+    if not config.is_file():
+        return
+    run('sudo', 'install', '-m', '0755', release / 'scripts/orion_wifi_fallback.py', '/usr/local/sbin/orion-wifi-fallback')
+    for name in ('orion-wifi-fallback.service', 'orion-wifi-fallback.timer'):
+        run('sudo', 'install', '-m', '0644', release / 'scripts/systemd' / (name + '.in'), '/etc/systemd/system/' + name)
+    run('sudo', 'systemctl', 'daemon-reload')
+    if run('systemctl', 'is-active', '--quiet', 'orion-wifi-fallback.timer', check=False).returncode == 0:
+        run('sudo', 'systemctl', 'restart', 'orion-wifi-fallback.timer')
+
+
 def configure_journal(path=Path('/etc/systemd/journald.conf.d/orion.conf')):
     # Raspberry Pi OS keeps logs in memory, so a power cut loses the log of what went wrong.
     if path.exists() and path.read_text() == JOURNAL_SETTINGS:
@@ -182,6 +194,7 @@ def install(payload, root, codename):
         install_system_packages(root, codename, present, pins)
         configure_hailo(present)
         configure_journal()
+        configure_avahi(run, prefix=('sudo',))
         prepare_hailo_models(root, present, run)
         installed = root / 'installation.json'
         active = json.loads(installed.read_text()) if installed.exists() else {}
@@ -202,6 +215,7 @@ def install(payload, root, codename):
         prepare_python(payload / 'python')
         uv = payload / 'bin/uv'
         prepare_environments(release, payload / 'wheels', uv, codename, present)
+        update_wifi_fallback(release)
         prepare_assets(root)
         prepare_vision_models(root, release)
         # Kernel modules depend on the Pi's running kernel, so DKMS handles

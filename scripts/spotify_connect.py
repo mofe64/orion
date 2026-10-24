@@ -65,6 +65,9 @@ def main():
 
 def forward_pcm(process, path, settings_file, settings):
     output, retry_at, backoff = None, 0., 0.1
+    position = 0
+    pending = b""
+    align = 0
     try:
         while process.poll() is None:
             if output is None and time.monotonic() >= retry_at:
@@ -74,6 +77,8 @@ def forward_pcm(process, path, settings_file, settings):
                 try:
                     candidate.connect(str(path))
                     output, backoff = candidate, 0.1
+                    pending = b""
+                    align = (-position) % 4
                 except OSError:
                     candidate.close()
                     retry_at = time.monotonic() + backoff
@@ -82,13 +87,22 @@ def forward_pcm(process, path, settings_file, settings):
             if ready:
                 data = process.stdout.read1(4096)
                 if not data: break
+                position += len(data)
                 # Drain PCM during an outage so Connect remains responsive and
                 # reconnect starts with current audio rather than an old song.
                 if output is not None:
-                    try: output.sendall(data)
+                    skip = min(align, len(data))
+                    align -= skip
+                    pending += data[skip:]
+                    whole = len(pending) // 4 * 4
+                    frame_data, pending = pending[:whole], pending[whole:]
+                    try:
+                        if frame_data:
+                            output.sendall(frame_data)
                     except OSError:
                         output.close()
                         output = None
+                        pending = b""
                         retry_at = time.monotonic() + backoff
                         backoff = min(backoff * 2, 2.)
             if read_settings(settings_file).get('connect_revision') != settings.get('connect_revision'):

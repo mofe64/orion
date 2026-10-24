@@ -39,7 +39,7 @@ pub(super) struct Mixer {
     active: Arc<AtomicU64>,
     next_id: u64,
     pcm: Option<mpsc::SyncSender<Vec<u8>>>,
-    duck: Arc<AtomicBool>,
+    duck: Arc<AtomicU8>,
     music: Arc<AtomicBool>,
     error: Arc<Mutex<Option<String>>>,
     worker: Option<JoinHandle<()>>,
@@ -67,7 +67,7 @@ impl Mixer {
         let worker_stopping = Arc::clone(&stopping);
         let (sender, receiver) = mpsc::channel();
         let active = Arc::new(AtomicU64::new(0));
-        let duck = Arc::new(AtomicBool::new(false));
+        let duck = Arc::new(AtomicU8::new(100));
         let music = Arc::new(AtomicBool::new(false));
         let error = Arc::new(Mutex::new(None));
         let pulse = Arc::new(Mutex::new(MusicPulse::default()));
@@ -206,8 +206,13 @@ impl Mixer {
     pub fn pulse(&self) -> Option<MusicPulse> {
         self.pulse.try_lock().ok().map(|pulse| *pulse)
     }
+    #[cfg(test)]
     pub fn duck(&self, value: bool) {
-        self.duck.store(value, Ordering::Relaxed);
+        self.duck_to(if value { 0.25 } else { 1. });
+    }
+    pub fn duck_to(&self, gain: f64) {
+        self.duck
+            .store((gain.clamp(0., 1.) * 100.).round() as u8, Ordering::Relaxed);
     }
     pub fn update(&mut self) -> crate::Result<()> {
         self.loaders.retain(|worker| !worker.is_finished());
@@ -499,9 +504,8 @@ fn read_wav(path: &Path) -> std::io::Result<Vec<Frame>> {
         .collect())
 }
 
-fn duck_gain(gain: f64, duck: bool) -> f64 {
-    let target = if duck { 0.25 } else { 1. };
-    let seconds = if duck { 0.04 } else { 0.4 };
+fn duck_gain(gain: f64, target: f64) -> f64 {
+    let seconds = if target < gain { 0.04 } else { 0.4 };
     target + (gain - target) * (-1. / (f64::from(RATE) * seconds)).exp()
 }
 
@@ -512,7 +516,7 @@ fn run(
     foreground: &mut Option<Foreground>,
     volume: &AtomicU8,
     active: &AtomicU64,
-    duck: &AtomicBool,
+    duck: &AtomicU8,
     music: &AtomicBool,
     pulse: &Mutex<MusicPulse>,
 ) -> std::io::Result<()> {
@@ -551,6 +555,7 @@ fn run(
             match listener.accept() {
                 Ok((stream, _)) => {
                     stream.set_nonblocking(true)?;
+                    pending.clear();
                     connection = Some(stream);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -562,6 +567,7 @@ fn run(
                 let mut buffer = [0; 4096];
                 match stream.read(&mut buffer) {
                     Ok(0) => {
+                        pending.clear();
                         connection = None;
                         break;
                     }
@@ -581,6 +587,7 @@ fn run(
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                     Err(_) => {
+                        pending.clear();
                         connection = None;
                         break;
                     }
@@ -589,7 +596,8 @@ fn run(
         }
         let target = f64::from(volume.load(Ordering::Relaxed)) / 100.;
         let alarm_target = target.max(0.25);
-        let should_duck = duck.load(Ordering::Relaxed) || foreground.is_some();
+        let duck_target = (f64::from(duck.load(Ordering::Relaxed)) / 100.)
+            .min(if foreground.is_some() { 0.25 } else { 1. });
         let streaming = resampler.input.len() >= 2;
         let song: [Frame; FRAMES] =
             std::array::from_fn(|_| resampler.take(44_100).unwrap_or([0.; 2]));
@@ -608,7 +616,7 @@ fn run(
             let progress = (index + 1) as f64 / FRAMES as f64;
             let master_gain = master + (target - master) * progress;
             let alarm_gain = alarm + (alarm_target - alarm) * progress;
-            ducking = duck_gain(ducking, should_duck);
+            ducking = duck_gain(ducking, duck_target);
             let song = song[index];
             audible_music |= song.iter().any(|sample| sample.abs() > 0.0001);
             let voice = foreground
@@ -654,6 +662,63 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reconnect_discards_partial_stereo_frames_at_every_byte_offset() {
+        let directory = tempfile::tempdir().unwrap();
+        let player = directory.path().join("player");
+        let pcm = directory.path().join("player.pcm");
+        fs::write(&player, "#!/bin/sh\nexec cat > \"$0.pcm\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = directory.path().join("music.sock");
+        let mixer = Mixer::open(
+            &player,
+            "test",
+            socket.clone(),
+            Arc::new(AtomicU8::new(100)),
+        )
+        .unwrap();
+        let wait = |condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !condition() {
+                assert!(Instant::now() < deadline, "music did not reach the speaker");
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&|| pcm.is_file());
+        for offset in 0..4 {
+            let before = fs::metadata(&pcm).unwrap().len() as usize;
+            let mut old = UnixStream::connect(&socket).unwrap();
+            old.write_all(&[0x7f; 3][..offset]).unwrap();
+            drop(old);
+            thread::sleep(Duration::from_millis(40));
+            let mut current = UnixStream::connect(&socket).unwrap();
+            let original = [1000_i16.to_le_bytes(), (-2000_i16).to_le_bytes()].concat();
+            current.write_all(&original.repeat(4410)).unwrap();
+            wait(&|| {
+                fs::read(&pcm).unwrap()[before..]
+                    .chunks_exact(4)
+                    .filter(|frame| *frame != [0, 0, 0, 0])
+                    .count()
+                    >= 960
+            });
+            let output = fs::read(&pcm).unwrap();
+            for frame in output[before..]
+                .chunks_exact(4)
+                .filter(|frame| *frame != [0, 0, 0, 0])
+            {
+                let left = i16::from_le_bytes([frame[0], frame[1]]);
+                let right = i16::from_le_bytes([frame[2], frame[3]]);
+                assert!(
+                    (left - 1000).abs() <= 1 && (right + 2000).abs() <= 1,
+                    "offset {offset}: {left}, {right}"
+                );
+            }
+            drop(current);
+            thread::sleep(Duration::from_millis(150));
+        }
+        drop(mixer);
+    }
+
     #[test]
     fn one_speaker_mixes_music_speech_and_alarm_and_keeps_music_during_stop() {
         let directory = tempfile::tempdir().unwrap();
@@ -844,14 +909,14 @@ mod tests {
         let mut gain = 1.;
         let mut last = gain;
         for _ in 0..RATE / 2 {
-            gain = duck_gain(gain, true);
+            gain = duck_gain(gain, 0.25);
             assert!(gain <= last && gain >= 0.25);
             assert!((gain - last).abs() < 0.001);
             last = gain;
         }
         assert!((gain - 0.25).abs() < 0.001);
         for _ in 0..RATE * 3 {
-            gain = duck_gain(gain, false);
+            gain = duck_gain(gain, 1.);
             assert!(gain >= last && gain <= 1.);
             last = gain;
         }

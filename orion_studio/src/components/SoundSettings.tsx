@@ -26,7 +26,7 @@ export function SoundSettings({ embedded = false, connected, routines, onSound, 
 
   const Heading = embedded ? "h3" : "h2";
   return <section className={embedded ? "settings-sounds" : "settings-card"} aria-labelledby="sound-settings-title">
-    <header>{!embedded && <AudioLines size={20} />}<div><Heading id="sound-settings-title">Alert sounds</Heading><p className="settings-help">Choose how Orion gets your attention.</p></div></header>
+    <header>{!embedded && <AudioLines size={20} />}<div><Heading id="sound-settings-title">Alert sounds</Heading><p className="settings-help">Choose how Orion gets your attention. The default soft chime grows gently louder.</p></div></header>
     {(["alarm", "timer"] as const).map(kind => <label key={kind}>{kind === "alarm" ? "Alarm sound" : "Timer sound"}
       <select value={routines?.sounds?.[kind] ?? ""} disabled={!available || busy} onChange={event => void save(() => onSound(kind, event.target.value), `${kind === "alarm" ? "Alarm" : "Timer"} sound saved on Orion.`)}>
         {!available && <option value="">Unavailable</option>}

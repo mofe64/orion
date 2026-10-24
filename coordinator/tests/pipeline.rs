@@ -623,7 +623,7 @@ async fn acoustic_rejection_clears_session_before_next_wake() {
 }
 
 #[tokio::test]
-async fn uncertain_prefix_falls_back_to_full_wake_confirmation() {
+async fn rejected_prefix_cancels_immediately_and_next_wake_uses_the_same_connection() {
     let mut h = Harness::new().await;
     send(
         &mut h.pi,
@@ -631,8 +631,16 @@ async fn uncertain_prefix_falls_back_to_full_wake_confirmation() {
     )
     .await;
     h.utterance(SID, "wake_prefix", "Hey Ryan").await;
-    assert_eq!(until(&mut h.pi, "wake.verified").await["accepted"], false);
-    h.utterance(SID, "wake_and_command", "Hey Orion, complete request")
+    assert_eq!(until(&mut h.pi, "session.cancel").await["sessionId"], SID);
+    until(&mut h.observer, "wake.rejected").await;
+    send(
+        &mut h.pi,
+        json!({"type":"wake.candidate","sessionId":NEXT,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    h.utterance(NEXT, "wake_prefix", "OK so, Hey Orion").await;
+    until(&mut h.pi, "wake.verified").await;
+    h.utterance(NEXT, "wake_and_command", "complete request")
         .await;
     until(&mut h.pi, "session.finish").await;
     assert_eq!(
@@ -643,7 +651,7 @@ async fn uncertain_prefix_falls_back_to_full_wake_confirmation() {
 }
 
 #[tokio::test]
-async fn rejected_full_recording_never_executes_even_after_prefix_confirmation() {
+async fn accepted_prefix_cannot_be_rejected_by_full_recording() {
     let mut h = Harness::new().await;
     send(
         &mut h.pi,
@@ -652,12 +660,64 @@ async fn rejected_full_recording_never_executes_even_after_prefix_confirmation()
     .await;
     h.utterance(SID, "wake_prefix", "Hey Orion").await;
     until(&mut h.pi, "wake.verified").await;
-    h.utterance(SID, "wake_and_command", "background television")
-        .await;
-    until(&mut h.pi, "session.reject").await;
-    until(&mut h.observer, "wake.rejected").await;
-    assert!(h.gateway.lock().await.uploads.is_empty());
+    h.utterance(SID, "wake_and_command", "stop talking").await;
+    until(&mut h.pi, "session.finish").await;
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: stop talking"
+    );
     h.stop().await;
+}
+
+#[tokio::test]
+async fn stale_turn_events_cancel_the_turn_and_leave_the_connection_usable() {
+    for message in [
+        json!({"type":"conversation.ready","sessionId":NEXT}),
+        json!({"type":"session.expired","sessionId":NEXT}),
+        json!({"type":"wake.candidate","sessionId":NEXT,"name":"hey_orion","score":0.8}),
+        json!({"type":"command.candidate","sessionId":NEXT,"previousSessionId":SID}),
+        json!({"type":"session.cancel","sessionId":SID}),
+    ] {
+        let mut h = Harness::new().await;
+        send(
+            &mut h.pi,
+            json!({"type":"wake.candidate","sessionId":SID,"name":"hey_orion","score":0.8}),
+        )
+        .await;
+        until(&mut h.observer, "wake.candidate").await;
+        send(&mut h.pi, message).await;
+        until(&mut h.pi, "session.cancel").await;
+        h.wake("Hey Orion, still connected").await;
+        until(&mut h.pi, "session.finish").await;
+        assert_eq!(
+            until(&mut h.observer, "agent.response").await["text"],
+            "Reply 1: still connected"
+        );
+        h.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn fragment_followups_close_quietly_without_agent_calls() {
+    for text in ["", "So.", "Orion.", "Hey Orion"] {
+        let mut h = Harness::new().await;
+        h.wake("Hey Orion, hello").await;
+        until(&mut h.pi, "session.finish").await;
+        until(&mut h.observer, "speech.completed").await;
+        send(
+            &mut h.pi,
+            json!({"type":"command.candidate","sessionId":NEXT,"previousSessionId":SID}),
+        )
+        .await;
+        h.utterance(NEXT, "command", text).await;
+        until(&mut h.pi, "session.cancel").await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), h.pi.next())
+                .await
+                .is_err()
+        );
+        h.stop().await;
+    }
 }
 
 #[tokio::test]
@@ -1042,7 +1102,7 @@ async fn alarm_interrupt_retires_playback_and_accepts_a_later_wake() {
 }
 
 #[tokio::test]
-async fn barge_in_outside_responding_preserves_the_pi_connection_and_session() {
+async fn barge_in_during_capture_retires_the_old_turn_and_checks_a_new_prefix() {
     let mut h = Harness::new().await;
     send(
         &mut h.pi,
@@ -1050,30 +1110,25 @@ async fn barge_in_outside_responding_preserves_the_pi_connection_and_session() {
     )
     .await;
     until(&mut h.observer, "wake.candidate").await;
-    // A late interruption during wake capture must leave the session usable.
     send(
         &mut h.pi,
         json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
     )
     .await;
-    h.utterance(SID, "wake_and_command", "Hey Orion").await;
-    let confirmed = until(&mut h.pi, "wake.confirmed").await;
-    assert_eq!(confirmed["sessionId"], SID);
-    assert_eq!(confirmed["followup"], true);
-    until(&mut h.observer, "command.started").await;
-    // The same rule applies while capturing the command after a bare wake.
     send(
         &mut h.pi,
-        json!({"type":"session.interrupted","sessionId":SID,"reason":"barge_in"}),
+        json!({"type":"wake.candidate","sessionId":NEXT,"name":"hey_orion","score":0.8}),
     )
     .await;
-    h.utterance(SID, "command", "hello after ignored interruption")
+    h.utterance(NEXT, "wake_prefix", "Hey Orion").await;
+    until(&mut h.pi, "wake.verified").await;
+    h.utterance(NEXT, "wake_and_command", "Hey Orion, stop")
         .await;
-    let answer = until(&mut h.observer, "agent.response").await;
-    assert_eq!(answer["sessionId"], SID);
-    assert_eq!(answer["text"], "Reply 1: hello after ignored interruption");
-    assert_eq!(until(&mut h.pi, "session.finish").await["sessionId"], SID);
-    assert!(h.gateway.lock().await.cancellations.is_empty());
+    assert_eq!(until(&mut h.pi, "session.finish").await["sessionId"], NEXT);
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: stop"
+    );
     h.stop().await;
 }
 

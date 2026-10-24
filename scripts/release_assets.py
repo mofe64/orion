@@ -130,6 +130,10 @@ def select_pack(app, destination, version=None):
         raise ValueError('Use --version assets-vX.Y.Z')
     candidates = [r for r in releases() if re.fullmatch(r'assets-v[0-9]+\.[0-9]+\.[0-9]+', r['tag_name'])
                   and (version is None or r['tag_name'] == version)]
+    minimum = app / 'ASSETS_VERSION'
+    if version is None and minimum.is_file():
+        wanted = tuple(map(int, minimum.read_text().strip().split('.')))
+        candidates = [r for r in candidates if tuple(map(int, r['tag_name'][8:].split('.'))) >= wanted]
     candidates.sort(key=lambda r: tuple(map(int, r['tag_name'][8:].split('.'))), reverse=True)
     for release in candidates:
         name = f'orion-assets-{release["tag_name"][8:]}.tar.gz'
@@ -154,7 +158,7 @@ def prepare_catalog(app, destination, first_install=False, version=None):
     destination.mkdir(parents=True, exist_ok=True)
     selected = select_pack(app, destination, version)
     if selected is not None: return selected
-    if first_install and (app / 'default-assets.tar.gz').is_file():
+    if version is None and (app / 'default-assets.tar.gz').is_file():
         unpack_verified(app / 'default-assets.tar.gz', destination)
         verify_pack(destination, app)
         return destination

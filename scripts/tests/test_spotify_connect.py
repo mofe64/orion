@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import struct
 import unittest
 from unittest.mock import patch, Mock
 
@@ -13,6 +14,39 @@ from pi_service_config import services_for_release
 
 
 class SpotifyConnectTests(unittest.TestCase):
+    def test_reconnect_at_every_source_offset_preserves_stereo_sample_boundaries(self):
+        original = b''.join(struct.pack('<hh', i, -i) for i in range(1, 30))
+        for offset in range(4):
+            for partial_send in range(4):
+                with self.subTest(offset=offset, partial_send=partial_send):
+                    # The failed connection can consume any prefix before sendall
+                    # raises. Outage reads end at each possible source alignment.
+                    chunks = [original[:8], original[8:12+offset], original[12+offset:19],
+                              original[19:23], original[23:]]
+                    process = Mock()
+                    process.poll.side_effect = [None] * len(chunks) + [0]
+                    process.stdout.read1.side_effect = chunks
+                    first, second = Mock(), Mock()
+                    discarded = bytearray()
+                    def fail(data):
+                        discarded.extend(data[:partial_send])
+                        raise OSError('disconnected part way through sendall')
+                    first.sendall.side_effect = fail
+                    # First connect, then failure schedules retry at 1.1 s;
+                    # the second read is discarded before reconnecting at 2 s.
+                    with patch('spotify_connect.socket.socket', side_effect=[first, second]), \
+                         patch('spotify_connect.select.select', return_value=([process.stdout], [], [])), \
+                         patch('spotify_connect.time.monotonic', side_effect=[0., 1., 1.05, 2.]), \
+                         patch('spotify_connect.read_settings', return_value={}):
+                        forward_pcm(process, Path('/music.sock'), Path('/settings'), {})
+                    actual = b''.join(call.args[0] for call in second.sendall.call_args_list)
+                    boundary = (12 + offset + 3) // 4 * 4
+                    self.assertEqual(actual, original[boundary:])
+                    self.assertEqual(list(struct.iter_unpack('<hh', actual)), list(struct.iter_unpack('<hh', original[boundary:])))
+                    for call in second.sendall.call_args_list:
+                        self.assertEqual(len(call.args[0]) % 4, 0)
+                    first.close.assert_called_once()
+
     def test_pcm_bridge_reconnects_after_a_stall_without_stopping_librespot(self):
         process=Mock();process.poll.side_effect=[None,None,None,None,0]
         process.stdout.read1.side_effect=[b'old',b'during-outage',b'new',b'last']

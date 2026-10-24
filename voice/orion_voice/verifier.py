@@ -17,6 +17,8 @@ import time
 
 import numpy as np
 
+from .rustpotter import WakeDetection
+
 RATE = 16_000
 CHUNK = 1_280  # 80 ms, one embedding frame
 MEL_CONTEXT = 480  # samples of overlap before each chunk
@@ -90,6 +92,35 @@ class StreamingScorer:
             score = float(self._classifier.run(None, {self._classifier_input: features})[0].reshape(-1)[0])
             scores.append((self.samples, score, self.frames > self.warmup_frames))
         return scores
+
+
+class OpenWakeWordDetector:
+    """One continuous scorer; suppression uses captured time, including busy phases."""
+
+    provider = "openwakeword"
+
+    def __init__(self, model_dir: Path, *, scorer=None):
+        config = json.loads((model_dir / "config.json").read_text())
+        self.model_name = "hey_orion_verifier.onnx"
+        self.threshold = float(config["threshold"])
+        if not 0 < self.threshold <= 1:
+            raise RuntimeError("Invalid openWakeWord threshold")
+        self.scorer = scorer or StreamingScorer(model_dir, int(config["warmup_frames"]), config["files"])
+        self._hold_until = 0
+
+    def process(self, pcm: bytes) -> WakeDetection | None:
+        if len(pcm) != 640:
+            raise ValueError("Wake detection requires one 20 ms PCM16 frame")
+        detection = None
+        for end, score, eligible in self.scorer.feed(np.frombuffer(pcm, dtype="<i2")):
+            if eligible and end >= self._hold_until and score >= self.threshold:
+                self._hold_until = end + 2 * RATE
+                detection = WakeDetection("Hey Orion", score)
+        return detection
+
+    def reset(self):
+        self.scorer.reset()
+        self._hold_until = 0
 
 
 class AcousticVerifier:

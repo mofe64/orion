@@ -14,7 +14,7 @@ SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH_BYTES = 2
 PEAK = 0.32
-VOICE_CUE_GAIN = {"voice_wake": 0.12, "voice_processing": 0.08,
+VOICE_CUE_GAIN = {"voice_wake": 1.0, "voice_processing": 1.0,
                   "wake_chirp": 0.07, "sleep_sigh": 0.05, "yawn_hum": 0.04}
 
 
@@ -72,14 +72,20 @@ def main() -> None:
         "settle_soft": [(659.255, 0.15), (523.251, 0.27)],
         "error_muted": [(392.000, 0.17), (349.228, 0.25)],
     }
-    cues.update({"voice_wake": [(220.0, 0.20)], "voice_processing": [(180.0, 0.18)]})
+    cues.update({"voice_wake": [(880.0, 0.09), (1320.0, 0.12)], "voice_processing": [(660.0, 0.12)]})
     cues.update({"wake_chirp": [(220.0, 0.15), (330.0, 0.16)],
                  "sleep_sigh": [(220.0, 0.22), (140.0, 0.32)],
                  "yawn_hum": [(130.0, 0.20), (170.0, 0.30), (130.0, 0.30)]})
     directory = Path(__file__).resolve().parent / "cues"
     for name, notes in cues.items():
         output = directory / f"{name}.wav"
-        write_stereo_wav(output, [round(sample * VOICE_CUE_GAIN.get(name, 1.0)) for sample in phrase(notes)])
+        samples = phrase(notes, gap=0.015 if name == "voice_wake" else 0.018)
+        if name in {"voice_wake", "voice_processing"}:
+            peak = 10 ** ((-12 if name == "voice_wake" else -18) / 20) * 32767
+            scale = peak / max(abs(sample) for sample in samples)
+        else:
+            scale = VOICE_CUE_GAIN.get(name, 1.0)
+        write_stereo_wav(output, [round(sample * scale) for sample in samples])
         print(f"Generated {output}")
 
 

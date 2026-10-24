@@ -29,6 +29,9 @@ impl VoiceFeedback {
     pub fn session_active(&self) -> bool {
         self.session.is_some()
     }
+    pub fn capturing(&self) -> bool {
+        self.session.is_some() && self.phase == "listening"
+    }
     pub fn vision_session(&self, now: f64) -> Option<&str> {
         (self.confirmed_activity()
             && self.phase == "thinking"
@@ -141,8 +144,18 @@ impl VoiceFeedback {
             self.record(event, now);
             return Ok(Some(("neutral", Some("notice_warm"))));
         }
-        if matches!(event, "wake" | "continue") {
-            if self.session.is_some() || self.retired.iter().any(|old| old == id) {
+        if matches!(event, "wake" | "continue" | "capture") {
+            if matches!(event, "wake" | "capture")
+                && !self.owns(id)
+                && !self.retired.iter().any(|old| old == id)
+            {
+                self.clear();
+            }
+            let accepting_capture =
+                event == "wake" && self.owns(id) && self.acknowledgment_since.is_none();
+            if (self.session.is_some() && !accepting_capture)
+                || self.retired.iter().any(|old| old == id)
+            {
                 return Ok(None);
             }
             self.session = Some(id.into());
@@ -155,6 +168,8 @@ impl VoiceFeedback {
             self.record(event, now);
             return Ok(if event == "wake" {
                 Some(("neutral", Some("voice_wake")))
+            } else if event == "capture" {
+                None
             } else {
                 Some(("listening", None))
             });
@@ -427,6 +442,24 @@ mod tests {
             assert!(feedback.light(3.15).is_none());
             assert_eq!(feedback.reaction(), "neutral");
         }
+    }
+
+    #[test]
+    fn new_wake_retires_old_ownership_and_capture_ducks_without_a_cue() {
+        let mut feedback = VoiceFeedback::default();
+        feedback.event(ID, "wake", 0.).unwrap();
+        let next = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert_eq!(feedback.event(next, "capture", 1.).unwrap(), None);
+        assert!(feedback.capturing());
+        assert!(!feedback.confirm(ID, 1.1));
+        assert_eq!(
+            feedback.event(next, "wake", 1.2).unwrap(),
+            Some(("neutral", Some("voice_wake")))
+        );
+        feedback.event(next, "verify", 1.3).unwrap();
+        assert!(feedback.confirm(next, 1.4));
+        assert_eq!(feedback.event(ID, "wake", 1.5).unwrap(), None);
+        assert!(feedback.owns(next));
     }
 
     #[test]

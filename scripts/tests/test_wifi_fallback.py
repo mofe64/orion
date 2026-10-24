@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from orion_wifi_fallback import BUSY, recover
@@ -31,6 +32,16 @@ class Network:
 
 
 class FallbackTests(unittest.TestCase):
+    def test_query_and_activation_timeouts_make_no_further_network_decision(self):
+        import orion_wifi_fallback as fallback
+        with patch.object(fallback, 'recover', side_effect=subprocess.TimeoutExpired('nmcli', 5)), \
+             patch.dict('os.environ', {'ORION_WIFI_INTERFACE':'wlan0', 'ORION_WIFI_HOME_UUID':'a'*8+'-1234-1234-1234-'+'b'*12,
+                                      'ORION_WIFI_HOTSPOT_UUID':'c'*8+'-1234-1234-1234-'+'d'*12}):
+            self.assertEqual(fallback.main(), 0)
+        network = Network([30], subprocess.TimeoutExpired('nmcli', 21))
+        self.assertEqual(network.recover(), 0)
+        self.assertEqual(network.activations, ['home'])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

@@ -1,4 +1,4 @@
-"""Pi-owned capture, Rustpotter and phrase verification, with bounded, authenticated WebSocket sessions."""
+"""Pi capture and continuous wake detection with authenticated voice sessions."""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +10,7 @@ import ipaddress
 import json
 import math
 import os
+import sys
 from pathlib import Path
 import time
 import uuid
@@ -19,20 +20,20 @@ import numpy as np
 from .direction import DirectionEstimator, XvfDirectionEstimator
 from .endpoint import EndpointConfig, EnergyEndpointDetector, ListeningNoise, pcm16_rms
 from .rustpotter import RustpotterWakeDetector
-from .verifier import AcousticVerifier
+from .verifier import AcousticVerifier, OpenWakeWordDetector
 from .capture import AlsaPcmCapture, DEFAULT_CAPTURE_DEVICE
-from .wake_debug import CaptureReadStats, WakeDebugRecorder
+from .wake_debug import CaptureReadStats, WakeDebugRecorder, WakePrefixClips
 
 PROTOCOL = 2
 FRAME_BYTES = 640  # 20 ms of mono signed little-endian PCM16 at 16 kHz
-MAX_UTTERANCE_BYTES = 33 * 32000
+MAX_UTTERANCE_BYTES = 18 * 32000
 CONVERSATION_WINDOW_SECONDS = 5.0
 ECHO_GUARD_SECONDS = 0.5
 ECHO_QUIET_MS = 300
 ECHO_GUARD_LIMIT_SECONDS = 2.0
-FOLLOWUP_ONSET_MS = 180
-WAKE_PREFIX_BYTES = 2 * 32000
-WAKE_PREFIX_TAIL_MS = 200
+FOLLOWUP_ONSET_MS = 400
+WAKE_PREFIX_BYTES = 3 * 32000
+WAKE_PREFIX_TAIL_MS = 300
 
 
 def shorten_pauses(audio, speech_frames):
@@ -132,6 +133,7 @@ class SatelliteSession:
     def __init__(self, wake, direction=None, clock=time.monotonic, endpoint_factory=EnergyEndpointDetector,
                  early_wake=False, verifier=None, barge_in=False, wake_debug=None):
         self.wake = wake
+        self.continuous_wake = getattr(wake, "provider", "rustpotter") == "openwakeword"
         # The verifier hears every captured frame, across sessions, so its
         # score history already covers the phrase when Rustpotter fires.
         self.verifier = verifier
@@ -146,6 +148,9 @@ class SatelliteSession:
         self.reset()
 
     def reset(self, preserve_listening=False):
+        # A turn boundary is not a microphone gap. Keep the rolling audio for
+        # detections in alarms, conversation windows and replacement turns too.
+        preserve_listening = preserve_listening or (self.continuous_wake and hasattr(self, "pre_roll"))
         self.session_id = None
         self.announcement_id = None
         self.phase = "listening"
@@ -159,6 +164,7 @@ class SatelliteSession:
         self.followup_speech = []
         self.followup_done = False
         self.prefix = bytearray()
+        self.prefix_audio = None
         self.prefix_pending = False
         self.prefix_sent = False
         self.acoustic_pending = False
@@ -179,7 +185,8 @@ class SatelliteSession:
         self.onset_ms = 0
         self.guard_started = 0.0
         if not preserve_listening:
-            self.wake.reset()
+            if not self.continuous_wake:
+                self.wake.reset()
             self.direction.reset()
         if self.verifier is not None:
             self.verifier.cancel()
@@ -220,6 +227,8 @@ class SatelliteSession:
         del self.pre_roll_speech[:-(limit // FRAME_BYTES)]
 
     def clear_pre_roll(self):
+        if self.continuous_wake:
+            return
         self.pre_roll.clear()
         self.pre_roll_speech.clear()
 
@@ -229,6 +238,9 @@ class SatelliteSession:
 
     def restart_verifier(self):
         """Discard score history after a capture gap; the stream is no longer continuous."""
+        self.wake.reset()
+        self.pre_roll.clear()
+        self.pre_roll_speech.clear()
         if self.verifier is not None:
             self.verifier.reset()
         if self.wake_debug is not None:
@@ -243,7 +255,14 @@ class SatelliteSession:
             chunks = self.verifier.feed(mono.astype(np.int16))
             if self.wake_debug is not None:
                 self.wake_debug.accept(mono.astype("<i2").tobytes(), chunks, self.verifier.position)
-        messages = self._accept_frame(stereo, mono.astype("<i2").tobytes())
+        audio = mono.astype("<i2").tobytes()
+        run_wake = (self.continuous_wake or self.alarm_active or self.acoustic_pending
+                    or self.phase == "listening" or self.announcement_id is not None
+                    or (self.phase == "playing" and self.barge_in and self.verifier_active() and self.barge_candidate is None))
+        detection = self.wake.process(audio) if run_wake else None
+        if self.continuous_wake:
+            self.append_pre_roll(audio)
+        messages = self._accept_frame(stereo, audio, detection)
         if self.acoustic_pending or self.barge_candidate is not None:
             messages.extend(self.acoustic_decision())
         return messages
@@ -291,11 +310,13 @@ class SatelliteSession:
         pending, self.pending_utterance = self.pending_utterance, []
         return [*interrupted, message, *pending]
 
-    def start_wake(self, detection, already_verified=False):
-        candidate_phase = self.phase
+    def start_wake(self, detection, already_verified=False, detected_phase=None):
+        candidate_phase = detected_phase or self.phase
         self.session_id = uuid.uuid4().hex
+        print(json.dumps({"event": "voice.wake_detection", "score": detection.score,
+                          "phase": candidate_phase, "session_id": self.session_id}), flush=True)
         self.phase = "wake"
-        self.wake_since_ns = max(0, boottime_ns() - 2_000_000_000)
+        self.wake_since_ns = max(0, boottime_ns() - 3_000_000_000)
         self.visual_attention_session = None
         config = EndpointConfig(speech_rms=self.noise.threshold())
         self.endpoint = self.endpoint_factory(config)
@@ -321,14 +342,27 @@ class SatelliteSession:
         return [self.message("wake.candidate", name=detection.name, score=detection.score,
                              direction=self.observation, acousticVerification=verifying)]
 
-    def _accept_frame(self, stereo, audio):
+    def _accept_frame(self, stereo, audio, detection):
         if self.alarm_active:
             # Alarm dismissal is local and never waits for ASR or the agent.
-            if self.wake.process(audio) is not None:
+            if detection is not None:
+                print(json.dumps({"event": "voice.wake_detection", "score": detection.score,
+                                  "phase": "alarm", "session_id": self.session_id}), flush=True)
                 return [{"type": "alarm.dismiss"}]
             return []
         if self.clock() < self.alarm_guard_until:
+            if detection is not None:
+                print(json.dumps({"event": "voice.wake_detection", "score": detection.score,
+                                  "phase": "echo_guard", "session_id": self.session_id}), flush=True)
             return []
+        if self.continuous_wake and detection is not None:
+            detected_phase = self.phase
+            interrupted = []
+            if self.session_id:
+                interrupted = [self.message("session.interrupted", reason="barge_in")]
+                self.reset(preserve_listening=True)
+                self.barge_in_session = True
+            return [*interrupted, *self.start_wake(detection, detected_phase=detected_phase)]
         if self.phase in {"echo_guard", "conversation"}:
             return self.accept_conversation(audio)
         if self.session_id and self.clock() >= self.expires_at:
@@ -336,20 +370,19 @@ class SatelliteSession:
             self.reset()
             return [event]
         if self.announcement_id is not None and self.phase == "processing":
-            self.append_pre_roll(audio)
-            detection = self.wake.process(audio)
+            if not self.continuous_wake:
+                self.append_pre_roll(audio)
             if detection is not None:
                 interrupted = self.message("session.interrupted", reason="announcement_wake")
                 self.reset(preserve_listening=True)
                 return [interrupted, *self.start_wake(detection)]
             return []
         if self.phase == "playing":
-            if self.announcement_id is not None and self.wake.process(audio) is not None:
+            if self.announcement_id is not None and detection is not None:
                 return [self.message("announcement.dismiss", id=self.announcement_id)]
             if self.barge_in and self.verifier_active():
                 self.append_pre_roll(audio)
                 if self.barge_candidate is None:
-                    detection = self.wake.process(audio)
                     if detection is not None:
                         self.barge_candidate = detection
                         self.verifier.begin()
@@ -361,12 +394,11 @@ class SatelliteSession:
             # Keep the listening stream warm while holding one candidate's
             # endpoint. Extra detections cannot overlap the pending verdict.
             self.append_pre_roll(audio)
-            self.wake.process(audio)
         if self.phase == "listening":
             self.noise.accept(audio)
             self.direction.accept(stereo)
-            self.append_pre_roll(audio)
-            detection = self.wake.process(audio)
+            if not self.continuous_wake:
+                self.append_pre_roll(audio)
             if detection is None:
                 return []
             return self.start_wake(detection)
@@ -379,6 +411,7 @@ class SatelliteSession:
                 self.prefix.extend(audio)
                 if self.endpoint.capture_ms + 20 >= WAKE_PREFIX_TAIL_MS:
                     prefix = bytes(self.prefix)
+                    self.prefix_audio = prefix
                     self.prefix.clear()
                     self.prefix_sent = True
                     messages = [self.message("utterance", purpose="wake_prefix", bytes=len(prefix),
@@ -411,7 +444,8 @@ class SatelliteSession:
         if now >= self.expires_at and self.onset_ms == 0:
             return self.close_conversation("timeout")
         speech = self.activity.is_speech(audio)
-        self.append_pre_roll(audio, speech, limit=int(0.3 * 32000))
+        if not self.continuous_wake:
+            self.append_pre_roll(audio, speech, limit=int(0.7 * 32000))
         self.onset_ms = self.onset_ms + 20 if speech else 0
         if self.onset_ms < FOLLOWUP_ONSET_MS:
             return []
@@ -419,8 +453,8 @@ class SatelliteSession:
         self.session_id = uuid.uuid4().hex
         self.phase = "command"
         self.expires_at = now + 120
-        self.utterance = bytearray(self.pre_roll)
-        self.utterance_speech = list(self.pre_roll_speech)
+        self.utterance = bytearray(self.pre_roll[-int(0.7 * 32000):])
+        self.utterance_speech = list(self.pre_roll_speech[-35:])
         self.clear_pre_roll()
         self.endpoint = self.endpoint_factory(self.endpoint.config)
         self.endpoint.prime_detected_speech()
@@ -494,7 +528,7 @@ class SatelliteSession:
             return []
         if kind in {"session.finish", "session.reject", "session.cancel"}:
             announcement = self.announcement_id is not None
-            self.reset()
+            self.reset(preserve_listening=self.continuous_wake)
             if announcement: self.alarm_guard_until = self.clock() + ECHO_GUARD_SECONDS
             return []
         if kind == "wake.confirmed" and self.phase == "confirming":
@@ -530,7 +564,8 @@ class SatelliteSession:
         if kind == "session.playing" and self.phase in {"processing", "playing"}:
             if self.phase != "playing":
                 self.clear_pre_roll()
-                self.wake.reset()
+                if not self.continuous_wake:
+                    self.wake.reset()
             self.phase = "playing"
             self.expires_at = self.clock() + 180
             return []
@@ -580,8 +615,10 @@ async def serve(args):
     token = args.token_file.read_text().strip()
     if len(token) < 32:
         raise ValueError("Voice token must contain at least 32 characters")
-    wake = RustpotterWakeDetector(args.wake_model, args.threshold)
-    verifier = AcousticVerifier(args.verifier_dir) if getattr(args, "verifier_dir", None) else None
+    engine = getattr(args, "wake_engine", "rustpotter")
+    wake = (OpenWakeWordDetector(args.verifier_dir) if engine == "openwakeword" else
+            RustpotterWakeDetector(args.wake_model, args.threshold))
+    verifier = AcousticVerifier(args.verifier_dir) if engine == "rustpotter" and getattr(args, "verifier_dir", None) else None
     hardware = getattr(args, "hardware", "v1")
     capture = (StereoCapture(args.device) if hardware == "v1" else
         StereoCapture(args.device, hardware=hardware,
@@ -621,6 +658,7 @@ async def serve(args):
             expression("wake", identity)
             expression("verify", identity)
     wake_debug = WakeDebugRecorder.from_environment()
+    wake_clips = WakePrefixClips.from_environment()
     session.wake_debug = wake_debug
 
     def expression(kind, session_id=None):
@@ -678,12 +716,17 @@ async def serve(args):
         # Runs beside capture so waiting for oriond never delays microphone reads.
         try:
             await confirmed_feedback(identity, observation, observed_at, skip_attention=skip_attention)
-        except (OSError, ValueError, asyncio.TimeoutError):
-            if session.session_id == identity:
-                cancel_turn()
-                if outgoing is not None:
-                    with suppress(asyncio.QueueFull):
-                        outgoing.put_nowait({"type": "session.expired", "sessionId": identity})
+        except Exception as error:
+            await fail_turn(identity, error)
+
+    async def fail_turn(identity, error):
+        expression("cancel", identity)
+        if session.session_id == identity:
+            session.reset(preserve_listening=True)
+        print(json.dumps({"event": "voice.turn_cancelled", "session_id": identity,
+                          "reason": str(error) or type(error).__name__}), flush=True)
+        if outgoing is not None:
+            await outgoing.put({"type": "session.cancel", "sessionId": identity})
 
     async def deliver(messages):
         nonlocal outgoing
@@ -709,15 +752,16 @@ async def serve(args):
                         if result.get("ok") is True:
                             session.set_alarm(False)
                             # Discard the speaker tail before normal wake detection resumes.
-                            session.wake.reset()
+                            if not session.continuous_wake:
+                                session.wake.reset()
                     except (OSError, ValueError, asyncio.TimeoutError):
                         pass
                     continue
                 if kind in {"wake.candidate", "wake.verified", "utterance"}:
                     timing_history.append({"sessionId": message["sessionId"], "event": kind, "at": time.monotonic()})
                 if kind == "wake.candidate":
-                    # The chime and light pulse wait for acoustic or ASR acceptance.
-                    pass
+                    # Capture ducks music before the phrase check; the chime waits.
+                    expression("capture", message["sessionId"])
                 elif kind == "wake.verified" and message["accepted"]:
                     # oriond opens its voice session on "wake" (chime and pulse) and
                     # accepts confirmation while listening only after "verify".
@@ -927,21 +971,28 @@ async def serve(args):
                         await asyncio.sleep(0.5)  # notice_warm finishes before speech starts
                         await deliver(session.announcement_ready(identity))
                         continue
-                    result = session.control(message)
-                    if message["type"] == "session.playing":
-                        expression("playing")
-                    if message["type"] == "session.keepalive":
-                        expression("keepalive", identity)
-                    elif message["type"] == "session.processing":
-                        expression("processing", identity)
-                    elif message["type"] == "wake.confirmed" or (
-                            message["type"] == "wake.verified" and message["accepted"]):
-                        announce(identity)
-                        await confirmed_feedback(identity, observation, observed_at, message.get("followup"), skip_attention)
-                    elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
-                        expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
-                                   else message["type"].split(".")[1], identity)
-                    await deliver(result)
+                    try:
+                        if wake_clips is not None and session.prefix_audio is not None:
+                            if message["type"] == "wake.verified" or message.get("wakeAccepted") is False:
+                                wake_clips.submit(identity, session.prefix_audio, message.get("accepted", False), message.get("qwenMs"))
+                                session.prefix_audio = None
+                        result = session.control(message)
+                        if message["type"] == "session.playing":
+                            expression("playing")
+                        if message["type"] == "session.keepalive":
+                            expression("keepalive", identity)
+                        elif message["type"] == "session.processing":
+                            expression("processing", identity)
+                        elif message["type"] == "wake.confirmed" or (
+                                message["type"] == "wake.verified" and message["accepted"]):
+                            announce(identity)
+                            await confirmed_feedback(identity, observation, observed_at, message.get("followup"), skip_attention)
+                        elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
+                            expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
+                                       else message["type"].split(".")[1], identity)
+                        await deliver(result)
+                    except Exception as error:
+                        await fail_turn(identity, error)
 
             tasks = []
             try:
@@ -987,6 +1038,8 @@ async def serve(args):
         await asyncio.gather(*tasks, return_exceptions=True)
         if wake_debug is not None:
             await asyncio.to_thread(wake_debug.close)
+        if wake_clips is not None:
+            await asyncio.to_thread(wake_clips.close)
         if session.session_id:
             with suppress(OSError, ValueError, asyncio.TimeoutError):
                 await daemon_command(f"voice {session.session_id} cancel", args.daemon_socket)
@@ -1002,10 +1055,14 @@ def parse_args(argv=None):
     parser.add_argument("--capture-channels", type=int, choices=(2, 6), default=2)
     parser.add_argument("--processed-channel", type=int, default=0, help="Verified XVF3800 processed USB channel; never mix raw channels")
     parser.add_argument("--device", default=None)
-    parser.add_argument("--wake-model", type=Path, default=Path(__file__).resolve().parents[1] / "models/wake/hey_orion_reference.rpw")
-    parser.add_argument("--threshold", type=float, default=0.35)
-    parser.add_argument("--verifier-dir", type=Path, default=Path(__file__).resolve().parents[1] / "models/verifier",
-                        help="openWakeWord phrase verifier; pass --no-verifier to use the ASR prefix instead")
+    models = Path(__file__).resolve().parents[1] / "models"
+    if not models.is_dir():
+        models = Path(sys.prefix).parent / "models"
+    parser.add_argument("--wake-model", type=Path, default=models / "wake/hey_orion_reference.rpw")
+    parser.add_argument("--wake-engine", choices=("openwakeword", "rustpotter"), default="openwakeword")
+    parser.add_argument("--threshold", type=float, default=0.35, help="Rustpotter threshold")
+    parser.add_argument("--verifier-dir", type=Path, default=models / "verifier",
+                        help="openWakeWord model directory; also supplies the optional Rustpotter verifier")
     parser.add_argument("--no-verifier", dest="verifier_dir", action="store_const", const=None)
     parser.add_argument("--vad-model", type=Path, default=os.environ.get("ORION_VAD_MODEL"))
     parser.add_argument("--local-processor", action="store_true", help="Reserve processing ownership for the onboard coordinator")
@@ -1019,6 +1076,8 @@ def parse_args(argv=None):
     parser.add_argument("--daemon-socket", default="/tmp/oriond.sock")
     parser.add_argument("--vision-socket", default="/tmp/orion-vision.sock")
     args = parser.parse_args(argv)
+    if args.wake_engine == "openwakeword" and args.verifier_dir is None:
+        parser.error("openwakeword requires --verifier-dir")
     if not 0 < args.threshold <= 1:
         parser.error("--threshold must be in (0, 1]")
     if args.device is None:

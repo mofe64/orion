@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 #[serde(rename_all = "snake_case")]
 pub enum AlertSound {
     #[default]
+    SoftChime,
     TwoTone,
     ClubAlarm,
     FunnyAlarm,
@@ -14,7 +15,8 @@ pub enum AlertSound {
 impl AlertSound {
     pub fn catalog() -> Value {
         json!([
-            {"id":Self::TwoTone,"name":"Two-tone (default)"},
+            {"id":Self::SoftChime,"name":"Soft chime (default)"},
+            {"id":Self::TwoTone,"name":"Two-tone"},
             {"id":Self::ClubAlarm,"name":"Club alarm"},
             {"id":Self::FunnyAlarm,"name":"Funny alarm"},
         ])
@@ -22,7 +24,7 @@ impl AlertSound {
 
     fn recording(self) -> Option<&'static [u8]> {
         match self {
-            Self::TwoTone => None,
+            Self::SoftChime | Self::TwoTone => None,
             Self::ClubAlarm => Some(include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../audio/alarms/club_alarm.pcm"
@@ -42,6 +44,29 @@ impl AlertSound {
                     let i = (sample % (recording.len() / 2)) * 2;
                     [recording[i], recording[i + 1]]
                 })
+                .collect();
+        }
+        if self == Self::SoftChime {
+            return (start..start + count)
+                .map(|sample| {
+                    let elapsed = sample as f64 / 24000.;
+                    let t = elapsed % 2.05; // Three 150 ms notes, then a 1.6 s pause.
+                    let note = (t / 0.15) as usize;
+                    let value = if note < 3 {
+                        let phase = t - note as f64 * 0.15;
+                        let envelope = (phase / 0.01).min(1.)
+                            * (-phase / 0.5).exp()
+                            * ((0.15 - phase) / 0.02).min(1.);
+                        let peak = 0.25 + 0.25 * (elapsed / 30.).min(1.);
+                        (std::f64::consts::TAU * [1047., 1319., 1568.][note] * phase).sin()
+                            * envelope
+                            * peak
+                    } else {
+                        0.
+                    };
+                    (value * i16::MAX as f64) as i16
+                })
+                .flat_map(i16::to_le_bytes)
                 .collect();
         }
         // High/low double pulse with listening gaps, at 24 kHz. A 0.65 peak
@@ -66,6 +91,24 @@ impl AlertSound {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_chime_has_a_listening_gap_and_grows_over_thirty_seconds() {
+        assert_eq!(AlertSound::default(), AlertSound::SoftChime);
+        let sound = AlertSound::SoftChime;
+        let peak = |pcm: Vec<u8>| {
+            pcm.chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
+                .max()
+                .unwrap()
+        };
+        let first = peak(sound.pcm(0, 10800));
+        let later = peak(sound.pcm(31 * 24000, 3 * 24000));
+        assert!((7000..8500).contains(&first));
+        assert!((14000..16400).contains(&later));
+        assert!(sound.pcm(10800, 38400).iter().all(|b| *b == 0));
+        assert_ne!(sound.pcm(0, 4800), AlertSound::TwoTone.pcm(0, 4800));
+    }
 
     #[test]
     fn bundled_recordings_have_headroom_and_loop_without_losing_samples() {

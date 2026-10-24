@@ -17,9 +17,64 @@ fn address_cache() -> &'static Mutex<HashMap<String, Vec<SocketAddr>>> {
     CACHE.get_or_init(Default::default)
 }
 
+fn reachable_candidates(mut addresses: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    let bridge = |address: &SocketAddr| match address.ip() {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            (a == 172 && (16..=31).contains(&b)) || (a == 169 && b == 254)
+        }
+        _ => false,
+    };
+    if addresses.iter().any(|address| !bridge(address)) {
+        addresses.retain(|address| !bridge(address));
+    }
+    addresses.sort();
+    addresses.dedup();
+    addresses
+}
+
+async fn probe_addresses(
+    base: &str,
+    host: &str,
+    addresses: Vec<SocketAddr>,
+) -> Result<(reqwest::Client, SocketAddr), String> {
+    let mut probes = tokio::task::JoinSet::new();
+    for address in reachable_candidates(addresses) {
+        let base = base.to_owned();
+        let host = host.to_owned();
+        probes.spawn(async move {
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .resolve(&host, address)
+                .build()
+                .map_err(|e| e.to_string())?;
+            client
+                .get(format!(
+                    "{}/api/v2/voice/status",
+                    base.trim_end_matches('/')
+                ))
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok::<_, String>((client, address))
+        });
+    }
+    while let Some(result) = probes.join_next().await {
+        if let Ok(Ok(answer)) = result {
+            return Ok(answer);
+        }
+    }
+    Err("Could not reach Orion's voice service: found the lamp but it did not answer".into())
+}
+
 /// Build a client pinned to the gateway's addresses. IP-literal hosts need no
 /// lookup. Returns whether the addresses came from the cache.
-pub(crate) async fn gateway_client(base: &str, fresh: bool) -> Result<(reqwest::Client, bool), String> {
+pub(crate) async fn gateway_client(
+    base: &str,
+    fresh: bool,
+) -> Result<(reqwest::Client, bool), String> {
     let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     let url = url::Url::parse(base).map_err(|_| "Invalid Orion address")?;
     let host = match url.host() {
@@ -35,7 +90,7 @@ pub(crate) async fn gateway_client(base: &str, fresh: bool) -> Result<(reqwest::
     let (addresses, from_cache) = match cached {
         Some(addresses) => (addresses, true),
         None => {
-            let mut addresses: Vec<SocketAddr> = tokio::time::timeout(
+            let addresses: Vec<SocketAddr> = tokio::time::timeout(
                 RESOLVE_BUDGET,
                 tokio::net::lookup_host((host.as_str(), port)),
             )
@@ -51,9 +106,6 @@ pub(crate) async fn gateway_client(base: &str, fresh: bool) -> Result<(reqwest::
                 )
             })?
             .collect();
-            // Prefer IPv4: link-local IPv6 depends on the interface scope.
-            addresses.sort_by_key(|address| !address.is_ipv4());
-            addresses.dedup();
             if addresses.is_empty() {
                 return Err(format!(
                     "Could not reach Orion's voice service: {host} was not found on this network"
@@ -62,7 +114,13 @@ pub(crate) async fn gateway_client(base: &str, fresh: bool) -> Result<(reqwest::
             (addresses, false)
         }
     };
+    if !from_cache {
+        let (client, address) = probe_addresses(base, &host, addresses).await?;
+        address_cache().lock().unwrap().insert(host, vec![address]);
+        return Ok((client, false));
+    }
     let client = builder
+        .no_proxy()
         .resolve_to_addrs(&host, &addresses)
         .build()
         .map_err(|e| e.to_string())?;
@@ -179,9 +237,58 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[test]
+    fn bridge_and_link_local_addresses_are_removed_only_when_another_address_exists() {
+        let lan = "192.168.1.191:7447".parse().unwrap();
+        let docker = "172.17.0.1:7447".parse().unwrap();
+        let link = "169.254.1.2:7447".parse().unwrap();
+        assert_eq!(reachable_candidates(vec![docker, link, lan]), vec![lan]);
+        assert_eq!(reachable_candidates(vec![docker]), vec![docker]);
+    }
+
+    #[tokio::test]
+    async fn parallel_probe_selects_the_answering_address_without_waiting_for_a_stalled_peer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good = listener.local_addr().unwrap();
+        let stalled = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, good.port()))
+            .await
+            .unwrap();
+        let slow = tokio::spawn(async move {
+            let (_stream, _) = stalled.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            while !bytes.ends_with(b"\r\n\r\n") {
+                bytes.push(stream.read_u8().await.unwrap());
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        let base = format!("http://orion.test:{}", good.port());
+        let bad = (std::net::Ipv6Addr::LOCALHOST, good.port()).into();
+        let (_, answer) = tokio::time::timeout(
+            Duration::from_secs(1),
+            probe_addresses(&base, "orion.test", vec![bad, good]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(answer, good);
+        peer.await.unwrap();
+        slow.abort();
+        let _ = slow.await;
+    }
+
     async fn gateway(
         status: &'static str,
         payload: &'static str,
+        requests: usize,
     ) -> (pairing::Pairing, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let pairing = pairing::Pairing {
@@ -189,14 +296,16 @@ mod tests {
             token: "a".repeat(32),
         };
         let task = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut bytes = Vec::new();
-            while !bytes.ends_with(b"\r\n\r\n") {
-                bytes.push(stream.read_u8().await.unwrap());
+            for _ in 0..requests {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    bytes.push(stream.read_u8().await.unwrap());
+                }
+                let header = String::from_utf8(bytes).unwrap();
+                assert!(header.starts_with("GET /api/v2/voice/status "));
+                stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len()).as_bytes()).await.unwrap();
             }
-            let header = String::from_utf8(bytes).unwrap();
-            assert!(header.starts_with("GET /api/v2/voice/status "));
-            stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len()).as_bytes()).await.unwrap();
         });
         (pairing, task)
     }
@@ -204,7 +313,7 @@ mod tests {
     #[tokio::test]
     async fn missing_or_non_onboard_service_returns_error_without_local_fallback() {
         for (status, payload) in [("404 Not Found", "{}"), ("200 OK", r#"{"onboard":false}"#)] {
-            let (pairing, task) = gateway(status, payload).await;
+            let (pairing, task) = gateway(status, payload, 1).await;
             let error = request_paired(&Request::StartSaved, &pairing)
                 .await
                 .unwrap_err();
@@ -215,7 +324,7 @@ mod tests {
 
     #[tokio::test]
     async fn hostname_pairing_caches_and_recovers_a_stale_address() {
-        let (mut pairing, task) = gateway("200 OK", r#"{"onboard":false}"#).await;
+        let (mut pairing, task) = gateway("200 OK", r#"{"onboard":false}"#, 2).await;
         let port = pairing.url.rsplit(':').next().unwrap().to_owned();
         pairing.url = format!("http://localhost:{port}");
         // A cached address that no longer answers (nothing listens on ::1).

@@ -313,10 +313,14 @@ class System:
                 if not listener_pid.isdigit() or int(listener_pid) == 0:
                     raise RuntimeError('Listener has no running process')
                 listener_args = Path(f'/proc/{listener_pid}/cmdline').read_bytes().decode().split('\0')
-                expected_wake_model = Path(option(listener_args, '--wake-model',
+                expected_engine = option(listener_args, '--wake-engine', 'openwakeword')
+                expected_wake_model = (Path(option(listener_args, '--wake-model',
                     str(release / 'voice/models/wake/hey_orion_reference.rpw'))).name
-                expected_wake_threshold = float(option(listener_args, '--threshold', ACTIVE_WAKE_THRESHOLD))
-                expected_verifier = '--no-verifier' not in listener_args
+                    if expected_engine == 'rustpotter' else 'hey_orion_verifier.onnx')
+                expected_wake_threshold = (float(option(listener_args, '--threshold', ACTIVE_WAKE_THRESHOLD))
+                    if expected_engine == 'rustpotter' else float(json.loads(
+                        (Path(option(listener_args, '--verifier-dir', str(release / 'voice/models/verifier'))) / 'config.json').read_text())['threshold']))
+                expected_verifier = expected_engine == 'rustpotter' and '--no-verifier' not in listener_args
                 if not (status.get('coordinator_running') and not status.get('error') and
                         status.get('project_root') == str(release) and status.get('revision') == metadata['revision'] and
                         ready.get('asr', {}).get('provider') == 'qwen3-asr' and
@@ -324,6 +328,7 @@ class System:
                         ready.get('tts', {}).get('model') == expected_model and
                         ready.get('agent', {}).get('model') == expected_agent and
                         ready.get('agent', {}).get('effort') == expected_effort and
+                        ready.get('wake', {}).get('provider') == expected_engine and
                         ready.get('wake', {}).get('model') == expected_wake_model and
                         ready.get('wake', {}).get('threshold') == expected_wake_threshold and
                         bool((ready.get('wake', {}).get('verifier') or {}).get('active')) == expected_verifier):

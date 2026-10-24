@@ -5,6 +5,19 @@ from daemon_support import DaemonTestCase, daemon, request
 
 
 class VisualAttentionTests(DaemonTestCase):
+    def wait_for_bearing(self, path, azimuth, elevation=.1):
+        from test_gaze import boottime_ns
+        command = lambda: 'camera-rays ' + json.dumps(dict(capture_boottime_ns=boottime_ns(), rays=[[0,0,1]]))
+        deadline = time.monotonic() + 18
+        while time.monotonic() < deadline:
+            result = request(path, command())
+            if result.get('ok'):
+                bearing = result['bearings'][0]
+                if abs(bearing['azimuth']-azimuth) < .02 and abs(bearing['elevation']-elevation) < .02:
+                    return result
+            time.sleep(.02)
+        self.fail(f'Camera did not face {azimuth}, {elevation}: {result}')
+
     def test_conversation_tracks_only_its_speaker_between_replies_and_clear_settles(self):
         from test_gaze import boottime_ns
         def target(azimuth, track=7):
@@ -14,13 +27,18 @@ class VisualAttentionTests(DaemonTestCase):
             self.wait_for_rest(path, 'awake')
             session = 'a'*32
             self.voice(path, session, 'wake', 'endpoint', 'confirmed', 'attend_bearing .3 .1 0 7')
-            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .28)
+            self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
+                and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
+            self.wait_for_bearing(path, .3)
             first = request(path, 'character status')['character']['active_anchor']
             self.assertFalse(request(path, target(.6, 8))['accepted'])
             self.assertTrue(request(path, target(.32))['accepted'])
             self.assertEqual(request(path, 'character status')['character']['active_anchor'], first)
             self.assertTrue(request(path, target(.6))['accepted'])
-            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .58)
+            self.wait_for_bearing(path, .6)
+            self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
+                and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
+            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor'] != first)
             second = request(path, 'character status')['character']['active_anchor']
             # The daemon's recording audio device completes immediately;
             # sustained speech ownership is exercised in the Rust regression.
@@ -56,7 +74,7 @@ class VisualAttentionTests(DaemonTestCase):
             self.ok(path, f'voice {session} attend_bearing .4 .1 0')
             self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
                 and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
-            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .35)
+            self.wait_for_bearing(path, .4)
 
     def test_confirmed_wake_clears_powered_stop_before_applying_visual_attention(self):
         from test_gaze import gaze_target
@@ -66,10 +84,13 @@ class VisualAttentionTests(DaemonTestCase):
             self.wait_for(path, 'gaze status', lambda s: s['gaze']['run_id'] is not None)
             self.ok(path, 'stop')
             session = 'a'*32
-            self.voice(path, session, 'wake', 'endpoint', 'confirmed', 'attend_bearing .4 .1 0')
+            self.voice(path, session, 'wake', 'endpoint', 'confirmed')
+            self.assertTrue(request(path, 'gaze status')['gaze']['enabled'])
+            self.wait_for_rest(path, 'awake')
+            self.voice(path, session, 'attend_bearing .4 .1 0')
             self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
                 and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
-            self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .35)
+            self.wait_for_bearing(path, .4)
 
     def test_visual_freshness_and_retired_ownership_are_rechecked_after_home(self):
         for age, retire in ((0, False), (2999, False), (0, True)):
@@ -78,18 +99,22 @@ class VisualAttentionTests(DaemonTestCase):
                 self.ok(path, 'character rest')
                 self.wait_for_rest(path, 'resting')
                 session = 'a'*32
+                captured = time.monotonic()
                 self.voice(path, session, 'wake', 'endpoint', 'confirmed', f'attend_bearing .4 .1 {age}')
                 if retire:
                     self.voice(path, session, 'finish')
                 awake = self.wait_for_rest(path, 'awake')
+                # Home and its optional stretch take longer than the three-second
+                # visual lease. Even an initially fresh bearing must be discarded.
+                self.assertGreater(time.monotonic() - captured, 3)
+                self.assertNotEqual(awake['character'].get('active_clip'), 'gaze_attention')
+                self.assertAlmostEqual(awake['character']['active_anchor']['base_yaw_joint'],
+                    home_anchor['base_yaw_joint'], delta=.001)
                 if age == 0 and not retire:
+                    self.voice(path, session, 'attend_bearing .4 .1 0')
                     self.wait_for(path, 'status', lambda s: s['last_motion'] is not None
                         and s['last_motion']['name'] == 'gaze_attention' and s['last_motion']['state'] == 'completed')
-                    self.wait_for(path, 'character status', lambda s: s['character']['active_anchor']['base_yaw_joint'] > .35)
-                else:
-                    self.assertNotEqual(awake['character'].get('active_clip'), 'gaze_attention')
-                    self.assertAlmostEqual(awake['character']['active_anchor']['base_yaw_joint'],
-                        home_anchor['base_yaw_joint'], delta=.001)
+                    self.wait_for_bearing(path, .4)
 
     def test_no_face_scans_once_then_gives_up(self):
         with daemon(hardware='v2', automatic_character=True, following=True, gaze=True) as path:

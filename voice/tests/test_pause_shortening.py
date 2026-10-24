@@ -55,7 +55,7 @@ class PauseShorteningTests(unittest.TestCase):
         session.accept_stereo(frame(1234))
         return session
 
-    def test_wake_session_sends_last_two_seconds_of_pre_roll_with_aligned_decisions(self):
+    def test_wake_session_sends_full_three_seconds_of_pre_roll_with_aligned_decisions(self):
         session = SatelliteSession(Wake())
         for i in range(175):
             session.append_pre_roll(mono(1000 + i), (None, False, True)[i % 3])
@@ -84,16 +84,16 @@ class PauseShorteningTests(unittest.TestCase):
             for _ in range(70):
                 messages = session.accept_stereo(frame(0))
         metadata, audio = messages
-        pre_roll = mono(0) * 99 + mono(1234)
+        pre_roll = mono(0) * 149 + mono(1234)
         self.assertEqual(audio, pre_roll + b''.join(speech[:30]) + mono(0) * 16
                          + b''.join(speech[30:]) + mono(0) * 16)
         self.assertEqual(metadata['purpose'], 'wake_and_command')
         self.assertEqual(metadata['captureMs'], 5000)
-        self.assertEqual(metadata['sentMs'], 4240)
+        self.assertEqual(metadata['sentMs'], 5240)
         self.assertEqual(metadata['bytes'], len(audio))
         endpoint_log = json.loads(log.call_args.args[0])
         self.assertEqual(endpoint_log['capture_ms'], 5000)
-        self.assertEqual(endpoint_log['sentMs'], 4240)
+        self.assertEqual(endpoint_log['sentMs'], 5240)
 
     def test_silero_decisions_preserve_quiet_speech_without_extra_inference(self):
         model = Model()
@@ -113,8 +113,8 @@ class PauseShorteningTests(unittest.TestCase):
 
     def test_wake_prefix_audio_is_unchanged(self):
         session = self.start_wake(early_wake=True)
-        expected = bytes(session.prefix) + mono(2100) * 10
-        for _ in range(10): messages = session.accept_stereo(frame(2100))
+        expected = bytes(session.prefix) + mono(2100) * 15
+        for _ in range(15): messages = session.accept_stereo(frame(2100))
         self.assertEqual(messages[0]['purpose'], 'wake_prefix')
         self.assertEqual(messages[1], expected)
 

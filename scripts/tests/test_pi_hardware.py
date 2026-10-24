@@ -31,7 +31,7 @@ class HardwareDeploymentTests(unittest.TestCase):
             project = base / 'project'; project.mkdir()
             units = base / 'units'; units.mkdir()
             shutil.copytree(SCRIPTS / 'systemd', release / 'scripts/systemd')
-            for name in ('home_assistant_install.py', 'release-home-assistant.json'):
+            for name in ('home_assistant_install.py', 'release-home-assistant.json', 'avahi_config.py'):
                 shutil.copy2(SCRIPTS / name, release / 'scripts' / name)
             (release / 'release.json').write_text('{"revision":"test","hardware":"v2"}')
             override = units / 'oriond.service.d/99-local.conf'; override.parent.mkdir()

@@ -6,8 +6,8 @@ The listener captures speech. The coordinator runs recognition, agent requests a
 
 ```text
 microphone
-  → Rustpotter candidate
-  → acoustic phrase check
+  → continuous openWakeWord detector
+  → Qwen wake-prefix check
   → Silero speech boundary
   → Qwen complete-command transcription
   → Codex agent
@@ -29,21 +29,27 @@ V1 uses stereo frames for direction and a mono downmix for recognition. V2 uses 
 
 Each candidate receives a fresh session ID. Cancellation, mute, disconnect and expiry discard its command buffers. Rejected candidates do not reach the agent.
 
-### Acoustic wake verification
+### Wake detection and confirmation
 
-Rustpotter proposes “Hey Orion” candidates. By default, Qwen transcribes a short wake prefix and checks it for the phrase. Acceptance permits the wake cue, light pulse and confirmed-wake sequence. Nothing is shown or played before acceptance.
+openWakeWord scores every 20 ms frame during capture, processing, playback, alarms and conversation windows. One scorer keeps a continuous history across turns.
+A capture gap resets that history and applies the configured startup frames. The detector suppresses further detections for two seconds after each detection.
 
-Rejection discards candidate audio while preserving rolling pre-roll and detector history. It does not restart capture. The optional acoustic verifier (`--verifier-dir`) replaces the Qwen prefix check when loaded.
+Qwen transcribes one prefix containing the full three-second pre-roll and the next 300 ms. The coordinator finds the wake phrase within the first eight words.
+Acceptance permits the wake cue, light pulse and confirmed-wake sequence. Rejection cancels only the turn and preserves pre-roll and detector history.
 
-Full command capture continues while Qwen checks the prefix. A slow or missing acoustic verifier disables playback interruption.
+Full command capture continues during the prefix check. The listener reduces music to ten percent during wake and command capture.
+Music uses twenty-five percent during Orion speech.
 
-### Complete command checks
+### Command transcription
 
-Qwen transcribes the complete utterance before dispatch. Prefix confirmation alone cannot supply agent command text. A wake-only utterance opens another capture opportunity.
+Qwen transcribes the complete recording to obtain the command. The recording starts with the full three-second pre-roll.
+After prefix acceptance, this transcript cannot reject the wake. The coordinator removes the wake phrase when present and uses the remaining text as the command.
+A wake without a command opens another capture opportunity.
 
-Recognition receives speech with pauses longer than 600 ms shortened to 320 ms. The listener keeps both ends of each pause and all speech frames in their original order.
+Recognition receives speech with pauses longer than 600 ms shortened to 320 ms. The listener keeps both ends of each pause and all speech frames in order.
+Capture permits 15 seconds after detection, or 18 seconds including pre-roll. A recording that reaches the limit is rejected.
 
-The command clip keeps 2 seconds from before wake detection. Capture permits 30 seconds after wake detection, or 32 seconds including pre-roll. A recording that reaches the limit is rejected. Empty commands also stop before agent dispatch.
+The optional `--wake-engine rustpotter` selection uses the previous candidate detector. It can use an acoustic verifier before command transcription.
 
 ### Speech boundaries
 
@@ -63,17 +69,17 @@ Duplicate confirmations cannot extend the same session's inactivity deadline. St
 
 After successful playback, the listener discards initial echo and waits for quiet. It then opens a five-second command window without another wake phrase. A teal pulse indicates that window.
 
-A follow-up receives a new session ID linked to the completed turn. The coordinator checks that link before recognition. Failed or cancelled playback returns to ordinary wake detection.
+A follow-up receives a new session ID linked to the completed turn. The coordinator checks that link before recognition. Capture requires at least 400 ms of speech.
+Empty transcripts, single words and the wake phrase alone close the window without an agent request. Failed or cancelled playback returns to ordinary wake detection.
 
 Keepalive messages extend an active processing or playback deadline. They do not repeat phase changes or feedback. An absent owner eventually loses its session.
 
 ## Wake-phrase interruption
 
-V2 runs wake detection during playback only with a healthy acoustic verifier. Candidate detection does not stop playback. Acceptance cancels the old session and starts a fresh verified session from pre-roll.
+A detection during speech or processing interrupts the current turn and starts a new wake-prefix check. The old reply stops before the new command runs.
+Interruption sessions suppress speaker attention. Alarm dismissal takes priority over a new conversation.
 
-Rejected candidates leave the reply unchanged. The Qwen-prefix fallback cannot authorize playback interruption. V1 suppresses wake detection during ordinary playback.
-
-V2 uses the XVF3800's hardware echo cancellation. It adds no software echo canceller. Interruption sessions suppress speaker attention. Alarm dismissal takes priority over a new conversation.
+V2 uses the XVF3800 hardware echo cancellation. Orion adds no software echo canceller.
 
 ## Agent conversation and memory
 
@@ -111,7 +117,7 @@ A search acknowledgement uses a separate speech run within the active session. T
 
 Robot tools return typed requests through the coordinator and gateway. The runtime decides whether execution is permitted. Failed actions return their reason before the agent confirms a result.
 
-Cancellation retires only the affected speech worker when necessary. It cancels old uploads and playback ownership. Late results cannot revive an expired session.
+A failed or stale turn sends cancellation and keeps the listener connection open. Cancellation retires only the affected speech worker when necessary. It cancels old uploads and playback ownership. Late results cannot revive an expired session.
 
 ## Scheduled announcements
 
@@ -130,3 +136,10 @@ Camera privacy, rest and viewing permission still apply. Images stay in memory o
 Autonomous observations do not authorize image upload. General conversation does not capture a snapshot automatically.
 
 See [speech workers](../speech/README.md), [listener setup](../voice/README.md) and [configuration](configuration.md).
+
+## Private recordings
+
+The listener saves no wake audio by default. `ORION_WAKE_CLIPS_DIR` enables bounded prefix recordings on a separate writer thread.
+See [listener troubleshooting](../voice/README.md#troubleshooting) for file limits and outcome fields.
+
+The Pi command `orion-record-voice` records training samples and restores the listener on exit. See [Record your voice](wake-word-training.md#record-your-voice).

@@ -25,6 +25,21 @@ from pi_release_platform import TARGET_PLATFORM, builder_image, check_platform
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_existing_wifi_fallback_gets_the_updated_helper_and_timer_without_enabling_it(self):
+        for active in (False, True):
+            with tempfile.TemporaryDirectory() as folder:
+                config = Path(folder) / 'wifi-fallback.env'
+                with patch.object(receiver, 'run') as run:
+                    receiver.update_wifi_fallback(Path('/release'), config)
+                    run.assert_not_called()
+                config.touch()
+                with patch.object(receiver, 'run', return_value=subprocess.CompletedProcess([], 0 if active else 3)) as run:
+                    receiver.update_wifi_fallback(Path('/release'), config)
+                commands = [call.args for call in run.call_args_list]
+                self.assertIn(('sudo', 'install', '-m', '0755', Path('/release/scripts/orion_wifi_fallback.py'), '/usr/local/sbin/orion-wifi-fallback'), commands)
+                self.assertEqual(('sudo', 'systemctl', 'restart', 'orion-wifi-fallback.timer') in commands, active)
+                self.assertFalse(any('enable' in command for command in commands))
+
     def setUp(self):
         self.pins = json.loads((SCRIPTS / 'release-native.json').read_text())
 

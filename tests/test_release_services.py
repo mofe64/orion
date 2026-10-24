@@ -40,8 +40,8 @@ def environment(release, component):
         shutil.copytree(ROOT / component / package, purelib / package, ignore=shutil.ignore_patterns('__pycache__'))
     if component in ('voice', 'vision'):
         # release_build prepares these wheel environments before running this test.
-        dependencies = next((p for p in (Path('/tmp') / ('test-' + component) / 'bin/python',
-                                         ROOT / component / '.venv/bin/python') if p.is_file()), None)
+        dependencies = next((p for p in (ROOT / component / '.venv/bin/python',
+                                         Path('/tmp') / ('test-' + component) / 'bin/python') if p.is_file()), None)
         assert dependencies, f'Prepare the {component} wheel test environment first'
         packages = subprocess.check_output([str(dependencies), '-c',
             'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip()
@@ -67,7 +67,8 @@ def test_every_rendered_service_starts_from_release_and_catalog_without_a_checko
             shutil.copytree(ROOT / directory, release / directory, ignore=ignore)
         studio_modules = tomllib.loads((ROOT / 'orion_studio/pyproject.toml').read_text())['tool']['setuptools']['py-modules']
         for relative in (*(f'orion_studio/{module}.py' for module in studio_modules), 'runtime/mujoco_bridge.py',
-                         'scripts/home_assistant_install.py', 'scripts/release-home-assistant.json', 'scripts/spotify_connect.py'):
+                             'scripts/home_assistant_install.py', 'scripts/avahi_config.py',
+                             'scripts/release-home-assistant.json', 'scripts/spotify_connect.py'):
             path = release / relative; path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, path)
         (release / 'release.json').write_text(json.dumps({'revision': 'layout-test', 'hardware': 'v2',

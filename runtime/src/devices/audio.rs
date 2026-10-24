@@ -45,7 +45,7 @@ pub trait AudioDevice {
     fn music_pulse(&self) -> Option<crate::expression::music::MusicPulse> {
         None
     }
-    fn set_music_ducking(&mut self, _duck: bool) {}
+    fn set_music_ducking(&mut self, _gain: f64) {}
     fn music_playing(&self) -> bool {
         false
     }
@@ -632,9 +632,9 @@ impl AudioDevice for AlsaAudioDevice {
     fn music_pulse(&self) -> Option<crate::expression::music::MusicPulse> {
         self.mixer.as_ref().and_then(|mixer| mixer.pulse())
     }
-    fn set_music_ducking(&mut self, duck: bool) {
+    fn set_music_ducking(&mut self, gain: f64) {
         if let Some(mixer) = &self.mixer {
-            mixer.duck(duck);
+            mixer.duck_to(gain);
         }
     }
     fn music_playing(&self) -> bool {
@@ -794,6 +794,7 @@ pub struct RecordingAudioDevice {
     playing: bool,
     auto_complete: bool,
     volume: VolumeControl,
+    music_playing: bool,
 }
 
 impl Default for RecordingAudioDevice {
@@ -803,11 +804,16 @@ impl Default for RecordingAudioDevice {
             playing: false,
             auto_complete: true,
             volume: VolumeControl::default(),
+            music_playing: false,
         }
     }
 }
 
 impl RecordingAudioDevice {
+    #[cfg(test)]
+    pub(crate) fn set_test_music_playing(&mut self, playing: bool) {
+        self.music_playing = playing;
+    }
     pub fn blocking() -> Self {
         Self {
             auto_complete: false,
@@ -825,6 +831,9 @@ impl RecordingAudioDevice {
 }
 
 impl AudioDevice for RecordingAudioDevice {
+    fn music_playing(&self) -> bool {
+        self.music_playing
+    }
     fn volume_status(&self) -> VolumeStatus {
         self.volume.status()
     }

@@ -6,25 +6,30 @@ The listener owns microphone capture, wake detection and voice-session boundarie
 
 Use the [Pi installer](../docs/quickstart.md) for the complete listener and models. V1 uses the audio HAT. V2 uses the XVF3800 USB array.
 
-The installed service supplies an explicit wake model path and `--no-verifier`. `--local-processor` reserves processing ownership for a loopback connection. Other authenticated connections can read or change mute.
+The installed service uses openWakeWord and supplies its model directory with `--verifier-dir`. `--local-processor` reserves processing ownership for a loopback connection. Other authenticated connections can read or change mute.
 
 ## Capture and sessions
 
 V1 captures synchronized stereo PCM16 at 16 kHz. It retains stereo for direction estimation and downmixes for recognition. V2 uses the selected processed USB channel.
 
-The listener keeps pre-roll and command audio in memory. Pre-roll is audio retained from before wake detection. Mute, cancellation and disconnect clear session buffers.
+The listener keeps pre-roll and command audio in memory. Pre-roll is audio retained from before wake detection. Mute, cancellation and disconnect clear command buffers. Wake rejection retains the rolling pre-roll.
 
-Rustpotter proposes a candidate. By default, Qwen checks a short wake prefix. The wake cue and light pulse start only after Qwen accepts the phrase. `--verifier-dir` turns on the acoustic verifier instead. Rejection discards candidate audio while preserving rolling pre-roll.
+openWakeWord scores every 20 ms frame in every phase. One scorer keeps its history across turns and pauses detection for two seconds after a detection.
+Only a capture gap resets the scorer. Model hashes, the threshold and startup frames come from `models/verifier/config.json`.
 
-Qwen checks the complete utterance before the agent receives a command. Recordings that reach the capture limit do not become agent requests. See [voice sessions](../docs/voice-architecture.md#capture-ownership-and-session-lifecycle).
+Qwen checks one prefix containing three seconds before detection and 300 ms after detection. Acceptance permits the wake cue and light pulse.
+Rejection cancels the turn immediately. Pre-roll and detector state remain available for the next wake.
+
+Qwen also transcribes the complete recording to obtain the command. An accepted prefix remains accepted when that transcript omits the wake phrase.
+Capture ends after silence or at the 15-second limit. Recordings that reach the limit do not become agent requests.
 
 ## Playback interruption
 
-V2 can accept an acoustically verified “Hey Orion” during playback. Acceptance cancels the old reply and starts a new session. Rejection leaves playback unchanged.
+A wake detection during speech or processing cancels the old turn and starts a new prefix check. “Hey Orion, stop” stops speech.
+Alarm dismissal takes priority. After normal playback, the listener waits for quiet before opening the follow-up window.
 
-This operation requires a healthy acoustic verifier. It uses XVF3800 hardware echo cancellation. Orion adds no software echo canceller. V1 suppresses wake detection during ordinary reply playback.
-
-Alarm dismissal takes priority over conversation interruption. After normal playback, the listener waits for quiet before opening the follow-up window.
+V2 uses XVF3800 hardware echo cancellation. Orion adds no software echo canceller.
+`--wake-engine rustpotter` selects the previous detector. Its optional acoustic verifier uses the same model directory.
 
 ## Settings
 
@@ -50,7 +55,16 @@ The [configuration reference](../docs/configuration.md#microphone-listener) defi
    journalctl -u orion-listener -u orion-voice-stack -n 60 --no-pager
    ```
 
-Wake audio saving requires the explicit `ORION_WAKE_DEBUG_DIR` setting. These recordings contain private microphone audio. The listener does not save them by default.
+Each detection produces a `voice.wake_detection` JSON line with score, phase and session ID.
+The coordinator reports `voice.wake_outcome` with acceptance and Qwen time. These outcome lines contain no transcript text.
+
+Set `ORION_WAKE_CLIPS_DIR` in the listener service environment to save accepted and rejected prefix WAV files.
+The writer uses a separate thread. `clips.jsonl` links each clip to its session and outcome.
+The directory holds at most 200 files and 100 MB. Old clips are removed first.
+Audio saving stays off when the variable is absent. These files contain private microphone audio and stay on the lamp.
+
+`ORION_WAKE_DEBUG_DIR` enables the separate Rustpotter acoustic-verifier diagnostics.
+The [recording procedure](../docs/wake-word-training.md#record-your-voice) uses `orion-record-voice` for private training samples.
 
 ## Development
 

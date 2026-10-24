@@ -128,6 +128,11 @@ impl RestCoordinator {
         self.last_confirmed_at = None;
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_test_state(&mut self, state: RestState) {
+        self.state = state;
+    }
+
     pub fn set_mode(&mut self, mode: super::routines::UserMode, now: f64) {
         self.mode = mode;
         self.presence_deferred = false;

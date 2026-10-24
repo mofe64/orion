@@ -2084,7 +2084,7 @@ mod tests {
         let mut r = Routines::load(Some(path.clone()), 100., 0.).unwrap();
         assert_eq!(
             r.status(100., 0.)["sounds"],
-            json!({"alarm":"two_tone","timer":"two_tone"})
+            json!({"alarm":"soft_chime","timer":"soft_chime"})
         );
         for (kind, sound) in [
             (AlertKind::Alarm, AlertSound::ClubAlarm),
@@ -2400,7 +2400,7 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(r.saved.sounds.timer, AlertSound::TwoTone);
+        assert_eq!(r.saved.sounds.timer, AlertSound::SoftChime);
     }
     #[test]
     fn alert_limits_and_pcm_headroom() {

@@ -32,7 +32,7 @@ class Fixture(unittest.TestCase):
         self.units = self.base / 'units'; self.units.mkdir()
         self.project = self.home / 'dev/orion'; self.project.mkdir(parents=True)
         shutil.copytree(SCRIPTS / 'systemd', self.release / 'scripts/systemd')
-        for name in ('home_assistant_install.py', 'release-home-assistant.json'):
+        for name in ('home_assistant_install.py', 'release-home-assistant.json', 'avahi_config.py'):
             shutil.copy2(SCRIPTS / name, self.release / 'scripts' / name)
         shutil.copytree(SCRIPTS.parent / 'hardware/profiles', self.release / 'hardware/profiles')
         (self.release / 'release.json').write_text('{"revision":"new"}')
@@ -50,6 +50,14 @@ class Fixture(unittest.TestCase):
 
 
 class ConfigurationTests(Fixture):
+    def test_existing_spotify_restart_delay_is_migrated_and_custom_delay_is_kept(self):
+        self.write(self.release / 'scripts/spotify_connect.py', '# receiver')
+        unit = self.units / 'orion-spotify.service'
+        self.write(unit, '[Service]\nExecStart=/old/release/orion_studio/.venv/bin/python /old/release/scripts/spotify_connect.py --binary /old/release/native/librespot\nRestartSec=2\n')
+        self.assertIn('RestartSec=15', self.plan()[unit])
+        self.write(unit, unit.read_text().replace('RestartSec=2', 'RestartSec=45'))
+        self.assertIn('RestartSec=45', self.plan()[unit])
+
     def test_spotify_service_follows_the_release_and_keeps_assets_separate(self):
         self.write(self.release / 'scripts/spotify_connect.py', '# receiver')
         plan = self.plan()
@@ -243,18 +251,18 @@ class ConfigurationTests(Fixture):
                 (self.release / 'release.json').write_text(json.dumps({'revision': 'new', 'hardware': hardware}))
                 result = self.plan()[self.units / 'orion-listener.service']
                 self.assertIn('--hardware ' + hardware, result)
-                self.assertIn('--threshold 0.35', result)
-                self.assertIn('--no-verifier', result)
-                self.assertNotIn('--verifier-dir', result)
+                self.assertNotIn('--threshold', result)
+                self.assertNotIn('--no-verifier', result)
+                self.assertIn('--verifier-dir', result)
 
-    def test_bundled_verifier_in_existing_override_is_turned_off(self):
+    def test_custom_threshold_retains_legacy_engine_and_verifier(self):
         self.installed_units()
         path = self.units / 'orion-listener.service.d/99-local.conf'
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener '
                    '--threshold 0.47 --verifier-dir /old/release/voice/models/verifier\n')
         result = self.plan()[path]
-        self.assertIn('--no-verifier', result)
-        self.assertNotIn('--verifier-dir', result)
+        self.assertIn('--verifier-dir', result)
+        self.assertNotIn('--no-verifier', result)
         self.assertNotIn('/old/release', result)
 
     def test_removes_retired_environment_and_preserves_other_tuning(self):
@@ -337,9 +345,10 @@ class ConfigurationTests(Fixture):
         path = self.units / 'orion-listener.service.d/40-pi-voice.conf'
         self.write(path, '[Service]\nExecStart=\nExecStart=/old/release/voice/.venv/bin/orion-listener --local-processor --threshold 0.8 --host 0.0.0.0\n')
         result = self.plan()[path]
-        self.assertIn('--threshold 0.35', result)
-        self.assertIn(str(self.release / 'voice/models/wake/hey_orion_reference.rpw'), result)
-        self.assertEqual(result.count('--no-verifier'), 1)
+        self.assertNotIn('--threshold', result)
+        self.assertNotIn('--wake-model', result)
+        self.assertNotIn('--no-verifier', result)
+        self.assertIn('--verifier-dir', result)
 
     def test_non_numeric_operator_threshold_is_preserved(self):
         self.installed_units()
@@ -378,10 +387,17 @@ class ListenerStartTests(unittest.TestCase):
             start += f' --wake-model /old/release/voice/models/wake/{model}'
         return start
 
+    def test_explicit_operator_engine_is_preserved(self):
+        for engine in ('openwakeword', 'rustpotter'):
+            start = self.start('0.35') + ' --wake-engine ' + engine
+            result = pi_service_config.listener_start(start, self.release)
+            self.assertIn('--wake-engine ' + engine, result)
+            self.assertEqual(result.count('--wake-engine'), 1)
+
     def test_wheel_installs_use_the_asr_wake_check(self):
         result = pi_service_config.listener_start(self.start('0.35'), self.release)
-        self.assertIn('--no-verifier', result)
-        self.assertNotIn('--verifier-dir', result)
+        self.assertIn('--verifier-dir', result)
+        self.assertNotIn('--no-verifier', result)
 
     def test_custom_or_disabled_verifier_is_preserved(self):
         for setting in ('--verifier-dir /custom/verifier', '--verifier-dir=/custom/verifier', '--no-verifier'):
@@ -394,17 +410,18 @@ class ListenerStartTests(unittest.TestCase):
         for model in (None, pi_service_config.REFERENCE_WAKE_MODEL):
             with self.subTest(model=model):
                 result = pi_service_config.listener_start(self.start('0.8', model), self.release)
-                self.assertIn('--threshold 0.35', result)
-                self.assertNotIn('--threshold 0.8', result)
-                self.assertIn(f'--wake-model {self.release}/voice/models/wake/{pi_service_config.ACTIVE_WAKE_MODEL}', result)
+                self.assertNotIn('--threshold', result)
+                self.assertNotIn('--wake-model', result)
+                self.assertIn(f'--verifier-dir {self.release}/voice/models/verifier', result)
 
     def test_active_managed_threshold_still_receives_wake_model_updates(self):
         for model in (None, pi_service_config.REFERENCE_WAKE_MODEL):
             with self.subTest(model=model), \
                  patch.object(pi_service_config, 'ACTIVE_WAKE_MODEL', 'updated.rpw'):
                 result = pi_service_config.listener_start(self.start('0.35', model), self.release)
-                self.assertIn('--threshold 0.35', result)
-                self.assertIn(f'--wake-model {self.release}/voice/models/wake/updated.rpw', result)
+                self.assertNotIn('--threshold', result)
+                self.assertNotIn('--wake-model', result)
+                self.assertIn('--verifier-dir', result)
 
     def test_custom_threshold_is_preserved(self):
         for model in (None, pi_service_config.REFERENCE_WAKE_MODEL):
@@ -1024,7 +1041,7 @@ class TransactionTests(Fixture):
         previous_manifest = self.manifest.read_bytes()
         self.release = self.root / 'releases/failed'; self.release.mkdir()
         (self.release / 'scripts').mkdir()
-        for name in ('home_assistant_install.py', 'release-home-assistant.json'):
+        for name in ('home_assistant_install.py', 'release-home-assistant.json', 'avahi_config.py'):
             shutil.copy2(SCRIPTS / name, self.release / 'scripts' / name)
         shutil.copytree(SCRIPTS.parent / 'hardware/profiles', self.release / 'hardware/profiles')
         (self.release / 'release.json').write_text('{"revision":"failed"}')
@@ -1098,7 +1115,7 @@ class ReadinessTests(Fixture):
     def test_processes_alone_are_not_ready_and_only_matching_release_is_accepted(self):
         cases = [(fault, None) for fault in (None, 'old-service', 'old-runtime', 'wrong-gateway', 'no-asr', 'no-tts',
                       'wrong-tts-provider', 'wrong-tts-model', 'no-agent', 'wrong-agent-model',
-                      'wrong-wake-model', 'wrong-wake-threshold', 'no-verifier', 'not-resting', 'lights-on', 'torque-on')]
+                      'wrong-wake-model', 'wrong-wake-threshold', 'wrong-wake-engine', 'not-resting', 'lights-on', 'torque-on')]
         cases += [(None, '0.35'), (None, '0.8'), (None, '0.6'), ('wrong-wake-threshold', '0.6')]
         cases = [(fault, threshold, 'v1') for fault, threshold in cases]
         cases += [(None, None, 'v2'), ('gaze-unavailable', None, 'v2'), ('vision-detection', None, 'v2')]
@@ -1112,6 +1129,9 @@ class ReadinessTests(Fixture):
                              wake=dict(provider='rustpotter', model='hey_orion_reference.rpw',
                                        threshold=float(listener_threshold or '0.35'),
                                        verifier=dict(provider='openwakeword', active=True)))
+                if listener_threshold is None:
+                    event['wake'] = dict(provider='openwakeword', model='hey_orion_verifier.onnx', threshold=0.5, verifier=None)
+                    self.write(self.release / 'voice/models/verifier/config.json', '{"threshold":0.5}')
                 revision, gateway_pid = 'new', 42
                 if fault == 'old-service': status['project_root'] = '/old/release'
                 if fault == 'old-runtime': revision = 'old'
@@ -1123,13 +1143,13 @@ class ReadinessTests(Fixture):
                 if fault == 'wrong-agent-model': event['agent']['model'] = 'gpt-5.6-sol'
                 if fault == 'wrong-wake-model': event['wake']['model'] = 'hey_orion_trained_080.rpw'
                 if fault == 'wrong-wake-threshold': event['wake']['threshold'] = 0.8
-                if fault == 'no-verifier': event['wake']['verifier'] = None
+                if fault == 'wrong-wake-engine': event['wake']['provider'] = 'rustpotter'
                 system = installer.System()
                 self.write(self.home / '.config/orion/custom-token', 'fixture-token')
                 cmdline = '\0'.join(['python3', 'gateway.py', '--port', '7555', '--socket', '/tmp/custom.sock', '--token-file', str(self.home / '.config/orion/custom-token'), '']).encode()
                 listener_args = ['orion-listener']
                 if listener_threshold is not None:
-                    listener_args += ['--threshold', listener_threshold]
+                    listener_args += ['--wake-engine', 'rustpotter', '--threshold', listener_threshold]
                 listener_cmdline = '\0'.join(listener_args + ['']).encode()
                 def run(*args, **kwargs):
                     if args[0] == 'systemctl': return subprocess.CompletedProcess(args, 0, '100\n')

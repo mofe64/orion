@@ -22,8 +22,7 @@ def services_for_release(release):
             *(('orion-spotify',) if (release / 'scripts/spotify_connect.py').is_file() else ()))
 
 REFERENCE_WAKE_MODEL = 'hey_orion_reference.rpw'
-# The reference model proposes candidates. The ASR wake check confirms them;
-# the packaged acoustic verifier (voice/models/verifier) stays off by default.
+# Rustpotter remains selectable for one release. openWakeWord is the default.
 ACTIVE_WAKE_MODEL = REFERENCE_WAKE_MODEL
 ACTIVE_WAKE_THRESHOLD = '0.35'
 # Recognize the legacy managed threshold so upgrades keep following the active profile.
@@ -118,25 +117,21 @@ def listener_start(start, release):
         threshold = None
     managed = ((model is None and (threshold in MANAGED_WAKE_THRESHOLDS or threshold_flag is None)) or
                (model == REFERENCE_WAKE_MODEL and threshold in MANAGED_WAKE_THRESHOLDS))
-    if managed:
-        wanted_model = f'{release}/voice/models/wake/{ACTIVE_WAKE_MODEL}'
-        if threshold_flag:
-            start = start[:threshold_flag.start()] + f'--threshold {ACTIVE_WAKE_THRESHOLD}' + start[threshold_flag.end():]
-        else:
-            start += f' --threshold {ACTIVE_WAKE_THRESHOLD}'
-        model_flag = re.search(r'(?<!\S)--wake-model(?:\s+|=)(\S+)', start)
-        if model_flag:
-            start = start[:model_flag.start()] + f'--wake-model {wanted_model}' + start[model_flag.end():]
-        else:
-            start += f' --wake-model {wanted_model}'
+    engine_flag = re.search(r'(?<!\S)--wake-engine(?:\s+|=)(\S+)', start)
+    # An explicit engine is an operator choice. Custom Rustpotter profiles also
+    # retain their engine instead of silently applying a different threshold.
+    legacy = engine_flag is not None and engine_flag[1] == 'rustpotter'
+    custom = engine_flag is None and not managed
+    if custom:
+        start += ' --wake-engine rustpotter'
+        legacy = True
+    if not legacy:
+        start = re.sub(r'(?<!\S)--(?:wake-model|threshold)(?:\s+|=)\S+', '', start)
+        start = re.sub(r'(?<!\S)--no-verifier(?=\s|$)', '', start)
+        if not re.search(r'(?<!\S)--verifier-dir(?:\s|=)', start):
+            start += f' --verifier-dir {release}/voice/models/verifier'
     elif model is None:
         start += f' --wake-model {release}/voice/models/wake/{REFERENCE_WAKE_MODEL}'
-    # Wheel-installed code lives in site-packages; models stay in the release.
-    # The packaged verifier is replaced by the ASR wake check. A custom
-    # verifier directory is an operator choice and stays.
-    start = re.sub(r'(?<!\S)--verifier-dir(?:\s+|=)\S*voice/models/verifier/?(?=\s|$)', '--no-verifier', start)
-    if not re.search(r'(?<!\S)--(?:verifier-dir(?:\s|=)|no-verifier(?:\s|$))', start):
-        start += ' --no-verifier'
     if '--local-processor' not in start:
         start += ' --local-processor'
     return start
@@ -188,6 +183,8 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
             if override.is_symlink():
                 raise ValueError(f'Inspect symlinked override before deployment: {override}')
             contents.append((override, override.read_text()))
+        if name == 'orion-spotify':
+            contents = [(p, re.sub(r'^RestartSec=2s?$', 'RestartSec=15', value, flags=re.M)) for p, value in contents]
         combined = '\n'.join(value for _, value in contents)
         if name in ('oriond', 'orion-studio-gateway', 'orion-listener'):
             def hardware_start(start):
@@ -284,6 +281,7 @@ def render_plan(release, root, runtime_project, home, user, unit_dir=Path('/etc/
     helper = system_root / 'usr/local/libexec/orion-home-assistant.py'
     manifest = system_root / 'usr/local/share/orion/home-assistant.json'
     files[helper] = (release / 'scripts/home_assistant_install.py').read_text()
+    files[helper.parent / 'avahi_config.py'] = (release / 'scripts/avahi_config.py').read_text()
     files[manifest] = (release / 'scripts/release-home-assistant.json').read_text()
     files[unit_dir / 'orion-home-assistant-install.service'] = (
         '[Unit]\nDescription=Install independent Orion Home Assistant container\nAfter=network-online.target\nWants=network-online.target\n'

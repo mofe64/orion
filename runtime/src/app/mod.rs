@@ -1274,6 +1274,34 @@ mod tests {
     }
 
     #[test]
+    fn accepted_wake_chimes_awake_or_resting_including_during_music() {
+        use crate::expression::rest::RestState;
+        for state in [RestState::Awake, RestState::Resting] {
+            for music in [false, true] {
+                let mut h = DispatchFixture::new(600.);
+                h.rest.set_test_state(state);
+                h.audio.set_test_music_playing(music);
+                let session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                h.ok(&format!("voice {session} capture"));
+                assert!(h.audio.commands().is_empty());
+                for event in ["wake", "verify", "confirmed"] {
+                    h.ok(&format!("voice {session} {event}"));
+                }
+                assert_eq!(
+                    h.audio
+                        .commands()
+                        .iter()
+                        .filter(
+                            |c| matches!(c, crate::AudioCommand::Play(cue) if cue == "voice_wake")
+                        )
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
+
+    #[test]
     fn confirmation_requires_current_endpointed_wake_and_resets_deadline_once() {
         let mut h = DispatchFixture::new(600.0);
         h.rest.started();

@@ -88,12 +88,18 @@ class PackTests(unittest.TestCase):
         with patch.object(assets, 'releases', return_value=iter([bad])), patch.object(assets, 'fetch', side_effect=responses.__getitem__):
             with self.assertRaisesRegex(RuntimeError, 'incompatible'): assets.select_pack(self.source, self.unpacked, 'assets-v2.0.0')
 
-    def test_first_install_only_can_use_bundled_default(self):
+    def test_app_update_does_not_select_an_asset_pack_older_than_its_bundled_cues(self):
+        old = {'tag_name':'assets-v1.2.2', 'assets':[]}
+        with patch.object(assets, 'releases', return_value=iter([old])), patch.object(assets, 'fetch') as fetch:
+            self.assertIsNone(assets.select_pack(self.source, self.unpacked))
+        fetch.assert_not_called()
+
+    def test_install_and_update_can_use_bundled_default(self):
         import shutil
         shutil.copy2(self.archive, self.source / 'default-assets.tar.gz')
         with patch.object(assets, 'select_pack', return_value=None):
             self.assertEqual(assets.prepare_catalog(self.source, self.unpacked, first_install=True), self.unpacked)
-            with self.assertRaisesRegex(RuntimeError, 'No compatible'): assets.prepare_catalog(self.source, self.root / 'other')
+            self.assertEqual(assets.prepare_catalog(self.source, self.root / 'other'), self.root / 'other')
 
 
 class AssetTransactionTests(Fixture):

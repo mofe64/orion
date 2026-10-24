@@ -1,8 +1,9 @@
 # Change the Hey Orion wake model
 
-The listener uses a Rustpotter candidate model and a Qwen check of the wake prefix. An optional acoustic phrase verifier can replace the prefix check. Qwen checks complete command recordings before agent dispatch. Changing one stage does not replace the others.
+The listener uses openWakeWord for continuous wake detection. Qwen checks one prefix before the command reaches the agent.
+The prefix contains three seconds before detection and 300 ms after detection. An accepted prefix remains accepted for the complete command recording.
 
-The installed model selection lives in `scripts/pi_service_config.py`. The verifier decision rule lives in `voice/models/verifier/config.json`.
+The detector configuration lives in `voice/models/verifier/config.json`. It defines the threshold, startup frames and model file hashes.
 
 ## Record your voice
 
@@ -45,17 +46,17 @@ Do not say the wake phrase during background capture. Use `--out DIR` to select 
 5. Include ordinary speech, similar phrases and household noise in negative clips.
 6. Separate training and comparison inputs by speaker and recording session.
 
-Rustpotter positive file names use labels such as `[hey_orion]001.wav`. Unlabelled file names represent the `none` class.
+## Select a model
 
-## Train and select a model
+1. Prepare the openWakeWord feature models and phrase classifier in `voice/models/verifier/`.
+2. Put each model file hash in `config.json`.
+3. Set the threshold and startup frames in `config.json`.
+4. Keep the model files and configuration together.
+5. Use the [release procedure](release-packaging.md) to install them.
 
-1. Follow the upstream [Rustpotter CLI guide](https://github.com/GiviMAD/rustpotter-cli#creating-a-wakeword-model).
-2. Compare candidate behavior with unchanged input audio.
-3. Select the model and its threshold together.
-4. Update the managed selection in `scripts/pi_service_config.py`.
-5. Keep standalone listener defaults and service templates consistent.
-6. Build and deploy through the [release procedure](release-packaging.md).
+`--wake-engine rustpotter` selects the previous detector. Its model uses `--wake-model` and `--threshold`.
+The [configuration reference](configuration.md#microphone-listener) defines these options.
 
-The listener accepts wake-model, threshold and verifier-directory options. The [configuration reference](configuration.md#microphone-listener) defines their use.
+`ORION_WAKE_CLIPS_DIR` saves accepted and rejected prefixes for inspection. The [listener reference](../voice/README.md#troubleshooting) defines storage limits.
 
 The acoustic classifier uses openWakeWord features with a CC BY-NC-SA license. Preserve model and feature licenses when distributing replacements.

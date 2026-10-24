@@ -116,6 +116,52 @@ class WakeDebugRecorder:
         self._thread.join(timeout=2)
 
 
+class WakePrefixClips(WakeDebugRecorder):
+    """Save Qwen prefix decisions on a bounded worker queue, without transcripts."""
+    max_files = 200
+    max_bytes = 100 * 1024 * 1024
+
+    @classmethod
+    def from_environment(cls):
+        directory = os.environ.get("ORION_WAKE_CLIPS_DIR")
+        return cls(directory) if directory else None
+
+    def submit(self, session_id, pcm, accepted, qwen_ms):
+        if self._stop.is_set():
+            return
+        now = datetime.now(timezone.utc)
+        name = now.strftime("%Y%m%dT%H%M%S%fZ") + "-" + ("accepted" if accepted else "rejected") + ".wav"
+        meta = {"event": "voice.wake_clip", "session_id": session_id, "accepted": accepted,
+                "qwen_ms": qwen_ms, "file": name, "timestamp": now.isoformat()}
+        try:
+            self._queue.put_nowait((name, pcm, meta))
+        except queue.Full:
+            print(json.dumps({"event": "voice.wake_clip_dropped", "session_id": session_id}), flush=True)
+
+    def _write(self, name, pcm, meta):
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        index = self.directory / "clips.jsonl"
+        entries = [json.loads(line) for line in index.read_text().splitlines()] if index.exists() else []
+        entries = [entry for entry in entries if (self.directory / entry["file"]).is_file()]
+        known = {entry["file"] for entry in entries}
+        for orphan in self.directory.glob("*.wav"):
+            if orphan.name not in known and _FOLDER_NAME.fullmatch(orphan.stem) and not orphan.is_symlink():
+                orphan.unlink()
+        destination = self.directory / name
+        with destination.open("xb") as stream, wave.open(stream, "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(RATE)
+            output.writeframes(pcm)
+        entries.append(meta)
+        # 199 WAVs and one JSONL index; account for both in the byte cap.
+        def size():
+            return sum((self.directory / e["file"]).stat().st_size for e in entries) + sum(len(json.dumps(e).encode()) + 1 for e in entries)
+        while len(entries) >= self.max_files or size() > self.max_bytes:
+            (self.directory / entries.pop(0)["file"]).unlink()
+        index.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+
+
 class CaptureReadStats:
     """Count read latency including dispatch to/from the capture worker thread."""
     def __init__(self, *, clock=time.monotonic):

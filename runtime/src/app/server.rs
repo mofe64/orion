@@ -384,9 +384,13 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         if feedback.expire(now_seconds) && had_confirmed_feedback {
             let _ = character.set_reaction("neutral", now_seconds, &mut core);
         }
-        audio.set_music_ducking(
-            feedback.session_active() || speech.is_active() || routines.ringing(),
-        );
+        audio.set_music_ducking(if feedback.capturing() {
+            0.10
+        } else if feedback.session_active() || speech.is_active() || routines.ringing() {
+            0.25
+        } else {
+            1.
+        });
         if rest.failed()
             || voice_speech_run.as_ref().is_some_and(|(run, session)| {
                 speech

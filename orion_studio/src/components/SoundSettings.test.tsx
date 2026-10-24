@@ -5,7 +5,7 @@ import type { GatewayStatus } from "../types";
 
 const routines = {
   sounds: { alarm: "club_alarm", timer: "funny_alarm" },
-  available_sounds: [{ id: "two_tone", name: "Two-tone (default)" }, { id: "club_alarm", name: "Club alarm" }, { id: "funny_alarm", name: "Funny alarm" }],
+  available_sounds: [{ id: "soft_chime", name: "Soft chime (default)" }, { id: "two_tone", name: "Two-tone" }, { id: "club_alarm", name: "Club alarm" }, { id: "funny_alarm", name: "Funny alarm" }],
 } as GatewayStatus["routines"];
 
 describe("Orion sound settings", () => {

@@ -107,9 +107,18 @@ Changing `voice-stack.env` does not replace saved choices. Studio's Voice settin
 
 ## Microphone listener
 
-Rustpotter proposes wake candidates. Qwen checks a short wake prefix before wake feedback. Qwen checks the complete recording before dispatching a command.
+openWakeWord detects the wake phrase in a continuous microphone stream. Qwen checks one 3.3-second prefix before wake feedback.
+Qwen transcribes the complete recording to obtain the command. Prefix acceptance remains valid for that command.
 
-`scripts/pi_service_config.py` selects the installed wake model and threshold. `voice/models/verifier/config.json` selects the acoustic threshold. `--wake-model`, `--threshold` and `--verifier-dir` override their respective inputs. The installed listener uses `--no-verifier`, which selects Qwen prefix confirmation.
+`--wake-engine` selects `openwakeword` by default. `--verifier-dir` selects the openWakeWord model directory.
+`voice/models/verifier/config.json` defines the threshold, startup frames and file hashes.
+
+`--wake-engine rustpotter` selects the previous detector. `--wake-model` and `--threshold` configure that detector.
+`--no-verifier` disables its additional acoustic check. Managed service updates preserve explicit engine selections.
+
+`ORION_WAKE_CLIPS_DIR` enables private prefix recordings. It is unset by default. See [listener troubleshooting](../voice/README.md#troubleshooting) for file limits.
+
+`orion-record-voice --speaker NAME` records training samples on the Pi. See [Record your voice](wake-word-training.md#record-your-voice) for prompts and storage.
 
 | Variable | Function |
 | --- | --- |

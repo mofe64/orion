@@ -3,7 +3,7 @@ use crate::{
     buffer::StartupBuffer,
     gateway::{ActiveRun, Gateway},
     hub::Hub,
-    session::{Phase, Session, after_wake},
+    session::{Phase, Session, after_wake, useful_followup},
     speech::{Chunk, SpeechRuntime},
 };
 use futures_util::{
@@ -70,8 +70,8 @@ async fn connect(
     control: bool,
 ) -> Result<(Pi, SplitStream<Socket>, Value), String> {
     let options = WebSocketConfig::default()
-        .max_message_size(Some(33 * 32000))
-        .max_frame_size(Some(33 * 32000));
+        .max_message_size(Some(18 * 32000))
+        .max_frame_size(Some(18 * 32000));
     let (socket, _) = connect_async_with_config(&config.pi_url, Some(options), false)
         .await
         .map_err(|e| e.to_string())?;
@@ -284,6 +284,29 @@ async fn connected(
     let mut retiring = JoinSet::<Result<(), String>>::new();
     let mut response_stop: Option<watch::Sender<bool>> = None;
     let mut active: ActiveRun = Arc::new(Mutex::new(None));
+    // A stale turn is a protocol-level cancellation, not a failed transport.
+    // Drain cancelled jobs before accepting the next turn on the same socket.
+    macro_rules! cancel_turn {
+        ($reason:expr, $incoming:expr) => {{
+            let identity = session.as_ref().map(|s| s.id.clone()).or_else(|| followup.clone());
+            if let Some(interrupt) = response_stop.take() { let _ = interrupt.send(true); }
+            jobs.abort_all(); while jobs.join_next().await.is_some() {}
+            gateway.cancel(&active).await;
+            active = Arc::new(Mutex::new(None));
+            announcement_ready = None;
+            if let Some(id) = active_announcement.take() {
+                let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":id}}), $incoming).await;
+            }
+            if let Some(ref identity) = identity {
+                pi.send(json!({"type":"session.cancel","sessionId":identity})).await?;
+            }
+            if identity.as_deref() != Some($incoming) {
+                pi.send(json!({"type":"session.cancel","sessionId":$incoming})).await?;
+            }
+            eprintln!("{}", json!({"event":"voice.turn_cancelled","session_id":identity,"reason":$reason}));
+            session = None; followup = None;
+        }};
+    }
     let result = async {
         loop {
             if session.is_none() && jobs.is_empty() && retiring.is_empty()
@@ -346,26 +369,33 @@ async fn connected(
                         },
                         Ok(Completed::Transcript { sid: job_sid, purpose, transcript, elapsed }) => {
                             let expected = if purpose == "wake_prefix" { Phase::VerifyingWake } else { Phase::Transcribing };
-                            if job_sid != sid || current.phase != expected { return Err("Stale transcription result".into()); }
+                            if job_sid != sid || current.phase != expected {
+                                cancel_turn!("Stale transcription result", job_sid.as_str());
+                                continue;
+                            }
                             timing(hub, &sid, &format!("transcription_{purpose}"), elapsed);
                             let raw = transcript["text"].as_str().ok_or("Invalid transcript text")?.trim();
                             if purpose == "wake_prefix" {
                                 let accepted = after_wake(raw).is_some();
+                                eprintln!("{}", json!({"event":"voice.wake_outcome","session_id":sid,"accepted":accepted,"qwen_ms":elapsed}));
                                 current.wake_verified = accepted;
                                 current.phase = Phase::Wake;
-                                pi.send(json!({"type":"wake.verified", "sessionId":sid, "accepted":accepted})).await?;
-                                event(hub, &sid, if accepted {
-                                    json!({"type":"wake.confirmed", "text":raw, "hasCommand":false, "early":true})
-                                } else {
-                                    json!({"type":"wake.verification_deferred"})
-                                });
+                                if !accepted {
+                                    pi.send(json!({"type":"session.cancel", "sessionId":sid,"wakeAccepted":false,"qwenMs":elapsed})).await?;
+                                    event(hub, &sid, json!({"type":"wake.rejected"}));
+                                    session = None; followup = None;
+                                    continue;
+                                }
+                                pi.send(json!({"type":"wake.verified", "sessionId":sid, "accepted":true,"qwenMs":elapsed})).await?;
+                                event(hub, &sid, json!({"type":"wake.confirmed", "hasCommand":false, "early":true}));
                                 continue;
                             }
                             let command = if purpose == "wake_and_command" {
-                                match after_wake(raw) {
+                                match after_wake(raw).or_else(|| current.wake_verified.then(|| raw.to_owned())) {
                                     None => {
+                                        eprintln!("{}", json!({"event":"voice.wake_outcome","session_id":sid,"accepted":false,"qwen_ms":elapsed}));
                                         pi.send(json!({"type":"session.reject", "sessionId":sid})).await?;
-                                        event(hub, &sid, json!({"type":"wake.rejected", "text":raw}));
+                                        event(hub, &sid, json!({"type":"wake.rejected"}));
                                         session = None;
                                         continue;
                                     },
@@ -373,6 +403,7 @@ async fn connected(
                                         current.phase = if command.is_empty() { Phase::Command } else { Phase::Responding };
                                         pi.send(json!({"type":"wake.confirmed", "sessionId":sid, "followup":command.is_empty()})).await?;
                                         if !current.wake_verified {
+                                            eprintln!("{}", json!({"event":"voice.wake_outcome","session_id":sid,"accepted":true,"qwen_ms":elapsed}));
                                             event(hub, &sid, json!({"type":"wake.confirmed", "text":raw, "hasCommand":!command.is_empty()}));
                                         }
                                         if command.is_empty() {
@@ -382,6 +413,11 @@ async fn connected(
                                     }
                                 }
                             } else { raw.to_owned() };
+                            if current.continuation && !useful_followup(&command) {
+                                pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
+                                event(hub, &sid, json!({"type":"conversation.window","active":false}));
+                                session = None; followup = None; continue;
+                            }
                             if command.is_empty() {
                                 pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
                                 event(hub, &sid, error("transcription_failed", "No command was heard", true));
@@ -460,12 +496,17 @@ async fn connected(
                             }
                         },
                         "wake.candidate" | "command.candidate" => {
-                            if session.is_some() || !jobs.is_empty() { return Err("Overlapping Pi voice session".into()); }
+                            if session.is_some() || !jobs.is_empty() {
+                                cancel_turn!("Overlapping Pi voice session", sid);
+                                continue;
+                            }
                             let continuation = message["type"] == "command.candidate";
                             if continuation && (followup.as_deref() != message["previousSessionId"].as_str() || followup.is_none() || followup.as_deref() == Some(sid)) {
-                                return Err("Unexpected conversation continuation".into());
+                                cancel_turn!("Unexpected conversation continuation", sid);
+                                continue;
                             }
                             session = Some(Session::new(sid, if continuation { Phase::Command } else { Phase::Wake })?);
+                            session.as_mut().unwrap().continuation = continuation;
                             followup = None;
                             if continuation { event(hub, sid, json!({"type":"command.started"})); } else { hub.publish(message); }
                         },
@@ -488,22 +529,29 @@ async fn connected(
                             }
                         },
                         "conversation.ready" | "conversation.closed" => {
-                            if followup.as_deref() != Some(sid) { return Err("Stale conversation window event".into()); }
+                            if followup.as_deref() != Some(sid) {
+                                cancel_turn!("Stale conversation window event", sid);
+                                continue;
+                            }
                             let open = message["type"] == "conversation.ready";
                             hub.publish(json!({"type":"conversation.window", "active":open}));
                             if !open { followup = None; }
                         },
                         "utterance" => {
-                            let current = session.as_mut().ok_or("Utterance without wake session")?;
                             let purpose = message["purpose"].as_str().ok_or("Missing utterance purpose")?.to_owned();
                             let size = message["bytes"].as_u64().ok_or("Missing utterance length")?;
-                            current.accept(sid, &purpose, size)?;
+                            let admission = session.as_mut().ok_or_else(|| "Utterance without wake session".to_owned())
+                                .and_then(|current| current.accept(sid, &purpose, size));
                             let audio = tokio::select! {
                                 _ = stop.changed() => return Ok(()),
                                 result = tokio::time::timeout(Duration::from_secs(5), pi.receive(&mut input)) => result.map_err(|_| "Pi audio timed out")??,
                             };
                             let Message::Binary(pcm) = audio else { return Err("Expected Pi PCM16 bytes".into()); };
                             if pcm.len() as u64 != size { return Err("Pi PCM16 length mismatch".into()); }
+                            if let Err(reason) = admission {
+                                cancel_turn!(&reason, sid);
+                                continue;
+                            }
                             if message["endReason"] == "max_duration" {
                                 pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
                                 event(hub, sid, error("utterance_too_long", "The recording limit was reached. Please repeat a shorter request.", true));
@@ -530,23 +578,17 @@ async fn connected(
                             let reason = message["reason"].as_str().ok_or("Interruption needs a reason")?;
                             match reason {
                                 "barge_in" => {
-                                    if let Some(current) = session.as_ref()
-                                        && current.phase != Phase::Responding
-                                    {
-                                        eprintln!("{}", json!({"event":"voice.barge_in_ignored",
-                                            "session_id":sid, "phase":format!("{:?}", current.phase),
-                                            "reason":"session_not_responding"}));
-                                        continue;
-                                    }
+                                    let responding = session.as_ref().is_some_and(|s| s.phase == Phase::Responding);
                                     if let Some(interrupt) = response_stop.take() { let _ = interrupt.send(true); }
                                     let mut interrupted_jobs = std::mem::take(&mut jobs);
+                                    if !responding { interrupted_jobs.abort_all(); }
                                     retiring.spawn(async move {
                                         while let Some(result) = interrupted_jobs.join_next().await {
                                             result.map_err(|e| e.to_string())??;
                                         }
                                         Ok(())
                                     });
-                                    agent.report_interruption();
+                                    if responding { agent.report_interruption(); }
                                 },
                                 "alarm" | "announcement" | "announcement_wake" => {
                                     jobs.abort_all(); while jobs.join_next().await.is_some() {}
@@ -562,17 +604,25 @@ async fn connected(
                             event(hub, sid, json!({"type":"session.interrupted","reason":reason}));
                             session = None; followup = None;
                         },
+                        "session.cancel" => {
+                            if session.as_ref().is_some_and(|s| s.id == sid) || followup.as_deref() == Some(sid) {
+                                cancel_turn!("Listener cancelled turn", sid);
+                            }
+                        },
                         "session.expired" => {
                             if let Some(index) = announcements.iter().position(|a| a["sessionId"] == sid) {
                                 let expired = announcements.remove(index).unwrap();
                                 let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":expired["id"]}}), sid).await;
                                 continue;
                             }
+                            if session.as_ref().map(|session| session.id.as_str()) != Some(sid) {
+                                cancel_turn!("Stale Pi expiry", sid);
+                                continue;
+                            }
                             announcement_ready = None;
                             if let Some(id) = active_announcement.take() {
                                 let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":id}}), sid).await;
                             }
-                            if session.as_ref().map(|session| session.id.as_str()) != Some(sid) { return Err("Stale Pi expiry".into()); }
                             jobs.abort_all(); while jobs.join_next().await.is_some() {}
                             retiring.abort_all(); while retiring.join_next().await.is_some() {}
                             response_stop = None;
