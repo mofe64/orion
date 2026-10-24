@@ -117,7 +117,7 @@ A search acknowledgement uses a separate speech run within the active session. T
 
 Robot tools return typed requests through the coordinator and gateway. The runtime decides whether execution is permitted. Failed actions return their reason before the agent confirms a result.
 
-A failed or stale turn sends cancellation and keeps the listener connection open. Cancellation retires only the affected speech worker when necessary. It cancels old uploads and playback ownership. Late results cannot revive an expired session.
+A failed turn sends cancellation and keeps the listener connection open. Cancellation retires only the affected speech worker when necessary. It cancels old uploads and playback ownership. Stale events and transcription results cannot cancel the current session. A new wake cancels the old session before admission. Late results cannot revive an expired session.
 
 ## Scheduled announcements
 

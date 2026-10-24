@@ -284,7 +284,7 @@ async fn connected(
     let mut retiring = JoinSet::<Result<(), String>>::new();
     let mut response_stop: Option<watch::Sender<bool>> = None;
     let mut active: ActiveRun = Arc::new(Mutex::new(None));
-    // A stale turn is a protocol-level cancellation, not a failed transport.
+    // Explicit cancellation retires the owned turn and any rejected incoming ID.
     // Drain cancelled jobs before accepting the next turn on the same socket.
     macro_rules! cancel_turn {
         ($reason:expr, $incoming:expr) => {{
@@ -370,7 +370,7 @@ async fn connected(
                         Ok(Completed::Transcript { sid: job_sid, purpose, transcript, elapsed }) => {
                             let expected = if purpose == "wake_prefix" { Phase::VerifyingWake } else { Phase::Transcribing };
                             if job_sid != sid || current.phase != expected {
-                                cancel_turn!("Stale transcription result", job_sid.as_str());
+                                eprintln!("{}", json!({"event":"voice.stale_transcription_ignored","session_id":job_sid,"current_session_id":sid,"reason":"Stale transcription result"}));
                                 continue;
                             }
                             timing(hub, &sid, &format!("transcription_{purpose}"), elapsed);
@@ -497,8 +497,10 @@ async fn connected(
                         },
                         "wake.candidate" | "command.candidate" => {
                             if session.is_some() || !jobs.is_empty() {
-                                cancel_turn!("Overlapping Pi voice session", sid);
-                                continue;
+                                // Retire only the old owner, then admit this candidate.
+                                let old_sid = session.as_ref().map(|s| s.id.clone()).or_else(|| followup.clone())
+                                    .ok_or("Voice jobs without an active session")?;
+                                cancel_turn!("Overlapping Pi voice session", old_sid.as_str());
                             }
                             let continuation = message["type"] == "command.candidate";
                             if continuation && (followup.as_deref() != message["previousSessionId"].as_str() || followup.is_none() || followup.as_deref() == Some(sid)) {
@@ -529,8 +531,8 @@ async fn connected(
                             }
                         },
                         "conversation.ready" | "conversation.closed" => {
-                            if followup.as_deref() != Some(sid) {
-                                cancel_turn!("Stale conversation window event", sid);
+                            if session.as_ref().map(|s| s.id.as_str()) != Some(sid) && followup.as_deref() != Some(sid) {
+                                eprintln!("{}", json!({"event":"voice.stale_window_ignored","session_id":sid,"type":message["type"],"reason":"Stale conversation window event"}));
                                 continue;
                             }
                             let open = message["type"] == "conversation.ready";
@@ -615,8 +617,8 @@ async fn connected(
                                 let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":expired["id"]}}), sid).await;
                                 continue;
                             }
-                            if session.as_ref().map(|session| session.id.as_str()) != Some(sid) {
-                                cancel_turn!("Stale Pi expiry", sid);
+                            if session.as_ref().map(|session| session.id.as_str()) != Some(sid) && followup.as_deref() != Some(sid) {
+                                eprintln!("{}", json!({"event":"voice.stale_expiry_ignored","session_id":sid,"reason":"Stale Pi expiry"}));
                                 continue;
                             }
                             announcement_ready = None;

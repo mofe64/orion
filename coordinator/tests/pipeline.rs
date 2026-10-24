@@ -670,11 +670,61 @@ async fn accepted_prefix_cannot_be_rejected_by_full_recording() {
 }
 
 #[tokio::test]
-async fn stale_turn_events_cancel_the_turn_and_leave_the_connection_usable() {
-    for message in [
-        json!({"type":"conversation.ready","sessionId":NEXT}),
-        json!({"type":"session.expired","sessionId":NEXT}),
+async fn stale_expiry_and_window_events_leave_live_playback_running() {
+    for kind in [
+        "session.expired",
+        "conversation.ready",
+        "conversation.closed",
+    ] {
+        let mut h = Harness::new().await;
+        h.gateway.lock().await.allow_complete = false;
+        h.wake("Hey Orion, still running").await;
+        until(&mut h.pi, "session.playing").await;
+        send(&mut h.pi, json!({"type":kind,"sessionId":NEXT})).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), h.pi.next())
+                .await
+                .is_err(),
+            "{kind} must not cancel the live turn"
+        );
+        assert!(h.gateway.lock().await.cancellations.is_empty());
+        h.gateway.lock().await.allow_complete = true;
+        assert_eq!(until(&mut h.pi, "session.finish").await["sessionId"], SID);
+        h.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn overlapping_wake_cancels_old_jobs_and_checks_the_new_prefix() {
+    let mut h = Harness::new().await;
+    h.wake("Hey Orion, hang-asr").await;
+    until(&mut h.observer, "transcription.started").await;
+    send(
+        &mut h.pi,
         json!({"type":"wake.candidate","sessionId":NEXT,"name":"hey_orion","score":0.8}),
+    )
+    .await;
+    let cancelled = next(&mut h.pi).await;
+    assert_eq!(cancelled["type"], "session.cancel");
+    assert_eq!(cancelled["sessionId"], SID);
+    h.utterance(NEXT, "wake_prefix", "Hey Orion").await;
+    let verified = next(&mut h.pi).await;
+    assert_eq!(verified["type"], "wake.verified");
+    assert_eq!(verified["sessionId"], NEXT);
+    assert_eq!(verified["accepted"], true);
+    h.utterance(NEXT, "wake_and_command", "keep this new request")
+        .await;
+    assert_eq!(until(&mut h.pi, "session.finish").await["sessionId"], NEXT);
+    assert_eq!(
+        until(&mut h.observer, "agent.response").await["text"],
+        "Reply 1: keep this new request"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn invalid_continuation_and_listener_cancel_leave_the_connection_usable() {
+    for message in [
         json!({"type":"command.candidate","sessionId":NEXT,"previousSessionId":SID}),
         json!({"type":"session.cancel","sessionId":SID}),
     ] {
