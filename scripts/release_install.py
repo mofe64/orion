@@ -227,6 +227,7 @@ def install(payload, root, codename):
         files[home / '.config/orion/servo_calibration-v2.json'] = None
         files[Path('/usr/local/bin/oriond')] = '#!/bin/sh\ncd ' + str(project) + '\nexec ' + str(release / 'runtime/target/release/oriond') + ' "$@"\n'
         files[Path('/usr/local/bin/orion-check-hailo')] = '#!/bin/sh\nexec ' + str(release / 'vision/.venv/bin/python') + ' ' + str(release / 'scripts/check_hailo.py') + ' --root ' + str(root) + ' "$@"\n'
+        files[Path('/usr/local/bin/orion-record-voice')] = '#!/bin/sh\nexec ' + str(release / 'voice/.venv/bin/orion-record-voice') + ' "$@"\n'
         files[Path('/usr/local/bin/codex')] = '#!/bin/sh\nexec ' + str(root / f'codex-{CODEX_VERSION}/bin/codex') + ' "$@"\n'
         folder = activate(root, release, home, files, System(), commissioning=True,
                           before_restore=lambda folder, data: restore_native_packages(root, codename, folder, data))

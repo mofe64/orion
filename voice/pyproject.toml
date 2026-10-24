@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 orion-listener = "orion_voice.satellite:main"
+orion-record-voice = "orion_voice.record_samples:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

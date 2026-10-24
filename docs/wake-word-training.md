@@ -4,7 +4,39 @@ The listener uses a Rustpotter candidate model and a Qwen check of the wake pref
 
 The installed model selection lives in `scripts/pi_service_config.py`. The verifier decision rule lives in `voice/models/verifier/config.json`.
 
-## Prepare training audio
+## Record your voice
+
+The recording tool runs on the Pi. It stops the listener during capture and starts it again on exit.
+Recordings stay on the lamp. The tool does not upload them.
+
+1. Get consent from the person before recording.
+2. Run the recorder from a Pi terminal.
+
+   This command records the prompted sets for one person.
+
+   ```bash
+   orion-record-voice --speaker NAME
+   ```
+
+3. Use only letters and digits in `NAME`.
+4. Press Enter to start each take.
+5. Speak when the screen shows `SPEAK NOW`.
+6. Press Enter to keep the take.
+7. Enter `r` to record the take again.
+8. Enter `q` to save progress and exit.
+
+The same command continues an incomplete set on the same day. Files use `~/.local/share/orion/wake-samples/NAME/YYYYMMDD/`.
+The manifest stores prompts, recording levels and take choices. The tool keeps previous takes.
+
+This command records 30 minutes of background sound.
+
+```bash
+orion-record-voice --speaker room --background 30
+```
+
+Do not say the wake phrase during background capture. Use `--out DIR` to select another directory.
+
+## Prepare training files
 
 1. Obtain consent from each recorded speaker.
 2. Keep private recordings outside Git.
