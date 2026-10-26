@@ -18,6 +18,7 @@ Paths in this table are relative to the Pi user's home directory.
 | `.config/orion/tracking.json` | Tracking mode |
 | `.config/orion/vision.json` | Vision accelerator selection |
 | `.config/orion/behaviours.json` | Optional character behaviors |
+| `.config/orion/personality.json` | Character quirks |
 | `.config/orion/servo_calibration.json` | V1 servo calibration |
 | `.config/orion/studio-token` | Gateway and listener access token |
 | `.local/share/orion/SOUL.md` | Personality choices |
@@ -27,6 +28,7 @@ Paths in this table are relative to the Pi user's home directory.
 | `.local/share/orion/weather.json` | Weather location and temperature unit |
 | `.local/share/orion/lists.json` | Shopping and to-do lists |
 | `.local/share/orion/reminders.json` | Next-conversation reminders |
+| `.local/share/orion/home.json` | Home memory: things to come back to, habits and recent days |
 | `.local/share/orion/voice-stack/` | Releases, transactions, models and catalogue |
 
 If `oriond` cannot read `routines.json` or `routines.sounds.json`, it renames the damaged file with a `.damaged` suffix. It then starts with default values and reports the reset in the routines `error` field. Damage to the sounds file resets only the sounds.
@@ -62,10 +64,31 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 
 Older boolean dance settings become `sometimes` for true and `off` for false.
 
-Studio shows `proactive_speech` and `demo_mode` as one Personality choice: Quiet, Lively or Demo. Demo keeps the `proactive_speech` value, so Orion returns to it when Demo stops. When `proactive_speech` or `demo_mode` changes to true, the gateway also sets `mutual_gaze`, `arrival_notice` and `new_object_peek` to true. If tracking is Off or Hands, it sets tracking to Idle. While `demo_mode` is true, vision also enables `object_glances`, `mutual_gaze`, `arrival_notice` and `new_object_peek`.
+Studio shows `proactive_speech` and `demo_mode` as one choice, **How lively Orion is**: Quiet, Lively or Demo. Demo keeps the `proactive_speech` value, so Orion returns to it when Demo stops. When `proactive_speech` or `demo_mode` changes to true, the gateway also sets `mutual_gaze`, `arrival_notice` and `new_object_peek` to true. If tracking is Off or Hands, it sets tracking to Idle. While `demo_mode` is true, vision also enables `object_glances`, `mutual_gaze`, `arrival_notice` and `new_object_peek`.
 
-Studio provides these settings under **Character behaviours**. The runtime reads act settings independently of camera observations.
+Studio shows liveliness and quirks in **Personality and memory**. It shows dance under **Character behaviours**, and the other switches under **Advanced** in that section. The runtime reads act settings independently of camera observations.
 The new act clips require the V2 catalogue. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
+
+## Quirks
+
+`personality.json` contains `{"quirks": {"curiosity": ..., "chattiness": ...}}`. The gateway is the only writer.
+
+| Key | Values |
+| --- | --- |
+| `curiosity` | `shy`, `normal`, `nosy` |
+| `chattiness` | `reserved`, `normal`, `chatty` |
+
+When the gateway starts and a quirk is missing or not valid, it selects a random outer value (for example `shy` or `nosy`) and saves it. Thus each new Orion gets different quirks. `oriond` reads the file each second. A missing or unknown value reads as `normal`. See [quirks](motion-architecture.md#quirks).
+
+## Home memory
+
+The agent keeps `home.json` on Orion. It has three parts:
+
+- Things to come back to. The reply model saves a short note and a day when the user tells about an event, for example an interview or a trip. It does not ask first. On that day and up to 3 days after it, the note goes with the user's request in a conversation. It never goes with a remark, an announcement or a briefing, so Orion does not bring it up when nobody talks to it. The model marks the note as done after it asks. A note given to 3 conversations without a question stops.
+- Habits. Each day the agent reads the behaviour log of the days before and counts the first and last person seen, the evening light, remarks and replies, and new objects. Habits show as sentences when a pattern occurs 2 or more times.
+- Recent days. One sentence for each day, for 30 days.
+
+Habits and the last 3 days go with the user's request in a conversation as background. Studio shows each part in **Personality and memory** and can delete each item, the habits or all of home memory.
 
 ## Camera privacy and tracking profile
 

@@ -135,3 +135,10 @@ class BehaviourTests(unittest.TestCase):
         self.assertFalse(value['looking_away'])
         self.assertEqual(value['objects'], [])
         self.assertNotIn('image', json.dumps(value))
+        self.assertIsNone(value['room_lux'])
+        pipeline.submit(10_000_000_001, None, {'Lux': 180.5})
+        pipeline.next_surroundings = 0
+        pipeline._surroundings(10_000_000_002, [track])
+        self.assertEqual(client.surroundings.call_args.args[0]['room_lux'], 180.5)
+        pipeline.submit(10_000_000_003, None, {'Lux': float('nan')})
+        self.assertIsNone(pipeline.room_lux)

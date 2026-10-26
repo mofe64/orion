@@ -49,6 +49,8 @@ class FacePipeline:
         self.objects, self.palms = objects, palms
         self.mode = "off"
         self.hand_count = 0
+        # Room light from the camera, in lux, when the camera reports it.
+        self.room_lux = None
         self.camera_enabled = False
         self.find_job = None
         self.behaviours = dict.fromkeys(KEYS, False)
@@ -206,6 +208,7 @@ class FacePipeline:
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': self.mode if self.enabled else 'off',
             'hand_count': self.hand_count,
+            'room_lux': self.room_lux,
             'objects': self.object_map.snapshot(self.boot_clock()),
             'novelty': self.novelty_observation,
             'faces': [{'track_id': track.id, 'azimuth': float(math.atan2(math.sin(track.state[0]), math.cos(track.state[0]))),
@@ -226,7 +229,9 @@ class FacePipeline:
             self.thread.join(timeout=2)
 
     def submit(self, stamp, buffer, metadata=None, geometry=None, rgb=None):
+        lux = (metadata or {}).get('Lux')
         with self.changed:
+            self.room_lux = float(lux) if isinstance(lux, (int, float)) and math.isfinite(lux) and 0 <= lux <= 200000 else None
             if self.camera_enabled and (self.enabled or self.find_job is not None) and buffer is not None:
                 if self.intrinsics.geometry is not None:
                     try:

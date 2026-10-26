@@ -112,6 +112,40 @@ Scene, speech and character coordinators plan their work. `RuntimeCore` executes
 
 ## Autonomous behaviors
 
+### Situation and initiative
+
+`oriond` builds one situation for each camera update. The situation contains:
+
+- The number of faces in view, and if a face looks at Orion.
+- Focus: a person looks away from Orion for a long time.
+- The visit: when it started, and since when nobody is in view.
+- The local hour and day.
+- Busy: a voice turn, a reply, music, an alert, a light routine or a scene is active.
+- Orion's own light: on or off, brightness and mood.
+- Room light in lux, when the camera gives it.
+- Liveliness: Quiet, Lively or Demo, from `proactive_speech` and `demo_mode`.
+
+A visit starts when a face comes into view. It ends when nobody is in view for 10 min, or 30 s in Demo. When `oriond` starts, it treats the current visit as already started.
+
+All reactions use one initiative path. A reaction asks the curiosity budget for admission. If the budget admits it, the path stops idle motion, plays the reaction, records it in the behaviour log and offers its remark. Remarks read the same situation.
+
+### Quirks
+
+Each Orion has quirks in `personality.json`. A quirk changes what Orion does:
+
+| Quirk | Value | Effect |
+| --- | --- | --- |
+| Curiosity | Shy | 2 gestures in 10 min, 2 min apart, 4 min before the same target again. One idle glance in four looks at an object. |
+| Curiosity | Normal | 3 gestures in 10 min, 1 min apart, 2 min before the same target again. One idle glance in three looks at an object. |
+| Curiosity | Nosy | 5 gestures in 10 min, 30 s apart, 1 min before the same target again. One idle glance in two looks at an object. |
+| Chattiness | Reserved | Lively remarks at least 20 min apart, at most 2 in one hour. Very short remarks. |
+| Chattiness | Normal | Lively remarks at least 10 min apart, at most 4 in one hour. |
+| Chattiness | Chatty | Lively remarks at least 5 min apart, at most 6 in one hour. Remarks can add a playful thought. |
+
+Each remark request contains the quirks, so the reply model speaks in the same style. Demo ignores quirk limits.
+
+### Curiosity budget
+
 Optional visual behaviors share one curiosity budget. The budget limits gesture frequency and repeated targets. It uses bounded memory without identifying people.
 
 Privacy off, Tracking Off, Stop, rest, voice and foreground work close admission. Active light routines and alerts also close admission. The runtime has no separate clock-based quiet-hours schedule.
@@ -125,9 +159,9 @@ With `proactive_speech` or `demo_mode`, an arrival, a sustained look or a new-ob
 The runtime controls when a remark can start:
 
 - Each event type has a cooldown. Arrival is 30 min, sustained look is 20 min and new object is 60 min.
-- Remarks are at least 10 min apart. Each ignored remark doubles this time, to a maximum of four times. A reply resets it.
-- At most 4 remarks occur in one hour.
-- Orion speaks to the people in view one time each visit, with a welcome, a remark about a look or a conversation. A new visit starts when nobody is in view for 10 min. People in view when `oriond` starts get no welcome.
+- Remarks are at least 10 min apart, or the time that the chattiness quirk sets. Each ignored remark doubles this time, to a maximum of four times. A reply resets it.
+- At most 4 remarks occur in one hour, or the number that the chattiness quirk sets.
+- Orion speaks to the people in view one time each visit, with a welcome, a remark about a look or a conversation. See the visit in [Situation and initiative](#situation-and-initiative). People in view when `oriond` starts get no welcome.
 - A remark waits 5 min after a conversation.
 - Common desk objects get no remark. Each object category gets a maximum of one remark each day. A new object must stay in view for 12 s.
 - No remark starts during a conversation, speech, music, scenes, focus, rest, Stop, or between 22:00 and 07:00.
