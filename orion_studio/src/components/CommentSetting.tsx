@@ -15,7 +15,7 @@ export const commentPatch = (mode: CommentMode, proactive: boolean) =>
 export function CommentSetting({proactive, demo, disabled, onChange}: {proactive: boolean; demo: boolean; disabled?: boolean;
   onChange: (patch: {demo_mode: boolean; proactive_speech: boolean}) => void}) {
   const group = useId(), value = commentMode(proactive, demo);
-  return <fieldset className="dance-setting" disabled={disabled}><legend>Personality</legend>
+  return <fieldset className="dance-setting" disabled={disabled}><legend>How lively Orion is</legend>
     {commentOptions.map(([mode, label, help]) => <label key={mode}><input type="radio" name={group} value={mode} checked={value === mode}
       onChange={() => onChange(commentPatch(mode, proactive))}/><span><strong>{label}</strong><small>{help}</small></span></label>)}
   </fieldset>;

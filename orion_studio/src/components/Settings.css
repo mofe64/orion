@@ -72,3 +72,6 @@
 .settings-saved { margin-left: .75rem; }
 .debug-values code { display: inline-block; margin-left: .4rem; color: var(--muted); font-size: .75rem; }
 @media(max-width: 600px) { .settings-voice-fields { grid-template-columns: 1fr; gap: 0; } .settings-save { align-items: start; flex-direction: column; } .settings-row { flex-wrap: wrap; } }
+.behaviour-advanced { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .8rem; }
+.behaviour-advanced > summary { cursor: pointer; font-size: .9rem; font-weight: 600; }
+.character-settings { margin-bottom: 1.2rem; }

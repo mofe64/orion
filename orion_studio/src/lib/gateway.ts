@@ -505,6 +505,15 @@ export const getBehaviours = (connection: GatewayConnection, signal?: AbortSigna
 export const setBehaviours = (connection: GatewayConnection, changes: Partial<BehaviourSettings>, signal?: AbortSignal) =>
   request<BehaviourResponse>(connection, "/api/v2/behaviours", { method: "POST", body: JSON.stringify(changes), signal });
 
+export type Curiosity = "shy" | "normal" | "nosy";
+export type Chattiness = "reserved" | "normal" | "chatty";
+export interface Quirks { curiosity: Curiosity; chattiness: Chattiness }
+export interface PersonalityResponse { quirks: Quirks }
+export const getPersonality = (connection: GatewayConnection, signal?: AbortSignal) =>
+  request<PersonalityResponse>(connection, "/api/v2/personality", { signal });
+export const setPersonality = (connection: GatewayConnection, quirks: Partial<Quirks>, signal?: AbortSignal) =>
+  request<PersonalityResponse>(connection, "/api/v2/personality", { method: "POST", body: JSON.stringify({ quirks }), signal });
+
 export function getSystemMetrics(connection: GatewayConnection, signal?: AbortSignal): Promise<import("./systemMetrics").SystemMetrics> {
   return request(connection, "/api/v2/system/metrics", { signal });
 }

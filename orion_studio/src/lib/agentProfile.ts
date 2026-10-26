@@ -5,6 +5,10 @@ export interface PersonalityChoice { id: string; label: string; description: str
 export interface MemoryEntry { id: string; created: string; text: string; source?: { conversationId: string; conversationStartedAt: string; turnIds: string[]; candidateId: string } }
 export interface WeatherLocation { name: string; latitude: number; longitude: number; timezone: string }
 export interface WeatherSettings { location: WeatherLocation | null; temperature_unit: "celsius" | "fahrenheit" | null }
+export interface FollowUp { id: string; created: string; text: string; on: string; offered: number; done: boolean }
+export interface HomeDay { day: string; text: string }
+export interface HomeMemory { followUps: FollowUp[]; days: HomeDay[] }
+export type HomeChange = { type: "delete_follow_up"; id: string } | { type: "delete_day"; day: string } | { type: "clear_habits" } | { type: "clear_all" };
 export interface AgentProfile {
   weather: WeatherSettings;
   soul: { revision: string; personality: Personality };
@@ -15,6 +19,8 @@ export interface AgentProfile {
   memories: MemoryEntry[];
   memoryEnabled: boolean;
   personalityEnabled: boolean;
+  home?: HomeMemory;
+  habits?: string[];
 }
 export type ProfileChange =
   | { type: "weather"; expected: WeatherSettings; settings: WeatherSettings }
@@ -22,7 +28,8 @@ export type ProfileChange =
   | { type: "add_memory"; text: string }
   | { type: "edit_memory"; expected: MemoryEntry; text: string }
   | { type: "delete_memory"; expected: MemoryEntry }
-  | { type: "clear_memories"; expected: MemoryEntry[] };
+  | { type: "clear_memories"; expected: MemoryEntry[] }
+  | { type: "home"; change: HomeChange };
 export const loadAgentProfile = () => forOwner(() => invoke<AgentProfile>("load_agent_profile"), "Studio couldn't load Orion's personality and memories. Please try again.");
 export const changeAgentProfile = (change: ProfileChange) => forOwner(() => invoke<AgentProfile>("change_agent_profile", { change }), "Studio couldn't save these changes. Your draft is preserved; please try again.");
 export function toggleSelection(personality: Personality, group: keyof Personality, id: string): Personality {

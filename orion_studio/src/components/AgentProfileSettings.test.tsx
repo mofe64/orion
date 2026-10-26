@@ -51,7 +51,7 @@ describe("profile readiness", () => {
   it("shows loaded cards and preserves memory privacy copy after a save failure", () => {
     const profile: AgentProfile = { weather: {location:null,temperature_unit:null}, soul: { revision: "test", personality: { traits: [], behaviors: [] } }, traits: [], behaviors: [], preview: "", memories: [], personalityEnabled: true, memoryEnabled: true };
     const html = markup(profile, { message: "Studio couldn't save these changes.", detail: "save error" });
-    expect(html).toContain("<h3>Personality</h3>");
+    expect(html).toContain("<h3>How Orion talks</h3>");
     expect(html).toContain("<h3>Memories</h3>");
     expect(html).toContain("Stored on Orion. Relevant memories are sent to Codex when Orion uses them. Retired conversations are reviewed by Codex for important lasting facts. Editing or deleting refreshes agent context; it does not erase information already sent to Codex.");
     expect(html).not.toContain("Stored on this computer.");

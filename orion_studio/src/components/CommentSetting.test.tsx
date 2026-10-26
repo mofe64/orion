@@ -11,7 +11,7 @@ it("shows one talk choice and leaving Demo returns to the everyday choice", () =
   expect(commentPatch("sometimes", false)).toEqual({ demo_mode: false, proactive_speech: true });
   expect(commentPatch("off", true)).toEqual({ demo_mode: false, proactive_speech: false });
   const html = renderToStaticMarkup(<CommentSetting proactive demo={false} onChange={() => {}} />);
-  expect(html).toContain("Personality"); expect(html).toContain("Lively");
+  expect(html).toContain("How lively Orion is"); expect(html).toContain("Lively");
   expect(html.match(/checked=""/g)).toHaveLength(1);
   expect(html).not.toMatch(/proactive|PID|rate/i);
 });
