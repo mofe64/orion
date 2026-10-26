@@ -16,6 +16,9 @@ pub struct Profile {
     pub memories: Vec<MemoryEntry>,
     pub memory_enabled: bool,
     pub personality_enabled: bool,
+    pub home: crate::home_memory::HomeMemory,
+    /// Habits in plain sentences.
+    pub habits: Vec<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -41,8 +44,12 @@ pub enum ProfileChange {
     ClearMemories {
         expected: Vec<MemoryEntry>,
     },
+    Home {
+        change: crate::home_memory::HomeChange,
+    },
 }
 pub(crate) fn load(config: &AgentConfig) -> Result<Profile, String> {
+    let home = crate::home_memory::load(config)?;
     let soul = config
         .soul_path
         .as_deref()
@@ -64,6 +71,8 @@ pub(crate) fn load(config: &AgentConfig) -> Result<Profile, String> {
             .unwrap_or_default(),
         memory_enabled: config.memory_path.is_some(),
         personality_enabled: config.soul_path.is_some(),
+        habits: home.habits.describe(),
+        home,
     })
 }
 pub(crate) fn change(config: &AgentConfig, change: ProfileChange) -> Result<(), String> {
@@ -82,6 +91,7 @@ pub(crate) fn change(config: &AgentConfig, change: ProfileChange) -> Result<(), 
             &expected_revision,
             personality,
         ),
+        ProfileChange::Home { change } => crate::home_memory::apply(config, change),
         other => {
             let path = config.memory_path.as_deref().ok_or("Memory is disabled")?;
             match other {

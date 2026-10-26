@@ -13,6 +13,7 @@ pub use prompt::ORION_INSTRUCTIONS;
 pub use runtime::{AgentHandle, AgentReply, AgentService};
 pub use types::{AgentInfo, ModelInfo};
 
+pub mod home_memory;
 pub mod lists;
 mod memory;
 mod reminders;

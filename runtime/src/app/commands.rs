@@ -783,7 +783,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
             if let Err(error) = feedback.event(parts[0], "remark", now_seconds) {
                 return serde_json::json!({"ok":false,"error":error}).to_string();
             }
-            return match character.remarks.take(id, now_seconds) {
+            return match character.take_remark(id, now_seconds) {
                 Ok(remark) => serde_json::json!({"ok":true,"remark":remark}).to_string(),
                 Err(error) => {
                     feedback.clear();
@@ -898,7 +898,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         };
         if action.is_ok() && !had_confirmed && feedback.confirmed_activity() {
             character.mind.confirmed_turn();
-            character.remarks.engaged(now_seconds);
+            character.remark_engaged(now_seconds);
         }
         match action {
             Ok(Some((reaction, cue))) => {

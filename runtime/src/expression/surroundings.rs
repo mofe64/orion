@@ -199,6 +199,33 @@ impl CharacterCoordinator {
     pub fn situation(&self) -> &crate::expression::situation::Situation {
         &self.surroundings.situation
     }
+    /// The listener starts speaking this remark. Home memory counts remarks
+    /// and replies from the behaviour log.
+    pub(crate) fn take_remark(
+        &mut self,
+        id: u64,
+        now: f64,
+    ) -> std::result::Result<crate::expression::remarks::PendingRemark, &'static str> {
+        let remark = self.remarks.take(id, now)?;
+        if let Some(log) = &self.behaviour_log {
+            log.observation(
+                "remark_spoken",
+                remark.detail.clone(),
+                serde_json::to_value(remark.event)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned)),
+                now,
+            );
+        }
+        Ok(remark)
+    }
+    pub(crate) fn remark_engaged(&mut self, now: f64) {
+        if self.remarks.engaged(now)
+            && let Some(log) = &self.behaviour_log
+        {
+            log.observation("remark_answered", None, None, now);
+        }
+    }
     /// The remark the voice listener may start now, if any.
     pub(crate) fn ready_remark(
         &mut self,
@@ -329,6 +356,25 @@ impl CharacterCoordinator {
             now,
         );
         let conditions = &state.conditions;
+        let lamp = &conditions.lamp;
+        let previous = &state.situation.lamp;
+        if let Some(log) = &self.behaviour_log
+            && (lamp.on != previous.on
+                || lamp.mood != previous.mood
+                || (lamp.brightness / 10.0).round() != (previous.brightness / 10.0).round())
+        {
+            // Home memory learns the light people choose at each time of day.
+            log.observation(
+                "lamp_state",
+                Some(format!("brightness:{:.0}", lamp.brightness)),
+                Some(if lamp.on {
+                    lamp.mood.clone()
+                } else {
+                    "off".into()
+                }),
+                now,
+            );
+        }
         state.situation = Situation {
             at: now,
             people: value.faces.len(),

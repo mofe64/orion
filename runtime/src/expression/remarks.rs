@@ -186,12 +186,15 @@ impl RemarkPolicy {
     }
 
     /// A confirmed voice turn is engagement: a reply resets the back-off.
-    pub fn engaged(&mut self, now: f64) {
+    /// Returns whether the turn answered a remark.
+    pub fn engaged(&mut self, now: f64) -> bool {
+        let answered = self.awaiting_reply.is_some();
         self.ignored = 0;
         self.awaiting_reply = None;
         self.last_conversation = Some(now);
         self.pending = None;
         self.spoken_visit = self.context.visit;
+        answered
     }
 
     pub fn quiet(&mut self, seconds: f64, now: f64) -> Result<f64, &'static str> {
