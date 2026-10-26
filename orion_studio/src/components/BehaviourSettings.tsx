@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { Footprints } from "lucide-react";
 import type { BehaviourKey, GatewayConnection } from "../lib/gateway";
 import { BehaviourPreference, emptyBehaviours } from "../lib/behaviourPreference";
 import { QuirkPreference, emptyQuirks } from "../lib/quirkPreference";
@@ -45,11 +46,13 @@ export function CharacterSettings({ connection, supported, active = true, behavi
     {supported && state.values && <CommentSetting proactive={state.values.proactive_speech} demo={state.values.demo_mode} disabled={state.pending}
       onChange={patch => void preference?.chooseMany(patch)}/>}
     {!supported && <p className="settings-help">How lively Orion is needs Orion’s V2 camera.</p>}
-    {quirkState.values && <>
+    {quirkState.values && <div className="quirk-settings">
+      <div className="quirk-pair">
+        <QuirkSetting quirk="curiosity" value={quirkState.values.curiosity} disabled={quirkState.pending} onChange={value => void quirks?.choose("curiosity", value)}/>
+        <QuirkSetting quirk="chattiness" value={quirkState.values.chattiness} disabled={quirkState.pending} onChange={value => void quirks?.choose("chattiness", value)}/>
+      </div>
       <p className="settings-help">Every Orion gets its own quirks when it is first set up. Change them here if you like.</p>
-      <QuirkSetting quirk="curiosity" value={quirkState.values.curiosity} disabled={quirkState.pending} onChange={value => void quirks?.choose("curiosity", value)}/>
-      <QuirkSetting quirk="chattiness" value={quirkState.values.chattiness} disabled={quirkState.pending} onChange={value => void quirks?.choose("chattiness", value)}/>
-    </>}
+    </div>}
     {(!state.values || !quirkState.values) && !state.error && !quirkState.error && <p role="status">Loading Orion’s character…</p>}
     {quirkState.notice && <p role="status">{quirkState.notice}</p>}<FailureNotice value={quirkState.error} />
   </section>;
@@ -58,7 +61,7 @@ export function CharacterSettings({ connection, supported, active = true, behavi
 export function BehaviourSettings({ connection, supported, active = true, behaviours }: { active?: boolean; connection: GatewayConnection | null; supported: boolean; behaviours?: Behaviours }) {
   const own = useBehaviourPreference(behaviours ? null : connection, active);
   const { preference, state } = behaviours ?? own;
-  return <section className="settings-card"><header><div><h2>Character behaviours</h2><p>Choose how Orion moves and responds. Visual behaviours also need the camera and tracking.</p></div></header>
+  return <section className="settings-card" id="settings-behaviours"><header><Footprints size={20}/><div><h2>Behaviours</h2><p>Choose how Orion moves and responds. Visual behaviours also need the camera and tracking.</p></div></header>
     {!connection ? <p className="settings-help">Connect Orion to change its behaviours.</p> : <>
       <DanceSetting value={state.values?.move_to_music} disabled={state.pending} onChange={mode=>void preference?.choose("move_to_music",mode)}/>
       {!supported && <p className="settings-help">The other behaviours need Orion’s V2 camera.</p>}

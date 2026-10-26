@@ -1,0 +1,13 @@
+.choice-setting { display: grid; align-content: start; gap: .55rem; padding: 1rem 0; }
+.choice-setting + .choice-setting { border-top: 1px solid var(--line); }
+.choice-setting > strong { font-size: .85rem; font-weight: 600; }
+.choice-setting > p { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.5; max-width: 38rem; }
+.choice-segments { display: inline-flex; flex-wrap: wrap; justify-self: start; gap: .25rem; padding: .25rem; border-radius: .9rem; background: var(--surface-2); border: 1px solid var(--line); }
+.choice-segments label, .settings-card .choice-segments label { position: relative; display: block; margin: 0; cursor: pointer; }
+.choice-segments input, .settings-card .choice-segments input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.choice-segments span { display: block; padding: .45rem .95rem; border-radius: .65rem; font-size: .82rem; color: var(--muted); transition: background .15s, color .15s; }
+.choice-segments label:hover span { color: var(--text); }
+.choice-segments label.chosen span { background: var(--accent); color: #fff; font-weight: 600; }
+.choice-segments input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.choice-segments input:disabled { cursor: default; }
+.choice-setting[aria-disabled="true"] .choice-segments { opacity: .55; }

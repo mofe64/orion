@@ -1,4 +1,4 @@
-import {useId} from "react";
+import { ChoiceSetting } from "./ChoiceSetting";
 
 export type CommentMode = "off" | "sometimes" | "demo";
 export const commentOptions: [CommentMode, string, string][] = [
@@ -14,9 +14,6 @@ export const commentPatch = (mode: CommentMode, proactive: boolean) =>
 
 export function CommentSetting({proactive, demo, disabled, onChange}: {proactive: boolean; demo: boolean; disabled?: boolean;
   onChange: (patch: {demo_mode: boolean; proactive_speech: boolean}) => void}) {
-  const group = useId(), value = commentMode(proactive, demo);
-  return <fieldset className="dance-setting" disabled={disabled}><legend>How lively Orion is</legend>
-    {commentOptions.map(([mode, label, help]) => <label key={mode}><input type="radio" name={group} value={mode} checked={value === mode}
-      onChange={() => onChange(commentPatch(mode, proactive))}/><span><strong>{label}</strong><small>{help}</small></span></label>)}
-  </fieldset>;
+  return <ChoiceSetting label="How lively Orion is" options={commentOptions} value={commentMode(proactive, demo)} disabled={disabled}
+    onChange={mode => onChange(commentPatch(mode, proactive))}/>;
 }

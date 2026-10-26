@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { ChoiceSetting } from "./ChoiceSetting";
 import type { Chattiness, Curiosity, Quirks } from "../lib/gateway";
 
 export const quirkOptions: { [K in keyof Quirks]: { label: string; choices: [Quirks[K], string, string][] } } = {
@@ -21,10 +21,7 @@ export const validQuirks = (value: unknown): value is Quirks => {
 
 /** One quirk as a row of choices. */
 export function QuirkSetting<K extends keyof Quirks>({ quirk, value, disabled, onChange }: { quirk: K; value: Quirks[K]; disabled?: boolean; onChange: (value: Quirks[K]) => void }) {
-  const group = useId(), option = quirkOptions[quirk];
-  return <fieldset className="dance-setting" disabled={disabled}><legend>{option.label}</legend>
-    {option.choices.map(([id, label, help]) => <label key={id}><input type="radio" name={group} value={id} checked={value === id}
-      onChange={() => onChange(id)}/><span><strong>{label}</strong><small>{help}</small></span></label>)}
-  </fieldset>;
+  const option = quirkOptions[quirk];
+  return <ChoiceSetting label={option.label} options={option.choices} value={value} disabled={disabled} onChange={onChange}/>;
 }
 export type { Chattiness, Curiosity };

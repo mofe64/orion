@@ -184,7 +184,9 @@ export function behaviourStory(events: BehaviourEvent[], filter: StoryFilter = "
     const note = event.actionId ? outcome.get(event.actionId) : undefined;
     block.rows.push(note && row.kind === "did" ? { ...row, note } : row);
   });
-  return blocks.filter(block => block.rows.length || block.idle || (block.visit && filter === "all")).reverse();
+  // Newest first, in the list of visits and inside each visit.
+  return blocks.filter(block => block.rows.length || block.idle || (block.visit && filter === "all"))
+    .reverse().map(block => ({ ...block, rows: block.rows.reverse() }));
 }
 
 export function storyCounts(events: BehaviourEvent[]): StoryCounts {

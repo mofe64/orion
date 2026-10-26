@@ -30,11 +30,12 @@ it("tells a visit as what Orion did, said and chose not to do, with plain reason
   expect(visit.visit).toBe(true);
   expect(visit.end).toBe("2026-10-26T10:00:00Z");
   expect(visit.idle).toBe(2);
-  expect(visit.rows.map(row => row.title)).toEqual(["Welcomed someone", "Spoke up about someone arriving", "You answered",
-    "Stayed quiet about your look", "Didn’t peek at a cup"]);
-  expect(visit.rows[0].note).toBe("Stopped early");
-  expect(visit.rows[1].detail).toBe("“Morning! Coffee first?”");
-  expect(visit.rows[3].detail).toContain("already talked with you this visit");
+  // Newest first.
+  expect(visit.rows.map(row => row.title)).toEqual(["Didn’t peek at a cup", "Stayed quiet about your look", "You answered",
+    "Spoke up about someone arriving", "Welcomed someone"]);
+  expect(visit.rows[4].note).toBe("Stopped early");
+  expect(visit.rows[3].detail).toBe("“Morning! Coffee first?”");
+  expect(visit.rows[1].detail).toContain("already talked with you this visit");
   expect(quiet.rows.map(row => row.title)).toEqual(["Fell asleep"]);
   expect(behaviourStory(events, "skipped").flatMap(block => block.rows).length).toBe(2);
   expect(storyCounts(events)).toEqual({ visits: 1, did: 1, said: 1, answered: 1, skipped: 2 });

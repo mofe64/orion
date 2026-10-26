@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { Bug, SlidersHorizontal, Sparkles, AudioLines, Link2 } from "lucide-react";
+import { Bug, SlidersHorizontal, Sparkles, AudioLines, Link2, NotebookPen } from "lucide-react";
 import type { StudioVoice } from "../hooks/useStudioVoice";
 import type { VoiceSettings } from "../lib/studioVoicePipeline";
 import type { StudioPreferences } from "../lib/preferences";
@@ -8,7 +8,7 @@ import type { GatewayStatus } from "../types";
 import "./Settings.css";
 import { BehaviourSettings, CharacterSettings, useBehaviourPreference } from "./BehaviourSettings";
 import type { GatewayConnection } from "../lib/gateway";
-import { AgentProfileSettings } from "./AgentProfileSettings";
+import { useAgentProfileParts } from "./AgentProfileSettings";
 import { LocationSettings } from "./LocationSettings";
 import { SoundSettings } from "./SoundSettings";
 import { FailureNotice } from "./FailureNotice";
@@ -31,6 +31,27 @@ export function canSaveVoiceSettings(voice: StudioVoice, draft: VoiceSettings, p
   const validAgent = voice.models.length ? !!model && model.efforts.includes(draft.effort) : !!draft.model.trim() && !!draft.effort.trim();
   return connected && voice.loaded && !voice.saving && JSON.stringify(draft) !== JSON.stringify(voice.settings) && provider === "codex" && validAgent;
 }
+const sections: [string, string][] = [["orion", "Orion"], ["personality", "Personality"], ["memory", "Memory"], ["behaviours", "Behaviours"],
+  ["location", "Location"], ["voice", "Voice"], ["studio", "Studio"], ["developer", "Developer tools"]];
+
+/** Jump links to each card. The card in view is marked. */
+function SettingsNav() {
+  const [current, setCurrent] = useState("orion");
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(entries => {
+      const shown = entries.filter(entry => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (shown) setCurrent(shown.target.id.replace("settings-", ""));
+    }, { rootMargin: "0px 0px -65% 0px" });
+    for (const [id] of sections) { const card = document.getElementById(`settings-${id}`); if (card) observer.observe(card); }
+    return () => observer.disconnect();
+  }, []);
+  return <nav className="settings-nav" aria-label="Settings sections">{sections.map(([id, label]) =>
+    <button key={id} type="button" aria-current={current === id ? "true" : undefined}
+      onClick={() => { setCurrent(id); document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{label}</button>)}
+  </nav>;
+}
+
 export function Settings({ active = true, voice, preferences, onPreferences, theme, onTheme, status, connected, onConnect, onHome, onSound, notice, connection = null, connectionScope = connected, desktop = isTauri() }: Props) {
   const [draft,setDraft] = useState(voice.settings);
   const behaviours = useBehaviourPreference(connection, active);
@@ -45,20 +66,24 @@ export function Settings({ active = true, voice, preferences, onPreferences, the
   const model = voice.models.find(value => value.model === draft.model);
   const efforts = model?.efforts ?? [];
   const canSave = desktop && canSaveVoiceSettings(voice, draft, "codex", connected);
+  const profile = useAgentProfileParts({ onboard: true, desktop, connected, connectionScope });
   return <section className="settings-page settings-owner" aria-labelledby="settings-title"><header className="settings-heading"><h1 id="settings-title">Settings</h1><p>Make Orion feel at home.</p></header>
+    <div className="settings-layout"><SettingsNav />
     <div className="settings-stack">
-      <section className="settings-card"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Changes apply immediately on Orion." : "Connect Orion to use its controls."}</p></div><button className="quiet-button" onClick={onConnect}>Manage connection</button></header>
+      <section className="settings-card" id="settings-orion"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Changes apply immediately on Orion." : "Connect Orion to use its controls."}</p></div><button className="quiet-button" onClick={onConnect}>Manage connection</button></header>
         <div className="settings-row"><div><strong>Orion mode</strong><p>{connected ? orionStateLabel(status) : "Connect Orion to view its mode."}</p></div><button className="quiet-button" type="button" onClick={onHome}>Change mode on Home</button></div>
         <SettingToggle label="Listening" help={voice.label} checked={voice.listening} disabled={!connected || voice.snapshot.muted === undefined || voice.toggling} onChange={() => void voice.toggle()} />
         {voice.notice && <p role="status">{voice.listeningError ? voice.notice : `Saved. ${voice.notice}`}</p>}<FailureNotice value={voice.listeningError} />
         <SoundSettings embedded connected={connected} connectionScope={connectionScope} routines={status?.routines} onSound={onSound} />
       </section>
-      <section className="settings-card"><header><Sparkles size={20} /><div><h2>Personality and memory</h2><p>Who Orion is and what it remembers. Changes save automatically.</p></div></header>
+      <section className="settings-card" id="settings-personality"><header><Sparkles size={20} /><div><h2>Personality</h2><p>Who Orion is: how lively it is, its quirks and how it talks. Changes save automatically.</p></div></header>
         <CharacterSettings active={active} connection={connection} supported={camera} behaviours={behaviours} />
-        <AgentProfileSettings onboard desktop={desktop} connected={connected} connectionScope={connectionScope} /></section>
+        {profile.personality}</section>
+      <section className="settings-card" id="settings-memory"><header><NotebookPen size={20} /><div><h2>Memory</h2><p>What Orion remembers about you and its home.</p></div></header>
+        {profile.memory}</section>
       <BehaviourSettings active={active} connection={connection} supported={camera} behaviours={behaviours} />
-      <LocationSettings desktop={desktop} connected={connected} connectionScope={connectionScope} />
-      <section className="settings-card"><header><AudioLines size={20} /><div><h2>Voice</h2><p>Speech recognition and voices run on Orion.</p></div></header>
+      <div id="settings-location"><LocationSettings desktop={desktop} connected={connected} connectionScope={connectionScope} /></div>
+      <section className="settings-card" id="settings-voice"><header><AudioLines size={20} /><div><h2>Voice</h2><p>Speech recognition and voices run on Orion.</p></div></header>
         {!desktop ? <p className="settings-help">Open Orion Studio’s desktop app and connect Orion to view or change voice settings.</p> : !connected ? <p className="settings-help">Connect Orion to view or change voice settings.</p> : !voice.loaded ? voice.loadError ? <FailureNotice value={voice.loadError} /> : <p role="status">Loading Orion’s voice settings…</p> : <form onSubmit={event => {
           event.preventDefault(); if (!canSave) return;
           void voice.save({ ...draft,provider:"codex" }).then(() => setSaved(true)).catch(() => {});
@@ -74,14 +99,14 @@ export function Settings({ active = true, voice, preferences, onPreferences, the
           <FailureNotice value={voice.saveError} />{saved && <p role="status">Saved on Orion. Turn listening on when Orion is ready.</p>}
         </form>}
       </section>
-      <section className="settings-card"><header><SlidersHorizontal size={20} /><div><h2>Studio</h2><p>Appearance and preview preferences save automatically on this computer.</p></div></header>
+      <section className="settings-card" id="settings-studio"><header><SlidersHorizontal size={20} /><div><h2>Studio</h2><p>Appearance and preview preferences save automatically on this computer.</p></div></header>
         <label className="settings-row"><span>Appearance {localSaved === "theme" && <small role="status">Saved</small>}</span><select value={theme} onChange={event => setLocalSaved(onTheme(event.target.value as "light" | "dark") === false ? "" : "theme")}><option value="dark">Dark</option><option value="light">Light</option></select></label>
         {notice && <p role="status">{notice}</p>}
         <SettingToggle label="Preview sound" help="Play scene audio in Studio previews." checked={preferences.previewAudio} saved={localSaved === "previewAudio"} onChange={value => preference("previewAudio", value)} />
         <SettingToggle label="Reduce interface motion" help="Minimize interface animations; scene playback stays unchanged." checked={preferences.reduceMotion} saved={localSaved === "reduceMotion"} onChange={value => preference("reduceMotion", value)} />
       </section>
-      <section className="settings-card"><header><Bug size={20} /><div><h2>Developer tools</h2><p>Useful details when something needs attention.</p></div></header><SettingToggle label="Enable debug mode" help="Adds Debug to navigation with voice metrics, joint readings, and runtime logs." checked={preferences.debugMode} saved={localSaved === "debugMode"} onChange={value => preference("debugMode",value)} /></section>
-    </div>
+      <section className="settings-card" id="settings-developer"><header><Bug size={20} /><div><h2>Developer tools</h2><p>Useful details when something needs attention.</p></div></header><SettingToggle label="Enable debug mode" help="Adds Debug to navigation with voice metrics, joint readings, and runtime logs." checked={preferences.debugMode} saved={localSaved === "debugMode"} onChange={value => preference("debugMode",value)} /></section>
+    </div></div>
   </section>;
 }
 export function SettingToggle({ label,help,checked,disabled,saved,onChange }: { label:string; help?:string; checked:boolean; disabled?:boolean; saved?:boolean; onChange:(value:boolean)=>void }) {

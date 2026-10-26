@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { House, NotebookPen, Sparkles } from "lucide-react";
 import { changeAgentProfile, loadAgentProfile, samePersonality, toggleSelection, validMemory, type AgentProfile, type MemoryEntry, type Personality, type ProfileChange } from "../lib/agentProfile";
@@ -9,7 +9,19 @@ import { useScopedNotice } from "../hooks/useScopedNotice";
 
 export const PROFILE_SAVING_NOTICE = "Saving… If Orion is replying, this will apply when it finishes.";
 
-export function AgentProfileSettings({ onboard = false, connectionScope, connected = true, desktop = isTauri() }: { onboard?: boolean; connectionScope?: unknown; connected?: boolean; desktop?: boolean }) {
+type ProfileProps = { onboard?: boolean; connectionScope?: unknown; connected?: boolean; desktop?: boolean };
+
+/** Personality and memory, as one block. */
+export function AgentProfileSettings(props: ProfileProps) {
+  const parts = useAgentProfileParts(props);
+  return <section className="agent-profile" aria-label="Personality and memories">{parts.personality}{parts.memory}</section>;
+}
+
+/**
+ * One loaded profile, shown in two places: how Orion talks, and what it
+ * remembers. Status and errors show beside the part that was last changed.
+ */
+export function useAgentProfileParts({ onboard = false, connectionScope, connected = true, desktop = isTauri() }: ProfileProps): { personality: ReactNode; memory: ReactNode } {
   const available = desktop && connected;
   const [profile,setProfile] = useState<AgentProfile|null>(null);
   const [personality,setPersonality] = useState<Personality>({traits:[],behaviors:[]});
@@ -22,6 +34,7 @@ export function AgentProfileSettings({ onboard = false, connectionScope, connect
   const [text,setText] = useState("");
   const [deletion,setDeletion] = useState<MemoryEntry|"all"|null>(null);
   const [forgetHome,setForgetHome] = useState(false);
+  const [lastChanged,setLastChanged] = useState<"personality"|"memory">("personality");
   const labelId = useId();
   const operation = useRef(false);
   const generation = useRef(0);
@@ -45,6 +58,7 @@ export function AgentProfileSettings({ onboard = false, connectionScope, connect
     if (operation.current) return;
     operation.current = true;
     const epoch = generation.current;
+    setLastChanged(change.type === "personality" ? "personality" : "memory");
     setPending(true); setError(null); setNotice("");
     try {
       const next = await changeAgentProfile(change);
@@ -79,12 +93,18 @@ export function AgentProfileSettings({ onboard = false, connectionScope, connect
     {text.length > 0 && !validMemory(text) && <p className="settings-error">Use a short, non-empty memory without reserved comment markers.</p>}
     <div className="profile-actions"><button className="quiet-button" type="button" disabled={pending || !validMemory(text)} onClick={commitMemory}>Done</button><button className="quiet-button" type="button" data-cancel-memory="true" disabled={pending} onClick={() => setEditor(null)}>Cancel</button></div>
   </div>;
-  if (!available) return <section className="agent-profile" aria-label="Personality and memories"><p className="settings-help">{desktop ? "Connect Orion to view or change personality and memories." : "Open Orion Studio’s desktop app and connect Orion to view or change personality and memories."}</p></section>;
-  return <section className="agent-profile" aria-label="Personality and memories">
+  if (!available) {
+    const message = <section className="agent-profile"><p className="settings-help">{desktop ? "Connect Orion to view or change personality and memories." : "Open Orion Studio’s desktop app and connect Orion to view or change personality and memories."}</p></section>;
+    return { personality: message, memory: <p className="settings-help">{desktop ? "Connect Orion to see what it remembers." : "Open Orion Studio’s desktop app and connect Orion to see what it remembers."}</p> };
+  }
+  const feedback = (part: "personality" | "memory") => (!profile || lastChanged === part) && <>
     <div className="profile-status" aria-live="polite">{loading && <p>Loading personality and memories…</p>}{pending && <p>{PROFILE_SAVING_NOTICE}</p>}{notice && <p>{notice}</p>}</div>
     {error && <div className="profile-error"><FailureNotice value={error} />{!profile && <button className="quiet-button" disabled={loading} onClick={() => void refresh()}>Try again</button>}{profile && <><p>Your draft is preserved.</p>{(dirty || editor) && <button className="quiet-button" disabled={pending} onClick={() => { if (editor) commitMemory(); else void save({type:"personality",expected_revision:profile.soul.revision,personality}); }}>Try again</button>}</>}</div>}
     {profile?.reminderError && <div className="profile-error"><FailureNotice value={{ message: "Orion couldn't read next-conversation reminders. Replies will continue without them.", detail: profile.reminderError }} /><button className="quiet-button" disabled={loading || pending} onClick={() => void refresh()}>Refresh</button></div>}
-    {profile && <div className="settings-stack">
+  </>;
+  return {
+    personality: <section className="agent-profile" aria-label="Personality">{feedback("personality")}
+      {profile && <div className="settings-stack">
       <section className="profile-subsection personality-settings"><header><Sparkles size={20}/><div><h3>How Orion talks</h3><p>Choose how Orion sounds and responds.</p></div></header>
         <p className="settings-help">Mix the traits that feel right. Tool permissions and privacy rules always stay in place.</p>
         {profile && <>
@@ -96,6 +116,10 @@ export function AgentProfileSettings({ onboard = false, connectionScope, connect
           {dirty && error && <button className="quiet-button" disabled={blocked} onClick={() => { setPersonality(profile.soul.personality); setError(null); }}>Discard changes</button>}
         </>}
       </section>
+      </div>}
+    </section>,
+    memory: !profile ? loading && <p className="settings-help" role="status">Loading memories…</p> : <section className="agent-profile" aria-label="Memories">{feedback("memory")}
+      <div className="settings-stack">
       <section className="profile-subsection memory-settings"><header><NotebookPen size={20}/><div><h3>Memories</h3><p>Saved facts and preferences. Only exceptionally important, lasting facts are extracted from retired conversations.</p></div></header>
         <p className="settings-help">{onboard ? "Stored on Orion." : "Stored on this computer."} Relevant memories are sent to Codex when Orion uses them. Retired conversations are reviewed by Codex for important lasting facts. Editing or deleting refreshes agent context; it does not erase information already sent to Codex.</p>
         {profile && <>
@@ -113,8 +137,9 @@ export function AgentProfileSettings({ onboard = false, connectionScope, connect
         </>}
       </section>
       <HomeMemorySection profile={profile} blocked={blocked || !!editor || !!deletion} confirming={forgetHome} onConfirming={setForgetHome} onChange={change => void save({type:"home",change})} />
-    </div>}
-  </section>;
+      </div>
+    </section>,
+  };
 }
 
 const day = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
