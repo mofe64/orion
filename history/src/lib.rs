@@ -592,6 +592,9 @@ pub struct BehaviourEvent {
     pub duration_seconds: Option<f64>,
     #[serde(default)]
     pub session_id: Option<String>,
+    /// What Orion saw when it decided: people, light, busy and its budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Value>,
 }
 
 /// Adds one event from another process, such as the words of a remark, to
@@ -621,6 +624,7 @@ pub fn append_behaviour(
         action_id: None,
         duration_seconds: None,
         session_id: session_id.map(str::to_owned),
+        context: None,
     };
     let directory = root.join("behaviours");
     private_dir(&directory)?;

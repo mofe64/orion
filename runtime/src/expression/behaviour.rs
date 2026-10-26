@@ -22,6 +22,8 @@ struct State {
     initialized: bool,
     held_gaze: Option<(u64, f64, String)>,
     faces: usize,
+    /// The latest situation, saved with each decision.
+    context: Option<serde_json::Value>,
 }
 
 impl BehaviourLog {
@@ -39,7 +41,12 @@ impl BehaviourLog {
             initialized: false,
             held_gaze: None,
             faces: 0,
+            context: None,
         })))
+    }
+    /// The situation that later decisions are based on.
+    pub(crate) fn set_context(&self, context: serde_json::Value) {
+        self.0.lock().unwrap().context = Some(context);
     }
     pub(crate) fn observation(
         &self,
@@ -49,7 +56,10 @@ impl BehaviourLog {
         now: f64,
     ) {
         let mut state = self.0.lock().unwrap();
-        let event = state.event("attention", behaviour, "observed", target, category, now);
+        let mut event = state.event("attention", behaviour, "observed", target, category, now);
+        if behaviour.starts_with("remark_") {
+            event.context = state.context.clone();
+        }
         state.emit(event);
     }
     /// Orion chose not to act; `reason` is a short code that Studio explains.
@@ -64,6 +74,7 @@ impl BehaviourLog {
         let mut state = self.0.lock().unwrap();
         let mut event = state.event("attention", behaviour, "skipped", target, category, now);
         event.reason = Some(reason.into());
+        event.context = state.context.clone();
         state.emit(event);
     }
     /// A visit started or ended; `seconds_ago` dates an end to when people left.
@@ -137,10 +148,17 @@ impl BehaviourLog {
                 "posture_home" => "return home before rest",
                 "wake_stretch" => "confirmed wake reached home",
                 "sleep_settle" => "prepare for rest",
+                "farewell_watch" => "person left after a stay",
+                "wave_back" => "palm raised near a face",
+                "light_care" => "room dark with Orion's light off or low",
+                "break_nudge" => "long time at the desk",
                 _ => "idle animation selection",
             }
             .into(),
         );
+        if event.category == "attention" {
+            event.context = state.context.clone();
+        }
         event.action_id = Some(format!("{}-motion-{run}", state.boot));
         state.emit(event.clone());
         state.motions.insert(run, (event, now));
@@ -370,6 +388,7 @@ impl State {
             action_id: None,
             duration_seconds: None,
             session_id: None,
+            context: None,
         };
         self.stamp(&mut event, now);
         event

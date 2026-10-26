@@ -291,6 +291,7 @@ async fn service_reads_grouped_conversations_and_filtered_behaviour_files() {
             action_id: Some("rest-event".into()),
             duration_seconds: None,
             session_id: None,
+            context: None,
         })
         .unwrap();
     drop(writer);

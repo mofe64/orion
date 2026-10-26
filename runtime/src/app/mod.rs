@@ -2,6 +2,7 @@ mod camera_viewer;
 mod catalog;
 mod client;
 mod commands;
+mod loop_stats;
 mod options;
 mod server;
 mod servo;

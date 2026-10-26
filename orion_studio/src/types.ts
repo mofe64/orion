@@ -249,6 +249,9 @@ export interface AudioStatus {
 }
 
 export interface GatewayStatus {
+  /** What Orion bases its own decisions on; see lib/recorder.ts. */
+  initiative?: import("./lib/recorder").Initiative | null;
+  remarks?: { ignored: number; quiet_seconds: number; visit_spoken: boolean; pending: { event: string } | null } | null;
   lamp?: LampStatus | null;
   audio?: AudioStatus | null;
   mind?: { energy: number; mood: number; label: string; attention: { kind: "none" | "speaker" | "person" | "hands" | "object"; since: number; track_id?: number; class?: string }; updated_at: number } | null;

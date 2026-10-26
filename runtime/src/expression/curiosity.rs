@@ -187,28 +187,7 @@ impl CuriosityBudget {
         {
             self.gestures.pop_front();
         }
-        let (max_gestures, spacing, first_cooldown) = match (self.demo, self.curiosity) {
-            (true, _) => (
-                DEMO_MAX_GESTURES,
-                DEMO_MIN_SPACING_SECONDS,
-                FIRST_TARGET_COOLDOWN_SECONDS,
-            ),
-            (false, Curiosity::Shy) => (
-                2,
-                2.0 * MIN_SPACING_SECONDS,
-                2.0 * FIRST_TARGET_COOLDOWN_SECONDS,
-            ),
-            (false, Curiosity::Normal) => (
-                MAX_GESTURES,
-                MIN_SPACING_SECONDS,
-                FIRST_TARGET_COOLDOWN_SECONDS,
-            ),
-            (false, Curiosity::Nosy) => (
-                5,
-                MIN_SPACING_SECONDS / 2.0,
-                FIRST_TARGET_COOLDOWN_SECONDS / 2.0,
-            ),
-        };
+        let (max_gestures, spacing, first_cooldown) = self.limits();
         if self.gestures.len() >= max_gestures {
             return Err(CuriosityDenied::Window);
         }
@@ -238,6 +217,56 @@ impl CuriosityBudget {
         interest.repetitions = interest.repetitions.saturating_add(1);
         self.gestures.push_back(now);
         Ok(())
+    }
+
+    /// Gestures in the window, spacing and the first wait for one target.
+    fn limits(&self) -> (usize, f64, f64) {
+        match (self.demo, self.curiosity) {
+            (true, _) => (
+                DEMO_MAX_GESTURES,
+                DEMO_MIN_SPACING_SECONDS,
+                FIRST_TARGET_COOLDOWN_SECONDS,
+            ),
+            (false, Curiosity::Shy) => (
+                2,
+                2.0 * MIN_SPACING_SECONDS,
+                2.0 * FIRST_TARGET_COOLDOWN_SECONDS,
+            ),
+            (false, Curiosity::Normal) => (
+                MAX_GESTURES,
+                MIN_SPACING_SECONDS,
+                FIRST_TARGET_COOLDOWN_SECONDS,
+            ),
+            (false, Curiosity::Nosy) => (
+                5,
+                MIN_SPACING_SECONDS / 2.0,
+                FIRST_TARGET_COOLDOWN_SECONDS / 2.0,
+            ),
+        }
+    }
+
+    /// The budget as Studio's Debug page shows it.
+    pub fn status(&self, now: f64) -> serde_json::Value {
+        let (max_gestures, spacing, _) = self.limits();
+        let used = self
+            .gestures
+            .iter()
+            .filter(|at| now - **at < WINDOW_SECONDS)
+            .count();
+        let spacing_left = self
+            .gestures
+            .back()
+            .map_or(0.0, |at| (spacing - (now - at)).max(0.0));
+        serde_json::json!({
+            "gestures_used": used,
+            "gestures_allowed": max_gestures,
+            "window_seconds": WINDOW_SECONDS,
+            "next_gesture_seconds": spacing_left,
+            "focused": self.focused(now),
+            "demo": self.demo,
+            "curiosity": self.curiosity,
+            "remembered_targets": self.targets.len(),
+        })
     }
 }
 

@@ -1,0 +1,20 @@
+.recorder h3 { margin: 1.5rem 0 .5rem; font-size: .9rem; color: var(--muted); }
+.recorder > header .quiet-button { display: inline-flex; gap: .4rem; align-items: center; margin-left: auto; }
+.recorder-ranges { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.recorder-ranges [aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.recorder-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 1.25rem; }
+.recorder-chart { margin: 0; min-width: 0; }
+.recorder-chart figcaption { font-size: .85rem; font-weight: 600; color: var(--text); }
+.recorder-chart figcaption span { font-weight: 400; color: var(--muted); }
+.recorder-legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .4rem 0 0; padding: 0; list-style: none; font-size: .75rem; color: var(--muted); }
+.recorder-legend li, .recorder-tooltip span { display: inline-flex; align-items: center; gap: .35rem; }
+.recorder-legend i, .recorder-tooltip i { display: inline-block; width: .7rem; height: .2rem; border-radius: 1px; }
+.recorder-plot { position: relative; }
+.recorder-plot svg { display: block; width: 100%; height: auto; margin-top: .4rem; touch-action: none; }
+.recorder-grid { stroke: var(--line); stroke-width: 1; }
+.recorder-axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.recorder-crosshair { stroke: var(--line-strong); stroke-width: 1; }
+.recorder-tooltip { position: absolute; top: .25rem; display: grid; gap: .2rem; padding: .5rem .65rem; border: 1px solid var(--line-strong); border-radius: .45rem; background: var(--surface-3); color: var(--text); font-size: .75rem; font-variant-numeric: tabular-nums; pointer-events: none; transform: translateX(.75rem); white-space: nowrap; }
+.recorder-severity { display: inline-block; min-width: 5.5rem; margin-right: .5rem; color: var(--muted); font-weight: 600; }
+.recorder-incident.problem .recorder-severity { color: var(--red); }
+.recorder-incident.recovered .recorder-severity { color: var(--green); }

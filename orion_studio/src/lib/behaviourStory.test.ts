@@ -61,3 +61,10 @@ it("names the lively behaviours in plain words", () => {
   ].map(storyRow).map(row => row?.title);
   expect(rows).toEqual(["Waved back", "Stretched after your long time at the desk", "Spoke up about taking a break", "Spoke up about saying goodnight"]);
 });
+
+it("says what Orion saw when it decided", () => {
+  const row = storyRow(event("21:00", "remark", "skipped", { reason: "focus", targetCategory: "person_looking",
+    context: { people: 1, looking: false, focused: true, visit_minutes: 42, busy: false, light: "warm_white 60%", room_lux: 8, liveliness: "lively", budget: 1 } }));
+  expect(row?.seen).toBe("1 person in view · someone busy working · visit 42 minutes long · Orion’s light warm white 60% · room dark · Lively · 1 gesture in the last 10 minutes");
+  expect(storyRow(event("21:00", "wave_back", "started"))?.seen).toBeUndefined();
+});

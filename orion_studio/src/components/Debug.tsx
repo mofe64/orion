@@ -7,6 +7,7 @@ import "./Settings.css";
 import { FailureNotice } from "./FailureNotice";
 import { debugStateLabel } from "../lib/debugState";
 import { CameraCard } from "./CameraCard";
+import { CharacterPanel, RecorderPanel } from "./Recorder";
 const stateValue = (value: string | undefined | null) => value ? <><span>{debugStateLabel(value)}</span> <code>{value}</code></> : "Unavailable";
 const reading = (value: number | undefined, unit: string) => value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(2)} ${unit}`;
 export function Debug({ voice, connection, status, onRefresh, onHistory }: { onRefresh: () => Promise<void>; onHistory: () => void; voice: StudioVoice; connection: GatewayConnection | null; status: GatewayStatus | null }) {
@@ -37,8 +38,10 @@ export function Debug({ voice, connection, status, onRefresh, onHistory }: { onR
     <FailureNotice value={voice.loadError} /><FailureNotice value={voice.listeningError} /><FailureNotice value={voice.saveError} />{snapshot.error && <details><summary>Voice error details</summary><pre>{snapshot.error}</pre></details>}
     <button className="quiet-button debug-history-button" type="button" onClick={onHistory}>View conversation history →</button></section></div>
     <section className="settings-card"><header><Activity size={20}/><div><h2>Mind</h2><p>Shared state reported by Orion.</p></div></header>{status?.mind ? <dl className="debug-values">{Object.entries({Energy: `${Math.round(status.mind.energy * 100)}%`, Mood: status.mind.mood.toFixed(2), Label: status.mind.label, Attention: status.mind.attention.kind === "object" ? status.mind.attention.class : status.mind.attention.track_id ? `${status.mind.attention.kind} ${status.mind.attention.track_id}` : status.mind.attention.kind}).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl> : <p>Mind state is unavailable.</p>}</section>
+    <CharacterPanel initiative={status?.initiative} ignored={status?.remarks?.ignored} quiet={status?.remarks?.quiet_seconds} />
     {status?.runtime.hardware !== "v1" && <div className="debug-camera"><label className="debug-camera-toggle"><input type="checkbox" checked={cameraOverlay} onChange={event => setCameraOverlay(event.target.checked)} />Show face boxes</label><CameraCard connection={connection} overlay={cameraOverlay} /></div>}
     <section className="settings-card debug-joints"><header><Activity size={20}/><div><h2>Joint readings</h2><p>Position, speed, electrical load, and temperature reported by Orion.</p></div></header>{status?.runtime.joints?.length ? <div className="debug-table"><table><thead><tr>{["Joint","Position","Speed","Current","Voltage","Temperature","Status"].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{status.runtime.joints.map(joint => <tr key={joint.name}><th>{joint.name}</th><td>{reading(joint.position_rad,"rad")}</td><td>{reading(joint.velocity_rad_s,"rad/s")}</td><td>{reading(joint.current_ma,"mA")}</td><td>{reading(joint.voltage_v,"V")}</td><td>{reading(joint.temperature_c,"°C")}</td><td>{joint.status ?? "—"}</td></tr>)}</tbody></table></div> : <p>Joint telemetry is unavailable.</p>}</section>
+    <RecorderPanel connection={connection} />
     <section className="settings-card"><header><FileText size={20}/><div><h2>Orion service logs</h2><p>Most recent 200 entries from the runtime, gateway, and listener.</p></div><button className="quiet-button" disabled={!connection || loading} onClick={() => setRefresh(value => value+1)}>{loading ? "Loading…" : "Refresh logs"}</button></header>{error && <p role="status" className="settings-error">{error}</p>}<pre className="debug-logs">{logs.join("\n") || (loading ? "Reading logs…" : "No log entries available.")}</pre></section>
   </section>;
 }

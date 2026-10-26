@@ -3,7 +3,7 @@ import type { BehaviourEvent } from "../components/VoiceHistory";
 /** What a row in the behaviour story is about. */
 export type StoryKind = "did" | "said" | "skipped" | "noticed" | "sleep";
 export type StoryFilter = "all" | StoryKind;
-export interface StoryRow { id: string; at: string; kind: StoryKind; title: string; detail?: string; note?: string; remark?: boolean }
+export interface StoryRow { id: string; at: string; kind: StoryKind; title: string; detail?: string; note?: string; remark?: boolean; seen?: string }
 export interface StoryBlock { id: string; visit: boolean; start: string; end: string; rows: StoryRow[]; idle: number }
 export interface StoryCounts { visits: number; did: number; said: number; answered: number; skipped: number }
 
@@ -73,8 +73,34 @@ const restTitles: Record<string, string> = {
   "rest_policy:disabled": "Automatic sleep turned off",
 };
 
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+/** The situation saved with a decision, in plain words. */
+export function whatOrionSaw(context: Record<string, unknown> | null | undefined): string | undefined {
+  if (!context) return undefined;
+  const number = (key: string) => typeof context[key] === "number" ? context[key] as number : undefined;
+  const people = number("people") ?? 0;
+  const parts = [people ? `${plural(people, "person", "people")} in view` : "Nobody in view"];
+  if (context.looking) parts.push("someone looking at Orion");
+  if (context.focused) parts.push("someone busy working");
+  const minutes = number("visit_minutes");
+  if (minutes != null) parts.push(`visit ${plural(minutes, "minute")} long`);
+  if (context.busy) parts.push("Orion busy talking, playing or running a routine");
+  if (typeof context.light === "string") parts.push(context.light === "off" ? "Orion’s light off" : `Orion’s light ${context.light.replaceAll("_", " ")}`);
+  const lux = number("room_lux");
+  if (lux != null) parts.push(lux < 15 ? "room dark" : lux < 100 ? "room dim" : "room bright");
+  if (typeof context.liveliness === "string") parts.push(`${context.liveliness[0].toUpperCase()}${context.liveliness.slice(1)}`);
+  const budget = number("budget");
+  if (budget != null) parts.push(`${plural(budget, "gesture")} in the last 10 minutes`);
+  return parts.join(" · ");
+}
+
 /** One readable row, or null for events that only matter in the technical log. */
 export function storyRow(event: BehaviourEvent): StoryRow | null {
+  const row = storyRowTitle(event);
+  const seen = row && whatOrionSaw(event.context);
+  return row && seen ? { ...row, seen } : row;
+}
+function storyRowTitle(event: BehaviourEvent): StoryRow | null {
   const base = { id: event.id, at: event.at };
   if (event.category === "rest") {
     const title = restTitles[`${event.behaviour}:${event.phase}`];

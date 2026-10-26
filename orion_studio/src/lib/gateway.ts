@@ -67,7 +67,7 @@ export class GatewayError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
 }
 
-async function request<T>(connection: GatewayConnection, path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(connection: GatewayConnection, path: string, init?: RequestInit): Promise<T> {
   const jsonBody = typeof init?.body === "string";
   const response = await fetch(`${connection.url.replace(/\/$/, "")}${path}`, {
     ...init,

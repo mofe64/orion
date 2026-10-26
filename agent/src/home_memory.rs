@@ -548,6 +548,7 @@ mod tests {
                 action_id: None,
                 duration_seconds: None,
                 session_id: None,
+                context: None,
             };
             let file = behaviours.join(format!("{}.jsonl", at.format("%Y-%m-%d")));
             let mut text = std::fs::read_to_string(&file).unwrap_or_default();

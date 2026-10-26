@@ -746,7 +746,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
     }
     if command == "character status" {
-        return serde_json::json!({"ok": true, "character": character.status(), "remarks": character.remarks.status(now_seconds), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds), "lamp":owner_lamp_status(manual_light,routines,character,scenes,speech,feedback,rest,now_seconds)}).to_string();
+        return serde_json::json!({"ok": true, "character": character.status(), "remarks": character.remarks.status(now_seconds), "initiative": character.initiative_status(now_seconds), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds), "lamp":owner_lamp_status(manual_light,routines,character,scenes,speech,feedback,rest,now_seconds)}).to_string();
     }
     if let Some(fields) = command.strip_prefix("voice ") {
         if fields == "status" {

@@ -19,6 +19,7 @@ fn event(id: usize) -> BehaviourEvent {
         action_id: Some("action".into()),
         duration_seconds: Some(2.),
         session_id: None,
+        context: None,
     }
 }
 

@@ -90,6 +90,18 @@ The agent keeps `home.json` on Orion. It has three parts:
 
 Habits and the last 3 days go with the user's request in a conversation as background. They also go with a welcome, light care and goodnight remark. Studio shows each part in **Personality and memory** and can delete each item, the habits or all of home memory.
 
+## Recordings
+
+The Studio gateway keeps recordings in `~/.local/share/orion/recorder/` for 7 days:
+
+- `readings-DAY.jsonl`: one row every 10 s with the worst values of those seconds. A row has the highest temperature and current and the lowest voltage of each servo, the control loop timing, servo bus errors, and the Pi temperature, CPU and memory.
+- `incidents-DAY.jsonl`: problems when they start and when they end. Examples are lost servo contact, a servo fault code, a hot servo, low servo voltage, late control steps, low Pi power, a service restart and a sleep fault.
+- `latency-DAY.jsonl`: the reply speed of each voice turn, from the saved voice history.
+
+The gateway reads `oriond` status every second and writes the files every minute. It writes incidents immediately. The Debug page in Studio shows the recordings, the problems and the character decisions. **Save support file** writes one JSON file with versions, status, recordings, two days of behaviour log, the behaviour settings and 24 hours of service logs. The file contains no passwords, tokens or keys.
+
+Each behaviour decision in the behaviour log also keeps the situation at that time: people in view, focus, visit length, busy, Orion's light, room light, liveliness and the number of recent gestures.
+
 ## Camera privacy and tracking profile
 
 `camera.json` stores `camera_enabled`. A missing file permits capture. An invalid or unreadable file disables capture.

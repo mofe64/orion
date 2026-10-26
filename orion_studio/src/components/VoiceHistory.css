@@ -64,3 +64,7 @@
 .behaviour-row.skipped strong { font-weight: 500; color: var(--muted); }
 .behaviour-row.idle p { color: var(--muted); margin: 0; }
 @media (max-width: 40rem) { .behaviour-row { grid-template-columns: 3.6rem minmax(0,1fr); padding: .5rem .6rem; } }
+
+.behaviour-seen { margin-top: .25rem; font-size: .82rem; color: var(--muted); }
+.behaviour-seen summary { cursor: pointer; width: fit-content; }
+.behaviour-seen p { margin: .25rem 0 0; }

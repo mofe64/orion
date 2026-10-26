@@ -58,6 +58,40 @@ impl CharacterCoordinator {
         false
     }
 
+    /// What Orion bases its own decisions on, for Studio's Debug page: the
+    /// situation, the curiosity budget, the Lively timers and, for each kind
+    /// of remark, why it would not be said now.
+    pub(crate) fn initiative_status(&self, now: f64) -> serde_json::Value {
+        let lively = &self.surroundings.lively;
+        let since = |at: Option<f64>| at.map(|at| (now - at).max(0.0));
+        let remarks: serde_json::Map<_, _> = [
+            RemarkEvent::PersonArrived,
+            RemarkEvent::PersonLooking,
+            RemarkEvent::NewObject,
+            RemarkEvent::LightCare,
+            RemarkEvent::BreakNudge,
+            RemarkEvent::PersonLeft,
+            RemarkEvent::Goodnight,
+        ]
+        .into_iter()
+        .filter_map(|event| {
+            let name = serde_json::to_value(event).ok()?.as_str()?.to_owned();
+            Some((name, self.remarks.refusal(event, now).into()))
+        })
+        .collect();
+        serde_json::json!({
+            "situation": self.surroundings.situation,
+            "curiosity": self.surroundings.budget.status(now),
+            "quirks": self.acts.settings.quirks,
+            "lively": {
+                "desk_seconds": since(lively.desk_since),
+                "dark_seconds": since(lively.dark_since),
+                "goodnight_rest_seconds": lively.goodnight_rest.map(|at| (at - now).max(0.0)),
+            },
+            "remark_refusals": remarks,
+        })
+    }
+
     pub(super) fn observe_lively<D: RuntimeDriver>(
         &mut self,
         faces: &[SeenFace],

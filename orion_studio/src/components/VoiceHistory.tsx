@@ -23,6 +23,8 @@ export interface BehaviourEvent {
   id: string; at: string; category: string; behaviour: string; phase: string;
   target: string | null; targetCategory: string | null; reason: string | null;
   durationSeconds: number | null; actionId: string | null;
+  /** What Orion saw when it decided, for decisions logged since 0.1.16. */
+  context?: Record<string, unknown> | null;
 }
 export function loadHistory(conversationId: string | null, before: string | null) {
   const message = conversationId ? "Studio couldn't open this conversation. Please try again." : before ? "Studio couldn't load older conversations. Please try again." : "Studio couldn't load Orion's conversation history. Please try again.";
@@ -102,7 +104,8 @@ export function BehaviourStory({ events, filter }: { events: BehaviourEvent[]; f
       return <section key={block.id} className={`behaviour-block${block.visit ? " visit" : ""}`}>{showDay && <h2>{heading}</h2>}
         <header><strong>{block.visit ? "Someone was here" : "Nobody around"}</strong><time dateTime={block.start}>{clock(block.start)} – {clock(block.end)}</time></header>
         <ol>{block.rows.map(row => <li key={row.id} className={`behaviour-row ${row.kind}`}><time dateTime={row.at}>{clock(row.at)}</time>
-          <div><strong>{row.title}</strong>{row.detail && <p>{row.detail}</p>}{row.note && <p className="settings-help">{row.note}</p>}</div></li>)}
+          <div><strong>{row.title}</strong>{row.detail && <p>{row.detail}</p>}{row.note && <p className="settings-help">{row.note}</p>}
+            {row.seen && <details className="behaviour-seen"><summary>What Orion saw</summary><p>{row.seen}</p></details>}</div></li>)}
           {block.idle > 0 && <li className="behaviour-row idle"><span /><div><p>{block.idle} small idle {block.idle === 1 ? "movement" : "movements"}</p></div></li>}
         </ol></section>; })}
   </div>;

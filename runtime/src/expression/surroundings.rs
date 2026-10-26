@@ -389,7 +389,7 @@ impl CharacterCoordinator {
                 now,
             );
         }
-        state.situation = Situation {
+        let situation = Situation {
             at: now,
             people: value.faces.len(),
             looking: value.faces.iter().any(|face| face.frontal),
@@ -405,6 +405,25 @@ impl CharacterCoordinator {
                 .filter(|lux| lux.is_finite() && (0.0..=200_000.0).contains(lux)),
             liveliness,
         };
+        if let Some(log) = &self.behaviour_log {
+            log.set_context(serde_json::json!({
+                "people": situation.people,
+                "looking": situation.looking,
+                "focused": situation.focused,
+                "visit_minutes": situation.visit.map(|at| ((now - at) / 60.0).round()),
+                "hour": (situation.hour * 100.0).round() / 100.0,
+                "busy": situation.busy,
+                "light": if situation.lamp.on {
+                    format!("{} {:.0}%", situation.lamp.mood, situation.lamp.brightness)
+                } else {
+                    "off".into()
+                },
+                "room_lux": situation.room_lux.map(f64::round),
+                "liveliness": situation.liveliness,
+                "budget": self.surroundings.budget.status(now).get("gestures_used").cloned(),
+            }));
+        }
+        self.surroundings.situation = situation;
     }
     pub(crate) fn observe_surroundings<D: RuntimeDriver>(
         &mut self,

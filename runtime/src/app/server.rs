@@ -320,11 +320,15 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         .then(crate::lamp::LampProgram::default);
     let mut light_mode = routines.mode();
     let mut camera_viewer = super::camera_viewer::CameraViewer::default();
+    let mut loop_stats = super::loop_stats::LoopStats::default();
     while !stopping.load(Ordering::Relaxed) {
+        let begun = Instant::now();
+        let delay_ms = begun.saturating_duration_since(next_sample).as_secs_f64() * 1000.0;
         next_sample += OBSERVE_PERIOD;
         let now_seconds = started_at.elapsed().as_secs_f64();
         core.tick(now_seconds)?;
         if core.take_bus_reconnected() {
+            loop_stats.bus_reconnected();
             character.resume_after_bus_reconnect(now_seconds, &mut core);
         }
         if let Some(log) = &behaviour_log {
@@ -622,6 +626,7 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
                         .collect::<std::collections::BTreeMap<_, _>>()
                 );
                 value["lighting_pixels"] = serde_json::json!(lighting.pixel_count());
+                value["loop"] = loop_stats.status();
                 value.to_string()
             } else {
                 response
@@ -629,6 +634,11 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
         })?;
         rest.render_failure_light(&mut lighting, now_seconds)?;
         rest.light_on = lighting.is_on();
+        loop_stats.record(
+            started_at.elapsed().as_secs(),
+            delay_ms,
+            begun.elapsed().as_secs_f64() * 1000.0,
+        );
         thread::sleep(next_sample.saturating_duration_since(Instant::now()));
     }
     mind_store.shutdown(&character.mind);

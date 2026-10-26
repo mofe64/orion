@@ -28,10 +28,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 from system_metrics import SystemMetrics, SystemdProperties
+from recorder import Recorder
 from home_assistant import HomeAssistant, HomeError
 from spotify import Spotify, SpotifyError
 
@@ -322,6 +323,7 @@ class OrionGateway:
         if hardware not in ("v1", "v2"):
             raise ValueError("Hardware must be v1 or v2")
         self.system_metrics = SystemMetrics()
+        self.recorder = Recorder(client.request, self.system_metrics)
         self.home = HomeAssistant()
         self.spotify = Spotify()
         self.hardware = hardware
@@ -854,11 +856,57 @@ class OrionGateway:
                 "last": speech.get("last_speech"),
             },
             "character": character.get("character"),
+            "initiative": character.get("initiative"),
+            "remarks": character.get("remarks"),
             "rest": character.get("rest"),
             "routines": character.get("routines"),
             "audio": audio.get("audio"),
             "lamp": runtime.get("lamp"),
         }
+
+    def recorder_snapshot(self, query: str) -> dict[str, Any]:
+        try:
+            hours = float(parse_qs(query).get('hours', ['1'])[0])
+        except ValueError:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_hours", "Hours must be a number.") from None
+        if not math.isfinite(hours):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_hours", "Hours must be a number.")
+        return self.recorder.snapshot(hours)
+
+    SUPPORT_FILES = ('behaviours.json', 'personality.json', 'tracking.json', 'camera.json')
+
+    def support_bundle(self) -> dict[str, Any]:
+        """Everything needed to look into a problem later, without secrets:
+        versions, status, 24 hours of readings and logs, 7 days of incidents
+        and reply times, two days of behaviour log and the behaviour settings."""
+        def attempt(read):
+            try:
+                return read()
+            except Exception as error:  # A bundle reports what it could not read.
+                return {'unavailable': str(error)[:300]}
+        def journal():
+            result = subprocess.run(['journalctl', '--no-pager', '--output=short-iso', '--since=-24h', '--lines=5000',
+                *[part for unit in ('oriond', 'orion-studio-gateway', 'orion-listener', 'orion-voice-stack', 'orion-vision')
+                  for part in ('-u', f'{unit}.service')]], capture_output=True, text=True, timeout=10, check=False)
+            return result.stdout[-2_000_000:].splitlines()
+        def settings():
+            values = {}
+            for name in self.SUPPORT_FILES:
+                path = self.camera_preference_file.with_name(name)
+                try:
+                    values[name] = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    values[name] = None
+            return values
+        def behaviour_log():
+            folder = self.recorder.history / 'behaviours'
+            return {path.name: path.read_text()[-3_000_000:].splitlines() for path in sorted(folder.glob('*.jsonl'))[-2:]}
+        version = attempt(lambda: (GATEWAY_PROGRAM.parent.parent / 'VERSION').read_text().strip())
+        return {'api_version': API_VERSION, 'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                'version': version, 'hardware': self.hardware, 'status': attempt(self.status),
+                'system': attempt(self.system_metrics.snapshot), 'recorder': attempt(lambda: self.recorder.snapshot(24)),
+                'incidents_7_days': attempt(lambda: self.recorder.snapshot(24 * 7)['incidents']),
+                'settings': attempt(settings), 'behaviour_log': attempt(behaviour_log), 'journal': attempt(journal)}
 
     def runtime_logs(self) -> dict[str, Any]:
         journal = shutil.which("journalctl")
@@ -2260,6 +2308,10 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return HTTPStatus.OK, gateway.home_request('GET', path.removeprefix('/api/v2/home/'))
             if path == '/api/v2/system/metrics':
                 return HTTPStatus.OK, gateway.system_metrics.snapshot()
+            if path == '/api/v2/system/recorder':
+                return HTTPStatus.OK, gateway.recorder_snapshot(urlparse(self.path).query)
+            if path == '/api/v2/system/support-bundle':
+                return HTTPStatus.OK, gateway.support_bundle()
             if path == '/api/v2/behaviours':
                 return HTTPStatus.OK, gateway.get_behaviours()
             if path == '/api/v2/personality':
@@ -2569,6 +2621,7 @@ def main() -> None:
         tracking_preference_file=args.tracking_preference_file,
     )
     gateway.system_metrics.start()
+    gateway.recorder.start()
     try:
         # A new lamp gets its quirks before Studio first opens.
         gateway.get_personality()
@@ -2586,6 +2639,7 @@ def main() -> None:
     finally:
         server.server_close()
         gateway.system_metrics.close()
+        gateway.recorder.close()
 
 
 if __name__ == "__main__":
