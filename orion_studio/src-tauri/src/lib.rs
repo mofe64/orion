@@ -26,7 +26,8 @@ pub fn run() {
             pairing::save_pairing,
             pairing::forget_pairing,
             pairing::list_pairings,
-            pairing::select_pairing
+            pairing::select_pairing,
+            pairing::resolve_gateway
         ])
         .build(tauri::generate_context!())
         .expect("error while building Orion Studio")

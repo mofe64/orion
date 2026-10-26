@@ -331,3 +331,28 @@ describe("pairing and reconnect", () => {
     controller.dispose();
   });
 });
+
+describe("address lookup", () => {
+  it("connects through the looked-up address, keeps the saved name, and looks it up again after a failure", async () => {
+    const store = { load: vi.fn(async () => target), save: vi.fn(async () => {}), forget: vi.fn(async () => {}) };
+    const resolve = vi.fn(async () => "http://192.168.1.9:7447");
+    const probe = { status: vi.fn(async () => status), capabilities: vi.fn(async () => capabilities), resolve };
+    const controller = new PairingController(store, probe);
+    await controller.start();
+    expect(controller.current()).toMatchObject({ phase: "connected", address: target.url,
+      connection: { url: "http://192.168.1.9:7447", token: target.token } });
+    expect(probe.status).toHaveBeenCalledWith({ url: "http://192.168.1.9:7447", token: target.token });
+    const first = controller.current().connection;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(controller.current().connection).toBe(first);
+    probe.status.mockRejectedValueOnce(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.current().phase).toBe("reconnecting");
+    resolve.mockResolvedValueOnce("http://192.168.1.10:7447");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(controller.current()).toMatchObject({ phase: "connected", connection: { url: "http://192.168.1.10:7447" } });
+    controller.dispose();
+  });
+});
