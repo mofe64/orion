@@ -374,6 +374,12 @@ class SatelliteSession:
                 print(json.dumps({"event": "voice.wake_detection", "score": detection.score,
                                   "phase": "echo_guard", "session_id": self.session_id}), flush=True)
             return []
+        if self.continuous_wake and detection is not None and self.session_id and self.phase == "command":
+            # Orion already accepted the wake and is recording the request.
+            # A second "Hey Orion" belongs to that request; a new session would lose it.
+            print(json.dumps({"event": "voice.wake_detection", "score": detection.score,
+                              "phase": "command_kept", "session_id": self.session_id}), flush=True)
+            detection = None
         if self.continuous_wake and detection is not None:
             detected_phase = self.phase
             interrupted = []

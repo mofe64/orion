@@ -75,7 +75,7 @@ class ContinuousWakeTests(unittest.TestCase):
         self.assertEqual(bytes(session.pre_roll), b''.join(mono(frame(i)) for i in range(150)))
 
     def test_busy_detection_interrupts_then_starts_a_prefix_checked_wake(self):
-        for phase in ('wake', 'command', 'confirming', 'processing', 'playing', 'echo_guard', 'conversation'):
+        for phase in ('wake', 'confirming', 'processing', 'playing', 'echo_guard', 'conversation'):
             wake = self.detector()
             session = SatelliteSession(wake, early_wake=True)
             session.phase = phase
@@ -87,3 +87,13 @@ class ContinuousWakeTests(unittest.TestCase):
             self.assertNotEqual(events[1]['sessionId'], 'a' * 32)
             self.assertFalse(events[1]['acousticVerification'])
             self.assertTrue(session.prefix_pending)
+
+    def test_a_second_wake_while_recording_the_request_keeps_the_request(self):
+        wake = self.detector()
+        session = SatelliteSession(wake, early_wake=True)
+        session.phase, session.session_id = 'command', 'a' * 32
+        session.utterance = bytearray(b'\1' * 640)
+        wake.process.return_value = SimpleNamespace(name='Hey Orion', score=.9)
+        self.assertEqual(session.accept_stereo(frame()), [])
+        self.assertEqual((session.phase, session.session_id), ('command', 'a' * 32))
+        self.assertEqual(len(session.utterance), 2 * 640)
