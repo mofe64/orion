@@ -127,6 +127,7 @@ The runtime controls when a remark can start:
 - Each event type has a cooldown. Arrival is 30 min, sustained look is 20 min and new object is 60 min.
 - Remarks are at least 10 min apart. Each ignored remark doubles this time, to a maximum of four times. A reply resets it.
 - At most 4 remarks occur in one hour.
+- Orion speaks to the people in view one time each visit, with a welcome, a remark about a look or a conversation. A new visit starts when nobody is in view for 10 min. People in view when `oriond` starts get no welcome.
 - A remark waits 5 min after a conversation.
 - Common desk objects get no remark. Each object category gets a maximum of one remark each day. A new object must stay in view for 12 s.
 - No remark starts during a conversation, speech, music, scenes, focus, rest, Stop, or between 22:00 and 07:00.
@@ -140,7 +141,7 @@ A wake word during a remark stops the remark and starts a normal turn.
 Demo mode is for showing Orion to people. It changes these limits:
 
 - The curiosity budget allows 20 gestures in 10 min, 12 s apart, without longer waits for repeated targets. Turning demo mode on clears the budget.
-- Remarks can be 30 s apart, with a 45 s cooldown per event type and 20 s after a conversation. The clock, focus and daily object limits do not apply.
+- Remarks can be 30 s apart, with a 45 s cooldown per event type and 20 s after a conversation. A new visit starts when nobody is in view for 30 s. The clock, focus and daily object limits do not apply.
 - Arrival needs 30 s of absence instead of 10 min.
 - A sustained look plays `mutual_gaze_notice_demo`, which has a nod and a larger neck turn.
 - Each remark sends one camera picture with the request.

@@ -74,3 +74,14 @@ it("turning on demo mode shows the reactions the gateway turned on with it", asy
   expect(model.snapshot()).toMatchObject({ values: on.behaviours, notice: "Saved on Orion." });
   model.stop();
 });
+
+it("saves a choice that sets two settings in one request and skips unchanged ones", async () => {
+  const on = { behaviours: { ...off.behaviours, proactive_speech: true, mutual_gaze: true, arrival_notice: true, new_object_peek: true } };
+  const save = vi.fn().mockResolvedValue(on);
+  const model = new BehaviourPreference(connection, { read: vi.fn().mockResolvedValue(off), save });
+  model.start(); await flush();
+  await model.chooseMany({ demo_mode: false, proactive_speech: true });
+  expect(save).toHaveBeenCalledWith(connection, { proactive_speech: true }, expect.any(AbortSignal));
+  expect(model.snapshot().values).toEqual(on.behaviours);
+  model.stop();
+});

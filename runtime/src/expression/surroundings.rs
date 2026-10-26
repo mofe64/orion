@@ -387,6 +387,7 @@ impl CharacterCoordinator {
                 focused: self.surroundings.budget.focused(now),
                 hour,
                 day,
+                person_present: !value.faces.is_empty(),
             },
             now,
         );

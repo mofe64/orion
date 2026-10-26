@@ -44,13 +44,17 @@ export class BehaviourPreference {
     // instead of preserving its optimistic value or leaving controls pending.
     if (this.state.pending) this.update({ values: null, pending: false, notice: "" });
   }
-  choose = async <K extends BehaviourKey>(key: K, value: import("./gateway").BehaviourSettings[K]) => {
+  choose = <K extends BehaviourKey>(key: K, value: import("./gateway").BehaviourSettings[K]) =>
+    this.chooseMany({ [key]: value } as Partial<import("./gateway").BehaviourSettings>);
+  /** Saves several settings in one request, for choices that set more than one key. */
+  chooseMany = async (patch: Partial<import("./gateway").BehaviourSettings>) => {
     const controller = this.controller, previous = this.state.values;
-    if (!controller || this.state.pending || !previous || previous[key] === value) return;
+    const changes = Object.fromEntries(Object.entries(patch).filter(([key, value]) => previous?.[key as BehaviourKey] !== value));
+    if (!controller || this.state.pending || !previous || !Object.keys(changes).length) return;
     this.revision++; this.saveFailure = null;
-    this.update({ values: { ...previous, [key]: value }, pending: true, error: null, notice: "" });
+    this.update({ values: { ...previous, ...changes }, pending: true, error: null, notice: "" });
     try {
-      const values = this.validate(await this.transport.save(this.connection, { [key]: value }, AbortSignal.any([controller.signal, AbortSignal.timeout(5000)])));
+      const values = this.validate(await this.transport.save(this.connection, changes, AbortSignal.any([controller.signal, AbortSignal.timeout(5000)])));
       if (!controller.signal.aborted) this.update({ values, notice: "Saved on Orion." });
     } catch (error) {
       if (!controller.signal.aborted) {

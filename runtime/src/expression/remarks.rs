@@ -17,6 +17,10 @@ pub enum RemarkEvent {
     PersonLeft,
 }
 impl RemarkEvent {
+    /// A welcome or a look speaks to the person; once per visit is enough.
+    fn about_person(self) -> bool {
+        matches!(self, Self::PersonArrived | Self::PersonLooking)
+    }
     /// Everyday per-event cooldowns, in seconds.
     fn cooldown(self, demo: bool) -> f64 {
         match (self, demo) {
@@ -59,6 +63,10 @@ const STALE_SECONDS: f64 = 8.0;
 const REPLY_SECONDS: f64 = 45.0;
 const MAX_IGNORED: u32 = 2;
 const MAX_QUIET_SECONDS: f64 = 8.0 * 3600.0;
+/// After a greeting, a look or a conversation, Orion says nothing more about
+/// the person until nobody has been in view for this long.
+const VISIT_AWAY_SECONDS: f64 = 600.0;
+const DEMO_VISIT_AWAY_SECONDS: f64 = 30.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RemarkContext {
@@ -71,6 +79,8 @@ pub struct RemarkContext {
     pub hour: f64,
     /// Local calendar day, for once-a-day object memory.
     pub day: i64,
+    /// A face is in view.
+    pub person_present: bool,
 }
 impl RemarkContext {
     fn enabled(self) -> bool {
@@ -103,18 +113,40 @@ pub struct RemarkPolicy {
     awaiting_reply: Option<f64>,
     quiet_until: f64,
     last_conversation: Option<f64>,
+    /// Orion already spoke to or with the people on this visit.
+    visit_spoken: bool,
+    absent_since: Option<f64>,
+    started: bool,
     context: RemarkContext,
 }
 
 impl RemarkPolicy {
     pub fn set_context(&mut self, context: RemarkContext, now: f64) {
+        if !self.started {
+            // After a restart or update, people already here are not new.
+            self.started = true;
+            self.visit_spoken = true;
+        }
         if context.demo && !self.context.demo {
             // Each demo take starts fresh.
             self.by_event.clear();
             self.by_category.clear();
             self.spoken.clear();
+            self.visit_spoken = false;
         }
         self.context = context;
+        if context.person_present {
+            self.absent_since = None;
+        } else {
+            let away = if context.demo {
+                DEMO_VISIT_AWAY_SECONDS
+            } else {
+                VISIT_AWAY_SECONDS
+            };
+            if now - *self.absent_since.get_or_insert(now) >= away {
+                self.visit_spoken = false;
+            }
+        }
         if !context.enabled() || context.busy {
             self.pending = None;
         }
@@ -144,6 +176,7 @@ impl RemarkPolicy {
         self.awaiting_reply = None;
         self.last_conversation = Some(now);
         self.pending = None;
+        self.visit_spoken = true;
     }
 
     pub fn quiet(&mut self, seconds: f64, now: f64) -> Result<f64, &'static str> {
@@ -178,6 +211,7 @@ impl RemarkPolicy {
             || self.pending.is_some()
             || now < self.quiet_until
             || (event == RemarkEvent::HandRaised && !demo)
+            || (self.visit_spoken && event.about_person())
             || (!demo && (context.focused || !(7.0..22.0).contains(&context.hour)))
         {
             return false;
@@ -273,6 +307,9 @@ impl RemarkPolicy {
         let remark = self.pending.take().unwrap();
         self.spoken.push_back(now);
         self.by_event.insert(remark.event, now);
+        if remark.event.about_person() {
+            self.visit_spoken = true;
+        }
         if let Some(category) = &remark.detail
             && remark.event == RemarkEvent::NewObject
         {
@@ -291,6 +328,7 @@ impl RemarkPolicy {
             "demo": self.context.demo,
             "quiet_seconds": (self.quiet_until - now).max(0.0),
             "ignored": self.ignored,
+            "visit_spoken": self.visit_spoken,
             "pending": self.pending,
         })
     }
@@ -312,7 +350,20 @@ mod tests {
             },
             0.0,
         );
+        policy.visit_spoken = false;
         policy
+    }
+    /// Nobody in view for ten minutes before `now`: a new visit starts.
+    /// Reply tracking is left as it was, so only the visit changes.
+    fn new_visit(policy: &mut RemarkPolicy, now: f64) {
+        let reply = (policy.awaiting_reply, policy.ignored);
+        let mut context = policy.context;
+        context.person_present = true;
+        policy.set_context(context, now - 601.0);
+        context.person_present = false;
+        policy.set_context(context, now - 600.0);
+        policy.set_context(context, now);
+        (policy.awaiting_reply, policy.ignored) = reply;
     }
     fn speak(policy: &mut RemarkPolicy, now: f64) -> RemarkEvent {
         let id = policy.ready(now, |_| true).unwrap().id;
@@ -325,10 +376,12 @@ mod tests {
         assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 1000.0));
         assert_eq!(speak(&mut policy, 1000.0), RemarkEvent::PersonArrived);
         // Ten minutes between any two remarks.
+        new_visit(&mut policy, 1500.0);
         assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 1500.0));
         assert!(policy.offer(RemarkEvent::PersonLooking, None, None, 1600.0));
         speak(&mut policy, 1600.0);
         // The same event waits its own cooldown.
+        new_visit(&mut policy, 2300.0);
         assert!(!policy.offer(RemarkEvent::PersonArrived, None, None, 2300.0));
         assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 2800.0));
         // Hand play belongs to demo mode only.
@@ -385,6 +438,7 @@ mod tests {
         speak(&mut policy, 1000.0);
         policy.set_context(context, 1050.0);
         assert_eq!(policy.ignored, 1);
+        new_visit(&mut policy, 2100.0);
         assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 2100.0));
         assert!(policy.offer(RemarkEvent::PersonLooking, None, None, 2200.0));
         speak(&mut policy, 2200.0);
@@ -431,6 +485,9 @@ mod tests {
         assert!(!policy.offer(RemarkEvent::HandRaised, None, None, 1020.0));
         assert!(policy.offer(RemarkEvent::HandRaised, None, None, 1031.0));
         assert!(policy.ready(1040.0, |_| true).is_none());
+        let mut context = policy.context;
+        context.person_present = false;
+        policy.set_context(context, 1041.0);
         assert!(policy.offer(RemarkEvent::PersonLooking, None, None, 1041.0));
         assert!(policy.take(99, 1041.0).is_err());
         speak(&mut policy, 1041.0);
@@ -441,5 +498,59 @@ mod tests {
         context.demo = true;
         policy.set_context(context, 1043.0);
         assert!(policy.offer(RemarkEvent::NewObject, Some("cup"), None, 1043.0));
+    }
+
+    #[test]
+    fn orion_speaks_about_a_person_once_per_visit() {
+        for (demo, away) in [(false, 600.0), (true, 30.0)] {
+            let mut policy = policy(demo);
+            let mut context = policy.context;
+            context.person_present = true;
+            policy.set_context(context, 1000.0);
+            assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 1000.0));
+            speak(&mut policy, 1000.0);
+            // Still here an hour later: no more welcomes or looks.
+            for now in [1100.0, 2500.0, 4700.0] {
+                policy.set_context(context, now);
+                assert!(
+                    !policy.offer(RemarkEvent::PersonLooking, None, None, now),
+                    "{demo}"
+                );
+            }
+            // Objects are still news.
+            assert!(policy.offer(RemarkEvent::NewObject, Some("banana"), None, 4700.0));
+            policy.pending = None;
+            // A short step away is the same visit.
+            context.person_present = false;
+            policy.set_context(context, 4710.0);
+            context.person_present = true;
+            policy.set_context(context, 4710.0 + away - 1.0);
+            assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 4710.0 + away));
+            // Away long enough: a new visit.
+            context.person_present = false;
+            policy.set_context(context, 5000.0);
+            policy.set_context(context, 5000.0 + away);
+            assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 5000.0 + away));
+        }
+        // A conversation counts as speaking with the person.
+        let mut policy = policy(true);
+        let mut context = policy.context;
+        context.person_present = true;
+        policy.set_context(context, 1000.0);
+        policy.engaged(1000.0);
+        assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 1100.0));
+    }
+
+    #[test]
+    fn a_restart_does_not_welcome_people_who_are_already_here() {
+        let mut policy = RemarkPolicy::default();
+        let context = RemarkContext {
+            proactive: true,
+            hour: 12.0,
+            person_present: true,
+            ..Default::default()
+        };
+        policy.set_context(context, 1000.0);
+        assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 1000.0));
     }
 }

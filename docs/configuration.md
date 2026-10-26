@@ -62,7 +62,7 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 
 Older boolean dance settings become `sometimes` for true and `off` for false.
 
-When `proactive_speech` or `demo_mode` changes to true, the gateway also sets `mutual_gaze`, `arrival_notice` and `new_object_peek` to true. If tracking is Off or Hands, it sets tracking to Idle. While `demo_mode` is true, vision also enables `object_glances`, `mutual_gaze`, `arrival_notice` and `new_object_peek`.
+Studio shows `proactive_speech` and `demo_mode` as one choice: Off, Sometimes or Demo. Demo keeps the `proactive_speech` value, so Orion returns to it when Demo stops. When `proactive_speech` or `demo_mode` changes to true, the gateway also sets `mutual_gaze`, `arrival_notice` and `new_object_peek` to true. If tracking is Off or Hands, it sets tracking to Idle. While `demo_mode` is true, vision also enables `object_glances`, `mutual_gaze`, `arrival_notice` and `new_object_peek`.
 
 Studio provides these settings under **Character behaviours**. The runtime reads act settings independently of camera observations.
 The new act clips require the V2 catalogue. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
