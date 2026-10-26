@@ -11,6 +11,8 @@ use std::{
 };
 
 pub const CONVERSATION_HOURS: i64 = 24;
+/// Behaviour events per history page; a page covers about one visit.
+pub const BEHAVIOUR_PAGE: usize = 400;
 
 pub fn directory() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("ORION_VOICE_HISTORY_DIR") {
@@ -553,12 +555,12 @@ impl Store {
             });
             day.reverse();
             items.extend(day);
-            if items.len() > 100 {
+            if items.len() > BEHAVIOUR_PAGE {
                 break;
             }
         }
-        let more = items.len() > 100;
-        items.truncate(100);
+        let more = items.len() > BEHAVIOUR_PAGE;
+        items.truncate(BEHAVIOUR_PAGE);
         let cursor = if more {
             items.last().map(|v| {
                 format!(

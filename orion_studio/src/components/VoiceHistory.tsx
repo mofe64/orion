@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import "./VoiceHistory.css";
 import { failure, forOwner, type Failure } from "../lib/feedback";
 import { FailureNotice } from "./FailureNotice";
+import { behaviourStory, storyCounts, type StoryFilter } from "../lib/behaviourStory";
 
 interface Summary {
   conversationId: string; startedAt: string; updatedAt: string; expiresAt: string;
@@ -84,10 +85,33 @@ export function BehaviourTimeline({ events }: { events: BehaviourEvent[] }) {
   </div></li>)}</ol>;
 }
 
+const clock = (date: string) => new Date(date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+export const storyFilters: [StoryFilter | "technical", string][] = [
+  ["all", "Everything"], ["did", "What it did"], ["said", "What it said"], ["skipped", "What it chose not to do"],
+  ["noticed", "What it noticed"], ["sleep", "Sleep and wake"], ["technical", "Technical log"],
+];
+/** Behaviour history as visits: what Orion did, said and chose not to do, and why. */
+export function BehaviourStory({ events, filter }: { events: BehaviourEvent[]; filter: StoryFilter }) {
+  const blocks = behaviourStory(events, filter);
+  const counts = storyCounts(events);
+  let previousDay = "";
+  return <div className="behaviour-story">
+    <p className="behaviour-summary">{counts.visits} {counts.visits === 1 ? "visit" : "visits"} · {counts.did} {counts.did === 1 ? "thing" : "things"} done · {counts.said} said ({counts.answered} answered) · {counts.skipped} chosen not to do</p>
+    {!blocks.length && <p className="voice-history-empty">Nothing to show for this choice yet.</p>}
+    {blocks.map(block => { const heading = day(block.start), showDay = heading !== previousDay; previousDay = heading;
+      return <section key={block.id} className={`behaviour-block${block.visit ? " visit" : ""}`}>{showDay && <h2>{heading}</h2>}
+        <header><strong>{block.visit ? "Someone was here" : "Nobody around"}</strong><time dateTime={block.start}>{clock(block.start)} – {clock(block.end)}</time></header>
+        <ol>{block.rows.map(row => <li key={row.id} className={`behaviour-row ${row.kind}`}><time dateTime={row.at}>{clock(row.at)}</time>
+          <div><strong>{row.title}</strong>{row.detail && <p>{row.detail}</p>}{row.note && <p className="settings-help">{row.note}</p>}</div></li>)}
+          {block.idle > 0 && <li className="behaviour-row idle"><span /><div><p>{block.idle} small idle {block.idle === 1 ? "movement" : "movements"}</p></div></li>}
+        </ol></section>; })}
+  </div>;
+}
+
 export function VoiceHistory({ connected, desktop = isTauri(), connectionScope = connected }: { connected: boolean; desktop?: boolean; connectionScope?: unknown }) {
   const available = connected && desktop;
   const [view, setView] = useState<"conversations" | "behaviours">("conversations");
-  const [category, setCategory] = useState("");
+  const [filter, setFilter] = useState<StoryFilter | "technical">("all");
   const [items, setItems] = useState<Summary[]>([]);
   const [behaviours, setBehaviours] = useState<BehaviourEvent[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -106,7 +130,7 @@ export function VoiceHistory({ connected, desktop = isTauri(), connectionScope =
     const generation = epoch.current; setLoading(true); setError(null);
     try {
       if (view === "behaviours") {
-        const page = await loadBehaviours(older ? nextCursor : null, category || null);
+        const page = await loadBehaviours(older ? nextCursor : null, null);
         if (generation !== epoch.current) return;
         setBehaviours(previous => older ? [...previous,...page.items] : page.items); setNextCursor(page.nextCursor);
       } else {
@@ -126,16 +150,16 @@ export function VoiceHistory({ connected, desktop = isTauri(), connectionScope =
     setItems([]); setBehaviours([]); setConversation(null); setSelected(null);
     if (available) void refresh(); else setLoading(false);
     return () => { epoch.current++; detailRequest.current++; };
-  },[available,view,category,connectionScope]);
+  },[available,view,connectionScope]);
   let previousDay = "";
   return <section className="settings-page voice-history" aria-labelledby="voice-history-title">
-    <header className="voice-history-heading"><div><h1 id="voice-history-title">History</h1><p>Conversations last 24 hours from the first turn. Behaviour events are saved on Orion.</p></div><button className="quiet-button" disabled={!available || loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
+    <header className="voice-history-heading"><div><h1 id="voice-history-title">History</h1><p>{view === "behaviours" ? "What Orion did, said and chose not to do, visit by visit." : "Conversations last 24 hours from the first turn."}</p></div><button className="quiet-button" disabled={!available || loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
     <div className="history-controls"><div role="group" aria-label="History view">{(["conversations","behaviours"] as const).map(value => <button className="quiet-button" key={value} aria-pressed={view === value} onClick={() => setView(value)}>{value === "conversations" ? "Conversations" : "Behaviours"}</button>)}</div>
-      {view === "behaviours" && <label>Show <select value={category} onChange={event => setCategory(event.target.value)}><option value="">All behaviours</option><option value="attention">Attention</option><option value="idle">Idle movements</option><option value="rest">Sleep and wake</option><option value="system">Log diagnostics</option></select></label>}
+      {view === "behaviours" && <label>Show <select value={filter} onChange={event => setFilter(event.target.value as StoryFilter | "technical")}>{storyFilters.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
     </div>
     {!desktop ? <p className="settings-help">Open Orion Studio’s desktop app and connect Orion to read history.</p> : !connected && <p className="settings-help">Connect Orion to read its history.</p>}
     <FailureNotice value={error}/>
-    {view === "behaviours" ? <div className="voice-history-layout behaviour-history"><BehaviourTimeline events={behaviours}/>{!behaviours.length && <p className="voice-history-empty">{loading ? "Reading Orion’s behaviours…" : available ? "No behaviour events recorded yet." : "Connect in the desktop app to read saved behaviours."}</p>}{nextCursor && <button className="quiet-button" disabled={loading} onClick={() => void refresh(true)}>Load older behaviours</button>}</div> :
+    {view === "behaviours" ? <div className="voice-history-layout behaviour-history">{filter === "technical" ? <BehaviourTimeline events={behaviours}/> : behaviours.length > 0 && <BehaviourStory events={behaviours} filter={filter}/>}{!behaviours.length && <p className="voice-history-empty">{loading ? "Reading Orion’s behaviours…" : available ? "No behaviour events recorded yet." : "Connect in the desktop app to read saved behaviours."}</p>}{nextCursor && <button className="quiet-button" disabled={loading} onClick={() => void refresh(true)}>Load older behaviours</button>}</div> :
       <div className="voice-history-layout"><aside className="voice-history-list" aria-label="Conversations">
         {!items.length && <p className="voice-history-empty">{loading ? "Reading Orion’s history…" : available ? "No saved conversations yet." : "Connect in the desktop app to read saved conversations."}</p>}
         {items.map(item => {const heading=day(item.startedAt), showDay=heading!==previousDay;previousDay=heading;return <div key={item.conversationId}>{showDay && <h2>{heading}</h2>}<button className={`voice-history-item${item.conversationId === selected ? " selected" : ""}`} aria-current={item.conversationId === selected ? "true" : undefined} onClick={() => void open(item.conversationId)}><time dateTime={item.startedAt}>{time(item.startedAt)} · {item.turnCount} {item.turnCount===1 ? "turn" : "turns"}</time><strong>{item.preview}</strong><span>{item.retired ? "Archived" : "Active"} · {time(item.updatedAt)}</span></button></div>;})}

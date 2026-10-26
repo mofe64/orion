@@ -352,11 +352,19 @@ impl CharacterCoordinator {
         let state = &mut self.surroundings;
         let liveliness =
             Liveliness::from_settings(state.settings.proactive_speech, state.settings.demo_mode);
-        state.visits.observe(
+        let change = state.visits.observe(
             !value.faces.is_empty(),
             liveliness.visit_away_seconds(),
             now,
         );
+        if let (Some(change), Some(log)) = (change, &self.behaviour_log) {
+            use crate::expression::situation::VisitChange;
+            match change {
+                VisitChange::Assumed => log.visit("started", Some("assumed_at_start"), 0.0, now),
+                VisitChange::Started => log.visit("started", None, 0.0, now),
+                VisitChange::Ended { left_at } => log.visit("ended", None, now - left_at, now),
+            }
+        }
         let conditions = &state.conditions;
         let lamp = &conditions.lamp;
         let previous = &state.situation.lamp;

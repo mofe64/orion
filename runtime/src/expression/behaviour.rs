@@ -66,6 +66,24 @@ impl BehaviourLog {
         event.reason = Some(reason.into());
         state.emit(event);
     }
+    /// A visit started or ended; `seconds_ago` dates an end to when people left.
+    pub(crate) fn visit(&self, phase: &str, reason: Option<&str>, seconds_ago: f64, now: f64) {
+        let mut state = self.0.lock().unwrap();
+        let mut event = state.event(
+            "attention",
+            "visit",
+            phase,
+            None,
+            Some("person".into()),
+            now,
+        );
+        // An end is dated to when people left, not to when the wait ran out.
+        event.at = (chrono::Utc::now()
+            - chrono::Duration::milliseconds((seconds_ago.max(0.0) * 1000.0) as i64))
+        .to_rfc3339();
+        event.reason = reason.map(str::to_owned);
+        state.emit(event);
+    }
     pub(crate) fn presence(&self, count: usize, track: Option<u64>, now: f64) {
         let mut state = self.0.lock().unwrap();
         if count > state.faces {

@@ -1,4 +1,4 @@
-use orion_history::{BehaviourEvent, BehaviourWriter, Store};
+use orion_history::{BEHAVIOUR_PAGE, BehaviourEvent, BehaviourWriter, Store};
 
 fn event(id: usize) -> BehaviourEvent {
     BehaviourEvent {
@@ -34,7 +34,7 @@ fn partial_crash_tail_is_ignored_and_pagination_handles_equal_times() {
     let writer = BehaviourWriter::start(directory.path().into()).unwrap();
     let sender = writer.sender();
     // Deliberately write in reverse ID order; the cursor must follow the read order.
-    for id in (0..105).rev() {
+    for id in (0..BEHAVIOUR_PAGE + 5).rev() {
         sender.send(event(id)).unwrap();
     }
     drop(writer); // A live producer clone must not deadlock shutdown.
@@ -43,16 +43,19 @@ fn partial_crash_tail_is_ignored_and_pagination_handles_equal_times() {
     let second = store
         .behaviours(first["nextCursor"].as_str(), None)
         .unwrap();
-    assert_eq!(first["items"].as_array().unwrap().len(), 100);
+    assert_eq!(first["items"].as_array().unwrap().len(), BEHAVIOUR_PAGE);
     assert_eq!(second["items"].as_array().unwrap().len(), 5);
-    assert_eq!(first["items"][0]["id"], "boot-0104");
+    assert_eq!(
+        first["items"][0]["id"],
+        format!("boot-{:04}", BEHAVIOUR_PAGE + 4)
+    );
     assert_eq!(second["items"][4]["id"], "boot-0000");
     assert_eq!(
         store.behaviours(None, Some("attention")).unwrap()["items"]
             .as_array()
             .unwrap()
             .len(),
-        52
+        BEHAVIOUR_PAGE / 2 + 2
     );
     assert!(sender.try_send(event(999)).is_err());
     #[cfg(unix)]

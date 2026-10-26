@@ -97,18 +97,38 @@ pub struct VisitTracker {
     away_since: Option<f64>,
     started: bool,
 }
+/// A change of visit, for the behaviour log.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VisitChange {
+    /// Orion started and assumes a visit is already going.
+    Assumed,
+    Started,
+    /// Nobody was in view for the away time; the visit ended when they left.
+    Ended {
+        left_at: f64,
+    },
+}
 impl VisitTracker {
-    pub fn observe(&mut self, present: bool, away_seconds: f64, now: f64) {
+    pub fn observe(&mut self, present: bool, away_seconds: f64, now: f64) -> Option<VisitChange> {
+        let mut change = None;
         if !self.started {
             self.started = true;
             self.visit = Some(now);
+            change = Some(VisitChange::Assumed);
         }
         if present {
             self.away_since = None;
-            self.visit.get_or_insert(now);
-        } else if now - *self.away_since.get_or_insert(now) >= away_seconds {
-            self.visit = None;
+            if self.visit.is_none() {
+                self.visit = Some(now);
+                change = Some(VisitChange::Started);
+            }
+        } else {
+            let away = *self.away_since.get_or_insert(now);
+            if now - away >= away_seconds && self.visit.take().is_some() {
+                change = Some(VisitChange::Ended { left_at: away });
+            }
         }
+        change
     }
     pub fn visit(&self) -> Option<f64> {
         self.visit
@@ -134,7 +154,10 @@ mod tests {
     #[test]
     fn a_visit_survives_short_absences_and_ends_after_a_long_one() {
         let mut visits = VisitTracker::default();
-        visits.observe(false, 600.0, 0.0);
+        assert_eq!(
+            visits.observe(false, 600.0, 0.0),
+            Some(VisitChange::Assumed)
+        );
         let first = visits.visit();
         assert_eq!(first, Some(0.0), "a restart keeps the current visit");
         visits.observe(true, 600.0, 10.0);
@@ -145,7 +168,16 @@ mod tests {
         visits.observe(false, 600.0, 1110.0);
         assert_eq!(visits.visit(), None);
         assert_eq!(visits.away_since(), Some(510.0));
-        visits.observe(true, 600.0, 1200.0);
+        assert_eq!(
+            visits.observe(true, 600.0, 1200.0),
+            Some(VisitChange::Started)
+        );
         assert_eq!(visits.visit(), Some(1200.0));
+        visits.observe(false, 600.0, 1300.0);
+        assert_eq!(
+            visits.observe(false, 600.0, 1900.0),
+            Some(VisitChange::Ended { left_at: 1300.0 })
+        );
+        assert_eq!(visits.observe(false, 600.0, 2000.0), None);
     }
 }
