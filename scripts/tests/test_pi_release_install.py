@@ -137,7 +137,7 @@ class ConfigurationTests(Fixture):
         (self.project / 'scenes/v2').mkdir(parents=True)
         gateway_file = self.release / 'orion_studio/gateway.py'
         gateway_file.parent.mkdir(parents=True)
-        for name in ('gateway.py', 'system_metrics.py', 'home_assistant.py', 'spotify.py'):
+        for name in ('gateway.py', 'system_metrics.py', 'home_assistant.py', 'spotify.py', 'recorder.py'):
             shutil.copy2(SCRIPTS.parent / 'orion_studio' / name, gateway_file.parent / name)
         compiler = self.release / 'runtime/target/release/orion-trajectory'
         self.write(compiler, '#!/bin/sh\nexit 0\n'); compiler.chmod(0o755)
