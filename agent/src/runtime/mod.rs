@@ -186,6 +186,7 @@ impl AgentHandle {
         &self,
         text: &str,
         image: Option<Vec<u8>>,
+        memory: RemarkMemory,
     ) -> Result<String, String> {
         if text.trim().is_empty() || text.len() > 8 * 1024 {
             return Err("Remark input is empty or too large".into());
@@ -198,7 +199,7 @@ impl AgentHandle {
                 direct_sleep: false,
                 session: None,
                 profile: None,
-                remark: Some(Remark { image }),
+                remark: Some(Remark { image, memory }),
                 reply,
             })
             .await
@@ -244,6 +245,14 @@ impl AgentHandle {
 /// An unprompted remark: no tools, no reminders, and an optional camera picture.
 struct Remark {
     image: Option<Vec<u8>>,
+    memory: RemarkMemory,
+}
+/// What home memory a remark may use. A welcome can ask about something to
+/// come back to; light and goodnight remarks can use the home's habits.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RemarkMemory {
+    pub home: bool,
+    pub follow_ups: bool,
 }
 struct Request {
     remark: Option<Remark>,
@@ -497,7 +506,12 @@ async fn dispatch(
         vec![]
     };
     // Someone is talking to Orion, so this is the moment for things to come back to.
-    let follow_ups = if text.is_some() && remark.is_none() && session.is_some() {
+    let follow_ups = if text.is_some()
+        && (remark.is_none() && session.is_some()
+            || remark
+                .as_ref()
+                .is_some_and(|remark| remark.memory.follow_ups))
+    {
         crate::home_memory::offer_due(config).unwrap_or_else(|reason| {
             eprintln!(
                 "{}",
@@ -526,7 +540,9 @@ async fn dispatch(
                 }))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let home = if session.is_some() && remark.is_none() {
+            let home = if session.is_some() && remark.is_none()
+                || remark.as_ref().is_some_and(|remark| remark.memory.home)
+            {
                 crate::home_memory::context(config)
             } else {
                 String::new()
@@ -534,6 +550,8 @@ async fn dispatch(
             let notices = format!("{home}{notices}");
             let mut input = if notices.is_empty() {
                 text.clone()
+            } else if remark.is_some() {
+                format!("{notices}\n{text}")
             } else {
                 format!("{notices}\nUser request: {text}")
             };

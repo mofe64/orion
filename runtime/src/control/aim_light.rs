@@ -161,6 +161,56 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         Ok(definition)
     }
 
+    /// Wave back at a person: the head turns to the face, the arm lifts as
+    /// if raising a hand and sways side to side while the head stays on the
+    /// face. Frames with a `wave_` marker add their offsets to the aimed pose.
+    pub(crate) fn prepare_wave_motion(
+        &self,
+        anchor: &JointPositions,
+        azimuth: f64,
+        elevation: f64,
+    ) -> Result<MotionDefinition> {
+        let model = self
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("V2 geometry unavailable".into()))?;
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let limits = self.driver.joint_limits()?;
+        let centre = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
+        let face =
+            crate::expression::gaze::solve_aim(model, &centre, azimuth, elevation, &limits)?.0;
+        let face = comfort.project(&centre, &face)?.0;
+        let mut definition = self.motions.motion("wave_back")?.clone();
+        for frame in &mut definition.keyframes {
+            if !frame
+                .marker
+                .as_deref()
+                .is_some_and(|marker| marker.starts_with("wave_"))
+            {
+                continue;
+            }
+            let mut pose = face.clone();
+            for (joint, offset) in &frame.target {
+                if let Some(position) = pose.get_mut(joint) {
+                    *position += offset;
+                }
+            }
+            let pose = comfort.project(&centre, &pose)?.0;
+            frame.target = pose
+                .iter()
+                .map(|(joint, position)| (joint.clone(), position - anchor[joint]))
+                .collect();
+        }
+        self.validate_curiosity_motion(&definition, anchor, None)?;
+        Ok(definition)
+    }
+
     pub(crate) fn prepare_peek_motion(
         &self,
         anchor: &JointPositions,

@@ -84,11 +84,11 @@ When the gateway starts and a quirk is missing or not valid, it selects a random
 
 The agent keeps `home.json` on Orion. It has three parts:
 
-- Things to come back to. The reply model saves a short note and a day when the user tells about an event, for example an interview or a trip. It does not ask first. On that day and up to 3 days after it, the note goes with the user's request in a conversation. It never goes with a remark, an announcement or a briefing, so Orion does not bring it up when nobody talks to it. The model marks the note as done after it asks. A note given to 3 conversations without a question stops.
+- Things to come back to. The reply model saves a short note and a day when the user tells about an event, for example an interview or a trip. It does not ask first. On that day and up to 3 days after it, the note goes with the user's request in a conversation. It also goes with a Lively welcome, which occurs only when a person comes into view. It never goes with other remarks, an announcement or a briefing, so Orion does not bring it up when nobody is there. The model marks the note as done after it asks in a conversation. A note given 3 times without a question stops.
 - Habits. Each day the agent reads the behaviour log of the days before and counts the first and last person seen, the evening light, remarks and replies, and new objects. Habits show as sentences when a pattern occurs 2 or more times.
 - Recent days. One sentence for each day, for 30 days.
 
-Habits and the last 3 days go with the user's request in a conversation as background. Studio shows each part in **Personality and memory** and can delete each item, the habits or all of home memory.
+Habits and the last 3 days go with the user's request in a conversation as background. They also go with a welcome, light care and goodnight remark. Studio shows each part in **Personality and memory** and can delete each item, the habits or all of home memory.
 
 ## Camera privacy and tracking profile
 

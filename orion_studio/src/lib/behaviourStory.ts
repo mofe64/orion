@@ -13,6 +13,7 @@ const VISIT_GAP_MS = 10 * 60 * 1000;
 const remarkTopic: Record<string, string> = {
   person_arrived: "someone arriving", person_looking: "your look", new_object: "something new",
   hand_raised: "a raised hand", person_left: "someone leaving",
+  light_care: "the room getting dark", break_nudge: "taking a break", goodnight: "saying goodnight",
 };
 const article = (thing: string) => (/^[aeiou]/i.test(thing) ? "an " : "a ") + thing;
 const thing = (event: BehaviourEvent) => event.targetCategory && event.targetCategory !== "person" ? article(event.targetCategory) : "something";
@@ -28,6 +29,9 @@ function didTitle(event: BehaviourEvent): string {
     case "wake_stretch": return "Stretched after waking";
     case "sleep_settle": return "Settled down before sleeping";
     case "posture_home": return "Went back to its rest position";
+    case "wave_back": return "Waved back";
+    case "light_care": return "Looked up as the room got dark";
+    case "break_nudge": return "Stretched after your long time at the desk";
     default: return event.behaviour.replaceAll("_", " ").replace(/^./, letter => letter.toUpperCase());
   }
 }
@@ -38,6 +42,7 @@ function skippedTitle(event: BehaviourEvent): string {
     case "arrival_notice": return "Didn’t welcome someone";
     case "farewell_watch": return "Didn’t watch someone leave";
     case "object_peek": return `Didn’t peek at ${thing(event)}`;
+    case "wave_back": return "Didn’t wave back";
     default: return `Didn’t ${event.behaviour.replaceAll("_", " ")}`;
   }
 }

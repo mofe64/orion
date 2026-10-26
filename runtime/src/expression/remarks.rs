@@ -16,11 +16,25 @@ pub enum RemarkEvent {
     NewObject,
     HandRaised,
     PersonLeft,
+    /// The room got dark while Orion's light is off or low.
+    LightCare,
+    /// Someone has been at the desk a long time without a break.
+    BreakNudge,
+    /// Someone left late in the evening.
+    Goodnight,
 }
 impl RemarkEvent {
     /// A welcome or a look speaks to the person; once per visit is enough.
     fn about_person(self) -> bool {
         matches!(self, Self::PersonArrived | Self::PersonLooking)
+    }
+    /// Care for the person: said at most once on each visit.
+    fn care(self) -> bool {
+        matches!(self, Self::LightCare | Self::BreakNudge)
+    }
+    /// A goodbye is said to someone who is leaving: no reply is expected.
+    fn parting(self) -> bool {
+        matches!(self, Self::PersonLeft | Self::Goodnight)
     }
     /// Everyday per-event cooldowns, in seconds.
     fn cooldown(self, demo: bool) -> f64 {
@@ -30,6 +44,9 @@ impl RemarkEvent {
             (Self::PersonLooking, false) => 1200.0,
             (Self::NewObject | Self::PersonLeft, false) => 3600.0,
             (Self::HandRaised, false) => f64::INFINITY,
+            (Self::LightCare, false) => 3.0 * 3600.0,
+            (Self::BreakNudge, false) => 3600.0,
+            (Self::Goodnight, false) => 4.0 * 3600.0,
         }
     }
 }
@@ -126,6 +143,8 @@ pub struct RemarkPolicy {
     last_conversation: Option<f64>,
     /// The visit in which Orion last spoke to or with the people.
     spoken_visit: Option<f64>,
+    /// Care remarks already said on one visit.
+    cared: (Option<f64>, BTreeSet<RemarkEvent>),
     started: bool,
     context: RemarkContext,
     quirks: Quirks,
@@ -156,6 +175,7 @@ impl RemarkPolicy {
             self.by_category.clear();
             self.spoken.clear();
             self.spoken_visit = None;
+            self.cared = (None, BTreeSet::new());
         }
         self.context = context;
         if !context.enabled() || context.busy {
@@ -238,58 +258,14 @@ impl RemarkPolicy {
         object: Option<&str>,
         now: f64,
     ) -> Result<(), &'static str> {
-        let context = self.context;
-        let demo = context.demo;
-        let gap = if demo {
-            DEMO_AFTER_CONVERSATION_SECONDS
-        } else {
-            AFTER_CONVERSATION_SECONDS
-        };
         while self.spoken.front().is_some_and(|at| now - at >= 3600.0) {
             self.spoken.pop_front();
         }
-        let refusal = if !context.enabled() {
-            Some("quiet_mode")
-        } else if context.busy {
-            Some("busy")
-        } else if self.pending.is_some() {
-            Some("pending")
-        } else if now < self.quiet_until {
-            Some("asked_quiet")
-        } else if event == RemarkEvent::HandRaised && !demo {
-            Some("demo_only")
-        } else if event.about_person() && self.visit_spoken() {
-            Some("once_per_visit")
-        } else if !demo && context.focused {
-            Some("focus")
-        } else if !demo && !(7.0..22.0).contains(&context.hour) {
-            Some("night")
-        } else if self.last_conversation.is_some_and(|at| now - at < gap) {
-            Some("after_conversation")
-        } else if self
-            .spoken
-            .back()
-            .is_some_and(|at| now - at < self.spacing())
-        {
-            Some(if self.ignored > 0 {
-                "ignored"
-            } else {
-                "spacing"
-            })
-        } else if self
-            .by_event
-            .get(&event)
-            .is_some_and(|at| now - at < event.cooldown(demo))
-        {
-            Some("cooldown")
-        } else if !demo && self.spoken.len() >= self.hourly_limit() {
-            Some("hourly_limit")
-        } else {
-            None
-        };
-        if let Some(reason) = refusal {
+        if let Some(reason) = self.refusal(event, now) {
             return Err(reason);
         }
+        let context = self.context;
+        let demo = context.demo;
         let detail = detail.map(str::trim).filter(|text| !text.is_empty());
         if event == RemarkEvent::NewObject {
             let Some(category) = detail else {
@@ -332,6 +308,66 @@ impl RemarkPolicy {
         Ok(())
     }
 
+    /// Why a remark about this event cannot be queued now, without queuing it.
+    pub fn refusal(&self, event: RemarkEvent, now: f64) -> Option<&'static str> {
+        let context = self.context;
+        let demo = context.demo;
+        let gap = if demo {
+            DEMO_AFTER_CONVERSATION_SECONDS
+        } else {
+            AFTER_CONVERSATION_SECONDS
+        };
+        let hourly = self.spoken.iter().filter(|at| now - **at < 3600.0).count();
+        if !context.enabled() {
+            Some("quiet_mode")
+        } else if context.busy {
+            Some("busy")
+        } else if self.pending.is_some() {
+            Some("pending")
+        } else if now < self.quiet_until {
+            Some("asked_quiet")
+        } else if event == RemarkEvent::HandRaised && !demo {
+            Some("demo_only")
+        } else if event.about_person() && self.visit_spoken() {
+            Some("once_per_visit")
+        } else if event.care()
+            && context.visit.is_some()
+            && self.cared.0 == context.visit
+            && self.cared.1.contains(&event)
+        {
+            Some("once_per_visit")
+        } else if !demo && context.focused && !event.care() {
+            Some("focus")
+        } else if !demo && !(7.0..22.0).contains(&context.hour) && event != RemarkEvent::Goodnight {
+            Some("night")
+        } else if event != RemarkEvent::Goodnight
+            && self.last_conversation.is_some_and(|at| now - at < gap)
+        {
+            Some("after_conversation")
+        } else if event != RemarkEvent::Goodnight
+            && self
+                .spoken
+                .back()
+                .is_some_and(|at| now - at < self.spacing())
+        {
+            Some(if self.ignored > 0 {
+                "ignored"
+            } else {
+                "spacing"
+            })
+        } else if self
+            .by_event
+            .get(&event)
+            .is_some_and(|at| now - at < event.cooldown(demo))
+        {
+            Some("cooldown")
+        } else if !demo && event != RemarkEvent::Goodnight && hourly >= self.hourly_limit() {
+            Some("hourly_limit")
+        } else {
+            None
+        }
+    }
+
     /// The remark the listener may start now. An object remark waits for its
     /// dwell time and is dropped if the object left. Old requests are dropped.
     pub fn ready(&mut self, now: f64, present: impl Fn(&str) -> bool) -> Option<&PendingRemark> {
@@ -365,6 +401,12 @@ impl RemarkPolicy {
         if remark.event.about_person() {
             self.spoken_visit = self.context.visit;
         }
+        if remark.event.care() {
+            if self.cared.0 != self.context.visit {
+                self.cared = (self.context.visit, BTreeSet::new());
+            }
+            self.cared.1.insert(remark.event);
+        }
         if let Some(category) = &remark.detail
             && remark.event == RemarkEvent::NewObject
         {
@@ -373,7 +415,9 @@ impl RemarkPolicy {
                 self.seen_today.1.insert(category.clone());
             }
         }
-        self.awaiting_reply = Some(now);
+        if !remark.event.parting() {
+            self.awaiting_reply = Some(now);
+        }
         Ok(remark)
     }
 
@@ -635,6 +679,46 @@ mod tests {
             assert!(policy.hourly_limit() == limit);
             assert!((policy.spacing() - gap).abs() < 1e-9, "{chattiness:?}");
         }
+    }
+
+    #[test]
+    fn care_remarks_come_once_a_visit_even_while_people_work() {
+        let mut policy = policy(false);
+        policy.context.focused = true;
+        assert_eq!(
+            policy.consider(RemarkEvent::PersonLooking, None, None, 1000.0),
+            Err("focus")
+        );
+        assert!(policy.offer(RemarkEvent::BreakNudge, None, None, 1000.0));
+        speak(&mut policy, 1000.0);
+        assert!(policy.offer(RemarkEvent::LightCare, Some("light off"), None, 2000.0));
+        speak(&mut policy, 2000.0);
+        assert_eq!(
+            policy.consider(RemarkEvent::BreakNudge, None, None, 9000.0),
+            Err("once_per_visit")
+        );
+        new_visit(&mut policy, 9000.0);
+        assert!(policy.offer(RemarkEvent::BreakNudge, None, None, 9000.0));
+    }
+
+    #[test]
+    fn goodnight_is_said_late_right_after_talking_and_expects_no_reply() {
+        let mut policy = policy(false);
+        policy.context.hour = 23.5;
+        assert_eq!(
+            policy.consider(RemarkEvent::PersonLeft, None, None, 1000.0),
+            Err("night")
+        );
+        policy.engaged(1000.0);
+        assert!(policy.offer(RemarkEvent::Goodnight, None, None, 1010.0));
+        speak(&mut policy, 1010.0);
+        let context = policy.context;
+        policy.set_context(context, 1100.0);
+        assert_eq!(policy.ignored, 0, "nobody is there to answer a goodnight");
+        assert_eq!(
+            policy.consider(RemarkEvent::Goodnight, None, None, 1200.0),
+            Err("cooldown")
+        );
     }
 
     #[test]

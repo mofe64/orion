@@ -259,6 +259,16 @@ motions:
     source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with
       the command-time planner'
     planner: farewell
+  wave_back:
+    intent: Turn the head to the person, lift the arm, sway it side to side as a wave, nod, and return.
+    direction: up
+    main_keyframe: 2
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/lively.rs and runtime/src/control/aim_light.rs: active anchor with
+      the command-time planner'
+    planner: wave
   peek_new_object:
     intent: Arm-led desk peek with a curious neck turn and a full anchor return.
     direction: down

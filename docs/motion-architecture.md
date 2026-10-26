@@ -170,6 +170,21 @@ The runtime controls when a remark can start:
 
 A wake word during a remark stops the remark and starts a normal turn.
 
+### Lively behaviors
+
+In Lively, Orion also cares for the people at the desk. Each behavior acts only while a face is in view. Remark rules apply to the words.
+
+| Behavior | When | What Orion does |
+| --- | --- | --- |
+| Wave back | A palm is raised near a face for 0.6 s | Plays `wave_back`: the head turns to the face, the arm lifts and sways about 14° to each side two times, and the head nods. The curiosity budget and the eye contact switch apply. Orion does not speak. |
+| Light care | The room is below 15 lux for 60 s, and Orion's light is off or below 25% | Turns to the person and offers to turn the light on. The reply model knows which light people usually choose in the evening. |
+| Break nudge | A person is at the desk for 90 min. Absences shorter than 5 min do not stop the count. | Plays `wake_stretch` and suggests a short break. |
+| Goodnight | A farewell occurs between 21:00 and 05:00 | Says goodnight instead of goodbye. If nobody comes back in 120 s, automatic rest starts. Lamp mode keeps Orion awake. |
+
+Light care and break nudge occur one time each visit. They do not use the curiosity budget, and focus does not stop them. A goodnight can occur at night and directly after a conversation. Nobody is expected to reply to a goodbye or a goodnight, so no reply does not increase the wait for the next remark.
+
+A welcome can ask about something to come back to. See [home memory](configuration.md#home-memory). In Demo, the break nudge comes after 60 s at the desk and light care after 5 s of darkness. Wave back does not occur in Demo, because a raised palm starts hand play.
+
 ### Demo mode
 
 Demo mode is for showing Orion to people. It changes these limits:

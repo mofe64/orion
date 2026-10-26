@@ -29,8 +29,12 @@ Palm detection uses the same NumPy anchor decoding and overlapping-box removal o
 | Faces, idle or voice activity | 15 Hz | 10 Hz idle; 3 Hz during voice activity |
 | Palms, Hands mode | 15 Hz on HAILO8L | 10 Hz idle; 3 Hz during voice activity |
 | Background objects | Every 5 seconds | Every 60 seconds |
+| Palms, Idle mode in Demo | 5 Hz | 2 Hz |
+| Palms, Idle mode in Lively | 2.5 Hz | 1 Hz |
 
 Background object work requires an enabled object behavior and runtime permission. Hands mode runs the palm detector instead of face tracking.
+
+In Idle mode, Demo and Lively also run the palm detector. A palm counts as raised when it is beside or above a face and not on the face. A palm more than two face heights below the top of the face does not count, so a hand on the desk does not count. Vision sends the palm count and the raised palm count to `oriond`.
 
 ## Accelerator setting
 

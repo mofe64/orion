@@ -16,6 +16,14 @@ TARGET_AREA_RATIO = 1.5
 TARGET_HOLD_NS = 1_000_000_000
 
 
+def raised_near(palm, face):
+    """A palm beside or above a face, not on it: a hand held up to wave.
+    A hand on the desk sits well below the face in the picture."""
+    x, y, width, height = face.box
+    px, py = palm.centre
+    on_face = x <= px <= x + width and y <= py <= y + height
+    return not on_face and py <= y + 2 * height and abs(px - (x + width / 2)) <= 4 * width
+
 class FacePipeline:
     def __init__(self, detector, intrinsics, client, clock=time.monotonic, boot_clock=boottime_ns,
                  objects=None, palms=None, accelerator=None):
@@ -49,6 +57,8 @@ class FacePipeline:
         self.objects, self.palms = objects, palms
         self.mode = "off"
         self.hand_count = 0
+        # Palms held up near a face, as when someone waves at Orion.
+        self.raised_hands = 0
         # Room light from the camera, in lux, when the camera reports it.
         self.room_lux = None
         self.camera_enabled = False
@@ -72,7 +82,7 @@ class FacePipeline:
             with self.changed:
                 self.enabled = enabled
                 self.mode = mode if mode is not None else ("faces" if enabled else "off")
-                self.hand_count = 0
+                self.hand_count = self.raised_hands = 0
                 self.camera_enabled = enabled if camera_enabled is None else camera_enabled
                 self.generation += 1
                 self.capture_generation += 1
@@ -184,21 +194,25 @@ class FacePipeline:
                 self.novelty_observation = value
 
     def _idle_palms_wanted(self):
-        return (self.mode == 'idle' and self.behaviours.get('demo_mode') is True
-                and self.palms is not None)
+        return (self.mode == 'idle' and self.palms is not None
+                and (self.behaviours.get('demo_mode') is True or self.behaviours.get('proactive_speech') is True))
 
-    def _idle_palms(self, buffer, generation):
-        """Demo mode looks for a raised hand while idle, at a low rate."""
+    def _idle_palms(self, buffer, generation, faces=()):
+        """Demo and Lively look for a raised hand while idle, at a low rate."""
         now = self.clock()
         with self.changed:
             wanted = self.enabled and self._idle_palms_wanted()
+            demo = self.behaviours.get('demo_mode') is True
         if not wanted or now < self.next_palm_pass:
             return
-        self.next_palm_pass = now + (.2 if backend(self.palms) == 'hailo' else .5)
+        # Lively only answers a wave, so it looks less often than Demo.
+        rate = (.2 if demo else .4) if backend(self.palms) == 'hailo' else (.5 if demo else 1.)
+        self.next_palm_pass = now + rate
         palms = self.palms.detect(buffer)
+        raised = sum(1 for palm in palms if any(raised_near(palm, face) for face in faces))
         with self.changed:
             if self.enabled and generation == self.generation and self._idle_palms_wanted():
-                self.hand_count = len(palms)
+                self.hand_count, self.raised_hands = len(palms), raised
 
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
@@ -208,6 +222,7 @@ class FacePipeline:
             'settings': self.behaviours.copy(), 'camera_on': self.camera_enabled,
             'tracking_mode': self.mode if self.enabled else 'off',
             'hand_count': self.hand_count,
+            'raised_hands': self.raised_hands,
             'room_lux': self.room_lux,
             'objects': self.object_map.snapshot(self.boot_clock()),
             'novelty': self.novelty_observation,
@@ -434,7 +449,7 @@ class FacePipeline:
             if self.mode == 'hands':
                 self.hand_count = len(faces)
             elif not self._idle_palms_wanted():
-                self.hand_count = 0
+                self.hand_count = self.raised_hands = 0
             fresh = self.tracker.update(stamp, faces, bearings)
             tracks = [track for track in self.tracker.tracks
                 if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
@@ -464,7 +479,7 @@ class FacePipeline:
         except (OSError, ValueError, AttributeError):
             pass
         try:
-            self._idle_palms(buffer, generation)
+            self._idle_palms(buffer, generation, faces if self.mode != 'hands' else ())
         except (OSError, ValueError, AttributeError):
             pass
 

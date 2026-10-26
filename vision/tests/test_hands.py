@@ -92,6 +92,31 @@ class PalmTests(unittest.TestCase):
         pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
         self.assertEqual(pipeline.hand_count, 0)
 
+    def test_lively_counts_only_palms_held_up_near_a_face(self):
+        from orion_vision.detect_faces import Face
+        faces, palms, client = Mock(), Mock(), Mock()
+        face = Face([300,100,60,60],[[310,120],[340,120],[325,135],[312,150],[338,150]],.9)
+        faces.detect.return_value = [face]
+        desk, wave = Palm([320,300,60,40],.9), Palm([400,90,50,50],.9)
+        palms.detect.return_value = [desk]
+        client.voice_active.return_value = False
+        client.bearings.return_value = [{"azimuth": 0., "elevation": 0.}]
+        now = [10.]
+        pipeline = FacePipeline(faces, intrinsics(), client, clock=lambda: now[0],
+            boot_clock=lambda: int(now[0] * 1e9), palms=palms)
+        pipeline.reset(True, mode='idle')
+        pipeline.configure_behaviours({**pipeline.behaviours, 'proactive_speech': True})
+        frame = np.zeros((360,640,3),np.uint8)
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual((pipeline.hand_count, pipeline.raised_hands), (1, 0))
+        palms.detect.return_value = [desk, wave]
+        now[0] += .5
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual(palms.detect.call_count, 1)  # Lively CPU palms run at 1 Hz
+        now[0] += .6
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual((pipeline.hand_count, pipeline.raised_hands), (2, 1))
+
     def test_motion_rejection_preserves_paired_preview(self):
         pipeline, detector, client, now = self.pipeline()
         client.target.side_effect = RuntimeRejected('Servo bus unavailable')

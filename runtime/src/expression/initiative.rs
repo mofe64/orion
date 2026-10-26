@@ -95,6 +95,18 @@ impl CharacterCoordinator {
             );
             return Ok(false);
         }
+        self.start_act(act, now, core)?;
+        Ok(true)
+    }
+
+    /// Starts a reaction without the curiosity budget. Care for the person,
+    /// such as a break nudge, is not curiosity and comes while people work.
+    pub(super) fn start_act<D: RuntimeDriver>(
+        &mut self,
+        act: Act,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<()> {
         self.preempt_idle_or_thinking(now, core)?;
         let run = core.play_generated_anchored_relative(act.motion, act.anchor, now)?;
         self.surroundings.reaction = Some(Reaction {
@@ -116,6 +128,6 @@ impl CharacterCoordinator {
         if let Some((event, detail, object)) = act.remark {
             self.offer_remark(event, detail.as_deref(), object.as_deref(), now);
         }
-        Ok(true)
+        Ok(())
     }
 }

@@ -140,6 +140,14 @@ impl RestCoordinator {
         self.deadline = (self.state == RestState::Awake).then_some(now + self.timeout);
     }
 
+    /// Brings automatic rest forward to now, as after a goodnight. Lamp mode
+    /// keeps Orion awake, and a later voice turn starts a new wait.
+    pub fn rest_soon(&mut self, now: f64) {
+        if self.state == RestState::Awake && self.mode == super::routines::UserMode::Idle {
+            self.deadline = Some(self.deadline.map_or(now, |at| at.min(now)));
+        }
+    }
+
     pub fn request_sleep(&mut self, session: &str) {
         self.sleep_session = Some(session.into());
         self.presence_deferred = false;
@@ -1035,6 +1043,21 @@ mod tests {
         assert_eq!(rest.state, RestState::GoingToRest);
         assert_eq!(f.releases.get(), 0);
         assert!(f.core.snapshot().torque_enabled);
+    }
+
+    #[test]
+    fn a_goodnight_brings_rest_forward_except_in_lamp_mode() {
+        let mut f = Fixture::home();
+        let mut rest = f.armed(DEFAULT_REST_AFTER_SECONDS);
+        rest.set_mode(super::super::routines::UserMode::Lamp, 5.0);
+        rest.rest_soon(20.0);
+        f.policy_tick(&mut rest, 20.0, false);
+        assert_eq!(rest.state, RestState::Awake);
+        rest.set_mode(super::super::routines::UserMode::Idle, 21.0);
+        rest.rest_soon(30.0);
+        assert_eq!(rest.status(30.0).remaining_seconds, Some(0.0));
+        f.policy_tick(&mut rest, 30.0, false);
+        assert_eq!(rest.state, RestState::GoingToRest);
     }
 
     #[test]

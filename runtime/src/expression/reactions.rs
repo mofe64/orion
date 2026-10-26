@@ -110,6 +110,10 @@ pub(super) enum ReactionKind {
     Peek,
     Pet,
     Farewell,
+    /// A wave back at a raised hand.
+    Wave,
+    /// A look at the person before a care remark.
+    Care,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Stage {
@@ -402,7 +406,9 @@ impl CharacterCoordinator {
             .clone()
             .ok_or_else(|| Error::InvalidState("Farewell needs an anchor".into()))?;
         let definition = core.prepare_farewell_motion(&anchor, face.azimuth, face.elevation)?;
-        self.perform(
+        let situation = &self.surroundings.situation;
+        let goodnight = situation.liveliness.speaks() && super::lively::late(situation.hour);
+        let performed = self.perform(
             Act {
                 kind: ReactionKind::Farewell,
                 key: "face:farewell".into(),
@@ -417,11 +423,24 @@ impl CharacterCoordinator {
                 target: Some(format!("face:{}", face.track_id)),
                 target_category: Some("person".into()),
                 clip: "farewell_watch",
-                remark: Some((RemarkEvent::PersonLeft, None, None)),
+                remark: Some((
+                    if goodnight {
+                        RemarkEvent::Goodnight
+                    } else {
+                        RemarkEvent::PersonLeft
+                    },
+                    None,
+                    None,
+                )),
             },
             now,
             core,
         )?;
+        if performed && goodnight {
+            // Late at night, Orion goes to sleep soon after people leave.
+            self.surroundings.lively.goodnight_rest =
+                Some(now + super::lively::GOODNIGHT_REST_SECONDS);
+        }
         Ok(())
     }
     pub(super) fn observe_novelty<D: RuntimeDriver>(
@@ -647,6 +666,11 @@ impl CharacterCoordinator {
                 ReactionKind::Peek | ReactionKind::Pet => {
                     self.surroundings.settings.new_object_peek
                 }
+                ReactionKind::Wave => self.surroundings.settings.mutual_gaze,
+                ReactionKind::Care => {
+                    self.surroundings.settings.proactive_speech
+                        || self.surroundings.settings.demo_mode
+                }
             };
         if !invalid || reaction.stage == Stage::Returning {
             return Ok(());
@@ -774,6 +798,7 @@ mod execution_tests {
             "mutual_gaze_away",
             "mutual_gaze_notice_demo",
             "farewell_watch",
+            "wave_back",
         ] {
             let definition = core.motions().motion(name).unwrap();
             assert_eq!(definition.space, MotionSpace::AnchorRelative);

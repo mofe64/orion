@@ -129,6 +129,10 @@ mod movement_review {
                 let (a, e) = bearing("look_left")?;
                 core.prepare_farewell_motion(&anchor, a, e)?
             }
+            "wave" => {
+                let (a, e) = bearing("attentive")?;
+                core.prepare_wave_motion(&anchor, a, e)?
+            }
             "pet" => {
                 let (a, e) = bearing("delight")?;
                 core.prepare_pet_motion(&anchor, None, a, e, None, 3.)?.0

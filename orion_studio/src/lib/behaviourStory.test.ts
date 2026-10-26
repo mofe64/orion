@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { behaviourStory, storyCounts } from "./behaviourStory";
+import { behaviourStory, storyCounts, storyRow } from "./behaviourStory";
 import type { BehaviourEvent } from "../components/VoiceHistory";
 
 let next = 0;
@@ -50,4 +50,14 @@ it("finds visits from person events in logs written before Orion logged visits",
   expect(blocks.map(block => [block.visit, block.rows.map(row => row.title)])).toEqual([
     [false, ["Peeked at a book"]], [true, ["Met your look"]],
   ]);
+});
+
+it("names the lively behaviours in plain words", () => {
+  const rows = [
+    event("21:00", "wave_back", "started", { targetCategory: "person" }),
+    event("21:10", "break_nudge", "started", { targetCategory: "person" }),
+    event("21:11", "remark_spoken", "observed", { targetCategory: "break_nudge" }),
+    event("21:30", "remark_spoken", "observed", { targetCategory: "goodnight" }),
+  ].map(storyRow).map(row => row?.title);
+  expect(rows).toEqual(["Waved back", "Stretched after your long time at the desk", "Spoke up about taking a break", "Spoke up about saying goodnight"]);
 });

@@ -3,7 +3,7 @@ import {useId} from "react";
 export type CommentMode = "off" | "sometimes" | "demo";
 export const commentOptions: [CommentMode, string, string][] = [
   ["off", "Quiet", "Orion stays in the background. It reacts with movement only and does not talk about what it notices."],
-  ["sometimes", "Lively", "Orion acts like a character. It sometimes says something about what it notices, such as a welcome or a new object. It speaks to a person once per visit, stays quiet during conversations, music and the night, and talks less when it is ignored."],
+  ["sometimes", "Lively", "Orion acts like a character. It waves back, welcomes you, offers light when the room gets dark, suggests a break after a long time at the desk and says goodnight when you leave late. It speaks to a person once per visit, stays quiet during conversations, music and the night, and talks less when it is ignored."],
   ["demo", "Demo", "Orion reacts and talks much more often, with bigger movements, for showing Orion to people. Each comment sends a camera picture to Orion’s reply service."],
 ];
 export const commentMode = (proactive: boolean, demo: boolean): CommentMode => demo ? "demo" : proactive ? "sometimes" : "off";

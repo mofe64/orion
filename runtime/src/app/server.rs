@@ -500,6 +500,9 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
             speech.active_analysis(),
             speech.active_energy_frame(),
         )?;
+        if character.take_goodnight_rest(now_seconds) {
+            rest.rest_soon(now_seconds);
+        }
         rest.tick(
             now_seconds,
             &mut core,

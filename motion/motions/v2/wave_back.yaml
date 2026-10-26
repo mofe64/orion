@@ -1,0 +1,58 @@
+format_version: 2
+motion:
+  name: wave_back
+  description: Turn the head to the person, lift the arm, sway it side to side as a wave, nod, and return.
+  space: anchor_relative
+  style: return_home
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      head_pitch_joint: 0.06
+    duration: 0.3
+    arrival: through
+    marker: wave_dip
+  - offsets:
+      shoulder_pitch_joint: -0.07
+      elbow_pitch_joint: 0.02
+      head_pitch_joint: -0.1
+    duration: 0.45
+    arrival: through
+    marker: wave_lift
+  - offsets:
+      base_yaw_joint: 0.28
+      head_roll_joint: -0.14
+      shoulder_pitch_joint: -0.07
+      elbow_pitch_joint: 0.02
+      head_pitch_joint: -0.1
+    duration: 0.45
+    arrival: through
+    marker: wave_out
+  - offsets:
+      base_yaw_joint: -0.28
+      head_roll_joint: 0.14
+      shoulder_pitch_joint: -0.07
+      elbow_pitch_joint: 0.02
+      head_pitch_joint: -0.1
+    duration: 0.6
+    arrival: through
+    marker: wave_across
+  - offsets:
+      base_yaw_joint: 0.28
+      head_roll_joint: -0.14
+      shoulder_pitch_joint: -0.07
+      elbow_pitch_joint: 0.02
+      head_pitch_joint: -0.1
+    duration: 0.6
+    arrival: through
+    marker: wave_return
+  - offsets:
+      shoulder_pitch_joint: -0.05
+      elbow_pitch_joint: 0.015
+      head_pitch_joint: 0.05
+    duration: 0.45
+    arrival: settle
+    hold: 0.3
+    marker: wave_nod
+  - offsets: {}
+    duration: 1.3
+    arrival: settle

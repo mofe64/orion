@@ -198,11 +198,14 @@ fn remark_prompt(
 ) -> Result<String, String> {
     let detail = message["detail"].as_str().unwrap_or("something");
     let event = match message["event"].as_str().ok_or("Remark needs an event")? {
-        "person_arrived" => "Someone just came in after the room was empty for a while.".to_owned(),
+        "person_arrived" => "Someone just came in after the room was empty for a while. If a note lists something to come back to, you may ask about one of them instead of a plain hello.".to_owned(),
         "person_looking" => "The person has been looking straight at Orion for a few seconds.".to_owned(),
         "new_object" => format!("Something new was put on the desk. The camera thinks it is: {detail}."),
         "hand_raised" => "The person raised a hand toward Orion. Orion now follows the hand with its head. Invite them to play.".to_owned(),
         "person_left" => "The person just left after spending time at the desk. Say a short goodbye.".to_owned(),
+        "light_care" => format!("The room has become dark and Orion's own light is {}. Offer to turn the light on, or up, in one short question. If a note says which light people usually choose in the evening, offer that one.", if detail.starts_with("light low") { "low" } else { "off" }),
+        "break_nudge" => "The person has been working at the desk for about an hour and a half without a break. Orion just stretched. Suggest a short break, kindly, without nagging.".to_owned(),
+        "goodnight" => "The person just left late in the evening. Say a short, warm goodnight. Orion will go to sleep soon.".to_owned(),
         _ => return Err("Unknown remark event".into()),
     };
     let demo = message["demo"] == true;
@@ -256,6 +259,16 @@ fn remark_prompt(
         );
     }
     Ok(prompt)
+}
+
+/// A welcome may ask about something to come back to. Light and goodnight
+/// remarks use what Orion knows about the home.
+fn remark_memory(message: &Value) -> orion_agent::RemarkMemory {
+    let event = message["event"].as_str().unwrap_or_default();
+    orion_agent::RemarkMemory {
+        home: matches!(event, "person_arrived" | "light_care" | "goodnight"),
+        follow_ups: event == "person_arrived",
+    }
 }
 
 /// SILENT, or no words at all, means Orion says nothing.
@@ -397,6 +410,7 @@ async fn connected(
                     let sid = message["sessionId"].as_str().ok_or("Remark needs a session")?.to_owned();
                     let id = message["id"].as_u64().ok_or("Remark needs an ID")?;
                     let prompt = remark_prompt(&message, &recent_remarks)?;
+                    let memory = remark_memory(&message);
                     let demo = message["demo"] == true;
                     active_remark = Some(id);
                     session = Some(Session::new(&sid, Phase::Responding)?); followup = None;
@@ -414,7 +428,7 @@ async fn connected(
                         // Demo mode lets the model see what Orion noticed. The
                         // gateway shows the camera light while it takes the picture.
                         let image = if demo { gateway.camera_snapshot().await.ok() } else { None };
-                        let text = agent.respond_remark(&prompt, image).await?;
+                        let text = agent.respond_remark(&prompt, image, memory).await?;
                         let text = remark_text(&text);
                         event(&hub, &sid, json!({"type":"agent.response", "requestId":request, "remark":true,
                             "text":text.as_deref().map(|text| response_metadata(text).0), "durationMs":started.elapsed().as_secs_f64()*1000.}));
@@ -639,7 +653,7 @@ async fn connected(
                         },
                         "remark" => {
                             let valid = message["id"].as_u64().is_some()
-                                && matches!(message["event"].as_str(), Some("person_arrived"|"person_looking"|"new_object"|"hand_raised"|"person_left"))
+                                && matches!(message["event"].as_str(), Some("person_arrived"|"person_looking"|"new_object"|"hand_raised"|"person_left"|"light_care"|"break_nudge"|"goodnight"))
                                 && message["demo"].is_boolean()
                                 && (message["detail"].is_null() || message["detail"].as_str().is_some_and(|detail| !detail.is_empty() && detail.chars().count() <= 32))
                                 && (message["quirks"].is_null() || message["quirks"].is_object())
@@ -1464,6 +1478,19 @@ mod playback_tests {
                 && !prompt.contains("attached")
         );
         assert!(remark_prompt(&json!({"event":"other","demo":false}), &recent).is_err());
+        let prompt = remark_prompt(
+            &json!({"event":"light_care","detail":"light low at 10%","demo":false}),
+            &recent,
+        )
+        .unwrap();
+        assert!(prompt.contains("dark") && prompt.contains("is low"));
+        for event in ["break_nudge", "goodnight"] {
+            assert!(remark_prompt(&json!({"event":event,"demo":false}), &recent).is_ok());
+        }
+        let welcome = remark_memory(&json!({"event":"person_arrived"}));
+        assert!(welcome.home && welcome.follow_ups);
+        let look = remark_memory(&json!({"event":"person_looking"}));
+        assert!(!look.home && !look.follow_ups);
         let prompt = remark_prompt(
             &json!({"event":"new_object","detail":"cup","demo":false,"quirks":{"curiosity":"nosy","chattiness":"reserved"}}),
             &recent,

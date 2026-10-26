@@ -16,6 +16,8 @@ mod acts;
 mod aim_light;
 #[path = "initiative.rs"]
 mod initiative;
+#[path = "lively.rs"]
+mod lively;
 #[path = "music_motion.rs"]
 mod music_motion;
 #[path = "reactions.rs"]

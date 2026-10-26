@@ -83,6 +83,9 @@ pub(crate) struct Surroundings {
     pub novelty: Option<NovelObject>,
     #[serde(default)]
     pub hand_count: u8,
+    /// Palms held up near a face, as when someone waves.
+    #[serde(default)]
+    pub raised_hands: u8,
     #[serde(default)]
     pub room_lux: Option<f64>,
 }
@@ -119,6 +122,7 @@ pub(super) struct SurroundingsState {
     conditions: crate::expression::situation::Conditions,
     visits: crate::expression::situation::VisitTracker,
     pub(super) situation: crate::expression::situation::Situation,
+    pub(super) lively: super::lively::LivelyState,
 }
 /// Demo hand play: a palm held up while idle switches tracking to Hands,
 /// and losing the hand for a while switches back.
@@ -495,6 +499,9 @@ impl CharacterCoordinator {
         }
         if let Err(error) = self.observe_mutual(&value.faces, now, core) {
             eprintln!("oriond: mutual gaze declined: {error}");
+        }
+        if let Err(error) = self.observe_lively(&value.faces, value.raised_hands, now, core) {
+            eprintln!("oriond: lively behaviour declined: {error}");
         }
         if !self.surroundings.settings.object_glances {
             self.surroundings.glance = None;
