@@ -15,6 +15,9 @@ pub struct VoiceFeedback {
     phase: String,
     confirmed: bool,
     announcement: bool,
+    /// A spoken remark: an announcement without a cue, which leaves the
+    /// noticed reaction moving until its speech starts.
+    remark: bool,
     verifying_wake: bool,
     processing_cued: bool,
     acknowledgment_since: Option<f64>,
@@ -62,6 +65,9 @@ impl VoiceFeedback {
     pub fn announcement(&self) -> bool {
         self.session.is_some() && self.announcement
     }
+    pub fn remark(&self) -> bool {
+        self.announcement() && self.remark
+    }
     pub fn playback_authorized(&self) -> bool {
         self.confirmed_activity() || self.announcement()
     }
@@ -104,6 +110,7 @@ impl VoiceFeedback {
         self.vision_until = None;
         self.confirmed = false;
         self.announcement = false;
+        self.remark = false;
         self.verifying_wake = false;
         self.acknowledgment_since = None;
         if let Some(id) = self.session.take() {
@@ -132,17 +139,22 @@ impl VoiceFeedback {
         if id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
             return Err("Invalid voice session ID");
         }
-        if event == "announcement" {
+        if matches!(event, "announcement" | "remark") {
             if self.session.is_some() || self.retired.iter().any(|old| old == id) {
                 return Err("Announcement needs an idle voice owner");
             }
             self.session = Some(id.into());
             self.announcement = true;
+            self.remark = event == "remark";
             self.phase = "thinking".into();
             self.since = now;
-            self.deadline = now + 180.;
+            self.deadline = now + if self.remark { 60. } else { 180. };
             self.record(event, now);
-            return Ok(Some(("neutral", Some("notice_warm"))));
+            return Ok(Some(if self.remark {
+                ("neutral", None)
+            } else {
+                ("neutral", Some("notice_warm"))
+            }));
         }
         if matches!(event, "wake" | "continue" | "capture") {
             if matches!(event, "wake" | "capture")
@@ -381,6 +393,19 @@ mod tests {
         feedback.clear();
         assert_eq!(feedback.vision_session(67.), None);
     }
+    #[test]
+    fn remark_authorizes_playback_without_a_cue() {
+        let mut feedback = VoiceFeedback::default();
+        assert_eq!(
+            feedback.event(ID, "remark", 0.).unwrap(),
+            Some(("neutral", None))
+        );
+        assert!(feedback.playback_authorized() && feedback.remark());
+        assert!(!feedback.confirmed_activity());
+        feedback.event(ID, "finish", 1.).unwrap();
+        assert!(!feedback.remark());
+    }
+
     #[test]
     fn announcement_authorizes_playback_without_confirmed_user_activity() {
         let mut feedback = VoiceFeedback::default();

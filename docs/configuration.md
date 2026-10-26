@@ -50,6 +50,8 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 | `arrival_notice` | false | Welcome a person after prolonged absence |
 | `new_object_peek` | false | Look at a new object or pet |
 | `presence_defers_rest` | false | Delay automatic rest while people or hands remain visible |
+| `proactive_speech` | false | Say a short remark about an arrival, a sustained look or a new object |
+| `demo_mode` | false | React and speak more often, with larger movements, and send a camera picture with each remark |
 | `mind_idle_rhythm` | true | Adjust idle rhythm and background light with energy |
 | `listen_lean_in` | true | Hold a small lean while listening |
 | `thinking_beats` | true | Add alternating gestures during longer thoughts |
@@ -60,6 +62,8 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 
 Older boolean dance settings become `sometimes` for true and `off` for false.
 
+When `proactive_speech` or `demo_mode` changes to true, the gateway also sets `mutual_gaze`, `arrival_notice` and `new_object_peek` to true. If tracking is Off or Hands, it sets tracking to Idle. While `demo_mode` is true, vision also enables `object_glances`, `mutual_gaze`, `arrival_notice` and `new_object_peek`.
+
 Studio provides these settings under **Character behaviours**. The runtime reads act settings independently of camera observations.
 The new act clips require the V2 catalogue. See [behavior ownership](motion-architecture.md#autonomous-behaviors).
 
@@ -68,6 +72,8 @@ The new act clips require the V2 catalogue. See [behavior ownership](motion-arch
 `camera.json` stores `camera_enabled`. A missing file permits capture. An invalid or unreadable file disables capture.
 
 `tracking.json` stores `tracking_mode`: `off`, `idle`, `faces` or `hands`. A missing file selects Faces. Invalid settings select Off. Camera privacy disables capture in every mode.
+
+The voice requests "follow my hand" and "follow my face" set `tracking_mode` to `hands` or `faces`. They also store the earlier mode in `resume_mode`. "Stop following" restores `resume_mode`. Demo hand play writes the same keys. The gateway and `oriond` write `tracking.json` through atomic replacement with mode `0600`.
 
 `hardware/profiles/v2.json` selects the camera and image orientation. See [vision](../vision/README.md#tracking-modes) for mode behavior.
 

@@ -190,6 +190,48 @@ pub(crate) async fn run(
     }
 }
 
+/// What Orion noticed, in plain words for the reply model. The camera
+/// label for an object can be wrong; the picture, when present, decides.
+fn remark_prompt(
+    message: &Value,
+    recent: &std::collections::VecDeque<String>,
+) -> Result<String, String> {
+    let detail = message["detail"].as_str().unwrap_or("something");
+    let event = match message["event"].as_str().ok_or("Remark needs an event")? {
+        "person_arrived" => "Someone just came in after the room was empty for a while.".to_owned(),
+        "person_looking" => "The person has been looking straight at Orion for a few seconds.".to_owned(),
+        "new_object" => format!("Something new was put on the desk. The camera thinks it is: {detail}."),
+        "hand_raised" => "The person raised a hand toward Orion. Orion now follows the hand with its head. Invite them to play.".to_owned(),
+        "person_left" => "The person just left after spending time at the desk. Say a short goodbye.".to_owned(),
+        _ => return Err("Unknown remark event".into()),
+    };
+    let demo = message["demo"] == true;
+    let mut prompt = format!(
+        "Nobody spoke to Orion. Orion noticed this on its own: {event}\n\
+         Write what Orion says out loud now, in character, to the person: one or two short sentences. \
+         {}Never mention cameras, pictures, detection or sensors. Ask at most one question. \
+         If there is nothing natural to say, reply with exactly SILENT.",
+        if demo {
+            "Be lively and playful. A picture of the scene is attached when available; use specific details from it, such as colours or what the person is doing, and stay SILENT if it does not show what was noticed. "
+        } else {
+            "Keep it light and easy to ignore. "
+        }
+    );
+    if !recent.is_empty() {
+        prompt.push_str("\nOrion said these recently; do not repeat them: ");
+        prompt.push_str(&recent.iter().map(|line| format!("\"{line}\"")).collect::<Vec<_>>().join(" "));
+    }
+    Ok(prompt)
+}
+
+/// SILENT, or no words at all, means Orion says nothing.
+fn remark_text(text: &str) -> Option<String> {
+    let text = text.trim();
+    let words = response_metadata(text).0;
+    let bare: String = words.chars().filter(|c| c.is_alphanumeric()).collect();
+    (!bare.is_empty() && !bare.eq_ignore_ascii_case("silent")).then(|| text.to_owned())
+}
+
 pub const MORNING_BRIEFING: &str = "Give the user a short morning briefing: greeting and time, weather for today, today's reminders and alarms, and how many items are on the to-do list.";
 
 async fn acknowledge_announcement(gateway: &Gateway, hub: &Hub, sid: &str, id: u64) {
@@ -219,6 +261,9 @@ async fn acknowledge_announcement(gateway: &Gateway, hub: &Hub, sid: &str, id: u
 }
 
 enum Completed {
+    Remark {
+        text: Option<String>,
+    },
     AnnouncementPlayed {
         id: u64,
         attempt: u64,
@@ -276,6 +321,8 @@ async fn connected(
     let mut announcement_ready: Option<(String, tokio::sync::oneshot::Sender<Result<(), String>>)> =
         None;
     let mut active_announcement: Option<u64> = None;
+    let mut active_remark: Option<u64> = None;
+    let mut recent_remarks = std::collections::VecDeque::<String>::new();
     let mut session: Option<Session> = None;
     let mut followup: Option<String> = None;
     let mut jobs = JoinSet::<Result<Completed, String>>::new();
@@ -294,6 +341,7 @@ async fn connected(
             gateway.cancel(&active).await;
             active = Arc::new(Mutex::new(None));
             announcement_ready = None;
+            active_remark = None;
             if let Some(id) = active_announcement.take() {
                 let _ = gateway.robot_operation(json!({"operation":"routines","request":{"action":"announce_failed","id":id}}), $incoming).await;
             }
@@ -309,6 +357,39 @@ async fn connected(
     }
     let result = async {
         loop {
+            if session.is_none() && jobs.is_empty() && retiring.is_empty()
+                && announcements.front().is_some_and(|message| message["purpose"] == "remark") {
+                    let message = announcements.pop_front().unwrap();
+                    let sid = message["sessionId"].as_str().ok_or("Remark needs a session")?.to_owned();
+                    let id = message["id"].as_u64().ok_or("Remark needs an ID")?;
+                    let prompt = remark_prompt(&message, &recent_remarks)?;
+                    let demo = message["demo"] == true;
+                    active_remark = Some(id);
+                    session = Some(Session::new(&sid, Phase::Responding)?); followup = None;
+                    *next_request += 1;
+                    let (ready_send, ready_receive) = tokio::sync::oneshot::channel();
+                    announcement_ready = Some((sid.clone(), ready_send));
+                    pi.send(json!({"type":"announcement.start","sessionId":sid})).await?;
+                    let agent = agent.clone();
+                    let speech = speech.clone(); let gateway = gateway.clone(); let pi = pi.clone();
+                    let hub = hub.clone(); let active = active.clone(); let request = *next_request;
+                    jobs.spawn(async move {
+                        tokio::time::timeout(Duration::from_secs(5), ready_receive).await.map_err(|_| "Remark session did not open")?.map_err(|_| "Remark session was cancelled")??;
+                        event(&hub, &sid, json!({"type":"agent.started", "requestId":request, "remark":true}));
+                        let started = Instant::now();
+                        // Demo mode lets the model see what Orion noticed. The
+                        // gateway shows the camera light while it takes the picture.
+                        let image = if demo { gateway.camera_snapshot().await.ok() } else { None };
+                        let text = agent.respond_remark(&prompt, image).await?;
+                        let text = remark_text(&text);
+                        event(&hub, &sid, json!({"type":"agent.response", "requestId":request, "remark":true,
+                            "text":text.as_deref().map(|text| response_metadata(text).0), "durationMs":started.elapsed().as_secs_f64()*1000.}));
+                        if let Some(text) = &text {
+                            speak(&speech,&gateway,&pi,&hub,&sid,request,text.clone(),active,false,true).await?;
+                        }
+                        Ok(Completed::Remark { text })
+                    });
+            }
             if session.is_none() && jobs.is_empty() && retiring.is_empty()
                 && let Some(message) = announcements.pop_front() {
                     let sid = message["sessionId"].as_str().ok_or("Announcement needs a session")?.to_owned();
@@ -446,6 +527,25 @@ async fn connected(
                                 Ok(Completed::Announcement { id })
                             });
                         },
+                        Ok(Completed::Remark {text}) => {
+                            active_remark = None;
+                            announcement_ready = None;
+                            session = None; followup = None;
+                            if let Some(text) = text {
+                                agent.note_remark(&text);
+                                recent_remarks.push_back(response_metadata(&text).0);
+                                if recent_remarks.len() > 5 { recent_remarks.pop_front(); }
+                                // Answering a remark needs no wake word.
+                                followup = window.then_some(sid.clone());
+                                let mut finish = json!({"type":"session.finish", "sessionId":sid});
+                                if window { finish["conversationWindow"] = true.into(); }
+                                pi.send(finish).await?;
+                                event(hub, &sid, json!({"type":"speech.completed", "remark":true}));
+                            } else {
+                                // Nothing worth saying: close the silent session.
+                                pi.send(json!({"type":"session.cancel","sessionId":sid})).await?;
+                            }
+                        },
                         Ok(Completed::Announcement {id}) => {
                             active_announcement = None;
                             announcement_ready = None;
@@ -471,7 +571,8 @@ async fn connected(
                     if message["type"] == "announcement.ready" || message["type"] == "announcement.failed" {
                         let failed = message["type"] == "announcement.failed";
                         if announcement_ready.as_ref().is_some_and(|(expected, _)| message["sessionId"].as_str() == Some(expected.as_str()))
-                            && (!failed || message["id"].as_u64() == active_announcement) {
+                            && (!failed || message["id"].as_u64() == active_announcement
+                                || (active_remark.is_some() && message["id"].as_u64() == active_remark)) {
                             let (_, send) = announcement_ready.take().unwrap();
                             let result = if failed { Err(message["reason"].as_str().unwrap_or("Announcement ownership failed").to_owned()) } else { Ok(()) };
                             let _ = send.send(result);
@@ -493,6 +594,22 @@ async fn connected(
                             } else if !announcements.iter().any(|queued| queued["id"]==id && queued["attempt"]==attempt) && !session.as_ref().is_some_and(|s| s.id==sid) {
                                 if announcements.len()>=64 { return Err("Announcement queue is full".into()); }
                                 announcements.push_back(message);
+                            }
+                        },
+                        "remark" => {
+                            let valid = message["id"].as_u64().is_some()
+                                && matches!(message["event"].as_str(), Some("person_arrived"|"person_looking"|"new_object"|"hand_raised"|"person_left"))
+                                && message["demo"].is_boolean()
+                                && (message["detail"].is_null() || message["detail"].as_str().is_some_and(|detail| !detail.is_empty() && detail.chars().count() <= 32))
+                                && crate::session::valid_session(sid);
+                            if !valid { return Err("Invalid remark".into()); }
+                            if session.is_some() || !jobs.is_empty() || announcements.len() >= 64 {
+                                // Remarks never wait behind other speech; release the reservation.
+                                pi.send(json!({"type":"session.cancel","sessionId":sid})).await?;
+                            } else {
+                                let mut message = message.clone();
+                                message["purpose"] = "remark".into();
+                                announcements.push_front(message);
                             }
                         },
                         "wake.candidate" | "command.candidate" => {
@@ -1291,6 +1408,22 @@ impl PlaybackProgress {
 #[cfg(test)]
 mod playback_tests {
     use super::*;
+    #[test]
+    fn remarks_describe_the_event_and_silent_means_nothing_is_said() {
+        let mut recent = std::collections::VecDeque::new();
+        let message = json!({"event":"new_object","detail":"banana","demo":true});
+        let prompt = remark_prompt(&message, &recent).unwrap();
+        assert!(prompt.contains("banana") && prompt.contains("attached"));
+        recent.push_back("Is that lunch?".to_owned());
+        let prompt = remark_prompt(&json!({"event":"person_left","demo":false}), &recent).unwrap();
+        assert!(prompt.contains("goodbye") && prompt.contains("\"Is that lunch?\"") && !prompt.contains("attached"));
+        assert!(remark_prompt(&json!({"event":"other","demo":false}), &recent).is_err());
+        for silent in ["", "  SILENT ", "Silent.", "[laugh]"] {
+            assert_eq!(remark_text(silent), None, "{silent}");
+        }
+        assert_eq!(remark_text(" Oh, hello! ").as_deref(), Some("Oh, hello!"));
+    }
+
     #[test]
     fn every_enabled_cue_stays_out_of_spoken_text_and_reply_history() {
         for cue in ReactionCue::enabled() {

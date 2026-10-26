@@ -11,6 +11,8 @@ pub(crate) struct BehaviourSettings {
     pub arrival_notice: bool,
     pub new_object_peek: bool,
     pub presence_defers_rest: bool,
+    pub proactive_speech: bool,
+    pub demo_mode: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,7 +109,25 @@ pub(super) struct SurroundingsState {
     pub(super) arrival: super::reactions::ArrivalPolicy,
     pub(super) last_novelty: Option<String>,
     pub(super) reaction: Option<super::reactions::Reaction>,
+    pub(super) departure: super::reactions::DeparturePolicy,
+    pub(super) hand_play: HandPlay,
+    /// Fresh object IDs from the latest observation, for delayed object remarks.
+    pub(super) present_objects: Vec<String>,
+    /// Voice, speech, music, scenes or alerts: no remark may start.
+    pub(super) remark_busy: bool,
+    /// Local hour and calendar day for remark rules.
+    pub(super) remark_clock: (f64, i64),
 }
+/// Demo hand play: a palm held up while idle switches tracking to Hands,
+/// and losing the hand for a while switches back.
+#[derive(Debug, Default)]
+pub(super) struct HandPlay {
+    raised_since: Option<f64>,
+    active: bool,
+    last_hand: f64,
+}
+const HAND_RAISE_SECONDS: f64 = 1.0;
+const HAND_LOST_SECONDS: f64 = 4.0;
 impl SurroundingsState {
     pub(super) fn clear(&mut self) {
         self.received = None;
@@ -116,7 +136,9 @@ impl SurroundingsState {
         self.settings = BehaviourSettings::default();
         self.mutual.clear();
         self.arrival.clear();
-        // Budget and last target survive privacy/mode changes.
+        self.departure.clear();
+        self.present_objects.clear();
+        // Budget, last target and hand play survive privacy/mode changes.
     }
     pub(super) fn fresh(&self, now: f64) -> bool {
         self.received
@@ -167,6 +189,109 @@ impl CharacterCoordinator {
     }
     pub(crate) fn set_curiosity_available(&mut self, allowed: bool) {
         self.surroundings.runtime_allowed = allowed;
+    }
+    /// Conditions for spoken remarks that only the command layer can see.
+    pub(crate) fn set_remark_conditions(&mut self, busy: bool, hour: f64, day: i64) {
+        self.surroundings.remark_busy = busy;
+        self.surroundings.remark_clock = (hour, day);
+    }
+    /// The remark the voice listener may start now, if any.
+    pub(crate) fn ready_remark(
+        &mut self,
+        now: f64,
+    ) -> Option<crate::expression::remarks::PendingRemark> {
+        let present = &self.surroundings.present_objects;
+        self.remarks
+            .ready(now, |id| present.iter().any(|object| object == id))
+            .cloned()
+    }
+    fn write_tracking(&self, mode: &str, resume: Option<&str>) {
+        let Some(path) = &self.tracking_file else {
+            return;
+        };
+        let mut value = serde_json::json!({"tracking_mode": mode});
+        if let Some(resume) = resume {
+            value["resume_mode"] = resume.into();
+        }
+        let temporary = path.with_extension("json.oriond");
+        let result = (|| {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&temporary)?;
+            file.write_all(value.to_string().as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&temporary, path)
+        })();
+        if let Err(error) = result {
+            eprintln!("oriond: hand play could not change tracking: {error}");
+        }
+    }
+    /// Demo mode: a raised palm starts hand play; a lost hand ends it.
+    fn observe_hand_play(&mut self, mode: &str, hand_count: u8, now: f64) {
+        let demo = self.surroundings.settings.demo_mode;
+        let play = &mut self.surroundings.hand_play;
+        if play.active {
+            if (mode != "hands" && mode != "idle")
+                || (mode == "idle" && now - play.last_hand >= 2.0 * HAND_LOST_SECONDS)
+            {
+                // Someone changed tracking, or the switch to Hands never arrived.
+                *play = HandPlay::default();
+            } else if mode == "hands" && hand_count > 0 {
+                play.last_hand = now;
+            } else if mode == "hands" && (!demo || now - play.last_hand >= HAND_LOST_SECONDS) {
+                *play = HandPlay::default();
+                self.write_tracking("idle", None);
+            }
+            return;
+        }
+        if !demo || mode != "idle" || hand_count == 0 {
+            play.raised_since = None;
+            return;
+        }
+        let since = *play.raised_since.get_or_insert(now);
+        if now - since < HAND_RAISE_SECONDS || !self.curiosity_available() {
+            return;
+        }
+        self.surroundings.hand_play = HandPlay {
+            raised_since: None,
+            active: true,
+            last_hand: now,
+        };
+        self.write_tracking("hands", Some("idle"));
+        self.offer_remark(
+            crate::expression::remarks::RemarkEvent::HandRaised,
+            None,
+            None,
+            now,
+        );
+    }
+    pub(super) fn offer_remark(
+        &mut self,
+        event: crate::expression::remarks::RemarkEvent,
+        detail: Option<&str>,
+        object: Option<&str>,
+        now: f64,
+    ) {
+        if self.remarks.offer(event, detail, object, now)
+            && let Some(log) = &self.behaviour_log
+        {
+            log.observation(
+                "remark_offered",
+                object.map(str::to_owned),
+                Some(
+                    serde_json::to_value(event)
+                        .ok()
+                        .and_then(|value| value.as_str().map(str::to_owned))
+                        .unwrap_or_default(),
+                ),
+                now,
+            );
+        }
     }
     pub(crate) fn curiosity_ready<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
         self.curiosity_available()
@@ -229,7 +354,21 @@ impl CharacterCoordinator {
             return Ok(());
         }
         self.surroundings.received = Some(now);
+        self.surroundings.budget.set_demo(value.settings.demo_mode);
         self.surroundings.settings = value.settings;
+        self.surroundings.present_objects = value
+            .objects
+            .iter()
+            .filter(|object| {
+                object
+                    .capture_boottime_ns
+                    .parse::<u64>()
+                    .is_ok_and(|stamp| {
+                        value.capture_boottime_ns.saturating_sub(stamp) <= 2_000_000_000
+                    })
+            })
+            .map(|object| object.id.clone())
+            .collect();
         self.surroundings.present = match value.tracking_mode.as_str() {
             "idle" | "faces" => !value.faces.is_empty(),
             "hands" => value.hand_count > 0,
@@ -239,6 +378,19 @@ impl CharacterCoordinator {
             .surroundings
             .budget
             .observe_focus(now, value.looking_away);
+        let (hour, day) = self.surroundings.remark_clock;
+        self.remarks.set_context(
+            crate::expression::remarks::RemarkContext {
+                proactive: self.surroundings.settings.proactive_speech,
+                demo: self.surroundings.settings.demo_mode,
+                busy: self.surroundings.remark_busy,
+                focused: self.surroundings.budget.focused(now),
+                hour,
+                day,
+            },
+            now,
+        );
+        self.observe_hand_play(&value.tracking_mode, value.hand_count, now);
         if value.tracking_mode == "hands" {
             self.surroundings.mutual.clear();
             self.surroundings.arrival.clear();
@@ -255,6 +407,9 @@ impl CharacterCoordinator {
         }
         if let Err(error) = self.observe_arrival(&value.faces, now, core) {
             eprintln!("oriond: arrival notice declined: {error}");
+        }
+        if let Err(error) = self.observe_departure(&value.faces, now, core) {
+            eprintln!("oriond: farewell declined: {error}");
         }
         if let Err(error) = self.observe_novelty(value.novelty.as_ref(), now, core) {
             eprintln!("oriond: object peek declined: {error}");

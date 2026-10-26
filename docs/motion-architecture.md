@@ -118,6 +118,38 @@ Privacy off, Tracking Off, Stop, rest, voice and foreground work close admission
 
 Object glances, mutual gaze, arrival notice and new-object peeks require their saved behavior switches. Failed execution does not refund a reserved gesture. Camera changes do not reset the budget.
 
+### Spoken remarks
+
+With `proactive_speech` or `demo_mode`, an arrival, a sustained look or a new-object peek can offer one spoken remark. The movement starts first. The voice listener then opens a session without a wake word. The agent writes the remark from the event and the recent remarks. It cannot use tools for a remark. An empty reply or `SILENT` gives no speech. After a remark, the user can reply without the wake word.
+
+The runtime controls when a remark can start:
+
+- Each event type has a cooldown. Arrival is 30 min, sustained look is 20 min and new object is 60 min.
+- Remarks are at least 10 min apart. Each ignored remark doubles this time, to a maximum of four times. A reply resets it.
+- At most 4 remarks occur in one hour.
+- A remark waits 5 min after a conversation.
+- Common desk objects get no remark. Each object category gets a maximum of one remark each day. A new object must stay in view for 12 s.
+- No remark starts during a conversation, speech, music, scenes, focus, rest, Stop, or between 22:00 and 07:00.
+- A request older than 8 s is discarded.
+- The request "be quiet for a while" stops remarks for up to 8 hours.
+
+A wake word during a remark stops the remark and starts a normal turn.
+
+### Demo mode
+
+Demo mode is for showing Orion to people. It changes these limits:
+
+- The curiosity budget allows 20 gestures in 10 min, 12 s apart, without longer waits for repeated targets. Turning demo mode on clears the budget.
+- Remarks can be 30 s apart, with a 45 s cooldown per event type and 20 s after a conversation. The clock, focus and daily object limits do not apply.
+- Arrival needs 30 s of absence instead of 10 min.
+- A sustained look plays `mutual_gaze_notice_demo`, which has a nod and a larger neck turn.
+- Each remark sends one camera picture with the request.
+
+Two reactions occur only in demo mode:
+
+- Farewell: a person who stayed for at least 20 s and is then gone for 5 s gets `farewell_watch` and a goodbye. The head turns to the last face bearing and gives a small sigh.
+- Hand play: in Idle tracking, vision runs palm detection. A palm in view for 1 s sets tracking to Hands and offers a remark that invites play. When no palm is visible for 4 s, tracking returns to the earlier mode.
+
 ### Presence defers automatic rest
 
 The `presence_defers_rest` option can delay automatic descent while fresh face or hand observations continue. It keeps the original inactivity deadline. When presence ends, an expired deadline can start rest immediately.

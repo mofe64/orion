@@ -7,6 +7,7 @@ pub mod gaze;
 pub mod lamp;
 pub mod mind;
 pub mod music;
+pub mod remarks;
 pub mod rest;
 pub mod routines;
 pub mod scene;

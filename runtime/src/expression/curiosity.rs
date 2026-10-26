@@ -9,6 +9,9 @@ const FORGET_SECONDS: f64 = 3600.0;
 const MAX_TARGETS: usize = 32;
 const FOCUS_SECONDS: f64 = 120.0;
 const OBSERVATION_GAP_SECONDS: f64 = 2.0;
+/// Demo mode shows reactions often; it is for showing Orion, not daily life.
+const DEMO_MAX_GESTURES: usize = 20;
+const DEMO_MIN_SPACING_SECONDS: f64 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CuriosityKind {
@@ -72,6 +75,7 @@ pub struct CuriosityBudget {
     last_now: Option<f64>,
     focus_since: Option<f64>,
     last_focus_observation: Option<f64>,
+    demo: bool,
 }
 
 impl CuriosityBudget {
@@ -106,7 +110,17 @@ impl CuriosityBudget {
         Ok(())
     }
 
-    fn focused(&self, now: f64) -> bool {
+    /// Demo mode uses short spacing and no growing habituation. Each start
+    /// of demo mode forgets spent gestures and targets, so takes can repeat.
+    pub fn set_demo(&mut self, demo: bool) {
+        if demo && !self.demo {
+            self.gestures.clear();
+            self.targets.clear();
+        }
+        self.demo = demo;
+    }
+
+    pub(crate) fn focused(&self, now: f64) -> bool {
         self.last_focus_observation
             .is_some_and(|last| now - last <= OBSERVATION_GAP_SECONDS)
             && self
@@ -142,21 +156,26 @@ impl CuriosityBudget {
         {
             self.gestures.pop_front();
         }
-        if self.gestures.len() >= MAX_GESTURES {
+        let (max_gestures, spacing) = if self.demo {
+            (DEMO_MAX_GESTURES, DEMO_MIN_SPACING_SECONDS)
+        } else {
+            (MAX_GESTURES, MIN_SPACING_SECONDS)
+        };
+        if self.gestures.len() >= max_gestures {
             return Err(CuriosityDenied::Window);
         }
-        if self
-            .gestures
-            .back()
-            .is_some_and(|at| now - at < MIN_SPACING_SECONDS)
-        {
+        if self.gestures.back().is_some_and(|at| now - at < spacing) {
             return Err(CuriosityDenied::Spacing);
         }
         self.targets
             .retain(|_, interest| now - interest.last_reaction < FORGET_SECONDS);
         if let Some(interest) = self.targets.get(target) {
-            let cooldown = FIRST_TARGET_COOLDOWN_SECONDS
-                * 2_f64.powi(interest.repetitions.saturating_sub(1).min(4) as i32);
+            let doubling = if self.demo {
+                0
+            } else {
+                interest.repetitions.saturating_sub(1).min(4) as i32
+            };
+            let cooldown = FIRST_TARGET_COOLDOWN_SECONDS * 2_f64.powi(doubling);
             if now - interest.last_reaction < cooldown {
                 return Err(CuriosityDenied::Habituation);
             }
@@ -190,6 +209,35 @@ mod tests {
     }
     fn spend(budget: &mut CuriosityBudget, now: f64, target: &str) -> Result<(), CuriosityDenied> {
         budget.try_spend(now, target, CuriosityKind::Gesture, available())
+    }
+
+    #[test]
+    fn demo_budget_is_short_spaced_flat_and_restarts_each_take() {
+        let mut budget = CuriosityBudget::default();
+        spend(&mut budget, 0.0, "book").unwrap();
+        assert_eq!(
+            spend(&mut budget, 20.0, "cup"),
+            Err(CuriosityDenied::Spacing)
+        );
+        budget.set_demo(true);
+        spend(&mut budget, 20.0, "book").unwrap();
+        assert_eq!(
+            spend(&mut budget, 31.0, "cup"),
+            Err(CuriosityDenied::Spacing)
+        );
+        spend(&mut budget, 32.0, "cup").unwrap();
+        assert_eq!(
+            spend(&mut budget, 100.0, "book"),
+            Err(CuriosityDenied::Habituation)
+        );
+        spend(&mut budget, 140.0, "book").unwrap();
+        // No doubling: the same target is allowed again after 120 s.
+        spend(&mut budget, 260.0, "book").unwrap();
+        budget.set_demo(false);
+        assert_eq!(
+            spend(&mut budget, 280.0, "lamp"),
+            Err(CuriosityDenied::Window)
+        );
     }
 
     #[test]

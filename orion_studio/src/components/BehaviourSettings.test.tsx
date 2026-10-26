@@ -9,7 +9,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
 }));
 vi.mock("../lib/gateway", async original => ({ ...await original<typeof import("../lib/gateway")>(),
   getBehaviours: vi.fn().mockResolvedValue({ behaviours: { mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, object_glances: false, mutual_gaze: false,
-    arrival_notice: false, new_object_peek: false, presence_defers_rest: false } }),
+    arrival_notice: false, new_object_peek: false, presence_defers_rest: false, proactive_speech: false, demo_mode: false } }),
 }));
 import { BehaviourSettings } from "./BehaviourSettings";
 import { getBehaviours } from "../lib/gateway";

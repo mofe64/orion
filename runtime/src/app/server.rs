@@ -277,6 +277,10 @@ pub(super) fn serve_driver<D: RuntimeDriver>(
     let mut mind_speech_run = None;
     let mut mind_cue_index = 0;
     character.behaviour_log = behaviour_log.clone();
+    character.tracking_file = (options.backend == Backend::Hardware)
+        .then(|| std::env::var_os("HOME"))
+        .flatten()
+        .map(|home| PathBuf::from(home).join(".config/orion/tracking.json"));
     character.set_gaze_enabled(options.gaze_on);
     if options.gaze_on
         && let Some(error) = camera_error

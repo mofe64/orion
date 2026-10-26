@@ -757,6 +757,29 @@ class TrackingPreferenceTests(unittest.TestCase):
         self.assertEqual(self.gateway.tracking_mode(), 'off')
         self.assertEqual(list(self.root.glob('.tracking-*')), [])
 
+    def test_voice_follow_switches_hands_or_faces_and_resumes_the_earlier_mode(self):
+        self.gateway.set_camera_enabled({'camera_enabled': True})
+        self.gateway.set_tracking_mode({'tracking_mode': 'idle'})
+        result = self.gateway.submit({'operation': 'tracking', 'mode': 'hands'})[1]['result']
+        self.assertEqual(result['tracking_mode'], 'hands')
+        self.gateway.submit({'operation': 'tracking', 'mode': 'faces'})
+        self.assertEqual(json.loads(self.gateway.tracking_preference_file.read_text()),
+                         {'tracking_mode': 'faces', 'resume_mode': 'idle'})
+        self.gateway.submit({'operation': 'tracking', 'mode': 'resume'})
+        self.assertEqual(self.gateway.tracking_mode(), 'idle')
+        # Studio's own choice forgets the voice resume point.
+        self.gateway.set_tracking_mode({'tracking_mode': 'faces'})
+        self.gateway.submit({'operation': 'tracking', 'mode': 'resume'})
+        self.assertEqual(self.gateway.tracking_mode(), 'idle')
+        for payload in ({'operation': 'tracking', 'mode': 'off'}, {'operation': 'tracking'},
+                        {'operation': 'tracking', 'mode': 'hands', 'extra': 1}):
+            with self.assertRaises(GatewayError):
+                self.gateway.submit(payload)
+        self.gateway.set_camera_enabled({'camera_enabled': False})
+        with self.assertRaises(GatewayError) as error:
+            self.gateway.submit({'operation': 'tracking', 'mode': 'hands'})
+        self.assertEqual(error.exception.code, 'camera_off')
+
     def test_v1_has_no_tracking_control(self):
         gateway = OrionGateway(Mock(), hardware='v1')
         for call in (gateway.get_tracking_mode, lambda: gateway.set_tracking_mode({'tracking_mode': 'off'})):
@@ -1139,6 +1162,30 @@ class BehaviourPreferenceTests(unittest.TestCase):
                 self.assertEqual(gateway.get_behaviours()['behaviours'], off)
             for value in ({}, None, {'object_glances': 1}, {'surprise': True}):
                 with self.assertRaises(GatewayError): gateway.set_behaviours(value)
+
+    def test_proactive_and_demo_modes_turn_on_their_reactions_and_idle_tracking(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = Mock()
+            client.request.return_value = {'ok': True, 'remarks': {}}
+            gateway = OrionGateway(client, hardware='v2', camera_preference_file=Path(directory) / 'camera.json')
+            gateway.set_tracking_mode({'tracking_mode': 'off'})
+            saved = gateway.submit({'operation': 'character_behaviours', 'proactive_speech': True})[1]['result']['behaviours']
+            self.assertTrue(all(saved[key] for key in ('proactive_speech', 'arrival_notice', 'mutual_gaze', 'new_object_peek')))
+            self.assertFalse(saved['demo_mode'])
+            self.assertEqual(gateway.tracking_mode(), 'idle')
+            gateway.set_behaviours({'mutual_gaze': False})
+            saved = gateway.submit({'operation': 'character_behaviours', 'demo_mode': False})[1]['result']['behaviours']
+            self.assertFalse(saved['mutual_gaze'])  # Turning a mode off leaves the switches alone.
+            for payload in ({'operation': 'character_behaviours'}, {'operation': 'character_behaviours', 'act_sounds': True},
+                            {'operation': 'character_behaviours', 'demo_mode': 'yes'},
+                            {'operation': 'character_behaviours', 'demo_mode': True, 'proactive_speech': True}):
+                with self.assertRaises(GatewayError):
+                    gateway.submit(payload)
+            gateway.submit({'operation': 'remarks', 'quiet_minutes': 120})
+            client.request.assert_called_with('character remarks quiet 7200')
+            for minutes in (-1, 481, 'soon', True):
+                with self.assertRaises(GatewayError):
+                    gateway.submit({'operation': 'remarks', 'quiet_minutes': minutes})
 
 class MindStatusTests(unittest.TestCase):
     def test_gateway_forwards_runtime_mind_and_accepts_older_runtime(self):

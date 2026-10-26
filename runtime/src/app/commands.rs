@@ -545,12 +545,25 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         .unwrap_or_default()
         .as_secs_f64();
     if command.starts_with("gaze surroundings ") {
+        // A remark session keeps the noticed reaction moving until speech starts.
         character.set_curiosity_available(
             rest.reactions_ready()
-                && !feedback.session_active()
+                && (!feedback.session_active() || feedback.remark())
                 && !speech.is_active()
                 && !scenes.is_active()
                 && !routines.curiosity_quiet(),
+        );
+        let local = chrono::Local::now();
+        character.set_remark_conditions(
+            !rest.reactions_ready()
+                || feedback.session_active()
+                || speech.is_active()
+                || scenes.is_active()
+                || routines.curiosity_quiet()
+                || audio.music_playing(),
+            f64::from(chrono::Timelike::hour(&local))
+                + f64::from(chrono::Timelike::minute(&local)) / 60.0,
+            i64::from(chrono::Datelike::num_days_from_ce(&local)),
         );
         if command == "gaze surroundings status" {
             return serde_json::json!({"ok":true,"ready":character.curiosity_ready(core)})
@@ -580,8 +593,21 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         return serde_json::json!({"ok":true,"lamp":owner_lamp_status(manual_light, routines, character, scenes, speech, feedback, rest, now_seconds)}).to_string();
     }
     if command == "routines status" {
-        return serde_json::json!({"ok":true,"routines":routines.status(wall, now_seconds)})
-            .to_string();
+        // The voice listener polls this; a due remark rides along with alerts.
+        return serde_json::json!({"ok":true,"routines":routines.status(wall, now_seconds),
+            "remark":character.ready_remark(now_seconds)})
+        .to_string();
+    }
+    if let Some(seconds) = command.strip_prefix("character remarks quiet ") {
+        return match seconds
+            .parse::<f64>()
+            .map_err(|_| "Invalid quiet time")
+            .and_then(|seconds| character.remarks.quiet(seconds, now_seconds))
+        {
+            Ok(_) => serde_json::json!({"ok":true,"remarks":character.remarks.status(now_seconds)})
+                .to_string(),
+            Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+        };
     }
     if let Some(body) = command.strip_prefix("routines ") {
         let result = (|| -> Result<serde_json::Value, String> {
@@ -705,7 +731,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         }
     }
     if command == "character status" {
-        return serde_json::json!({"ok": true, "character": character.status(), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds), "lamp":owner_lamp_status(manual_light,routines,character,scenes,speech,feedback,rest,now_seconds)}).to_string();
+        return serde_json::json!({"ok": true, "character": character.status(), "remarks": character.remarks.status(now_seconds), "rest": rest.status(now_seconds), "routines": routines.status(wall, now_seconds), "lamp":owner_lamp_status(manual_light,routines,character,scenes,speech,feedback,rest,now_seconds)}).to_string();
     }
     if let Some(fields) = command.strip_prefix("voice ") {
         if fields == "status" {
@@ -717,6 +743,38 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         if parts.len() < 2 || parts.len() > 6 {
             return serde_json::json!({"ok": false, "error": "Expected voice SESSION EVENT"})
                 .to_string();
+        }
+        if parts[1] == "remark" {
+            // The listener opens a silent speaking session for the due remark.
+            // Taking the remark first means a failed session never repeats it.
+            let id = match parts.as_slice() {
+                [_, _, id] => id.parse::<u64>().ok(),
+                _ => None,
+            };
+            let Some(id) = id else {
+                return serde_json::json!({"ok":false,"error":"Expected voice SESSION remark ID"})
+                    .to_string();
+            };
+            if speech.is_active() || scenes.is_active() || routines.ringing() {
+                return serde_json::json!({"ok":false,"error":"Orion is busy"}).to_string();
+            }
+            if character
+                .ready_remark(now_seconds)
+                .is_none_or(|remark| remark.id != id)
+            {
+                return serde_json::json!({"ok":false,"error":"The remark is no longer current"})
+                    .to_string();
+            }
+            if let Err(error) = feedback.event(parts[0], "remark", now_seconds) {
+                return serde_json::json!({"ok":false,"error":error}).to_string();
+            }
+            return match character.remarks.take(id, now_seconds) {
+                Ok(remark) => serde_json::json!({"ok":true,"remark":remark}).to_string(),
+                Err(error) => {
+                    feedback.clear();
+                    serde_json::json!({"ok":false,"error":error}).to_string()
+                }
+            };
         }
         if parts[1] == "vision_begin"
             && (speech.is_active() || scenes.is_active() || !feedback.owns(parts[0]))
@@ -825,6 +883,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
         };
         if action.is_ok() && !had_confirmed && feedback.confirmed_activity() {
             character.mind.confirmed_turn();
+            character.remarks.engaged(now_seconds);
         }
         match action {
             Ok(Some((reaction, cue))) => {

@@ -237,6 +237,28 @@ motions:
     - 8
     - null
     main_joint: head_pitch_joint
+  mutual_gaze_notice_demo:
+    intent: Meet the look with a clear nod, turn the neck with curiosity, and return.
+    direction: up
+    main_keyframe: 0
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/reactions.rs: demo mode; relative clips return to the held pose'
+    movement_degrees:
+    - 11
+    - null
+    main_joint: head_pitch_joint
+  farewell_watch:
+    intent: Watch the place where the person left, sigh gently, and return.
+    direction: up
+    main_keyframe: 1
+    contexts:
+    - start: home
+      anchor: home
+    source: 'runtime/src/expression/reactions.rs and runtime/src/control/aim_light.rs: active anchor with
+      the command-time planner'
+    planner: farewell
   peek_new_object:
     intent: Arm-led desk peek with a curious neck turn and a full anchor return.
     direction: down

@@ -66,6 +66,32 @@ class PalmTests(unittest.TestCase):
             states.append(values)
         np.testing.assert_array_equal(states[0], states[1])
 
+    def test_demo_mode_counts_raised_palms_while_idle_at_a_low_rate(self):
+        faces, palms, client = Mock(), Mock(), Mock()
+        faces.detect.return_value = []
+        palms.detect.return_value = [Palm([320,180,64,36],.9)]
+        client.voice_active.return_value = False
+        now = [10.]
+        pipeline = FacePipeline(faces, intrinsics(), client, clock=lambda: now[0],
+            boot_clock=lambda: int(now[0] * 1e9), palms=palms)
+        pipeline.reset(True, mode='idle')
+        frame = np.zeros((360,640,3),np.uint8)
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        palms.detect.assert_not_called()
+        self.assertEqual(pipeline.hand_count, 0)
+        pipeline.configure_behaviours({**pipeline.behaviours, 'demo_mode': True})
+        now[0] += .1
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual(pipeline.hand_count, 1)
+        now[0] += .1
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual(palms.detect.call_count, 1)  # CPU palms run at 2 Hz
+        client.target.assert_not_called()  # Idle never follows the palm itself
+        pipeline.configure_behaviours({**pipeline.behaviours, 'demo_mode': False})
+        now[0] += 1
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual(pipeline.hand_count, 0)
+
     def test_motion_rejection_preserves_paired_preview(self):
         pipeline, detector, client, now = self.pipeline()
         client.target.side_effect = RuntimeRejected('Servo bus unavailable')

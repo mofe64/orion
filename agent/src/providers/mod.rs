@@ -17,6 +17,13 @@ pub(crate) trait AgentBackend: Send {
         text: &'a str,
         events: Option<&'a mpsc::Sender<AgentEvent>>,
     ) -> Response<'a>;
+    /// One turn with an optional attached picture and no tools.
+    fn respond_with_image<'a>(
+        &'a mut self,
+        text: &'a str,
+        image: Option<&'a [u8]>,
+        events: Option<&'a mpsc::Sender<AgentEvent>>,
+    ) -> Response<'a>;
     fn close(&mut self) -> Shutdown<'_>;
 }
 
@@ -33,6 +40,14 @@ impl AgentBackend for codex::Codex {
         events: Option<&'a mpsc::Sender<AgentEvent>>,
     ) -> Response<'a> {
         Box::pin(codex::Codex::respond(self, text, events))
+    }
+    fn respond_with_image<'a>(
+        &'a mut self,
+        text: &'a str,
+        image: Option<&'a [u8]>,
+        events: Option<&'a mpsc::Sender<AgentEvent>>,
+    ) -> Response<'a> {
+        Box::pin(codex::Codex::respond_inner(self, text, image, false, events))
     }
     fn close(&mut self) -> Shutdown<'_> {
         Box::pin(codex::Codex::close(self))

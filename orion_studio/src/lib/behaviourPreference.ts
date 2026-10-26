@@ -15,6 +15,8 @@ export class BehaviourPreference {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private update(patch: Partial<BehaviourState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()); }
   private validate(value: BehaviourResponse) {
+    // An Orion without proactive or demo mode yet reports neither switch.
+    if (value.behaviours) value = { behaviours: { ...{ proactive_speech: false, demo_mode: false } as Partial<BehaviourSettings>, ...value.behaviours } as BehaviourSettings };
     if (!value.behaviours || behaviourKeys.some(key => key === "move_to_music" ? !["off","sometimes","always"].includes(value.behaviours[key]) : typeof value.behaviours[key] !== "boolean"))
       throw new Error("The gateway returned invalid character behaviours.");
     return value.behaviours;

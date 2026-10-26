@@ -3,16 +3,24 @@ import json
 import math
 from pathlib import Path
 
-KEYS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest')
+KEYS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest',
+        'proactive_speech', 'demo_mode')
+# Demo mode shows every social reaction, whatever the saved switches say.
+DEMO_REACTIONS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek')
 
 
 def settings(path):
     off = dict.fromkeys(KEYS, False)
     try:
         value = json.loads(Path(path).read_text())
-        if not isinstance(value, dict) or any(type(item) is not bool for item in value.values()):
+        # Other components keep non-boolean settings, such as move_to_music,
+        # in the same file. Only a corrupt camera switch fails closed.
+        if not isinstance(value, dict) or any(key in value and type(value[key]) is not bool for key in KEYS):
             return off
-        return {key: value.get(key, False) for key in KEYS}
+        result = {key: value.get(key, False) for key in KEYS}
+        if result['demo_mode']:
+            result.update(dict.fromkeys(DEMO_REACTIONS, True))
+        return result
     except (OSError, ValueError):
         return off
 

@@ -1,0 +1,32 @@
+format_version: 2
+motion:
+  name: farewell_watch
+  description: Watch the place where the person left, sigh gently, and return.
+  space: anchor_relative
+  style: return_home
+  return_to_anchor: true
+  keyframes:
+  - offsets:
+      head_roll_joint: 0.1
+    duration: 0.4
+    arrival: through
+    marker: farewell_head
+  - offsets:
+      base_yaw_joint: 0.2
+      head_roll_joint: 0.1
+    duration: 0.9
+    arrival: settle
+    hold: 1.5
+    marker: farewell_watch
+  - offsets:
+      base_yaw_joint: 0.2
+      head_roll_joint: 0.1
+      head_pitch_joint: 0.14
+      shoulder_pitch_joint: -0.05
+    duration: 1.2
+    arrival: settle
+    hold: 0.8
+    marker: farewell_sigh
+  - offsets: {}
+    duration: 2.0
+    arrival: settle

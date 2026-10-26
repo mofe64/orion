@@ -282,6 +282,10 @@ pub struct CharacterCoordinator {
     music: music_motion::MusicMotion,
     pub(crate) behaviour_log: Option<super::behaviour::BehaviourLog>,
     surroundings: surroundings::SurroundingsState,
+    /// When Orion may speak about what it noticed.
+    pub remarks: super::remarks::RemarkPolicy,
+    /// Demo hand play switches the camera's tracking preference here.
+    pub(crate) tracking_file: Option<std::path::PathBuf>,
     gaze: super::gaze::GazeCoordinator,
     /// Character state we expose to other parts of the application.
     status: CharacterStatus,
@@ -416,6 +420,8 @@ impl CharacterCoordinator {
             behaviour_log: None,
             gaze: super::gaze::GazeCoordinator::default(),
             surroundings: surroundings::SurroundingsState::default(),
+            remarks: Default::default(),
+            tracking_file: None,
             status: CharacterStatus {
                 last_rejection: None,
                 enabled: false,

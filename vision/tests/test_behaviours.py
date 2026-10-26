@@ -31,6 +31,11 @@ class BehaviourTests(unittest.TestCase):
             self.assertEqual(settings(path), off)
             path.write_text('{"object_glances":true}')
             self.assertEqual(settings(path), {**off, 'object_glances': True})
+            path.write_text('{"object_glances":true,"move_to_music":"sometimes","posture_drift":false}')
+            self.assertEqual(settings(path), {**off, 'object_glances': True})
+            path.write_text('{"demo_mode":true,"move_to_music":"always"}')
+            self.assertEqual(settings(path), {**off, 'demo_mode': True, 'object_glances': True,
+                                              'mutual_gaze': True, 'arrival_notice': True, 'new_object_peek': True})
             for content in ('broken', '[]', 'null', '{"object_glances":true,"mutual_gaze":1}'):
                 path.write_text(content)
                 self.assertEqual(settings(path), off)

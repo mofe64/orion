@@ -2,6 +2,11 @@
 use super::surroundings::{NovelObject, SeenFace};
 use super::*;
 use crate::expression::curiosity::{CuriosityContext, CuriosityKind};
+use crate::expression::remarks::RemarkEvent;
+
+/// Demo mode notices arrivals and departures after short absences and stays.
+const DEMO_EMPTY_SECONDS: f64 = 30.0;
+const DEMO_STAY_SECONDS: f64 = 20.0;
 
 #[derive(Debug, Default)]
 pub(super) struct MutualPolicy {
@@ -57,7 +62,7 @@ impl ArrivalPolicy {
     pub(super) fn clear(&mut self) {
         *self = Self::default();
     }
-    fn observe(&mut self, faces: &[SeenFace], now: f64) -> Option<SeenFace> {
+    fn observe(&mut self, faces: &[SeenFace], now: f64, empty_seconds: f64) -> Option<SeenFace> {
         if self.last.is_some_and(|last| now - last > 2.0) {
             self.clear();
         }
@@ -68,8 +73,38 @@ impl ArrivalPolicy {
         }
         let empty_since = self.empty_since.take();
         empty_since
-            .filter(|since| now - since >= 600.0)
+            .filter(|since| now - since >= empty_seconds)
             .map(|_| faces[0].clone())
+    }
+}
+/// A person who stayed a while and then left. Short gaps are not departures.
+#[derive(Debug, Default)]
+pub(super) struct DeparturePolicy {
+    present_since: Option<f64>,
+    last_seen: Option<f64>,
+    last_face: Option<SeenFace>,
+}
+const DEPARTURE_GONE_SECONDS: f64 = 5.0;
+impl DeparturePolicy {
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+    fn observe(&mut self, faces: &[SeenFace], now: f64, stay_seconds: f64) -> Option<SeenFace> {
+        if let Some(face) = faces.first() {
+            if self.present_since.is_none() {
+                self.present_since = Some(now);
+            }
+            self.last_seen = Some(now);
+            self.last_face = Some(face.clone());
+            return None;
+        }
+        let (since, last) = (self.present_since?, self.last_seen?);
+        if now - last < DEPARTURE_GONE_SECONDS {
+            return None;
+        }
+        let face = self.last_face.take();
+        self.clear();
+        face.filter(|_| last - since >= stay_seconds)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +113,7 @@ enum ReactionKind {
     Arrival,
     Peek,
     Pet,
+    Farewell,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
@@ -205,6 +241,10 @@ impl CharacterCoordinator {
                 reaction.run = Some(next);
                 reaction.stage = stage;
                 self.status.active_clip = Some(clip.into());
+                if stage == Stage::Hi && !self.surroundings.settings.demo_mode {
+                    // Everyday speech needs the look held, not only met.
+                    self.offer_remark(RemarkEvent::PersonLooking, None, None, now);
+                }
             }
             return Ok(());
         }
@@ -225,7 +265,13 @@ impl CharacterCoordinator {
             .iter()
             .map(|joint| (joint.name.clone(), joint.position))
             .collect();
-        let mut definition = self.social_clip("mutual_gaze_notice", &centre, &anchor, core)?;
+        let demo = self.surroundings.settings.demo_mode;
+        let clip = if demo {
+            "mutual_gaze_notice_demo"
+        } else {
+            "mutual_gaze_notice"
+        };
+        let mut definition = self.social_clip(clip, &centre, &anchor, core)?;
         if self.rng.index(2) == 0 {
             // Sometimes just meet the look; variation never creates a trigger.
             for frame in &mut definition.keyframes {
@@ -281,8 +327,11 @@ impl CharacterCoordinator {
                 now,
             );
         }
-        self.status.active_clip = Some("mutual_gaze_notice".into());
+        self.status.active_clip = Some(clip.into());
         self.reset_timers(now);
+        if demo {
+            self.offer_remark(RemarkEvent::PersonLooking, None, None, now);
+        }
         Ok(())
     }
     pub(super) fn observe_arrival<D: RuntimeDriver>(
@@ -295,7 +344,12 @@ impl CharacterCoordinator {
             self.surroundings.arrival.clear();
             return Ok(());
         }
-        let Some(face) = self.surroundings.arrival.observe(faces, now) else {
+        let empty = if self.surroundings.settings.demo_mode {
+            DEMO_EMPTY_SECONDS
+        } else {
+            600.0
+        };
+        let Some(face) = self.surroundings.arrival.observe(faces, now, empty) else {
             return Ok(());
         };
         if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
@@ -352,6 +406,77 @@ impl CharacterCoordinator {
         }
         self.status.active_clip = Some("arrival_notice".into());
         self.reset_timers(now);
+        self.offer_remark(RemarkEvent::PersonArrived, None, None, now);
+        Ok(())
+    }
+    pub(super) fn observe_departure<D: RuntimeDriver>(
+        &mut self,
+        faces: &[SeenFace],
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> Result<()> {
+        if !self.surroundings.settings.arrival_notice {
+            self.surroundings.departure.clear();
+            return Ok(());
+        }
+        let stay = if self.surroundings.settings.demo_mode {
+            DEMO_STAY_SECONDS
+        } else {
+            600.0
+        };
+        let Some(face) = self.surroundings.departure.observe(faces, now, stay) else {
+            return Ok(());
+        };
+        if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
+            return Ok(());
+        }
+        let anchor = self
+            .status
+            .active_anchor
+            .clone()
+            .ok_or_else(|| Error::InvalidState("Farewell needs an anchor".into()))?;
+        let definition = core.prepare_farewell_motion(&anchor, face.azimuth, face.elevation)?;
+        let context = CuriosityContext {
+            enabled: true,
+            camera_on: true,
+            tracking_on: true,
+            powered_and_awake: true,
+            character_available: true,
+            ..Default::default()
+        };
+        if self
+            .surroundings
+            .budget
+            .try_spend(now, "face:farewell", CuriosityKind::Gesture, context)
+            .is_err()
+        {
+            return Ok(());
+        }
+        self.preempt_idle_or_thinking(now, core)?;
+        let run = core.play_generated_anchored_relative(definition, anchor.clone(), now)?;
+        self.surroundings.reaction = Some(Reaction {
+            kind: ReactionKind::Farewell,
+            category: None,
+            track: face.track_id,
+            started: now,
+            deadline: now + 10.0,
+            run: Some(run),
+            stage: Stage::Notice,
+            centre: anchor,
+            object: None,
+        });
+        if let Some(log) = &self.behaviour_log {
+            log.motion(
+                "farewell_watch",
+                run,
+                Some(format!("face:{}", face.track_id)),
+                Some("person".into()),
+                now,
+            );
+        }
+        self.status.active_clip = Some("farewell_watch".into());
+        self.reset_timers(now);
+        self.offer_remark(RemarkEvent::PersonLeft, None, None, now);
         Ok(())
     }
     pub(super) fn observe_novelty<D: RuntimeDriver>(
@@ -494,6 +619,12 @@ impl CharacterCoordinator {
         }
         self.status.active_clip = Some(if pet { "pet_notice" } else { "peek_new_object" }.into());
         self.reset_timers(now);
+        self.offer_remark(
+            RemarkEvent::NewObject,
+            Some(&object.category),
+            Some(&object.id),
+            now,
+        );
         Ok(())
     }
 
@@ -579,7 +710,9 @@ impl CharacterCoordinator {
             || !self.gaze.status().enabled
             || !match reaction.kind {
                 ReactionKind::Mutual => self.surroundings.settings.mutual_gaze,
-                ReactionKind::Arrival => self.surroundings.settings.arrival_notice,
+                ReactionKind::Arrival | ReactionKind::Farewell => {
+                    self.surroundings.settings.arrival_notice
+                }
                 ReactionKind::Peek | ReactionKind::Pet => {
                     self.surroundings.settings.new_object_peek
                 }
@@ -638,22 +771,44 @@ mod tests {
     #[test]
     fn arrival_requires_ten_minutes_of_observed_emptiness_and_never_replays() {
         let mut policy = ArrivalPolicy::default();
-        assert!(policy.observe(&[face(1, true)], 0.0).is_none());
+        assert!(policy.observe(&[face(1, true)], 0.0, 600.0).is_none());
         for second in 1..=600 {
-            assert!(policy.observe(&[], second as f64).is_none());
+            assert!(policy.observe(&[], second as f64, 600.0).is_none());
         }
-        assert_eq!(policy.observe(&[face(1, true)], 601.0).unwrap().track_id, 1);
-        assert!(policy.observe(&[face(2, true)], 602.0).is_none());
+        assert_eq!(
+            policy
+                .observe(&[face(1, true)], 601.0, 600.0)
+                .unwrap()
+                .track_id,
+            1
+        );
+        assert!(policy.observe(&[face(2, true)], 602.0, 600.0).is_none());
         for second in 603..=1202 {
-            policy.observe(&[], second as f64);
+            policy.observe(&[], second as f64, 600.0);
         }
         // A camera stall is unknown time, not proof of an empty room.
-        assert!(policy.observe(&[face(3, true)], 1205.0).is_none());
+        assert!(policy.observe(&[face(3, true)], 1205.0, 600.0).is_none());
         for second in 1206..=1806 {
-            policy.observe(&[], second as f64);
+            policy.observe(&[], second as f64, 600.0);
         }
         policy.clear();
-        assert!(policy.observe(&[face(3, true)], 1807.0).is_none());
+        assert!(policy.observe(&[face(3, true)], 1807.0, 600.0).is_none());
+    }
+    #[test]
+    fn departure_needs_a_real_stay_and_five_seconds_gone() {
+        let mut policy = DeparturePolicy::default();
+        assert!(policy.observe(&[face(1, true)], 0.0, 20.0).is_none());
+        assert!(policy.observe(&[face(1, true)], 10.0, 20.0).is_none());
+        // A short look in is not a stay.
+        assert!(policy.observe(&[], 16.0, 20.0).is_none());
+        assert!(policy.observe(&[face(1, true)], 20.0, 20.0).is_none());
+        assert!(policy.observe(&[face(1, true)], 45.0, 20.0).is_none());
+        // Brief gaps do not count as leaving.
+        assert!(policy.observe(&[], 47.0, 20.0).is_none());
+        assert!(policy.observe(&[face(1, true)], 48.0, 20.0).is_none());
+        assert!(policy.observe(&[], 50.0, 20.0).is_none());
+        assert_eq!(policy.observe(&[], 53.0, 20.0).unwrap().track_id, 1);
+        assert!(policy.observe(&[], 60.0, 20.0).is_none());
     }
     #[test]
     fn mutual_requires_continuity_tracks_one_person_and_fires_once_per_look() {
@@ -686,6 +841,8 @@ mod execution_tests {
             "mutual_gaze_notice",
             "mutual_gaze_hi",
             "mutual_gaze_away",
+            "mutual_gaze_notice_demo",
+            "farewell_watch",
         ] {
             let definition = core.motions().motion(name).unwrap();
             assert_eq!(definition.space, MotionSpace::AnchorRelative);
@@ -813,6 +970,161 @@ mod execution_tests {
         for joint in &core.snapshot().joints {
             assert!((joint.position - anchor[&joint.name]).abs() < 0.01);
         }
+    }
+    #[test]
+    fn demo_arrival_and_farewell_offer_remarks_and_restore_the_anchor() {
+        let (mut core, _, boot) = crate::expression::gaze::tests::following();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let profile: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("hardware/profiles/v2.json")).unwrap(),
+        )
+        .unwrap();
+        core.configure_comfort_box(serde_json::from_value(profile["comfort_box"].clone()).unwrap())
+            .unwrap();
+        let mut character = CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        for step in 1..=250 {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+        }
+        character.set_curiosity_available(true);
+        character.set_remark_conditions(false, 12.0, 1);
+        let anchor = character.status.active_anchor.clone().unwrap();
+        let bearing = crate::control::camera_rays::Bearing::from_direction(
+            core.camera_kinematics()
+                .unwrap()
+                .fk(&anchor)
+                .unwrap()
+                .camera
+                .rotate_vector([0.0, 0.0, 1.0]),
+        );
+        let observe = |now: f64,
+                       present: bool,
+                       character: &mut CharacterCoordinator,
+                       core: &mut RuntimeCore<_>| {
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            let faces = if present {
+                serde_json::json!([{"track_id":1, "azimuth":bearing.azimuth + 0.3,
+                "elevation":bearing.elevation, "frontal":false}])
+            } else {
+                serde_json::json!([])
+            };
+            let value = serde_json::from_value(
+                serde_json::json!({"capture_boottime_ns":boot.load(Ordering::Relaxed),
+                "camera_on":true,"tracking_mode":"idle",
+                "settings":{"arrival_notice":true,"demo_mode":true},
+                "objects":[],"faces":faces,"looking_away":null}),
+            )
+            .unwrap();
+            character.observe_surroundings(value, now, core).unwrap();
+        };
+        let run = |from: f64,
+                   seconds: f64,
+                   present: bool,
+                   character: &mut CharacterCoordinator,
+                   core: &mut RuntimeCore<_>| {
+            for step in 1..=(seconds / 0.02) as usize {
+                let now = from + step as f64 * 0.02;
+                boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+                core.tick(now).unwrap();
+                character
+                    .tick(now, core, false, None, false, None, None)
+                    .unwrap();
+                if step % 25 == 0 {
+                    observe(now, present, character, core);
+                }
+            }
+        };
+        // Demo mode notices an arrival after only thirty seconds of empty room.
+        for step in 0..70 {
+            observe(5.0 + step as f64 * 0.5, false, &mut character, &mut core);
+        }
+        observe(40.0, true, &mut character, &mut core);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("arrival_notice")
+        );
+        let remark = character.ready_remark(40.0).unwrap();
+        assert_eq!(remark.event, RemarkEvent::PersonArrived);
+        assert!(remark.demo);
+        character.remarks.take(remark.id, 40.0).unwrap();
+        run(40.0, 30.0, true, &mut character, &mut core);
+        assert!(character.surroundings.reaction.is_none());
+        // The person leaves after a stay: Orion watches, sighs and returns.
+        run(70.0, 10.0, false, &mut character, &mut core);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("farewell_watch")
+        );
+        let mut watched = false;
+        for step in 1..=600 {
+            let now = 80.0 + step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, &mut core, false, None, false, None, None)
+                .unwrap();
+            watched |= core.snapshot().joints.iter().any(|joint| {
+                joint.name == "base_yaw_joint" && (joint.position - anchor[&joint.name]).abs() > 0.1
+            });
+        }
+        assert!(watched);
+        assert_eq!(
+            character.ready_remark(80.0).map(|remark| remark.event),
+            Some(RemarkEvent::PersonLeft)
+        );
+        assert!(character.surroundings.reaction.is_none());
+        for joint in &core.snapshot().joints {
+            assert!((joint.position - anchor[&joint.name]).abs() < 0.01);
+        }
+        // A palm held up for a second starts hand play; losing it ends play.
+        let directory = tempfile::tempdir().unwrap();
+        let tracking = directory.path().join("tracking.json");
+        character.tracking_file = Some(tracking.clone());
+        character.remarks = Default::default();
+        let hands = |now: f64,
+                     mode: &str,
+                     count: u8,
+                     character: &mut CharacterCoordinator,
+                     core: &mut RuntimeCore<_>| {
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            let value = serde_json::from_value(serde_json::json!({
+                "capture_boottime_ns":boot.load(Ordering::Relaxed),"camera_on":true,
+                "tracking_mode":mode,"settings":{"demo_mode":true},"objects":[],
+                "faces":[],"looking_away":null,"hand_count":count}))
+            .unwrap();
+            character.observe_surroundings(value, now, core).unwrap();
+        };
+        hands(100.0, "idle", 1, &mut character, &mut core);
+        hands(100.5, "idle", 1, &mut character, &mut core);
+        assert!(!tracking.exists());
+        hands(101.1, "idle", 1, &mut character, &mut core);
+        let saved = |path: &std::path::Path| -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+        };
+        assert_eq!(
+            saved(&tracking),
+            serde_json::json!({"tracking_mode":"hands","resume_mode":"idle"})
+        );
+        assert_eq!(
+            character.ready_remark(101.1).map(|remark| remark.event),
+            Some(RemarkEvent::HandRaised)
+        );
+        hands(102.0, "hands", 1, &mut character, &mut core);
+        hands(105.0, "hands", 0, &mut character, &mut core);
+        assert_eq!(saved(&tracking)["tracking_mode"], "hands");
+        hands(106.1, "hands", 0, &mut character, &mut core);
+        assert_eq!(
+            saved(&tracking),
+            serde_json::json!({"tracking_mode":"idle"})
+        );
     }
     #[test]
     fn mutual_sequence_is_bounded_observed_and_privacy_returns_the_anchor() {

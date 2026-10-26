@@ -104,6 +104,63 @@ impl<D: RuntimeDriver> RuntimeCore<D> {
         Ok(definition)
     }
 
+    /// Watch the bearing where a person was last seen, then sigh and return.
+    /// The neck turns first; the base follows to share the turn.
+    pub(crate) fn prepare_farewell_motion(
+        &self,
+        anchor: &JointPositions,
+        azimuth: f64,
+        elevation: f64,
+    ) -> Result<MotionDefinition> {
+        let model = self
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("V2 geometry unavailable".into()))?;
+        let comfort = &self
+            .comfort
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("Comfort box unavailable".into()))?
+            .1;
+        let limits = self.driver.joint_limits()?;
+        let centre = comfort.tracking_start(
+            &self.measured_positions(),
+            COMPLETION_POSITION_TOLERANCE_RAD,
+        )?;
+        let mut turned = centre.clone();
+        let delta = azimuth + model.joint_reference("base_yaw_joint")? - centre["base_yaw_joint"];
+        turned.insert(
+            "base_yaw_joint".into(),
+            centre["base_yaw_joint"] + delta.sin().atan2(delta.cos()).clamp(-0.35, 0.35),
+        );
+        // A departed person is often at the edge of view: aim as far as reach allows.
+        let watch =
+            crate::expression::gaze::solve_aim(model, &turned, azimuth, elevation, &limits)?.0;
+        let watch = comfort.project(&centre, &watch)?.0;
+        let head =
+            crate::expression::gaze::solve_aim(model, &centre, azimuth, elevation, &limits)?.0;
+        let head = comfort.project(&centre, &head)?.0;
+        let mut sigh = watch.clone();
+        *sigh.get_mut("head_pitch_joint").unwrap() += 0.14;
+        *sigh.get_mut("shoulder_pitch_joint").unwrap() -= 0.05;
+        let sigh = comfort.project(&watch, &sigh)?.0;
+        let mut definition = self.motions.motion("farewell_watch")?.clone();
+        for frame in &mut definition.keyframes {
+            let pose = match frame.marker.as_deref() {
+                Some("farewell_head") => Some(&head),
+                Some("farewell_watch") => Some(&watch),
+                Some("farewell_sigh") => Some(&sigh),
+                _ => None,
+            };
+            if let Some(pose) = pose {
+                frame.target = pose
+                    .iter()
+                    .map(|(joint, position)| (joint.clone(), position - anchor[joint]))
+                    .collect();
+            }
+        }
+        self.validate_curiosity_motion(&definition, anchor, None)?;
+        Ok(definition)
+    }
+
     pub(crate) fn prepare_peek_motion(
         &self,
         anchor: &JointPositions,

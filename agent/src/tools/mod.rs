@@ -1,4 +1,5 @@
 mod aim_light;
+mod character;
 mod lighting;
 mod lists;
 pub mod look;
@@ -48,6 +49,7 @@ pub(crate) fn schemas() -> Value {
     schemas.as_array_mut().unwrap().extend(home::schemas());
     schemas.as_array_mut().unwrap().extend(volume::schemas());
     schemas.as_array_mut().unwrap().extend(music::schemas());
+    schemas.as_array_mut().unwrap().extend(character::schemas());
     schemas.as_array_mut().unwrap().extend(lists::schemas());
     schemas.as_array_mut().unwrap().push(aim_light::schema());
     schemas.as_array_mut().unwrap().push(look::schema());
@@ -82,6 +84,14 @@ pub(crate) async fn execute(
             events.send(AgentEvent::RobotOperation { parameters, reply }).await.map_err(|_| "Coordinator stopped")?;
             tokio::time::timeout(std::time::Duration::from_secs(30), result).await
                 .map_err(|_| "Spotify did not answer. Please try again.")?.map_err(|_| "Music request cancelled")?
+        }
+        "follow_me" | "stop_following" | "set_proactive_mode" | "set_demo_mode" | "pause_remarks" => {
+            let parameters = character::resolve(name, arguments)?;
+            let events = events.ok_or("No robot coordinator is attached")?;
+            let (reply, result) = oneshot::channel();
+            events.send(AgentEvent::RobotOperation { parameters, reply }).await.map_err(|_| "Coordinator stopped")?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), result).await
+                .map_err(|_| "Robot request timed out")?.map_err(|_| "Robot request cancelled")?
         }
         "set_volume" | "louder" | "quieter" => {
             let parameters = volume::resolve(name, arguments)?;

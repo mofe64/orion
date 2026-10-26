@@ -54,6 +54,7 @@ class FacePipeline:
         self.behaviours = dict.fromkeys(KEYS, False)
         self.object_map = ObjectMap()
         self.next_object_pass = 0.
+        self.next_palm_pass = 0.
         self.next_surroundings = 0.
         self.object_baseline = False
         self.novelty = self.novelty_observation = None
@@ -179,6 +180,23 @@ class FacePipeline:
         with self.changed:
             if self.enabled and generation == self.generation and self.novelty is track:
                 self.novelty_observation = value
+
+    def _idle_palms_wanted(self):
+        return (self.mode == 'idle' and self.behaviours.get('demo_mode') is True
+                and self.palms is not None)
+
+    def _idle_palms(self, buffer, generation):
+        """Demo mode looks for a raised hand while idle, at a low rate."""
+        now = self.clock()
+        with self.changed:
+            wanted = self.enabled and self._idle_palms_wanted()
+        if not wanted or now < self.next_palm_pass:
+            return
+        self.next_palm_pass = now + (.2 if backend(self.palms) == 'hailo' else .5)
+        palms = self.palms.detect(buffer)
+        with self.changed:
+            if self.enabled and generation == self.generation and self._idle_palms_wanted():
+                self.hand_count = len(palms)
 
     def _surroundings(self, stamp, tracks):
         if self.clock() < self.next_surroundings:
@@ -408,7 +426,10 @@ class FacePipeline:
                 self.error = "Detection result is stale"
                 self.latest_preview = None
                 return
-            self.hand_count = len(faces) if self.mode == 'hands' else 0
+            if self.mode == 'hands':
+                self.hand_count = len(faces)
+            elif not self._idle_palms_wanted():
+                self.hand_count = 0
             fresh = self.tracker.update(stamp, faces, bearings)
             tracks = [track for track in self.tracker.tracks
                 if 0 <= self.boot_clock() - track.capture_ns <= MAX_AGE_NS]
@@ -435,6 +456,10 @@ class FacePipeline:
         try:
             if self.mode != 'hands':
                 self._background_objects(stamp, buffer, faces, generation)
+        except (OSError, ValueError, AttributeError):
+            pass
+        try:
+            self._idle_palms(buffer, generation)
         except (OSError, ValueError, AttributeError):
             pass
 

@@ -58,6 +58,7 @@ impl AgentHandle {
                 direct_sleep,
                 session,
                 profile: None,
+                remark: None,
                 reply,
             })
             .await
@@ -77,6 +78,7 @@ impl AgentHandle {
                 direct_sleep: false,
                 session: None,
                 profile: Some(change),
+                remark: None,
                 reply,
             })
             .await
@@ -177,6 +179,50 @@ impl AgentHandle {
         }
     }
 
+    /// Write one unprompted remark about what Orion noticed. The request has
+    /// no conversation history, tools or reminders. A picture, when given, is
+    /// attached to this request only. An empty reply means stay silent.
+    pub async fn respond_remark(
+        &self,
+        text: &str,
+        image: Option<Vec<u8>>,
+    ) -> Result<String, String> {
+        if text.trim().is_empty() || text.len() > 8 * 1024 {
+            return Err("Remark input is empty or too large".into());
+        }
+        let (reply, receive) = oneshot::channel();
+        self.0
+            .send(Request {
+                text: Some(text.into()),
+                events: None,
+                direct_sleep: false,
+                session: None,
+                profile: None,
+                remark: Some(Remark { image }),
+                reply,
+            })
+            .await
+            .map_err(|_| "Agent runtime stopped")?;
+        match receive.await.map_err(|_| "Remark request cancelled")?? {
+            Reply::Text(reply) => Ok(reply.text),
+            _ => Err("Invalid remark response".into()),
+        }
+    }
+
+    /// The next user turn learns what Orion said unprompted, so a reply
+    /// without the wake word continues that thread.
+    pub fn note_remark(&self, text: &str) {
+        let note = format!(
+            "Orion said this to the user unprompted, about what it noticed: {}",
+            text.chars().take(512).collect::<String>()
+        );
+        let mut notice = self.1.lock().unwrap();
+        *notice = Some(match notice.take() {
+            Some(previous) => format!("{previous}\n{note}"),
+            None => note,
+        });
+    }
+
     /// Called only after the coordinator observes completed playback. A failed
     /// store write leaves notices pending and cannot turn successful speech into an error.
     pub fn confirm_playback(&self, reply: &AgentReply) {
@@ -195,7 +241,12 @@ impl AgentHandle {
     }
 }
 
+/// An unprompted remark: no tools, no reminders, and an optional camera picture.
+struct Remark {
+    image: Option<Vec<u8>>,
+}
 struct Request {
+    remark: Option<Remark>,
     text: Option<String>,
     events: Option<mpsc::Sender<crate::AgentEvent>>,
     direct_sleep: bool,
@@ -264,7 +315,7 @@ impl AgentService {
                 };
                 // Background inference yields to every foreground request, including settings edits.
                 if let Some(task) = extraction.take() { task.abort(); let _ = task.await; }
-                let Request { text, events, direct_sleep, session, profile, mut reply } = request;
+                let Request { text, events, direct_sleep, session, profile, remark, mut reply } = request;
                 let session_id = session.as_ref().map(|(id, _)| id.clone());
                 let system = text.is_some() && session.is_none() && profile.is_none();
                 let mut system_client = None;
@@ -295,7 +346,7 @@ impl AgentService {
                         }
                         continue;
                     },
-                    result = tokio::time::timeout(TURN_OUTER_TIMEOUT, dispatch(&config, slot, text, events, direct_sleep, session, profile, &pending_notices, note, logical, hydration)) =>
+                    result = tokio::time::timeout(TURN_OUTER_TIMEOUT, dispatch(&config, slot, text, events, direct_sleep, session, profile, remark, &pending_notices, note, logical, hydration)) =>
                         result.unwrap_or_else(|_| Err("Agent request timed out; conversation reset".into())),
                 };
                 if let (Some(history), Some(id)) = (&history, &session_id) {
@@ -332,6 +383,7 @@ async fn dispatch(
     direct_sleep: bool,
     session: Option<(String, String)>,
     profile: Option<Option<crate::profile::ProfileChange>>,
+    remark: Option<Remark>,
     notices: &std::sync::Mutex<Option<String>>,
     visual_note: &mut Option<String>,
     logical_id: &mut Option<String>,
@@ -426,7 +478,7 @@ async fn dispatch(
         Some(client) => client,
         None => providers::connect(config).await?,
     };
-    let pending = if text.is_some() {
+    let pending = if text.is_some() && remark.is_none() {
         crate::reminders::pending(config).unwrap_or_else(|reason| {
             eprintln!(
                 "{}",
@@ -471,7 +523,14 @@ async fn dispatch(
                     input = format!("{context}Current user request: {input}");
                 }
             }
-            let result = client.respond(&input, events.as_ref()).await;
+            let result = match &remark {
+                Some(remark) => {
+                    client
+                        .respond_with_image(&input, remark.image.as_deref(), events.as_ref())
+                        .await
+                }
+                None => client.respond(&input, events.as_ref()).await,
+            };
             *needs_context = false;
             result.map(|text| {
                 Reply::Text(AgentReply {

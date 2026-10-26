@@ -153,6 +153,7 @@ class SatelliteSession:
         preserve_listening = preserve_listening or (self.continuous_wake and hasattr(self, "pre_roll"))
         self.session_id = None
         self.announcement_id = None
+        self.remark = False
         self.phase = "listening"
         if not preserve_listening:
             self.pre_roll = bytearray()
@@ -202,6 +203,22 @@ class SatelliteSession:
         # Waiting for foreground replies is bounded and remains wake-interruptible.
         self.expires_at = self.clock() + 60
         return [self.message("announcement", **announcement)]
+
+    def start_remark(self, remark):
+        """A remark is an announcement the agent writes about what Orion noticed."""
+        if self.session_id or self.phase != "listening" or self.alarm_active:
+            return []
+        if (not isinstance(remark, dict) or type(remark.get("id")) is not int
+                or not isinstance(remark.get("event"), str) or type(remark.get("demo")) is not bool):
+            return []
+        self.session_id = uuid.uuid4().hex
+        self.announcement_id = remark["id"]
+        self.remark = True
+        self.phase = "processing"
+        self.expires_at = self.clock() + 60
+        detail = remark.get("detail")
+        return [self.message("remark", id=remark["id"], event=remark["event"], demo=remark["demo"],
+                             **({"detail": detail} if isinstance(detail, str) else {}))]
 
     def announcement_ready(self, identity):
         # A cue may finish after wake/alarm reset this session.
@@ -378,6 +395,11 @@ class SatelliteSession:
                 return [interrupted, *self.start_wake(detection)]
             return []
         if self.phase == "playing":
+            if self.remark and detection is not None:
+                # A remark is chat, not an alert: a wake simply takes over.
+                interrupted = self.message("session.interrupted", reason="remark_wake")
+                self.reset(preserve_listening=True)
+                return [interrupted, *self.start_wake(detection)]
             if self.announcement_id is not None and detection is not None:
                 return [self.message("announcement.dismiss", id=self.announcement_id)]
             if self.barge_in and self.verifier_active():
@@ -451,6 +473,9 @@ class SatelliteSession:
             return []
         previous = self.session_id
         self.session_id = uuid.uuid4().hex
+        # A reply to a remark or announcement is an ordinary conversation turn.
+        self.announcement_id = None
+        self.remark = False
         self.phase = "command"
         self.expires_at = now + 120
         self.utterance = bytearray(self.pre_roll[-int(0.7 * 32000):])
@@ -862,7 +887,7 @@ async def serve(args):
                     session.set_alarm(active)
                     if interrupted and outgoing is not None:
                         await deliver([{"type":"session.interrupted", "sessionId":interrupted, "reason":"alarm"}])
-                if session.announcement_id is not None:
+                if session.announcement_id is not None and not session.remark:
                     item = next((a for a in routines.get("alerts", []) if a.get("id") == session.announcement_id), None)
                     if item is not None and item.get("state") != "announcing" and not item.get("dismissal_notice"):
                         identity = session.session_id
@@ -873,6 +898,8 @@ async def serve(args):
                     pending = routines.get("announcements", [])
                     if pending:
                         await deliver(session.start_announcement(pending[0]))
+                    elif result.get("remark"):
+                        await deliver(session.start_remark(result["remark"]))
             except (OSError, ValueError, asyncio.TimeoutError):
                 pass
             await asyncio.sleep(0.2)
@@ -955,10 +982,13 @@ async def serve(args):
                     observed_at = session.observed_at
                     skip_attention = session.barge_in_session
                     if message["type"] == "announcement.start" and session.announcement_id is not None:
-                        session.expires_at = session.clock() + 180
+                        remark = session.remark
+                        session.expires_at = session.clock() + (60 if remark else 180)
                         announcement_id = session.announcement_id
                         try:
-                            opened = await daemon_command(f"voice {identity} announcement", args.daemon_socket)
+                            command = (f"voice {identity} remark {announcement_id}" if remark
+                                       else f"voice {identity} announcement")
+                            opened = await daemon_command(command, args.daemon_socket)
                             if opened.get("ok") is not True:
                                 raise ValueError("Runtime rejected announcement ownership")
                         except (OSError, ValueError, asyncio.TimeoutError) as error:
@@ -968,7 +998,8 @@ async def serve(args):
                                 await deliver([session.message("announcement.failed", id=announcement_id,
                                     reason=str(error) or type(error).__name__)])
                             continue
-                        await asyncio.sleep(0.5)  # notice_warm finishes before speech starts
+                        if not remark:
+                            await asyncio.sleep(0.5)  # notice_warm finishes before speech starts
                         await deliver(session.announcement_ready(identity))
                         continue
                     try:

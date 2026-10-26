@@ -102,6 +102,27 @@ class SatelliteTests(unittest.TestCase):
         self.session.control({'type':'session.finish','sessionId':sid})
         self.assertGreater(self.session.alarm_guard_until, self.now)
 
+    def test_remark_needs_no_alert_a_wake_takes_over_and_a_reply_is_a_normal_turn(self):
+        self.assertEqual(self.session.start_remark({'id': 'x'}), [])
+        messages = self.session.start_remark({'id': 7, 'event': 'new_object', 'detail': 'banana', 'demo': True})
+        sid = self.session.session_id
+        self.assertEqual(messages[0], {'type': 'remark', 'sessionId': sid, 'id': 7,
+                                       'event': 'new_object', 'demo': True, 'detail': 'banana'})
+        self.assertEqual(self.session.start_remark({'id': 8, 'event': 'person_left', 'demo': False}), [])
+        self.session.control({'type': 'session.playing', 'sessionId': sid})
+        self.wake.next = True
+        events = self.session.accept_stereo(frame())
+        self.assertEqual([e['type'] for e in events], ['session.interrupted', 'wake.candidate'])
+        self.assertEqual(events[0]['reason'], 'remark_wake')
+        self.assertFalse(self.session.remark)
+        # A finished remark opens the ordinary conversation window.
+        self.session.reset()
+        self.session.start_remark({'id': 9, 'event': 'person_arrived', 'demo': False})
+        sid = self.session.session_id
+        self.session.control({'type': 'session.playing', 'sessionId': sid})
+        self.session.control({'type': 'session.finish', 'sessionId': sid, 'conversationWindow': True})
+        self.assertEqual(self.session.phase, 'echo_guard')
+
     def test_wake_interrupts_waiting_and_thinking_announcements_and_stale_ready_is_dropped(self):
         for thinking in (False, True):
             with self.subTest(thinking=thinking):

@@ -12,9 +12,11 @@ const controls: Array<[Exclude<BehaviourKey,"move_to_music">, string, string]> =
   ["wake_sleep_acts", "Wake and sleep gestures", "Stretch after waking and settle before resting."],
   ["posture_drift", "Posture changes", "Occasionally change the held posture while idle."],
   ["act_sounds", "Rare gesture sounds", "Add quiet wake, sleep and yawn sounds outside quiet hours."],
+  ["proactive_speech", "Proactive mode", "Sometimes say something about what Orion notices, such as a welcome or a new object. Orion stays quiet during conversations, music and the night, and talks less when it is ignored."],
+  ["demo_mode", "Demo mode", "React and talk much more often, with bigger movements, for showing Orion to people. Each comment sends a camera picture to Orion’s reply service."],
   ["object_glances", "Object glances", "Occasionally direct an idle glance toward an object on the desk."],
-  ["mutual_gaze", "Mutual gaze", "Acknowledge a sustained look with a small, silent response."],
-  ["arrival_notice", "Arrival notice", "Give a silent welcome after the room has been empty for ten minutes."],
+  ["mutual_gaze", "Mutual gaze", "Acknowledge a sustained look with a small response."],
+  ["arrival_notice", "Arrival notice", "Give a welcome after the room has been empty for ten minutes, and watch people leave."],
   ["new_object_peek", "Object peeks", "Take one curious look at a newly noticed object or pet."],
   ["presence_defers_rest", "Stay awake with company", "Delay automatic rest while a face or hands remain in view."],
 ];

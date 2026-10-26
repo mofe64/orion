@@ -494,11 +494,11 @@ export function agentLists(connection: GatewayConnection, list: ListName, change
   return request(connection, "/api/v2/voice/request", { method: "POST", body: JSON.stringify({ method: "lists", params: { list, change: change ?? null } }) });
 }
 
-export const behaviourKeys = ["object_glances", "mutual_gaze", "arrival_notice", "new_object_peek", "presence_defers_rest", "mind_idle_rhythm", "listen_lean_in", "thinking_beats", "wake_sleep_acts", "posture_drift", "act_sounds", "move_to_music"] as const;
+export const behaviourKeys = ["object_glances", "mutual_gaze", "arrival_notice", "new_object_peek", "presence_defers_rest", "mind_idle_rhythm", "listen_lean_in", "thinking_beats", "wake_sleep_acts", "posture_drift", "act_sounds", "move_to_music", "proactive_speech", "demo_mode"] as const;
 export type BehaviourKey = typeof behaviourKeys[number];
 export type DanceMode = "off" | "sometimes" | "always";
 export type BehaviourSettings = Record<Exclude<BehaviourKey,"move_to_music">, boolean> & {move_to_music: DanceMode};
-export const behaviourDefaults: BehaviourSettings = { object_glances:false, mutual_gaze:false, arrival_notice:false, new_object_peek:false, presence_defers_rest:false, mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, move_to_music:"sometimes" };
+export const behaviourDefaults: BehaviourSettings = { object_glances:false, mutual_gaze:false, arrival_notice:false, new_object_peek:false, presence_defers_rest:false, mind_idle_rhythm:true, listen_lean_in:true, thinking_beats:true, wake_sleep_acts:true, posture_drift:false, act_sounds:true, move_to_music:"sometimes", proactive_speech:false, demo_mode:false };
 export interface BehaviourResponse { behaviours: BehaviourSettings }
 export const getBehaviours = (connection: GatewayConnection, signal?: AbortSignal) =>
   request<BehaviourResponse>(connection, "/api/v2/behaviours", { signal });

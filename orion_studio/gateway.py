@@ -466,7 +466,10 @@ class OrionGateway:
         return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
 
     BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest',
-                  'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds', 'move_to_music')
+                  'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds', 'move_to_music',
+                  'proactive_speech', 'demo_mode')
+    # Remarks speak about these reactions, so turning a mode on enables them.
+    REMARK_REACTIONS = ('arrival_notice', 'mutual_gaze', 'new_object_peek')
     BEHAVIOUR_DEFAULTS = dict.fromkeys(BEHAVIOURS, False) | dict.fromkeys(
         ('mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'act_sounds'), True) | {'move_to_music':'sometimes'}
 
@@ -497,6 +500,10 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_behaviour_setting', 'Choose a valid behaviour setting.')
         if self.hardware != 'v2' and set(payload) != {'move_to_music'}:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
+        if any(payload.get(key) is True for key in ('proactive_speech', 'demo_mode')):
+            payload = dict.fromkeys(self.REMARK_REACTIONS, True) | payload
+            if self.tracking_mode() in ('off', 'hands'):
+                self._write_tracking({'tracking_mode': 'idle'})
         with self.behaviours_lock:
             saved = self._behaviour_values()
             saved.update(payload)
@@ -538,13 +545,40 @@ class OrionGateway:
         if not isinstance(payload, dict) or payload.get('tracking_mode') not in ('off', 'idle', 'faces', 'hands'):
             raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_tracking_mode',
                 'tracking_mode must be off, idle, faces or hands.')
+        self._write_tracking({'tracking_mode': payload['tracking_mode']})
+        return self.get_tracking_mode()
+
+    def follow(self, mode):
+        """Voice follow: hands or faces, or resume the mode used before following."""
+        if self.hardware != 'v2':
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_unavailable', 'This Orion has no camera.')
+        if mode not in ('hands', 'faces', 'resume'):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_tracking_mode', 'Choose hand or face.')
+        if not self.camera_is_enabled():
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'camera_off', 'The camera is turned off in Studio.')
+        current = self.tracking_mode()
+        try:
+            resume = json.loads(self.tracking_preference_file.read_text()).get('resume_mode')
+        except (OSError, ValueError, AttributeError):
+            resume = None
+        if resume not in ('off', 'idle'):
+            resume = None
+        if mode == 'resume':
+            self._write_tracking({'tracking_mode': resume or ('idle' if current in ('hands', 'faces') else current)})
+        else:
+            if current not in ('hands', 'faces'):
+                resume = current
+            self._write_tracking({'tracking_mode': mode, **({'resume_mode': resume} if resume else {})})
+        return self.get_tracking_mode()
+
+    def _write_tracking(self, value):
         path = self.tracking_preference_file
         temporary = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.tracking-', delete=False) as output:
                 temporary = Path(output.name)
-                json.dump({'tracking_mode': payload['tracking_mode']}, output)
+                json.dump(value, output)
                 output.flush()
                 os.fsync(output.fileno())
             temporary.replace(path)
@@ -554,7 +588,6 @@ class OrionGateway:
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
-        return self.get_tracking_mode()
 
     def open_camera(self, path):
         if self.hardware != "v2":
@@ -893,6 +926,20 @@ class OrionGateway:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music_movement', 'Choose Off, Sometimes or Always.')
             saved=self.set_behaviours({'move_to_music':mode})
             response={'ok':True,'mode':saved['behaviours']['move_to_music']}
+        elif operation == 'tracking':
+            if set(payload) != {'operation', 'mode'}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_tracking_mode', 'Choose hand or face.')
+            response = {'ok': True, **self.follow(payload['mode'])}
+        elif operation == 'character_behaviours':
+            changes = {key: value for key, value in payload.items() if key != 'operation'}
+            if len(changes) != 1 or not set(changes) <= {'proactive_speech', 'demo_mode'}:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_behaviour_setting', 'Choose proactive or demo mode.')
+            response = {'ok': True, **self.set_behaviours(changes)}
+        elif operation == 'remarks':
+            minutes = payload.get('quiet_minutes')
+            if set(payload) != {'operation', 'quiet_minutes'} or type(minutes) is not int or not 0 <= minutes <= 480:
+                raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_remarks', 'Choose 0 to 480 quiet minutes.')
+            response = self._checked(f'character remarks quiet {minutes * 60}')
         elif operation == 'music':
             if set(payload) != {'operation','request'}:
                 raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_music', 'Choose a music action.')
