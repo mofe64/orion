@@ -167,12 +167,29 @@ class GatewayContractTests(unittest.TestCase):
             self.assertEqual(OrionGateway(self.client,hardware='v1',camera_preference_file=camera).get_personality()['quirks'], quirks)
             saved=gateway.set_personality({'quirks':{'curiosity':'normal'}})['quirks']
             self.assertEqual(saved, quirks|{'curiosity':'normal'})
-            self.assertEqual(json.loads(camera.with_name('personality.json').read_text()), {'quirks':saved})
+            self.assertEqual(json.loads(camera.with_name('personality.json').read_text())['quirks'], saved)
             camera.with_name('personality.json').write_text('{"quirks":{"curiosity":"normal","chattiness":"loud"}}')
             repaired=gateway.get_personality()['quirks']
             self.assertEqual(repaired['curiosity'], 'normal'); self.assertIn(repaired['chattiness'], ('reserved','chatty'))
             for bad in ({}, {'quirks':{}}, {'quirks':{'curiosity':'loud'}}, {'quirks':{'mood':'shy'}}, {'quirks':{'curiosity':'shy'},'x':1}):
                 with self.assertRaises(GatewayError): gateway.set_personality(bad)
+
+    def test_owner_rules_save_beside_quirks_within_their_ranges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            camera=Path(directory)/'camera.json'
+            gateway=OrionGateway(self.client,hardware='v2',camera_preference_file=camera)
+            rules=gateway.get_personality()['rules']
+            self.assertEqual((rules['quiet_from'], rules['per_hour'], rules['looks']), (22*60, 4, True))
+            quirks=gateway.get_personality()['quirks']
+            saved=gateway.set_personality({'rules':{'quiet_from':23*60,'sleep_after_goodnight_minutes':None,'looks':False}})
+            self.assertEqual(saved['quirks'], quirks)
+            self.assertEqual((saved['rules']['quiet_from'], saved['rules']['sleep_after_goodnight_minutes'], saved['rules']['looks']), (23*60, None, False))
+            self.assertEqual(json.loads(camera.with_name('personality.json').read_text())['rules'], saved['rules'])
+            for bad in ({'per_hour':0}, {'per_hour':2.5}, {'quiet_from':24*60}, {'goodnight_from':12*60}, {'looks':1}, {'spacing_minutes':float('nan')}, {'mood':1}, {'sleep_after_goodnight_minutes':'never'}):
+                with self.assertRaises(GatewayError): gateway.set_personality({'rules':bad})
+            camera.with_name('personality.json').write_text(json.dumps({'quirks':quirks,'rules':{'per_hour':99,'break_after_minutes':45}}))
+            repaired=gateway.get_personality()['rules']
+            self.assertEqual((repaired['per_hour'], repaired['break_after_minutes']), (4, 45))
 
     def test_dance_modes_migrate_booleans_and_persist_on_both_lamps(self):
         for hardware in ('v1','v2'):

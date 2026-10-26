@@ -358,7 +358,7 @@ impl CharacterCoordinator {
             Liveliness::from_settings(state.settings.proactive_speech, state.settings.demo_mode);
         let change = state.visits.observe(
             !value.faces.is_empty(),
-            liveliness.visit_away_seconds(),
+            liveliness.visit_away_seconds(&self.acts.settings.rules),
             now,
         );
         if let (Some(change), Some(log)) = (change, &self.behaviour_log) {

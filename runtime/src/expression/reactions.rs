@@ -328,7 +328,7 @@ impl CharacterCoordinator {
             .surroundings
             .situation
             .liveliness
-            .arrival_empty_seconds();
+            .arrival_empty_seconds(&self.acts.settings.rules);
         let Some(face) = self.surroundings.arrival.observe(faces, now, empty) else {
             return Ok(());
         };
@@ -407,7 +407,10 @@ impl CharacterCoordinator {
             .ok_or_else(|| Error::InvalidState("Farewell needs an anchor".into()))?;
         let definition = core.prepare_farewell_motion(&anchor, face.azimuth, face.elevation)?;
         let situation = &self.surroundings.situation;
-        let goodnight = situation.liveliness.speaks() && super::lively::late(situation.hour);
+        let rules = &self.acts.settings.rules;
+        let goodnight =
+            situation.liveliness.speaks() && rules.goodnight && rules.late_at(situation.hour);
+        let rest_after = rules.sleep_after_goodnight_minutes;
         let performed = self.perform(
             Act {
                 kind: ReactionKind::Farewell,
@@ -439,7 +442,7 @@ impl CharacterCoordinator {
         if performed && goodnight {
             // Late at night, Orion goes to sleep soon after people leave.
             self.surroundings.lively.goodnight_rest =
-                Some(now + super::lively::GOODNIGHT_REST_SECONDS);
+                rest_after.map(|minutes| now + minutes * 60.0);
         }
         Ok(())
     }

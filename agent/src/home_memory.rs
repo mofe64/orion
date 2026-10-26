@@ -228,8 +228,22 @@ pub(crate) fn remember(config: &AgentConfig, text: &str, on: &str) -> Result<Fol
 }
 
 /// Follow-ups due today, counted as offered to this conversation.
+/// The owner can turn off "ask about things you mentioned" in Studio.
+pub(crate) fn follow_ups_on() -> bool {
+    std::env::var_os("ORION_PERSONALITY_PATH")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join(".config/orion/personality.json"))
+        })
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value["rules"]["follow_ups"].as_bool())
+        .unwrap_or(true)
+}
+
 pub(crate) fn offer_due(config: &AgentConfig) -> Result<Vec<FollowUp>, String> {
-    if config.memory_path.is_none() {
+    if config.memory_path.is_none() || !follow_ups_on() {
         return Ok(vec![]);
     }
     let today = Local::now().date_naive();

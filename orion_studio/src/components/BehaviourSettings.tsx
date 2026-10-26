@@ -8,6 +8,7 @@ import { DanceSetting } from "./DanceSetting";
 import { SettingToggle } from "./Settings";
 import { CommentSetting } from "./CommentSetting";
 import { QuirkSetting } from "./QuirkSetting";
+import { LivelyRules } from "./LivelyRules";
 
 const controls: Array<[Exclude<BehaviourKey,"move_to_music"|"proactive_speech"|"demo_mode">, string, string]> = [
   ["mind_idle_rhythm", "Follow shared energy", "Adjust idle timing, movement and background light with Orion’s energy."],
@@ -53,6 +54,9 @@ export function CharacterSettings({ connection, supported, active = true, behavi
       </div>
       <p className="settings-help">Every Orion gets its own quirks when it is first set up. Change them here if you like.</p>
     </div>}
+    {supported && quirkState.values && (quirkState.rules
+      ? <LivelyRules rules={quirkState.rules} pending={quirkState.pending} onChange={rules => void quirks?.chooseRules(rules)} />
+      : <p className="settings-help">Update Orion to fine-tune how Lively behaves.</p>)}
     {(!state.values || !quirkState.values) && !state.error && !quirkState.error && <p role="status">Loading Orion’s character…</p>}
     {quirkState.notice && <p role="status">{quirkState.notice}</p>}<FailureNotice value={quirkState.error} />
   </section>;

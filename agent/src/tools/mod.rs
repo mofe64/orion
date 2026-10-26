@@ -152,6 +152,10 @@ pub(crate) async fn execute(
         "remember_to_ask" => {
             let args: RememberToAsk =
                 serde_json::from_value(arguments).map_err(|e| e.to_string())?;
+            if !crate::home_memory::follow_ups_on() {
+                // The owner turned this off; there is nothing to tell the user.
+                return Ok(json!({"saved": false}));
+            }
             crate::home_memory::remember(config, &args.text, &args.on)
                 .and_then(|item| serde_json::to_value(item).map_err(|e| e.to_string()))
         }

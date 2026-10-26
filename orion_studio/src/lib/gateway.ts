@@ -508,11 +508,19 @@ export const setBehaviours = (connection: GatewayConnection, changes: Partial<Be
 export type Curiosity = "shy" | "normal" | "nosy";
 export type Chattiness = "reserved" | "normal" | "chatty";
 export interface Quirks { curiosity: Curiosity; chattiness: Chattiness }
-export interface PersonalityResponse { quirks: Quirks }
+/** Lively's everyday rules. Times of day are minutes after midnight. */
+export interface LivelyRules {
+  quiet_from: number; quiet_until: number; per_hour: number; spacing_minutes: number; after_talk_minutes: number;
+  welcome_after_minutes: number; break_after_minutes: number; goodnight_from: number; sleep_after_goodnight_minutes: number | null;
+  wave_back: boolean; light_care: boolean; break_nudge: boolean; goodnight: boolean; follow_ups: boolean; new_things: boolean; looks: boolean;
+}
+/** An Orion before 0.1.17 has quirks but no rules. */
+export interface PersonalityResponse { quirks: Quirks; rules?: LivelyRules }
+export interface PersonalityChange { quirks?: Partial<Quirks>; rules?: Partial<LivelyRules> }
 export const getPersonality = (connection: GatewayConnection, signal?: AbortSignal) =>
   request<PersonalityResponse>(connection, "/api/v2/personality", { signal });
-export const setPersonality = (connection: GatewayConnection, quirks: Partial<Quirks>, signal?: AbortSignal) =>
-  request<PersonalityResponse>(connection, "/api/v2/personality", { method: "POST", body: JSON.stringify({ quirks }), signal });
+export const setPersonality = (connection: GatewayConnection, change: PersonalityChange, signal?: AbortSignal) =>
+  request<PersonalityResponse>(connection, "/api/v2/personality", { method: "POST", body: JSON.stringify(change), signal });
 
 export function getSystemMetrics(connection: GatewayConnection, signal?: AbortSignal): Promise<import("./systemMetrics").SystemMetrics> {
   return request(connection, "/api/v2/system/metrics", { signal });

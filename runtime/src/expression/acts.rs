@@ -44,6 +44,7 @@ impl CharacterCoordinator {
             .budget
             .set_curiosity(settings.quirks.curiosity);
         self.remarks.set_quirks(settings.quirks);
+        self.remarks.set_rules(settings.rules);
         self.acts.settings = settings;
     }
     pub(crate) fn act_sounds_enabled(&self) -> bool {

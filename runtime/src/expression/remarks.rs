@@ -4,7 +4,7 @@
 //! moving: proactive mode spaces remarks far apart, backs off when people
 //! ignore them, and never interrupts conversation, music, alerts or quiet hours.
 //! Demo mode keeps the same events with short spacing for showing Orion.
-use crate::expression::settings::{Chattiness, Quirks};
+use crate::expression::settings::{Chattiness, Quirks, Rules};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -68,10 +68,7 @@ const ORDINARY_OBJECTS: [&str; 14] = [
     "potted plant",
     "book",
 ];
-const SPACING_SECONDS: f64 = 600.0;
 const DEMO_SPACING_SECONDS: f64 = 30.0;
-const HOURLY_LIMIT: usize = 4;
-const AFTER_CONVERSATION_SECONDS: f64 = 300.0;
 const DEMO_AFTER_CONVERSATION_SECONDS: f64 = 20.0;
 /// An object must stay this long before an everyday remark about it.
 const OBJECT_DWELL_SECONDS: f64 = 12.0;
@@ -148,6 +145,7 @@ pub struct RemarkPolicy {
     started: bool,
     context: RemarkContext,
     quirks: Quirks,
+    rules: Rules,
 }
 
 impl RemarkPolicy {
@@ -156,11 +154,28 @@ impl RemarkPolicy {
     pub fn set_quirks(&mut self, quirks: Quirks) {
         self.quirks = quirks;
     }
+    /// The owner's rules for a Lively Orion.
+    pub fn set_rules(&mut self, rules: Rules) {
+        self.rules = rules;
+    }
     fn hourly_limit(&self) -> usize {
+        let base = self.rules.per_hour as usize;
         match self.quirks.chattiness {
-            Chattiness::Reserved => HOURLY_LIMIT / 2,
-            Chattiness::Normal => HOURLY_LIMIT,
-            Chattiness::Chatty => HOURLY_LIMIT + 2,
+            Chattiness::Reserved => (base / 2).max(1),
+            Chattiness::Normal => base,
+            Chattiness::Chatty => base + base.div_ceil(2),
+        }
+    }
+    /// The owner switched this kind of remark off.
+    fn switched_off(&self, event: RemarkEvent) -> bool {
+        let rules = &self.rules;
+        match event {
+            RemarkEvent::PersonLooking => !rules.looks,
+            RemarkEvent::NewObject => !rules.new_things,
+            RemarkEvent::LightCare => !rules.light_care,
+            RemarkEvent::BreakNudge => !rules.break_nudge,
+            RemarkEvent::Goodnight => !rules.goodnight,
+            RemarkEvent::PersonArrived | RemarkEvent::HandRaised | RemarkEvent::PersonLeft => false,
         }
     }
     pub fn set_context(&mut self, context: RemarkContext, now: f64) {
@@ -230,10 +245,11 @@ impl RemarkPolicy {
         if self.context.demo {
             DEMO_SPACING_SECONDS
         } else {
+            let base = self.rules.spacing_minutes * 60.0;
             let spacing = match self.quirks.chattiness {
-                Chattiness::Reserved => 2.0 * SPACING_SECONDS,
-                Chattiness::Normal => SPACING_SECONDS,
-                Chattiness::Chatty => SPACING_SECONDS / 2.0,
+                Chattiness::Reserved => 2.0 * base,
+                Chattiness::Normal => base,
+                Chattiness::Chatty => base / 2.0,
             };
             spacing * 2_f64.powi(self.ignored as i32)
         }
@@ -315,13 +331,15 @@ impl RemarkPolicy {
         let gap = if demo {
             DEMO_AFTER_CONVERSATION_SECONDS
         } else {
-            AFTER_CONVERSATION_SECONDS
+            self.rules.after_talk_minutes * 60.0
         };
         let hourly = self.spoken.iter().filter(|at| now - **at < 3600.0).count();
         if !context.enabled() {
             Some("quiet_mode")
         } else if context.busy {
             Some("busy")
+        } else if self.switched_off(event) {
+            Some("switched_off")
         } else if self.pending.is_some() {
             Some("pending")
         } else if now < self.quiet_until {
@@ -338,7 +356,7 @@ impl RemarkPolicy {
             Some("once_per_visit")
         } else if !demo && context.focused && !event.care() {
             Some("focus")
-        } else if !demo && !(7.0..22.0).contains(&context.hour) && event != RemarkEvent::Goodnight {
+        } else if !demo && self.rules.quiet_at(context.hour) && event != RemarkEvent::Goodnight {
             Some("night")
         } else if event != RemarkEvent::Goodnight
             && self.last_conversation.is_some_and(|at| now - at < gap)
@@ -565,6 +583,31 @@ mod tests {
     }
 
     #[test]
+    fn the_owners_rules_set_quiet_hours_and_switch_remarks_off() {
+        let mut policy = policy(false);
+        policy.set_rules(Rules {
+            quiet_from: 20 * 60,
+            quiet_until: 9 * 60,
+            looks: false,
+            ..Rules::default()
+        });
+        let mut context = policy.context;
+        context.hour = 8.5;
+        policy.set_context(context, 1000.0);
+        assert_eq!(
+            policy.refusal(RemarkEvent::PersonArrived, 1000.0),
+            Some("night")
+        );
+        context.hour = 12.0;
+        policy.set_context(context, 1000.0);
+        assert_eq!(
+            policy.refusal(RemarkEvent::PersonLooking, 1000.0),
+            Some("switched_off")
+        );
+        assert_eq!(policy.refusal(RemarkEvent::PersonArrived, 1000.0), None);
+    }
+
+    #[test]
     fn demo_speaks_often_about_everything_and_drops_stale_requests() {
         let mut policy = policy(true);
         assert!(policy.offer(
@@ -594,7 +637,7 @@ mod tests {
     fn orion_speaks_about_a_person_once_per_visit() {
         use crate::expression::situation::{Liveliness, VisitTracker};
         for demo in [false, true] {
-            let away = Liveliness::from_settings(true, demo).visit_away_seconds();
+            let away = Liveliness::from_settings(true, demo).visit_away_seconds(&Rules::default());
             let mut policy = policy(demo);
             let mut visits = VisitTracker::default();
             let mut context = policy.context;

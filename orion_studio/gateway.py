@@ -531,41 +531,81 @@ class OrionGateway:
     # at random from the outer choices so that no two lamps feel the same.
     QUIRKS = {'curiosity': ('shy', 'normal', 'nosy'), 'chattiness': ('reserved', 'normal', 'chatty')}
 
+    # Lively's everyday rules, as the owner sets them in Studio. Times of day
+    # are minutes after midnight. oriond reads the same file.
+    RULES = {
+        'quiet_from': ('time', 22 * 60), 'quiet_until': ('time', 7 * 60),
+        'per_hour': ('count', 4, 1, 12),
+        'spacing_minutes': ('minutes', 10, 1, 120), 'after_talk_minutes': ('minutes', 5, 0, 60),
+        'welcome_after_minutes': ('minutes', 10, 2, 240), 'break_after_minutes': ('minutes', 90, 20, 240),
+        'goodnight_from': ('time', 21 * 60, 18 * 60, 24 * 60 - 1),
+        'sleep_after_goodnight_minutes': ('minutes_or_never', 2, 1, 60),
+        **{name: ('switch', True) for name in ('wave_back', 'light_care', 'break_nudge', 'goodnight', 'follow_ups', 'new_things', 'looks')},
+    }
+
+    @classmethod
+    def _rule_valid(cls, name, value):
+        kind, *bounds = cls.RULES[name]
+        if kind == 'switch':
+            return isinstance(value, bool)
+        if kind == 'minutes_or_never' and value is None:
+            return True
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return False
+        if kind in ('time', 'count') and value != int(value):
+            return False
+        low, high = (bounds[1], bounds[2]) if len(bounds) == 3 else (0, 24 * 60 - 1)
+        return low <= value <= high
+
     def get_personality(self):
         with self.behaviours_lock:
-            return {'api_version': API_VERSION, 'quirks': self._quirks()}
+            return {'api_version': API_VERSION, 'quirks': self._quirks(), 'rules': self._rules()}
+
+    def _personality(self):
+        try:
+            value = json.loads(self.personality_file.read_text())
+        except (OSError, ValueError):
+            value = None
+        return value if isinstance(value, dict) else {}
+
+    def _rules(self):
+        saved = self._personality().get('rules')
+        saved = saved if isinstance(saved, dict) else {}
+        return {name: saved[name] if name in saved and self._rule_valid(name, saved[name]) else spec[1]
+                for name, spec in self.RULES.items()}
 
     def _quirks(self):
-        try:
-            value = json.loads(self.personality_file.read_text()).get('quirks')
-        except (OSError, ValueError, AttributeError):
-            value = None
+        value = self._personality().get('quirks')
         value = value if isinstance(value, dict) else {}
         quirks = {key: value[key] for key, choices in self.QUIRKS.items() if value.get(key) in choices}
         if len(quirks) < len(self.QUIRKS):
             chooser = secrets.SystemRandom()
             for key, choices in self.QUIRKS.items():
                 quirks.setdefault(key, chooser.choice((choices[0], choices[-1])))
-            self._save_personality(quirks)
+            self._save_personality(quirks, self._rules())
         return quirks
 
     def set_personality(self, payload):
-        quirks = payload.get('quirks') if isinstance(payload, dict) else None
-        if (not isinstance(quirks, dict) or not quirks or set(payload) != {'quirks'}
+        quirks = payload.get('quirks', {}) if isinstance(payload, dict) else None
+        rules = payload.get('rules', {}) if isinstance(payload, dict) else None
+        if (not isinstance(quirks, dict) or not isinstance(rules, dict) or not (quirks or rules)
+                or not set(payload) <= {'quirks', 'rules'}
                 or any(key not in self.QUIRKS or value not in self.QUIRKS[key] for key, value in quirks.items())):
             raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_personality', 'Choose a valid personality.')
+        if any(name not in self.RULES or not self._rule_valid(name, value) for name, value in rules.items()):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_rules', 'Choose a value within the range shown.')
         with self.behaviours_lock:
-            saved = self._quirks() | quirks
-            self._save_personality(saved)
-            return {'api_version': API_VERSION, 'quirks': saved}
+            saved, saved_rules = self._quirks() | quirks, self._rules() | rules
+            self._save_personality(saved, saved_rules)
+            return {'api_version': API_VERSION, 'quirks': saved, 'rules': saved_rules}
 
-    def _save_personality(self, quirks):
+    def _save_personality(self, quirks, rules):
         path, temporary = self.personality_file, None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.personality-', delete=False) as output:
                 temporary = Path(output.name)
-                json.dump({'quirks': quirks}, output)
+                json.dump({'quirks': quirks, 'rules': rules}, output)
                 output.flush()
                 os.fsync(output.fileno())
             temporary.replace(path)

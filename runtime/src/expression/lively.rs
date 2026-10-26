@@ -11,8 +11,7 @@ use super::surroundings::SeenFace;
 use super::*;
 use crate::expression::remarks::RemarkEvent;
 
-/// A person must be at the desk this long before Orion suggests a break.
-const BREAK_SECONDS: f64 = 90.0 * 60.0;
+/// In Demo, a break is suggested after this long; Lively uses the owner's rule.
 const DEMO_BREAK_SECONDS: f64 = 60.0;
 /// Nobody in view this long ends a stretch at the desk.
 const DESK_GAP_SECONDS: f64 = 300.0;
@@ -25,10 +24,6 @@ const DARK_SECONDS: f64 = 60.0;
 const DEMO_DARK_SECONDS: f64 = 5.0;
 /// A hand must stay raised this long before Orion waves back.
 const WAVE_RAISE_SECONDS: f64 = 0.6;
-/// Goodnight is said to people who leave from this hour until 05:00.
-const GOODNIGHT_HOUR: f64 = 21.0;
-/// After a goodnight, Orion rests when nobody comes back for this long.
-pub(super) const GOODNIGHT_REST_SECONDS: f64 = 120.0;
 
 #[derive(Debug, Default)]
 pub(super) struct LivelyState {
@@ -40,11 +35,6 @@ pub(super) struct LivelyState {
     waved: bool,
     /// When Orion rests after a goodnight, unless someone comes back.
     pub(super) goodnight_rest: Option<f64>,
-}
-
-/// Late evening: a goodbye is a goodnight.
-pub(super) fn late(hour: f64) -> bool {
-    !(5.0..GOODNIGHT_HOUR).contains(&hour)
 }
 
 impl CharacterCoordinator {
@@ -83,6 +73,7 @@ impl CharacterCoordinator {
             "situation": self.surroundings.situation,
             "curiosity": self.surroundings.budget.status(now),
             "quirks": self.acts.settings.quirks,
+            "rules": self.acts.settings.rules,
             "lively": {
                 "desk_seconds": since(lively.desk_since),
                 "dark_seconds": since(lively.dark_since),
@@ -134,7 +125,9 @@ impl CharacterCoordinator {
             return Ok(());
         }
         let lively = &self.surroundings.lively;
+        let rules = self.acts.settings.rules;
         if !demo
+            && rules.wave_back
             && !lively.waved
             && lively
                 .raised_since
@@ -148,7 +141,7 @@ impl CharacterCoordinator {
                 >= if demo {
                     DEMO_BREAK_SECONDS
                 } else {
-                    BREAK_SECONDS
+                    rules.break_after_minutes * 60.0
                 }
         });
         let dark_due = lively.dark_since.is_some_and(|since| {
@@ -274,13 +267,6 @@ mod tests {
     use super::*;
     use crate::expression::situation::{Conditions, LampView};
     use std::sync::atomic::{AtomicU64, Ordering};
-
-    #[test]
-    fn goodnight_starts_at_nine_and_ends_at_five() {
-        assert!(!late(20.9));
-        assert!(late(21.0) && late(23.5) && late(0.5) && late(4.9));
-        assert!(!late(5.0) && !late(12.0));
-    }
 
     struct Desk {
         core: RuntimeCore<crate::expression::gaze::tests::FollowingDriver>,
@@ -428,7 +414,7 @@ mod tests {
         desk.run(5.0, 3.0, Some(person.clone()));
         assert!(desk.character.ready_remark(8.0).is_none());
         // Ninety minutes later the person is still working.
-        desk.character.surroundings.lively.desk_since = Some(8.0 - BREAK_SECONDS);
+        desk.character.surroundings.lively.desk_since = Some(8.0 - 90.0 * 60.0);
         desk.run(8.0, 1.0, Some(person));
         assert_eq!(desk.clip(), Some("wake_stretch"));
         assert_eq!(

@@ -31,12 +31,16 @@ impl Liveliness {
         self != Self::Quiet
     }
     /// Nobody in view for this long ends a visit.
-    pub fn visit_away_seconds(self) -> f64 {
-        if self.demo() { 30.0 } else { 600.0 }
+    pub fn visit_away_seconds(self, rules: &super::settings::Rules) -> f64 {
+        if self.demo() {
+            30.0
+        } else {
+            rules.welcome_after_minutes * 60.0
+        }
     }
     /// An arrival is noticed only after the room was empty for this long.
-    pub fn arrival_empty_seconds(self) -> f64 {
-        if self.demo() { 30.0 } else { 600.0 }
+    pub fn arrival_empty_seconds(self, rules: &super::settings::Rules) -> f64 {
+        self.visit_away_seconds(rules)
     }
     /// A farewell is shown only after a person stayed this long.
     pub fn farewell_stay_seconds(self) -> f64 {
