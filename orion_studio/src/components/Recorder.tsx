@@ -4,6 +4,7 @@ import type { GatewayConnection } from "../lib/gateway";
 import { getRecorder, jointNames, median, recorderRanges, remarkName, saveSupportBundle, type Initiative, type RecorderRow, type RecorderSnapshot, type ReplySpeed } from "../lib/recorder";
 import { skipReasons } from "../lib/behaviourStory";
 import { FailureNotice } from "./FailureNotice";
+import "./System.css";
 import "./Recorder.css";
 
 /** Categorical slots 1-5, stepped for Studio's dark surface and validated as a set. */
@@ -83,7 +84,7 @@ export function RecorderPanel({ connection }: { connection: GatewayConnection | 
     <button className="quiet-button" disabled={!connection || saving} onClick={() => void bundle()}><Download size={16}/>{saving ? "Saving…" : "Save support file"}</button></header>
     <div className="recorder-ranges" role="group" aria-label="Time range">{recorderRanges.map(([value, label]) =>
       <button key={value} className="quiet-button" aria-pressed={hours === value} onClick={() => setHours(value)}>{label}</button>)}</div>
-    {error && <FailureNotice value={error} />}
+    {error && <p role="alert" className="settings-error">{error}</p>}
     <h3>Problems</h3>
     {snapshot && !snapshot.incidents.length && <p className="settings-help">No problems in this time.</p>}
     {!!snapshot?.incidents.length && <div className="system-table"><table><thead><tr><th>Time</th><th>What happened</th><th>Details</th></tr></thead><tbody>
@@ -109,6 +110,21 @@ export function RecorderPanel({ connection }: { connection: GatewayConnection | 
 const minutes = (value: number | null | undefined) => value == null ? "—" : value < 120 ? `${Math.round(value)} s` : `${Math.round(value / 60)} min`;
 const refusals: Record<string, string> = { ...skipReasons, quiet_mode: "Orion is set to Quiet.", no_detail: "Nothing to say about it." };
 
+const clockTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+/** The owner's Lively rules in plain words. */
+export function rulesInWords(rules: import("../lib/gateway").LivelyRules): string[] {
+  const off = ([["wave_back", "waving back"], ["light_care", "offering light"], ["break_nudge", "break reminders"], ["goodnight", "goodnight"],
+    ["follow_ups", "asking about things you mentioned"], ["new_things", "talking about new things"], ["looks", "talking when you look at it"]] as const)
+    .filter(([key]) => !rules[key]).map(([, name]) => name);
+  return [
+    rules.quiet_from === rules.quiet_until ? "No quiet hours" : `Quiet from ${clockTime(rules.quiet_from)} to ${clockTime(rules.quiet_until)}`,
+    `At most ${rules.per_hour} remarks an hour, ${rules.spacing_minutes} min apart, none for ${rules.after_talk_minutes} min after a conversation`,
+    `Welcome after ${rules.welcome_after_minutes} min with nobody around; break after ${rules.break_after_minutes} min at the desk`,
+    `Goodnight from ${clockTime(rules.goodnight_from)}, ${rules.sleep_after_goodnight_minutes == null ? "then stays awake" : `then sleeps after ${rules.sleep_after_goodnight_minutes} min`}`,
+    off.length ? `Turned off: ${off.join(", ")}` : "Every Lively habit is on",
+  ];
+}
+
 export function CharacterPanel({ initiative, ignored, quiet }: { initiative?: Initiative | null; ignored?: number; quiet?: number }) {
   if (!initiative) return <section className="settings-card"><header><Sparkles size={20}/><div><h2>Character decisions</h2></div></header><p>Character decisions are unavailable. Update Orion to see them.</p></section>;
   const { situation, curiosity, lively, quirks } = initiative;
@@ -129,6 +145,7 @@ export function CharacterPanel({ initiative, ignored, quiet }: { initiative?: In
   ];
   return <section className="settings-card"><header><Sparkles size={20}/><div><h2>Character decisions</h2><p>What Orion sees now, and what it would say if something happened.</p></div></header>
     <dl className="debug-values">{facts.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>
+    {initiative.rules && <><h3>Lively rules</h3><ul className="debug-rules">{rulesInWords(initiative.rules).map(line => <li key={line}>{line}</li>)}</ul></>}
     <h3>Remarks right now</h3>
     <dl className="debug-values">{Object.entries(initiative.remark_refusals).map(([event, reason]) => <div key={event}><dt>{remarkName(event)}</dt>
       <dd>{reason ? refusals[reason] ?? reason : "Would speak"}</dd></div>)}</dl>

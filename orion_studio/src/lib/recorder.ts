@@ -17,6 +17,8 @@ export interface Initiative {
   quirks: { curiosity: string; chattiness: string };
   lively: { desk_seconds: number | null; dark_seconds: number | null; goodnight_rest_seconds: number | null };
   remark_refusals: Record<string, string | null>;
+  /** The owner's Lively rules; missing before 0.1.17. */
+  rules?: import("./gateway").LivelyRules;
 }
 
 export const recorderRanges = [[1, "Last hour"], [24, "Last day"], [168, "Last 7 days"]] as const;

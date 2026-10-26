@@ -55,7 +55,7 @@ export const skipReasons: Record<string, string> = {
   habituation: "It looked at this a short while ago.",
   focus: "You looked busy, so it left you alone.",
   once_per_visit: "It had already talked with you this visit.",
-  night: "It stays quiet at night.",
+  night: "It stays quiet during quiet hours.",
   after_conversation: "You talked with it a few minutes ago.",
   ignored: "Its last remarks got no reply, so it waits longer.",
   cooldown: "It talked about this kind of thing recently.",
@@ -65,6 +65,7 @@ export const skipReasons: Record<string, string> = {
   asked_quiet: "You asked it to be quiet for a while.",
   pending: "It was about to say something else.",
   demo_only: "This happens only in Demo.",
+  switched_off: "It is turned off in Settings.",
 };
 const restTitles: Record<string, string> = {
   "sleep:started": "Started going to sleep", "sleep:completed": "Fell asleep", "sleep:failed": "Couldn’t go to sleep",
@@ -175,7 +176,7 @@ export function behaviourStory(events: BehaviourEvent[], filter: StoryFilter = "
     const row = storyRow(event);
     if (!row || (filter !== "all" && row.kind !== filter)) return;
     // The words follow the remark they belong to: show them on one row.
-    const spoken = event.behaviour === "remark_words" ? block.rows.findLast(item => item.remark && !item.detail && ms(event.at) - ms(item.at) <= 120_000) : undefined;
+    const spoken = event.behaviour === "remark_words" ? [...block.rows].reverse().find(item => item.remark && !item.detail && ms(event.at) - ms(item.at) <= 120_000) : undefined;
     if (spoken) {
       if (event.phase === "silent") spoken.title = "Thought of something to say, then stayed quiet";
       else spoken.detail = row.detail;

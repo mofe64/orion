@@ -1,0 +1,17 @@
+.debug-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .6rem; margin: 0; }
+.debug-tiles > div { border: 1px solid var(--line); border-radius: .9rem; padding: .7rem .8rem; background: var(--surface-2); min-width: 0; }
+.debug-tiles dt { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+.debug-tiles dd { margin: .3rem 0 0; font-size: .9rem; font-weight: 600; overflow-wrap: anywhere; }
+.debug-tiles code { display: block; margin-top: .15rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
+.debug-page .debug-torque { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.debug-page .debug-torque strong { font-size: .85rem; }
+.debug-page .debug-torque p { margin: .25rem 0 0; }
+.debug-page .debug-torque button { flex-shrink: 0; }
+.debug-page .debug-camera { margin-top: 0; }
+.debug-more { border-top: 1px solid var(--line); padding-top: .4rem; }
+.debug-more > summary { font-size: .85rem; color: var(--muted); }
+.settings-card label.debug-log-filter { display: flex; align-items: center; gap: .7rem; margin: 0 0 .8rem; color: var(--muted); white-space: nowrap; }
+.debug-log-filter input { flex: 1; }
+.debug-rules { margin: .2rem 0 0; padding-left: 1.1rem; font-size: .82rem; line-height: 1.7; color: var(--muted); }
+@media(max-width: 600px) { .debug-page .debug-torque { flex-direction: column; align-items: start; } .settings-card label.debug-log-filter { flex-direction: column; align-items: stretch; } }
+.debug-page .settings-card h3 { margin: 1.5rem 0 .5rem; font-size: .9rem; color: var(--muted); }

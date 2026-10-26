@@ -16,8 +16,8 @@ describe("Debug torque release availability",()=>{
   it("describes the Pi voice source and keeps load errors inspectable", () => {
     expect(markup(base)).toContain("Runtime readings and voice activity reported by Orion’s Pi.");
     expect(markup(base)).not.toContain("local voice worker");
-    expect(markup(base)).toContain("Rustpotter");
-    expect(markup(base)).toContain("Silero VAD");
+    expect(markup(base)).toContain("Wake model");
+    expect(markup(base)).toContain("Debug sections");
     expect(markup(base)).toContain("ASR files");
     expect(markup(base)).toContain("/pi/models/qwen");
     expect(markup(base)).not.toContain("Cache directory");

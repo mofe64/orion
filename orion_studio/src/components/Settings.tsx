@@ -34,21 +34,21 @@ export function canSaveVoiceSettings(voice: StudioVoice, draft: VoiceSettings, p
 const sections: [string, string][] = [["orion", "Orion"], ["personality", "Personality"], ["memory", "Memory"], ["behaviours", "Behaviours"],
   ["location", "Location"], ["voice", "Voice"], ["studio", "Studio"], ["developer", "Developer tools"]];
 
-/** Jump links to each card. The card in view is marked. */
-function SettingsNav() {
-  const [current, setCurrent] = useState("orion");
+/** Jump links to each card on a page. The card in view is marked. */
+export function SectionNav({ sections, prefix, label }: { sections: [string, string][]; prefix: string; label: string }) {
+  const [current, setCurrent] = useState(sections[0][0]);
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(entries => {
       const shown = entries.filter(entry => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-      if (shown) setCurrent(shown.target.id.replace("settings-", ""));
+      if (shown) setCurrent(shown.target.id.slice(prefix.length));
     }, { rootMargin: "0px 0px -65% 0px" });
-    for (const [id] of sections) { const card = document.getElementById(`settings-${id}`); if (card) observer.observe(card); }
+    for (const [id] of sections) { const card = document.getElementById(`${prefix}${id}`); if (card) observer.observe(card); }
     return () => observer.disconnect();
-  }, []);
-  return <nav className="settings-nav" aria-label="Settings sections">{sections.map(([id, label]) =>
+  }, [sections, prefix]);
+  return <nav className="settings-nav" aria-label={label}>{sections.map(([id, name]) =>
     <button key={id} type="button" aria-current={current === id ? "true" : undefined}
-      onClick={() => { setCurrent(id); document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{label}</button>)}
+      onClick={() => { setCurrent(id); document.getElementById(`${prefix}${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{name}</button>)}
   </nav>;
 }
 
@@ -68,7 +68,7 @@ export function Settings({ active = true, voice, preferences, onPreferences, the
   const canSave = desktop && canSaveVoiceSettings(voice, draft, "codex", connected);
   const profile = useAgentProfileParts({ onboard: true, desktop, connected, connectionScope });
   return <section className="settings-page settings-owner" aria-labelledby="settings-title"><header className="settings-heading"><h1 id="settings-title">Settings</h1><p>Make Orion feel at home.</p></header>
-    <div className="settings-layout"><SettingsNav />
+    <div className="settings-layout"><SectionNav sections={sections} prefix="settings-" label="Settings sections" />
     <div className="settings-stack">
       <section className="settings-card" id="settings-orion"><header><Link2 size={20} /><div><h2>Orion</h2><p>{connected ? "Changes apply immediately on Orion." : "Connect Orion to use its controls."}</p></div><button className="quiet-button" onClick={onConnect}>Manage connection</button></header>
         <div className="settings-row"><div><strong>Orion mode</strong><p>{connected ? orionStateLabel(status) : "Connect Orion to view its mode."}</p></div><button className="quiet-button" type="button" onClick={onHome}>Change mode on Home</button></div>
