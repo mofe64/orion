@@ -308,20 +308,22 @@ impl CharacterCoordinator {
         object: Option<&str>,
         now: f64,
     ) {
-        if self.remarks.offer(event, detail, object, now)
-            && let Some(log) = &self.behaviour_log
-        {
-            log.observation(
-                "remark_offered",
-                object.map(str::to_owned),
-                Some(
-                    serde_json::to_value(event)
-                        .ok()
-                        .and_then(|value| value.as_str().map(str::to_owned))
-                        .unwrap_or_default(),
-                ),
-                now,
-            );
+        let enabled = self.remarks.enabled();
+        let result = self.remarks.consider(event, detail, object, now);
+        let Some(log) = &self.behaviour_log else {
+            return;
+        };
+        let name = serde_json::to_value(event)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        match result {
+            Ok(()) => log.observation("remark_offered", object.map(str::to_owned), Some(name), now),
+            // In Quiet, Orion never speaks on its own; that is not news.
+            Err(reason) if enabled => {
+                log.skipped("remark", detail.map(str::to_owned), Some(name), reason, now)
+            }
+            Err(_) => {}
         }
     }
     pub(crate) fn curiosity_ready<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
@@ -606,7 +608,7 @@ impl CharacterCoordinator {
             return None;
         }
         let (key, id) = (glance.interest_key.clone(), glance.id.clone());
-        if !self.admit(now, &key, CuriosityKind::Glance) {
+        if self.admit(now, &key, CuriosityKind::Glance).is_err() {
             return None;
         }
         let glance = self.surroundings.glance.as_ref()?;

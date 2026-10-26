@@ -6,7 +6,7 @@
 //! the movement through the remark policy, which reads the same situation.
 use super::reactions::{Reaction, ReactionKind, Stage};
 use super::*;
-use crate::expression::curiosity::{CuriosityContext, CuriosityKind};
+use crate::expression::curiosity::{CuriosityContext, CuriosityDenied, CuriosityKind};
 use crate::expression::remarks::RemarkEvent;
 
 /// One reaction Orion wants to perform.
@@ -38,7 +38,12 @@ impl CharacterCoordinator {
     }
 
     /// Admission against the shared budget. Callers check availability first.
-    pub(super) fn admit(&mut self, now: f64, key: &str, kind: CuriosityKind) -> bool {
+    pub(super) fn admit(
+        &mut self,
+        now: f64,
+        key: &str,
+        kind: CuriosityKind,
+    ) -> std::result::Result<(), CuriosityDenied> {
         let context = CuriosityContext {
             enabled: true,
             camera_on: true,
@@ -47,10 +52,30 @@ impl CharacterCoordinator {
             character_available: true,
             ..Default::default()
         };
-        self.surroundings
-            .budget
-            .try_spend(now, key, kind, context)
-            .is_ok()
+        self.surroundings.budget.try_spend(now, key, kind, context)
+    }
+
+    /// Records a reaction Orion chose not to start, for Studio history.
+    pub(super) fn skip(
+        &self,
+        behaviour: &str,
+        target: Option<String>,
+        category: Option<String>,
+        reason: &str,
+        now: f64,
+    ) {
+        if let Some(log) = &self.behaviour_log {
+            log.skipped(behaviour, target, category, reason, now);
+        }
+    }
+
+    /// A reaction found its moment taken: another reaction runs or Orion is busy.
+    pub(super) fn busy_reason(&self) -> &'static str {
+        if self.surroundings.reaction.is_some() {
+            "reaction_running"
+        } else {
+            "busy"
+        }
     }
 
     /// Admits and starts a reaction. Returns false when the budget declined.
@@ -60,7 +85,14 @@ impl CharacterCoordinator {
         now: f64,
         core: &mut RuntimeCore<D>,
     ) -> Result<bool> {
-        if !self.admit(now, &act.key, CuriosityKind::Gesture) {
+        if let Err(denied) = self.admit(now, &act.key, CuriosityKind::Gesture) {
+            self.skip(
+                act.behaviour,
+                act.target,
+                act.target_category,
+                denied.code(),
+                now,
+            );
             return Ok(false);
         }
         self.preempt_idle_or_thinking(now, core)?;

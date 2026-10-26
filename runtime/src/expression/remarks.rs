@@ -227,45 +227,73 @@ impl RemarkPolicy {
         object: Option<&str>,
         now: f64,
     ) -> bool {
+        self.consider(event, detail, object, now).is_ok()
+    }
+
+    /// Like [`offer`](Self::offer), with the reason a remark was not queued.
+    pub fn consider(
+        &mut self,
+        event: RemarkEvent,
+        detail: Option<&str>,
+        object: Option<&str>,
+        now: f64,
+    ) -> Result<(), &'static str> {
         let context = self.context;
         let demo = context.demo;
-        if !context.enabled()
-            || context.busy
-            || self.pending.is_some()
-            || now < self.quiet_until
-            || (event == RemarkEvent::HandRaised && !demo)
-            || (event.about_person() && self.visit_spoken())
-            || (!demo && (context.focused || !(7.0..22.0).contains(&context.hour)))
-        {
-            return false;
-        }
         let gap = if demo {
             DEMO_AFTER_CONVERSATION_SECONDS
         } else {
             AFTER_CONVERSATION_SECONDS
         };
-        if self.last_conversation.is_some_and(|at| now - at < gap)
-            || self
-                .spoken
-                .back()
-                .is_some_and(|at| now - at < self.spacing())
-            || self
-                .by_event
-                .get(&event)
-                .is_some_and(|at| now - at < event.cooldown(demo))
-        {
-            return false;
-        }
         while self.spoken.front().is_some_and(|at| now - at >= 3600.0) {
             self.spoken.pop_front();
         }
-        if !demo && self.spoken.len() >= self.hourly_limit() {
-            return false;
+        let refusal = if !context.enabled() {
+            Some("quiet_mode")
+        } else if context.busy {
+            Some("busy")
+        } else if self.pending.is_some() {
+            Some("pending")
+        } else if now < self.quiet_until {
+            Some("asked_quiet")
+        } else if event == RemarkEvent::HandRaised && !demo {
+            Some("demo_only")
+        } else if event.about_person() && self.visit_spoken() {
+            Some("once_per_visit")
+        } else if !demo && context.focused {
+            Some("focus")
+        } else if !demo && !(7.0..22.0).contains(&context.hour) {
+            Some("night")
+        } else if self.last_conversation.is_some_and(|at| now - at < gap) {
+            Some("after_conversation")
+        } else if self
+            .spoken
+            .back()
+            .is_some_and(|at| now - at < self.spacing())
+        {
+            Some(if self.ignored > 0 {
+                "ignored"
+            } else {
+                "spacing"
+            })
+        } else if self
+            .by_event
+            .get(&event)
+            .is_some_and(|at| now - at < event.cooldown(demo))
+        {
+            Some("cooldown")
+        } else if !demo && self.spoken.len() >= self.hourly_limit() {
+            Some("hourly_limit")
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            return Err(reason);
         }
         let detail = detail.map(str::trim).filter(|text| !text.is_empty());
         if event == RemarkEvent::NewObject {
             let Some(category) = detail else {
-                return false;
+                return Err("no_detail");
             };
             if demo {
                 if self
@@ -273,14 +301,17 @@ impl RemarkPolicy {
                     .get(category)
                     .is_some_and(|at| now - at < 120.0)
                 {
-                    return false;
+                    return Err("cooldown");
                 }
             } else {
                 if self.seen_today.0 != context.day {
                     self.seen_today = (context.day, BTreeSet::new());
                 }
-                if ORDINARY_OBJECTS.contains(&category) || self.seen_today.1.contains(category) {
-                    return false;
+                if ORDINARY_OBJECTS.contains(&category) {
+                    return Err("ordinary_object");
+                }
+                if self.seen_today.1.contains(category) {
+                    return Err("seen_today");
                 }
             }
         }
@@ -298,7 +329,7 @@ impl RemarkPolicy {
             },
             object: object.map(str::to_owned),
         });
-        true
+        Ok(())
     }
 
     /// The remark the listener may start now. An object remark waits for its
@@ -604,5 +635,29 @@ mod tests {
             assert!(policy.hourly_limit() == limit);
             assert!((policy.spacing() - gap).abs() < 1e-9, "{chattiness:?}");
         }
+    }
+
+    #[test]
+    fn a_refused_remark_says_why() {
+        let mut policy = policy(false);
+        assert_eq!(
+            policy.consider(RemarkEvent::NewObject, Some("laptop"), None, 1000.0),
+            Err("ordinary_object")
+        );
+        assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 1000.0));
+        speak(&mut policy, 1000.0);
+        assert_eq!(
+            policy.consider(RemarkEvent::PersonLooking, None, None, 1100.0),
+            Err("once_per_visit")
+        );
+        assert_eq!(
+            policy.consider(RemarkEvent::NewObject, Some("banana"), None, 1100.0),
+            Err("spacing")
+        );
+        policy.context.hour = 23.0;
+        assert_eq!(
+            policy.consider(RemarkEvent::NewObject, Some("banana"), None, 5000.0),
+            Err("night")
+        );
     }
 }

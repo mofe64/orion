@@ -65,3 +65,21 @@ fn partial_crash_tail_is_ignored_and_pagination_handles_equal_times() {
         assert_eq!(mode & 0o777, 0o600);
     }
 }
+
+#[test]
+fn another_process_adds_remark_words_that_read_back_with_the_log() {
+    let directory = tempfile::tempdir().unwrap();
+    orion_history::append_behaviour(
+        directory.path(),
+        "remark_words",
+        "observed",
+        Some("Is that a new mug?"),
+        Some("session-1"),
+    )
+    .unwrap();
+    let page = orion_history::Store::new(directory.path().into())
+        .behaviours(None, None)
+        .unwrap();
+    assert_eq!(page["items"][0]["behaviour"], "remark_words");
+    assert_eq!(page["items"][0]["reason"], "Is that a new mug?");
+}

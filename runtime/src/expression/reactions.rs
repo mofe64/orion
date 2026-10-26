@@ -248,6 +248,13 @@ impl CharacterCoordinator {
             return Ok(());
         };
         if !self.reaction_ready(core) {
+            self.skip(
+                "mutual_gaze",
+                Some(format!("face:{track}")),
+                Some("person".into()),
+                "busy",
+                now,
+            );
             return Ok(());
         }
         let anchor = self
@@ -322,6 +329,14 @@ impl CharacterCoordinator {
             return Ok(());
         };
         if !self.may_start_reaction(core) {
+            let reason = self.busy_reason();
+            self.skip(
+                "arrival_notice",
+                Some(format!("face:{}", face.track_id)),
+                Some("person".into()),
+                reason,
+                now,
+            );
             return Ok(());
         }
         let anchor = self
@@ -371,6 +386,14 @@ impl CharacterCoordinator {
             return Ok(());
         };
         if !self.may_start_reaction(core) {
+            let reason = self.busy_reason();
+            self.skip(
+                "farewell_watch",
+                Some(format!("face:{}", face.track_id)),
+                Some("person".into()),
+                reason,
+                now,
+            );
             return Ok(());
         }
         let anchor = self
@@ -481,6 +504,14 @@ impl CharacterCoordinator {
             );
         }
         if !self.may_start_reaction(core) {
+            let reason = self.busy_reason();
+            self.skip(
+                "object_peek",
+                Some(object.id.clone()),
+                Some(object.category.clone()),
+                reason,
+                now,
+            );
             return Ok(());
         }
         let anchor = self

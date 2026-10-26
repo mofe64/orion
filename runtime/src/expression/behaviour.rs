@@ -52,6 +52,20 @@ impl BehaviourLog {
         let event = state.event("attention", behaviour, "observed", target, category, now);
         state.emit(event);
     }
+    /// Orion chose not to act; `reason` is a short code that Studio explains.
+    pub(crate) fn skipped(
+        &self,
+        behaviour: &str,
+        target: Option<String>,
+        category: Option<String>,
+        reason: &str,
+        now: f64,
+    ) {
+        let mut state = self.0.lock().unwrap();
+        let mut event = state.event("attention", behaviour, "skipped", target, category, now);
+        event.reason = Some(reason.into());
+        state.emit(event);
+    }
     pub(crate) fn presence(&self, count: usize, track: Option<u64>, now: f64) {
         let mut state = self.0.lock().unwrap();
         if count > state.faces {

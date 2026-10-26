@@ -565,6 +565,13 @@ async fn connected(
                             active_remark = None;
                             announcement_ready = None;
                             session = None; followup = None;
+                            // Studio history shows what Orion said, or that it chose silence.
+                            if let Ok(root) = crate::history::directory()
+                                && let Err(reason) = orion_history::append_behaviour(&root, "remark_words",
+                                    if text.is_some() { "observed" } else { "silent" },
+                                    text.as_deref().map(|text| response_metadata(text).0).as_deref(), Some(&sid)) {
+                                eprintln!("{}", json!({"event":"voice.remark_log_failed","reason":reason}));
+                            }
                             if let Some(text) = text {
                                 agent.note_remark(&text);
                                 recent_remarks.push_back(response_metadata(&text).0);

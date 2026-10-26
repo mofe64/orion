@@ -61,6 +61,22 @@ pub enum CuriosityDenied {
     Capacity,
 }
 
+impl CuriosityDenied {
+    /// The reason recorded in the behaviour log.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Focus => "focus",
+            Self::Spacing => "spacing",
+            Self::Window => "window",
+            Self::Habituation => "habituation",
+            Self::InvalidClock => "invalid_clock",
+            Self::InvalidTarget => "invalid_target",
+            Self::Capacity => "capacity",
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Interest {
     last_reaction: f64,

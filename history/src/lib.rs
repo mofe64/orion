@@ -592,6 +592,53 @@ pub struct BehaviourEvent {
     pub session_id: Option<String>,
 }
 
+/// Adds one event from another process, such as the words of a remark, to
+/// the behaviour log that `oriond` writes. One write keeps the line whole.
+pub fn append_behaviour(
+    root: &Path,
+    behaviour: &str,
+    phase: &str,
+    reason: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<(), String> {
+    let now = Utc::now();
+    let event = BehaviourEvent {
+        id: format!(
+            "external-{}-{}",
+            std::process::id(),
+            now.timestamp_nanos_opt().unwrap_or_default()
+        ),
+        at: now.to_rfc3339(),
+        runtime_time_seconds: 0.0,
+        category: "attention".into(),
+        behaviour: behaviour.into(),
+        phase: phase.into(),
+        target: None,
+        target_category: None,
+        reason: reason.map(|text| text.chars().take(500).collect()),
+        action_id: None,
+        duration_seconds: None,
+        session_id: session_id.map(str::to_owned),
+    };
+    let directory = root.join("behaviours");
+    private_dir(&directory)?;
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let line = format!(
+        "\n{}\n",
+        serde_json::to_string(&event).map_err(|e| e.to_string())?
+    );
+    options
+        .open(directory.join(format!("{}.jsonl", now.format("%Y-%m-%d"))))
+        .and_then(|mut file| file.write_all(line.as_bytes()))
+        .map_err(|e| e.to_string())
+}
+
 /// The runtime enqueues metadata only; serialization and disk IO belong to this thread.
 pub struct BehaviourWriter {
     sender: Option<mpsc::SyncSender<BehaviourEvent>>,
