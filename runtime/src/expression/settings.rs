@@ -25,6 +25,64 @@ impl<'de> Deserialize<'de> for DanceMode {
     }
 }
 
+/// How much Orion looks around on its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Curiosity {
+    Shy,
+    #[default]
+    Normal,
+    Nosy,
+}
+/// How often a Lively Orion speaks on its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Chattiness {
+    Reserved,
+    #[default]
+    Normal,
+    Chatty,
+}
+/// Per-lamp character quirks from `personality.json`. Studio writes the file;
+/// a missing or unknown value reads as normal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Quirks {
+    pub curiosity: Curiosity,
+    pub chattiness: Chattiness,
+}
+impl Quirks {
+    pub fn load(path: &Path) -> Self {
+        let Some(value) = read_json(path) else {
+            return Self::default();
+        };
+        let quirk = |name: &str| {
+            value
+                .get("quirks")
+                .and_then(|quirks| quirks.get(name))
+                .cloned()
+        };
+        Self {
+            curiosity: quirk("curiosity")
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default(),
+            chattiness: quirk("chattiness")
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default(),
+        }
+    }
+}
+fn read_json(path: &Path) -> Option<serde_json::Value> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(8193)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= 8192)
+        .then(|| serde_json::from_slice(&bytes).ok())
+        .flatten()
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub(crate) struct ActSettings {
@@ -35,6 +93,8 @@ pub(crate) struct ActSettings {
     pub posture_drift: bool,
     pub act_sounds: bool,
     pub move_to_music: DanceMode,
+    #[serde(skip)]
+    pub quirks: Quirks,
 }
 impl Default for ActSettings {
     fn default() -> Self {
@@ -46,23 +106,18 @@ impl Default for ActSettings {
             posture_drift: false,
             act_sounds: true,
             move_to_music: DanceMode::Sometimes,
+            quirks: Quirks::default(),
         }
     }
 }
 impl ActSettings {
+    /// Reads `behaviours.json` and the quirks in `personality.json` beside it.
     pub fn load(path: &Path) -> Self {
-        (|| {
-            let mut bytes = Vec::new();
-            std::fs::File::open(path)
-                .ok()?
-                .take(8193)
-                .read_to_end(&mut bytes)
-                .ok()?;
-            (bytes.len() <= 8192)
-                .then(|| serde_json::from_slice(&bytes).ok())
-                .flatten()
-        })()
-        .unwrap_or_default()
+        let mut settings: Self = read_json(path)
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        settings.quirks = Quirks::load(&path.with_file_name("personality.json"));
+        settings
     }
 }
 
@@ -94,5 +149,19 @@ mod tests {
         let settings = ActSettings::load(&path);
         assert_eq!(settings.move_to_music, DanceMode::Off);
         assert!(settings.act_sounds);
+    }
+    #[test]
+    fn quirks_read_from_the_personality_file_and_default_to_normal() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("behaviours.json");
+        assert_eq!(ActSettings::load(&path).quirks, Quirks::default());
+        std::fs::write(
+            directory.path().join("personality.json"),
+            r#"{"quirks":{"curiosity":"nosy","chattiness":"loud","gestures":"big"}}"#,
+        )
+        .unwrap();
+        let quirks = ActSettings::load(&path).quirks;
+        assert_eq!(quirks.curiosity, Curiosity::Nosy);
+        assert_eq!(quirks.chattiness, Chattiness::Normal);
     }
 }

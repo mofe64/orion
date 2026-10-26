@@ -337,6 +337,7 @@ class OrionGateway:
         self.tracking_preference_file = tracking_preference_file or self.camera_preference_file.with_name('tracking.json')
         self.behaviours_file = self.camera_preference_file.with_name('behaviours.json')
         self.behaviours_lock = threading.Lock()
+        self.personality_file = self.camera_preference_file.with_name('personality.json')
         self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
 
     def spotify_request(self, action, payload=None):
@@ -523,6 +524,55 @@ class OrionGateway:
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)
             return {'api_version': API_VERSION, 'behaviours': saved}
+
+    # Each quirk visibly changes what Orion does. A new lamp draws its quirks
+    # at random from the outer choices so that no two lamps feel the same.
+    QUIRKS = {'curiosity': ('shy', 'normal', 'nosy'), 'chattiness': ('reserved', 'normal', 'chatty')}
+
+    def get_personality(self):
+        with self.behaviours_lock:
+            return {'api_version': API_VERSION, 'quirks': self._quirks()}
+
+    def _quirks(self):
+        try:
+            value = json.loads(self.personality_file.read_text()).get('quirks')
+        except (OSError, ValueError, AttributeError):
+            value = None
+        value = value if isinstance(value, dict) else {}
+        quirks = {key: value[key] for key, choices in self.QUIRKS.items() if value.get(key) in choices}
+        if len(quirks) < len(self.QUIRKS):
+            chooser = secrets.SystemRandom()
+            for key, choices in self.QUIRKS.items():
+                quirks.setdefault(key, chooser.choice((choices[0], choices[-1])))
+            self._save_personality(quirks)
+        return quirks
+
+    def set_personality(self, payload):
+        quirks = payload.get('quirks') if isinstance(payload, dict) else None
+        if (not isinstance(quirks, dict) or not quirks or set(payload) != {'quirks'}
+                or any(key not in self.QUIRKS or value not in self.QUIRKS[key] for key, value in quirks.items())):
+            raise GatewayError(HTTPStatus.BAD_REQUEST, 'invalid_personality', 'Choose a valid personality.')
+        with self.behaviours_lock:
+            saved = self._quirks() | quirks
+            self._save_personality(saved)
+            return {'api_version': API_VERSION, 'quirks': saved}
+
+    def _save_personality(self, quirks):
+        path, temporary = self.personality_file, None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.personality-', delete=False) as output:
+                temporary = Path(output.name)
+                json.dump({'quirks': quirks}, output)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(path)
+        except OSError as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, 'personality_unavailable',
+                'Could not save Orion\'s personality.') from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def tracking_mode(self):
         try:
@@ -2212,6 +2262,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return HTTPStatus.OK, gateway.system_metrics.snapshot()
             if path == '/api/v2/behaviours':
                 return HTTPStatus.OK, gateway.get_behaviours()
+            if path == '/api/v2/personality':
+                return HTTPStatus.OK, gateway.get_personality()
             if path == '/api/v2/tracking/mode':
                 return HTTPStatus.OK, gateway.get_tracking_mode()
             camera_paths = {"/api/v2/camera/stream": "/stream", "/api/v2/camera/snapshot": "/frame.jpg",
@@ -2257,6 +2309,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return HTTPStatus.OK, gateway.home_request('POST', path.removeprefix('/api/v2/home/'), self._read_json())
             if path == '/api/v2/behaviours':
                 return HTTPStatus.OK, gateway.set_behaviours(self._read_json())
+            if path == '/api/v2/personality':
+                return HTTPStatus.OK, gateway.set_personality(self._read_json())
             if path == '/api/v2/tracking/mode':
                 return HTTPStatus.OK, gateway.set_tracking_mode(self._read_json())
             if path == "/api/v2/camera/enabled":
@@ -2515,6 +2569,11 @@ def main() -> None:
         tracking_preference_file=args.tracking_preference_file,
     )
     gateway.system_metrics.start()
+    try:
+        # A new lamp gets its quirks before Studio first opens.
+        gateway.get_personality()
+    except GatewayError as error:
+        print(f"orion-studio-gateway: {error}")
     server = GatewayHTTPServer(
         (args.bind, args.port), make_handler(gateway, token, args.allowed_origins)
     )

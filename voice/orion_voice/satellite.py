@@ -216,9 +216,11 @@ class SatelliteSession:
         self.remark = True
         self.phase = "processing"
         self.expires_at = self.clock() + 60
-        detail = remark.get("detail")
+        detail, quirks = remark.get("detail"), remark.get("quirks")
+        quirks = {key: value for key, value in quirks.items() if isinstance(key, str) and isinstance(value, str)} if isinstance(quirks, dict) else {}
         return [self.message("remark", id=remark["id"], event=remark["event"], demo=remark["demo"],
-                             **({"detail": detail} if isinstance(detail, str) else {}))]
+                             **({"detail": detail} if isinstance(detail, str) else {}),
+                             **({"quirks": quirks} if quirks else {}))]
 
     def announcement_ready(self, identity):
         # A cue may finish after wake/alarm reset this session.

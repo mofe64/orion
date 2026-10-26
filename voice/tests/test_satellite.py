@@ -104,10 +104,13 @@ class SatelliteTests(unittest.TestCase):
 
     def test_remark_needs_no_alert_a_wake_takes_over_and_a_reply_is_a_normal_turn(self):
         self.assertEqual(self.session.start_remark({'id': 'x'}), [])
-        messages = self.session.start_remark({'id': 7, 'event': 'new_object', 'detail': 'banana', 'demo': True})
+        messages = self.session.start_remark({'id': 7, 'event': 'new_object', 'detail': 'banana', 'demo': True,
+                                              'quirks': {'curiosity': 'nosy', 'chattiness': 3}})
+        self.assertEqual(messages[0]['quirks'], {'curiosity': 'nosy'})
         sid = self.session.session_id
         self.assertEqual(messages[0], {'type': 'remark', 'sessionId': sid, 'id': 7,
-                                       'event': 'new_object', 'demo': True, 'detail': 'banana'})
+                                       'event': 'new_object', 'demo': True, 'detail': 'banana',
+                                       'quirks': {'curiosity': 'nosy'}})
         self.assertEqual(self.session.start_remark({'id': 8, 'event': 'person_left', 'demo': False}), [])
         self.session.control({'type': 'session.playing', 'sessionId': sid})
         self.wake.next = True

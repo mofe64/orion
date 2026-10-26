@@ -217,9 +217,43 @@ fn remark_prompt(
             "Keep it light and easy to ignore. "
         }
     );
+    // Quirks this lamp was given; each one shows in how Orion speaks.
+    for (quirk, value, style) in [
+        (
+            "curiosity",
+            "nosy",
+            "Orion is nosy: it is fascinated by new things and likes to ask what they are for.",
+        ),
+        (
+            "curiosity",
+            "shy",
+            "Orion is shy: it notices things quietly and comments with a light touch.",
+        ),
+        (
+            "chattiness",
+            "chatty",
+            "Orion is chatty: it enjoys talking and often adds a playful thought.",
+        ),
+        (
+            "chattiness",
+            "reserved",
+            "Orion is reserved: it says as little as it can, often only a few words.",
+        ),
+    ] {
+        if message["quirks"][quirk] == value {
+            prompt.push('\n');
+            prompt.push_str(style);
+        }
+    }
     if !recent.is_empty() {
         prompt.push_str("\nOrion said these recently; do not repeat them: ");
-        prompt.push_str(&recent.iter().map(|line| format!("\"{line}\"")).collect::<Vec<_>>().join(" "));
+        prompt.push_str(
+            &recent
+                .iter()
+                .map(|line| format!("\"{line}\""))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
     }
     Ok(prompt)
 }
@@ -601,6 +635,7 @@ async fn connected(
                                 && matches!(message["event"].as_str(), Some("person_arrived"|"person_looking"|"new_object"|"hand_raised"|"person_left"))
                                 && message["demo"].is_boolean()
                                 && (message["detail"].is_null() || message["detail"].as_str().is_some_and(|detail| !detail.is_empty() && detail.chars().count() <= 32))
+                                && (message["quirks"].is_null() || message["quirks"].is_object())
                                 && crate::session::valid_session(sid);
                             if !valid { return Err("Invalid remark".into()); }
                             if session.is_some() || !jobs.is_empty() || announcements.len() >= 64 {
@@ -1416,8 +1451,20 @@ mod playback_tests {
         assert!(prompt.contains("banana") && prompt.contains("attached"));
         recent.push_back("Is that lunch?".to_owned());
         let prompt = remark_prompt(&json!({"event":"person_left","demo":false}), &recent).unwrap();
-        assert!(prompt.contains("goodbye") && prompt.contains("\"Is that lunch?\"") && !prompt.contains("attached"));
+        assert!(
+            prompt.contains("goodbye")
+                && prompt.contains("\"Is that lunch?\"")
+                && !prompt.contains("attached")
+        );
         assert!(remark_prompt(&json!({"event":"other","demo":false}), &recent).is_err());
+        let prompt = remark_prompt(
+            &json!({"event":"new_object","detail":"cup","demo":false,"quirks":{"curiosity":"nosy","chattiness":"reserved"}}),
+            &recent,
+        )
+        .unwrap();
+        assert!(
+            prompt.contains("nosy") && prompt.contains("reserved") && !prompt.contains("chatty")
+        );
         for silent in ["", "  SILENT ", "Silent.", "[laugh]"] {
             assert_eq!(remark_text(silent), None, "{silent}");
         }

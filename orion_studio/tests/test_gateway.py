@@ -157,6 +157,23 @@ class GatewayContractTests(unittest.TestCase):
                 self.assertTrue(json.loads(path.with_name('behaviours.json').read_text())['act_sounds'])
                 with self.assertRaises(GatewayError): gateway.submit({'operation':'music_movement','enabled':'false'})
 
+    def test_a_new_lamp_draws_noticeable_quirks_once_and_keeps_owner_choices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            camera=Path(directory)/'camera.json'
+            gateway=OrionGateway(self.client,hardware='v2',camera_preference_file=camera)
+            quirks=gateway.get_personality()['quirks']
+            self.assertIn(quirks['curiosity'], ('shy','nosy'))
+            self.assertIn(quirks['chattiness'], ('reserved','chatty'))
+            self.assertEqual(OrionGateway(self.client,hardware='v1',camera_preference_file=camera).get_personality()['quirks'], quirks)
+            saved=gateway.set_personality({'quirks':{'curiosity':'normal'}})['quirks']
+            self.assertEqual(saved, quirks|{'curiosity':'normal'})
+            self.assertEqual(json.loads(camera.with_name('personality.json').read_text()), {'quirks':saved})
+            camera.with_name('personality.json').write_text('{"quirks":{"curiosity":"normal","chattiness":"loud"}}')
+            repaired=gateway.get_personality()['quirks']
+            self.assertEqual(repaired['curiosity'], 'normal'); self.assertIn(repaired['chattiness'], ('reserved','chatty'))
+            for bad in ({}, {'quirks':{}}, {'quirks':{'curiosity':'loud'}}, {'quirks':{'mood':'shy'}}, {'quirks':{'curiosity':'shy'},'x':1}):
+                with self.assertRaises(GatewayError): gateway.set_personality(bad)
+
     def test_dance_modes_migrate_booleans_and_persist_on_both_lamps(self):
         for hardware in ('v1','v2'):
             with tempfile.TemporaryDirectory() as directory:

@@ -40,6 +40,10 @@ impl CharacterCoordinator {
         self.acts.rest_due = rest_due;
     }
     pub(crate) fn set_act_settings(&mut self, settings: ActSettings) {
+        self.surroundings
+            .budget
+            .set_curiosity(settings.quirks.curiosity);
+        self.remarks.set_quirks(settings.quirks);
         self.acts.settings = settings;
     }
     pub(crate) fn act_sounds_enabled(&self) -> bool {

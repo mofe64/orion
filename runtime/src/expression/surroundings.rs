@@ -541,7 +541,8 @@ impl CharacterCoordinator {
         if clip != "idle_micro_glance" {
             return None;
         }
-        self.surroundings.glance_count = (self.surroundings.glance_count + 1) % 3;
+        self.surroundings.glance_count =
+            (self.surroundings.glance_count + 1) % self.surroundings.budget.glance_cadence();
         if self.surroundings.glance_count != 0
             || !self.surroundings.fresh(now)
             || !self.surroundings.settings.object_glances

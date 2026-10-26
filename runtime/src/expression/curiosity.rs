@@ -1,4 +1,5 @@
 //! Shared admission policy for autonomous vision gestures, without IO or motion.
+use crate::expression::settings::Curiosity;
 use std::collections::{BTreeMap, VecDeque};
 
 const WINDOW_SECONDS: f64 = 600.0;
@@ -76,9 +77,23 @@ pub struct CuriosityBudget {
     focus_since: Option<f64>,
     last_focus_observation: Option<f64>,
     demo: bool,
+    curiosity: Curiosity,
 }
 
 impl CuriosityBudget {
+    /// A shy Orion reacts about half as often as a normal one; a nosy one
+    /// reacts almost twice as often and comes back to things sooner.
+    pub fn set_curiosity(&mut self, curiosity: Curiosity) {
+        self.curiosity = curiosity;
+    }
+    /// One idle glance in this many looks toward a seen object.
+    pub fn glance_cadence(&self) -> u8 {
+        match self.curiosity {
+            Curiosity::Shy => 4,
+            Curiosity::Normal => 3,
+            Curiosity::Nosy => 2,
+        }
+    }
     fn advance(&mut self, now: f64) -> Result<(), CuriosityDenied> {
         if !now.is_finite() || now < 0.0 || self.last_now.is_some_and(|last| now < last) {
             return Err(CuriosityDenied::InvalidClock);
@@ -156,10 +171,27 @@ impl CuriosityBudget {
         {
             self.gestures.pop_front();
         }
-        let (max_gestures, spacing) = if self.demo {
-            (DEMO_MAX_GESTURES, DEMO_MIN_SPACING_SECONDS)
-        } else {
-            (MAX_GESTURES, MIN_SPACING_SECONDS)
+        let (max_gestures, spacing, first_cooldown) = match (self.demo, self.curiosity) {
+            (true, _) => (
+                DEMO_MAX_GESTURES,
+                DEMO_MIN_SPACING_SECONDS,
+                FIRST_TARGET_COOLDOWN_SECONDS,
+            ),
+            (false, Curiosity::Shy) => (
+                2,
+                2.0 * MIN_SPACING_SECONDS,
+                2.0 * FIRST_TARGET_COOLDOWN_SECONDS,
+            ),
+            (false, Curiosity::Normal) => (
+                MAX_GESTURES,
+                MIN_SPACING_SECONDS,
+                FIRST_TARGET_COOLDOWN_SECONDS,
+            ),
+            (false, Curiosity::Nosy) => (
+                5,
+                MIN_SPACING_SECONDS / 2.0,
+                FIRST_TARGET_COOLDOWN_SECONDS / 2.0,
+            ),
         };
         if self.gestures.len() >= max_gestures {
             return Err(CuriosityDenied::Window);
@@ -175,7 +207,7 @@ impl CuriosityBudget {
             } else {
                 interest.repetitions.saturating_sub(1).min(4) as i32
             };
-            let cooldown = FIRST_TARGET_COOLDOWN_SECONDS * 2_f64.powi(doubling);
+            let cooldown = first_cooldown * 2_f64.powi(doubling);
             if now - interest.last_reaction < cooldown {
                 return Err(CuriosityDenied::Habituation);
             }
@@ -422,5 +454,28 @@ mod tests {
             spend(&mut budget, 100.0, "cup"),
             Err(CuriosityDenied::Spacing)
         );
+    }
+
+    #[test]
+    fn curiosity_quirk_changes_how_often_orion_reacts() {
+        let count = |curiosity| {
+            let mut budget = CuriosityBudget::default();
+            budget.set_curiosity(curiosity);
+            (0..60)
+                .filter(|step| {
+                    budget
+                        .try_spend(
+                            *step as f64 * 10.0,
+                            &format!("object:{step}"),
+                            CuriosityKind::Gesture,
+                            available(),
+                        )
+                        .is_ok()
+                })
+                .count()
+        };
+        assert_eq!(count(Curiosity::Shy), 2);
+        assert_eq!(count(Curiosity::Normal), 3);
+        assert_eq!(count(Curiosity::Nosy), 5);
     }
 }

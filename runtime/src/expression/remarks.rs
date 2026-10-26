@@ -4,6 +4,7 @@
 //! moving: proactive mode spaces remarks far apart, backs off when people
 //! ignore them, and never interrupts conversation, music, alerts or quiet hours.
 //! Demo mode keeps the same events with short spacing for showing Orion.
+use crate::expression::settings::{Chattiness, Quirks};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -103,6 +104,8 @@ pub struct PendingRemark {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub demo: bool,
+    /// The reply model writes the line in this lamp's style.
+    pub quirks: Quirks,
     #[serde(skip)]
     due: f64,
     #[serde(skip)]
@@ -125,9 +128,22 @@ pub struct RemarkPolicy {
     spoken_visit: Option<f64>,
     started: bool,
     context: RemarkContext,
+    quirks: Quirks,
 }
 
 impl RemarkPolicy {
+    /// A reserved Orion speaks half as often as a normal one; a chatty one
+    /// twice as often, up to six times an hour.
+    pub fn set_quirks(&mut self, quirks: Quirks) {
+        self.quirks = quirks;
+    }
+    fn hourly_limit(&self) -> usize {
+        match self.quirks.chattiness {
+            Chattiness::Reserved => HOURLY_LIMIT / 2,
+            Chattiness::Normal => HOURLY_LIMIT,
+            Chattiness::Chatty => HOURLY_LIMIT + 2,
+        }
+    }
     pub fn set_context(&mut self, context: RemarkContext, now: f64) {
         if !self.started {
             // After a restart or update, people already here are not new.
@@ -191,7 +207,12 @@ impl RemarkPolicy {
         if self.context.demo {
             DEMO_SPACING_SECONDS
         } else {
-            SPACING_SECONDS * 2_f64.powi(self.ignored as i32)
+            let spacing = match self.quirks.chattiness {
+                Chattiness::Reserved => 2.0 * SPACING_SECONDS,
+                Chattiness::Normal => SPACING_SECONDS,
+                Chattiness::Chatty => SPACING_SECONDS / 2.0,
+            };
+            spacing * 2_f64.powi(self.ignored as i32)
         }
     }
 
@@ -235,7 +256,7 @@ impl RemarkPolicy {
         while self.spoken.front().is_some_and(|at| now - at >= 3600.0) {
             self.spoken.pop_front();
         }
-        if !demo && self.spoken.len() >= HOURLY_LIMIT {
+        if !demo && self.spoken.len() >= self.hourly_limit() {
             return false;
         }
         let detail = detail.map(str::trim).filter(|text| !text.is_empty());
@@ -266,6 +287,7 @@ impl RemarkPolicy {
             event,
             detail: detail.map(|text| text.chars().take(32).collect()),
             demo,
+            quirks: self.quirks,
             due: if event == RemarkEvent::NewObject && !demo {
                 now + OBJECT_DWELL_SECONDS
             } else {
@@ -546,5 +568,38 @@ mod tests {
         };
         policy.set_context(context, 1000.0);
         assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 1000.0));
+    }
+
+    #[test]
+    fn chattiness_quirk_changes_how_often_lively_orion_speaks() {
+        for (chattiness, gap, limit) in [
+            (Chattiness::Reserved, 1200.0, 2),
+            (Chattiness::Normal, 600.0, 4),
+            (Chattiness::Chatty, 300.0, 6),
+        ] {
+            let mut policy = policy(false);
+            policy.set_quirks(Quirks {
+                chattiness,
+                ..Default::default()
+            });
+            let mut spoken = 0;
+            for step in 0..12 {
+                let now = 1000.0 + step as f64 * gap / 2.0;
+                if policy.offer(
+                    RemarkEvent::NewObject,
+                    Some(&format!("thing{step}")),
+                    None,
+                    now,
+                ) {
+                    let id = policy.ready(now + 12.0, |_| true).unwrap().id;
+                    policy.take(id, now + 12.0).unwrap();
+                    policy.awaiting_reply = None;
+                    spoken += 1;
+                }
+            }
+            assert!(spoken > 0 && spoken <= 6, "{chattiness:?}");
+            assert!(policy.hourly_limit() == limit);
+            assert!((policy.spacing() - gap).abs() < 1e-9, "{chattiness:?}");
+        }
     }
 }
