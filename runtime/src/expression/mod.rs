@@ -12,5 +12,6 @@ pub mod rest;
 pub mod routines;
 pub mod scene;
 pub(crate) mod settings;
+pub mod situation;
 pub mod speech;
 pub mod voice_feedback;

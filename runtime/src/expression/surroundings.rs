@@ -1,6 +1,6 @@
 //! Capture-grounded autonomous context. Detector IO and IK run at command time.
 use super::*;
-use crate::expression::curiosity::{CuriosityBudget, CuriosityContext, CuriosityKind};
+use crate::expression::curiosity::{CuriosityBudget, CuriosityKind};
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -83,6 +83,8 @@ pub(crate) struct Surroundings {
     pub novelty: Option<NovelObject>,
     #[serde(default)]
     pub hand_count: u8,
+    #[serde(default)]
+    pub room_lux: Option<f64>,
 }
 #[derive(Debug)]
 pub(super) struct ObjectGlance {
@@ -113,10 +115,10 @@ pub(super) struct SurroundingsState {
     pub(super) hand_play: HandPlay,
     /// Fresh object IDs from the latest observation, for delayed object remarks.
     pub(super) present_objects: Vec<String>,
-    /// Voice, speech, music, scenes or alerts: no remark may start.
-    pub(super) remark_busy: bool,
-    /// Local hour and calendar day for remark rules.
-    pub(super) remark_clock: (f64, i64),
+    /// What only the command layer can see: busy, clock and Orion's light.
+    conditions: crate::expression::situation::Conditions,
+    visits: crate::expression::situation::VisitTracker,
+    pub(super) situation: crate::expression::situation::Situation,
 }
 /// Demo hand play: a palm held up while idle switches tracking to Hands,
 /// and losing the hand for a while switches back.
@@ -190,10 +192,12 @@ impl CharacterCoordinator {
     pub(crate) fn set_curiosity_available(&mut self, allowed: bool) {
         self.surroundings.runtime_allowed = allowed;
     }
-    /// Conditions for spoken remarks that only the command layer can see.
-    pub(crate) fn set_remark_conditions(&mut self, busy: bool, hour: f64, day: i64) {
-        self.surroundings.remark_busy = busy;
-        self.surroundings.remark_clock = (hour, day);
+    /// Conditions that only the command layer can see.
+    pub(crate) fn set_conditions(&mut self, conditions: crate::expression::situation::Conditions) {
+        self.surroundings.conditions = conditions;
+    }
+    pub fn situation(&self) -> &crate::expression::situation::Situation {
+        &self.surroundings.situation
     }
     /// The remark the voice listener may start now, if any.
     pub(crate) fn ready_remark(
@@ -314,6 +318,34 @@ impl CharacterCoordinator {
                 CharacterState::HomeIdle | CharacterState::PoseIdle
             )
     }
+    fn update_situation(&mut self, value: &Surroundings, now: f64) {
+        use crate::expression::situation::{Liveliness, Situation};
+        let state = &mut self.surroundings;
+        let liveliness =
+            Liveliness::from_settings(state.settings.proactive_speech, state.settings.demo_mode);
+        state.visits.observe(
+            !value.faces.is_empty(),
+            liveliness.visit_away_seconds(),
+            now,
+        );
+        let conditions = &state.conditions;
+        state.situation = Situation {
+            at: now,
+            people: value.faces.len(),
+            looking: value.faces.iter().any(|face| face.frontal),
+            focused: state.budget.focused(now),
+            visit: state.visits.visit(),
+            away_since: state.visits.away_since(),
+            hour: conditions.hour,
+            day: conditions.day,
+            busy: conditions.busy,
+            lamp: conditions.lamp.clone(),
+            room_lux: value
+                .room_lux
+                .filter(|lux| lux.is_finite() && (0.0..=200_000.0).contains(lux)),
+            liveliness,
+        };
+    }
     pub(crate) fn observe_surroundings<D: RuntimeDriver>(
         &mut self,
         value: Surroundings,
@@ -355,7 +387,7 @@ impl CharacterCoordinator {
         }
         self.surroundings.received = Some(now);
         self.surroundings.budget.set_demo(value.settings.demo_mode);
-        self.surroundings.settings = value.settings;
+        self.surroundings.settings = value.settings.clone();
         self.surroundings.present_objects = value
             .objects
             .iter()
@@ -378,19 +410,9 @@ impl CharacterCoordinator {
             .surroundings
             .budget
             .observe_focus(now, value.looking_away);
-        let (hour, day) = self.surroundings.remark_clock;
-        self.remarks.set_context(
-            crate::expression::remarks::RemarkContext {
-                proactive: self.surroundings.settings.proactive_speech,
-                demo: self.surroundings.settings.demo_mode,
-                busy: self.surroundings.remark_busy,
-                focused: self.surroundings.budget.focused(now),
-                hour,
-                day,
-                person_present: !value.faces.is_empty(),
-            },
-            now,
-        );
+        self.update_situation(&value, now);
+        self.remarks
+            .set_context((&self.surroundings.situation).into(), now);
         self.observe_hand_play(&value.tracking_mode, value.hand_count, now);
         if value.tracking_mode == "hands" {
             self.surroundings.mutual.clear();
@@ -536,19 +558,12 @@ impl CharacterCoordinator {
         {
             return None;
         }
-        let context = CuriosityContext {
-            enabled: true,
-            camera_on: true,
-            tracking_on: true,
-            powered_and_awake: true,
-            character_available: true,
-            ..Default::default()
-        };
-        self.surroundings
-            .budget
-            .try_spend(now, &glance.interest_key, CuriosityKind::Glance, context)
-            .ok()?;
-        self.surroundings.last_object = Some(glance.id.clone());
+        let (key, id) = (glance.interest_key.clone(), glance.id.clone());
+        if !self.admit(now, &key, CuriosityKind::Glance) {
+            return None;
+        }
+        let glance = self.surroundings.glance.as_ref()?;
+        self.surroundings.last_object = Some(id);
         self.surroundings.active_object = true;
         Some(glance.definition.clone())
     }

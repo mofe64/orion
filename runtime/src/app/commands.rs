@@ -554,17 +554,32 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 && !routines.curiosity_quiet(),
         );
         let local = chrono::Local::now();
-        character.set_remark_conditions(
-            !rest.reactions_ready()
+        let lamp = owner_lamp_status(
+            manual_light,
+            routines,
+            character,
+            scenes,
+            speech,
+            feedback,
+            rest,
+            now_seconds,
+        );
+        character.set_conditions(crate::expression::situation::Conditions {
+            busy: !rest.reactions_ready()
                 || feedback.session_active()
                 || speech.is_active()
                 || scenes.is_active()
                 || routines.curiosity_quiet()
                 || audio.music_playing(),
-            f64::from(chrono::Timelike::hour(&local))
+            hour: f64::from(chrono::Timelike::hour(&local))
                 + f64::from(chrono::Timelike::minute(&local)) / 60.0,
-            i64::from(chrono::Datelike::num_days_from_ce(&local)),
-        );
+            day: i64::from(chrono::Datelike::num_days_from_ce(&local)),
+            lamp: crate::expression::situation::LampView {
+                on: lamp["on"].as_bool().unwrap_or(false),
+                brightness: lamp["brightness"].as_f64().unwrap_or(0.0),
+                mood: lamp["mood"].as_str().unwrap_or("custom").into(),
+            },
+        });
         if command == "gaze surroundings status" {
             return serde_json::json!({"ok":true,"ready":character.curiosity_ready(core)})
                 .to_string();

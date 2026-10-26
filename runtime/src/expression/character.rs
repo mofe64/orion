@@ -14,6 +14,8 @@ use crate::motion::style::MotionStyle;
 mod acts;
 #[path = "aim_light.rs"]
 mod aim_light;
+#[path = "initiative.rs"]
+mod initiative;
 #[path = "music_motion.rs"]
 mod music_motion;
 #[path = "reactions.rs"]

@@ -63,11 +63,6 @@ const STALE_SECONDS: f64 = 8.0;
 const REPLY_SECONDS: f64 = 45.0;
 const MAX_IGNORED: u32 = 2;
 const MAX_QUIET_SECONDS: f64 = 8.0 * 3600.0;
-/// After a greeting, a look or a conversation, Orion says nothing more about
-/// the person until nobody has been in view for this long.
-const VISIT_AWAY_SECONDS: f64 = 600.0;
-const DEMO_VISIT_AWAY_SECONDS: f64 = 30.0;
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RemarkContext {
     pub proactive: bool,
@@ -79,8 +74,21 @@ pub struct RemarkContext {
     pub hour: f64,
     /// Local calendar day, for once-a-day object memory.
     pub day: i64,
-    /// A face is in view.
-    pub person_present: bool,
+    /// When the current visit started; see [`VisitTracker`](super::situation::VisitTracker).
+    pub visit: Option<f64>,
+}
+impl From<&super::situation::Situation> for RemarkContext {
+    fn from(situation: &super::situation::Situation) -> Self {
+        Self {
+            proactive: situation.liveliness == super::situation::Liveliness::Lively,
+            demo: situation.liveliness.demo(),
+            busy: situation.busy,
+            focused: situation.focused,
+            hour: situation.hour,
+            day: situation.day,
+            visit: situation.visit,
+        }
+    }
 }
 impl RemarkContext {
     fn enabled(self) -> bool {
@@ -113,9 +121,8 @@ pub struct RemarkPolicy {
     awaiting_reply: Option<f64>,
     quiet_until: f64,
     last_conversation: Option<f64>,
-    /// Orion already spoke to or with the people on this visit.
-    visit_spoken: bool,
-    absent_since: Option<f64>,
+    /// The visit in which Orion last spoke to or with the people.
+    spoken_visit: Option<f64>,
     started: bool,
     context: RemarkContext,
 }
@@ -125,28 +132,16 @@ impl RemarkPolicy {
         if !self.started {
             // After a restart or update, people already here are not new.
             self.started = true;
-            self.visit_spoken = true;
+            self.spoken_visit = context.visit;
         }
         if context.demo && !self.context.demo {
             // Each demo take starts fresh.
             self.by_event.clear();
             self.by_category.clear();
             self.spoken.clear();
-            self.visit_spoken = false;
+            self.spoken_visit = None;
         }
         self.context = context;
-        if context.person_present {
-            self.absent_since = None;
-        } else {
-            let away = if context.demo {
-                DEMO_VISIT_AWAY_SECONDS
-            } else {
-                VISIT_AWAY_SECONDS
-            };
-            if now - *self.absent_since.get_or_insert(now) >= away {
-                self.visit_spoken = false;
-            }
-        }
         if !context.enabled() || context.busy {
             self.pending = None;
         }
@@ -169,6 +164,10 @@ impl RemarkPolicy {
     pub fn enabled(&self) -> bool {
         self.context.enabled()
     }
+    /// Orion already spoke to or with the people on this visit.
+    fn visit_spoken(&self) -> bool {
+        self.context.visit.is_some() && self.spoken_visit == self.context.visit
+    }
 
     /// A confirmed voice turn is engagement: a reply resets the back-off.
     pub fn engaged(&mut self, now: f64) {
@@ -176,7 +175,7 @@ impl RemarkPolicy {
         self.awaiting_reply = None;
         self.last_conversation = Some(now);
         self.pending = None;
-        self.visit_spoken = true;
+        self.spoken_visit = self.context.visit;
     }
 
     pub fn quiet(&mut self, seconds: f64, now: f64) -> Result<f64, &'static str> {
@@ -211,7 +210,7 @@ impl RemarkPolicy {
             || self.pending.is_some()
             || now < self.quiet_until
             || (event == RemarkEvent::HandRaised && !demo)
-            || (self.visit_spoken && event.about_person())
+            || (event.about_person() && self.visit_spoken())
             || (!demo && (context.focused || !(7.0..22.0).contains(&context.hour)))
         {
             return false;
@@ -308,7 +307,7 @@ impl RemarkPolicy {
         self.spoken.push_back(now);
         self.by_event.insert(remark.event, now);
         if remark.event.about_person() {
-            self.visit_spoken = true;
+            self.spoken_visit = self.context.visit;
         }
         if let Some(category) = &remark.detail
             && remark.event == RemarkEvent::NewObject
@@ -328,7 +327,7 @@ impl RemarkPolicy {
             "demo": self.context.demo,
             "quiet_seconds": (self.quiet_until - now).max(0.0),
             "ignored": self.ignored,
-            "visit_spoken": self.visit_spoken,
+            "visit_spoken": self.visit_spoken(),
             "pending": self.pending,
         })
     }
@@ -346,24 +345,17 @@ mod tests {
                 demo,
                 hour: 12.0,
                 day: 1,
+                visit: Some(0.0),
                 ..Default::default()
             },
             0.0,
         );
-        policy.visit_spoken = false;
+        policy.spoken_visit = None;
         policy
     }
-    /// Nobody in view for ten minutes before `now`: a new visit starts.
-    /// Reply tracking is left as it was, so only the visit changes.
+    /// A new visit starts at `now`; reply tracking is left as it was.
     fn new_visit(policy: &mut RemarkPolicy, now: f64) {
-        let reply = (policy.awaiting_reply, policy.ignored);
-        let mut context = policy.context;
-        context.person_present = true;
-        policy.set_context(context, now - 601.0);
-        context.person_present = false;
-        policy.set_context(context, now - 600.0);
-        policy.set_context(context, now);
-        (policy.awaiting_reply, policy.ignored) = reply;
+        policy.context.visit = Some(now);
     }
     fn speak(policy: &mut RemarkPolicy, now: f64) -> RemarkEvent {
         let id = policy.ready(now, |_| true).unwrap().id;
@@ -485,9 +477,7 @@ mod tests {
         assert!(!policy.offer(RemarkEvent::HandRaised, None, None, 1020.0));
         assert!(policy.offer(RemarkEvent::HandRaised, None, None, 1031.0));
         assert!(policy.ready(1040.0, |_| true).is_none());
-        let mut context = policy.context;
-        context.person_present = false;
-        policy.set_context(context, 1041.0);
+        new_visit(&mut policy, 1041.0);
         assert!(policy.offer(RemarkEvent::PersonLooking, None, None, 1041.0));
         assert!(policy.take(99, 1041.0).is_err());
         speak(&mut policy, 1041.0);
@@ -502,16 +492,25 @@ mod tests {
 
     #[test]
     fn orion_speaks_about_a_person_once_per_visit() {
-        for (demo, away) in [(false, 600.0), (true, 30.0)] {
+        use crate::expression::situation::{Liveliness, VisitTracker};
+        for demo in [false, true] {
+            let away = Liveliness::from_settings(true, demo).visit_away_seconds();
             let mut policy = policy(demo);
+            let mut visits = VisitTracker::default();
             let mut context = policy.context;
-            context.person_present = true;
-            policy.set_context(context, 1000.0);
+            let mut observe = |policy: &mut RemarkPolicy, present: bool, now: f64| {
+                visits.observe(present, away, now);
+                context.visit = visits.visit();
+                policy.set_context(context, now);
+            };
+            observe(&mut policy, false, 0.0);
+            observe(&mut policy, false, away + 1.0);
+            observe(&mut policy, true, 1000.0);
             assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 1000.0));
             speak(&mut policy, 1000.0);
             // Still here an hour later: no more welcomes or looks.
             for now in [1100.0, 2500.0, 4700.0] {
-                policy.set_context(context, now);
+                observe(&mut policy, true, now);
                 assert!(
                     !policy.offer(RemarkEvent::PersonLooking, None, None, now),
                     "{demo}"
@@ -521,22 +520,17 @@ mod tests {
             assert!(policy.offer(RemarkEvent::NewObject, Some("banana"), None, 4700.0));
             policy.pending = None;
             // A short step away is the same visit.
-            context.person_present = false;
-            policy.set_context(context, 4710.0);
-            context.person_present = true;
-            policy.set_context(context, 4710.0 + away - 1.0);
+            observe(&mut policy, false, 4710.0);
+            observe(&mut policy, true, 4710.0 + away - 1.0);
             assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 4710.0 + away));
             // Away long enough: a new visit.
-            context.person_present = false;
-            policy.set_context(context, 5000.0);
-            policy.set_context(context, 5000.0 + away);
+            observe(&mut policy, false, 5000.0);
+            observe(&mut policy, false, 5000.0 + away);
+            observe(&mut policy, true, 5000.0 + away);
             assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 5000.0 + away));
         }
         // A conversation counts as speaking with the person.
         let mut policy = policy(true);
-        let mut context = policy.context;
-        context.person_present = true;
-        policy.set_context(context, 1000.0);
         policy.engaged(1000.0);
         assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 1100.0));
     }
@@ -547,7 +541,7 @@ mod tests {
         let context = RemarkContext {
             proactive: true,
             hour: 12.0,
-            person_present: true,
+            visit: Some(1000.0),
             ..Default::default()
         };
         policy.set_context(context, 1000.0);

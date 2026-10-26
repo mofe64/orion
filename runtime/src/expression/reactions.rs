@@ -1,12 +1,8 @@
 //! Bounded, observed social responses; planning occurs on metadata commands.
+use super::initiative::Act;
 use super::surroundings::{NovelObject, SeenFace};
 use super::*;
-use crate::expression::curiosity::{CuriosityContext, CuriosityKind};
 use crate::expression::remarks::RemarkEvent;
-
-/// Demo mode notices arrivals and departures after short absences and stays.
-const DEMO_EMPTY_SECONDS: f64 = 30.0;
-const DEMO_STAY_SECONDS: f64 = 20.0;
 
 #[derive(Debug, Default)]
 pub(super) struct MutualPolicy {
@@ -108,7 +104,7 @@ impl DeparturePolicy {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReactionKind {
+pub(super) enum ReactionKind {
     Mutual,
     Arrival,
     Peek,
@@ -116,7 +112,7 @@ enum ReactionKind {
     Farewell,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stage {
+pub(super) enum Stage {
     Notice,
     Hi,
     Away,
@@ -124,15 +120,15 @@ enum Stage {
 }
 #[derive(Debug)]
 pub(super) struct Reaction {
-    category: Option<String>,
-    kind: ReactionKind,
-    track: u64,
-    started: f64,
-    deadline: f64,
-    run: Option<u64>,
-    stage: Stage,
-    centre: JointPositions,
-    object: Option<(String, f64, f64, f64)>,
+    pub(super) category: Option<String>,
+    pub(super) kind: ReactionKind,
+    pub(super) track: u64,
+    pub(super) started: f64,
+    pub(super) deadline: f64,
+    pub(super) run: Option<u64>,
+    pub(super) stage: Stage,
+    pub(super) centre: JointPositions,
+    pub(super) object: Option<(String, f64, f64, f64)>,
 }
 
 impl CharacterCoordinator {
@@ -157,7 +153,7 @@ impl CharacterCoordinator {
             .filter(|r| r.kind == ReactionKind::Mutual && r.run.is_none())
             .map(|r| r.track)
     }
-    fn reaction_ready<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
+    pub(super) fn reaction_ready<D: RuntimeDriver>(&self, core: &RuntimeCore<D>) -> bool {
         self.curiosity_available()
             && (core.mode() == RuntimeMode::Holding
                 || core.snapshot().motion.as_ref().is_some_and(|motion| {
@@ -241,7 +237,7 @@ impl CharacterCoordinator {
                 reaction.run = Some(next);
                 reaction.stage = stage;
                 self.status.active_clip = Some(clip.into());
-                if stage == Stage::Hi && !self.surroundings.settings.demo_mode {
+                if stage == Stage::Hi && !self.surroundings.situation.liveliness.demo() {
                     // Everyday speech needs the look held, not only met.
                     self.offer_remark(RemarkEvent::PersonLooking, None, None, now);
                 }
@@ -265,7 +261,7 @@ impl CharacterCoordinator {
             .iter()
             .map(|joint| (joint.name.clone(), joint.position))
             .collect();
-        let demo = self.surroundings.settings.demo_mode;
+        let demo = self.surroundings.situation.liveliness.demo();
         let clip = if demo {
             "mutual_gaze_notice_demo"
         } else {
@@ -284,54 +280,27 @@ impl CharacterCoordinator {
             }
         }
         core.validate_curiosity_motion(&definition, &anchor, None)?;
-        let context = CuriosityContext {
-            enabled: true,
-            camera_on: true,
-            tracking_on: true,
-            powered_and_awake: true,
-            character_available: true,
-            ..Default::default()
-        };
-        if self
-            .surroundings
-            .budget
-            .try_spend(
-                now,
-                &format!("face:{track}"),
-                CuriosityKind::Gesture,
-                context,
-            )
-            .is_err()
-        {
-            return Ok(());
-        }
-        self.preempt_idle_or_thinking(now, core)?;
-        let run = core.play_generated_anchored_relative(definition, anchor, now)?;
-        self.surroundings.reaction = Some(Reaction {
-            kind: ReactionKind::Mutual,
-            category: None,
-            track,
-            started: now,
-            deadline: now + 8.0,
-            run: Some(run),
-            stage: Stage::Notice,
-            centre,
-            object: None,
-        });
-        if let Some(log) = &self.behaviour_log {
-            log.motion(
-                "mutual_gaze",
-                run,
-                Some(format!("face:{track}")),
-                Some("person".into()),
-                now,
-            );
-        }
-        self.status.active_clip = Some(clip.into());
-        self.reset_timers(now);
-        if demo {
-            self.offer_remark(RemarkEvent::PersonLooking, None, None, now);
-        }
+        self.perform(
+            Act {
+                kind: ReactionKind::Mutual,
+                key: format!("face:{track}"),
+                motion: definition,
+                anchor,
+                centre,
+                track,
+                category: None,
+                object: None,
+                seconds: 8.0,
+                behaviour: "mutual_gaze",
+                target: Some(format!("face:{track}")),
+                target_category: Some("person".into()),
+                clip,
+                // Everyday speech waits for the held look (stage Hi).
+                remark: demo.then_some((RemarkEvent::PersonLooking, None, None)),
+            },
+            now,
+            core,
+        )?;
         Ok(())
     }
     pub(super) fn observe_arrival<D: RuntimeDriver>(
@@ -344,15 +313,15 @@ impl CharacterCoordinator {
             self.surroundings.arrival.clear();
             return Ok(());
         }
-        let empty = if self.surroundings.settings.demo_mode {
-            DEMO_EMPTY_SECONDS
-        } else {
-            600.0
-        };
+        let empty = self
+            .surroundings
+            .situation
+            .liveliness
+            .arrival_empty_seconds();
         let Some(face) = self.surroundings.arrival.observe(faces, now, empty) else {
             return Ok(());
         };
-        if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
+        if !self.may_start_reaction(core) {
             return Ok(());
         }
         let anchor = self
@@ -361,52 +330,26 @@ impl CharacterCoordinator {
             .clone()
             .ok_or_else(|| Error::InvalidState("Arrival needs an anchor".into()))?;
         let definition = core.prepare_arrival_motion(&anchor, face.azimuth, face.elevation)?;
-        let context = CuriosityContext {
-            enabled: true,
-            camera_on: true,
-            tracking_on: true,
-            powered_and_awake: true,
-            character_available: true,
-            ..Default::default()
-        };
-        if self
-            .surroundings
-            .budget
-            .try_spend(
-                now,
-                &format!("face:{}", face.track_id),
-                CuriosityKind::Gesture,
-                context,
-            )
-            .is_err()
-        {
-            return Ok(());
-        }
-        self.preempt_idle_or_thinking(now, core)?;
-        let run = core.play_generated_anchored_relative(definition, anchor.clone(), now)?;
-        self.surroundings.reaction = Some(Reaction {
-            kind: ReactionKind::Arrival,
-            category: None,
-            track: face.track_id,
-            started: now,
-            deadline: now + 8.0,
-            run: Some(run),
-            stage: Stage::Notice,
-            centre: anchor,
-            object: None,
-        });
-        if let Some(log) = &self.behaviour_log {
-            log.motion(
-                "arrival_notice",
-                run,
-                Some(format!("face:{}", face.track_id)),
-                Some("person".into()),
-                now,
-            );
-        }
-        self.status.active_clip = Some("arrival_notice".into());
-        self.reset_timers(now);
-        self.offer_remark(RemarkEvent::PersonArrived, None, None, now);
+        self.perform(
+            Act {
+                kind: ReactionKind::Arrival,
+                key: format!("face:{}", face.track_id),
+                motion: definition,
+                centre: anchor.clone(),
+                anchor,
+                track: face.track_id,
+                category: None,
+                object: None,
+                seconds: 8.0,
+                behaviour: "arrival_notice",
+                target: Some(format!("face:{}", face.track_id)),
+                target_category: Some("person".into()),
+                clip: "arrival_notice",
+                remark: Some((RemarkEvent::PersonArrived, None, None)),
+            },
+            now,
+            core,
+        )?;
         Ok(())
     }
     pub(super) fn observe_departure<D: RuntimeDriver>(
@@ -419,15 +362,15 @@ impl CharacterCoordinator {
             self.surroundings.departure.clear();
             return Ok(());
         }
-        let stay = if self.surroundings.settings.demo_mode {
-            DEMO_STAY_SECONDS
-        } else {
-            600.0
-        };
+        let stay = self
+            .surroundings
+            .situation
+            .liveliness
+            .farewell_stay_seconds();
         let Some(face) = self.surroundings.departure.observe(faces, now, stay) else {
             return Ok(());
         };
-        if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
+        if !self.may_start_reaction(core) {
             return Ok(());
         }
         let anchor = self
@@ -436,47 +379,26 @@ impl CharacterCoordinator {
             .clone()
             .ok_or_else(|| Error::InvalidState("Farewell needs an anchor".into()))?;
         let definition = core.prepare_farewell_motion(&anchor, face.azimuth, face.elevation)?;
-        let context = CuriosityContext {
-            enabled: true,
-            camera_on: true,
-            tracking_on: true,
-            powered_and_awake: true,
-            character_available: true,
-            ..Default::default()
-        };
-        if self
-            .surroundings
-            .budget
-            .try_spend(now, "face:farewell", CuriosityKind::Gesture, context)
-            .is_err()
-        {
-            return Ok(());
-        }
-        self.preempt_idle_or_thinking(now, core)?;
-        let run = core.play_generated_anchored_relative(definition, anchor.clone(), now)?;
-        self.surroundings.reaction = Some(Reaction {
-            kind: ReactionKind::Farewell,
-            category: None,
-            track: face.track_id,
-            started: now,
-            deadline: now + 10.0,
-            run: Some(run),
-            stage: Stage::Notice,
-            centre: anchor,
-            object: None,
-        });
-        if let Some(log) = &self.behaviour_log {
-            log.motion(
-                "farewell_watch",
-                run,
-                Some(format!("face:{}", face.track_id)),
-                Some("person".into()),
-                now,
-            );
-        }
-        self.status.active_clip = Some("farewell_watch".into());
-        self.reset_timers(now);
-        self.offer_remark(RemarkEvent::PersonLeft, None, None, now);
+        self.perform(
+            Act {
+                kind: ReactionKind::Farewell,
+                key: "face:farewell".into(),
+                motion: definition,
+                centre: anchor.clone(),
+                anchor,
+                track: face.track_id,
+                category: None,
+                object: None,
+                seconds: 10.0,
+                behaviour: "farewell_watch",
+                target: Some(format!("face:{}", face.track_id)),
+                target_category: Some("person".into()),
+                clip: "farewell_watch",
+                remark: Some((RemarkEvent::PersonLeft, None, None)),
+            },
+            now,
+            core,
+        )?;
         Ok(())
     }
     pub(super) fn observe_novelty<D: RuntimeDriver>(
@@ -558,7 +480,7 @@ impl CharacterCoordinator {
                 now,
             );
         }
-        if self.surroundings.reaction.is_some() || !self.reaction_ready(core) {
+        if !self.may_start_reaction(core) {
             return Ok(());
         }
         let anchor = self
@@ -575,56 +497,34 @@ impl CharacterCoordinator {
             };
             (core.prepare_peek_motion(&anchor, point)?, anchor.clone())
         };
-        let context = CuriosityContext {
-            enabled: true,
-            camera_on: true,
-            tracking_on: true,
-            powered_and_awake: true,
-            character_available: true,
-            ..Default::default()
-        };
-        if self
-            .surroundings
-            .budget
-            .try_spend(now, &object.interest_key, CuriosityKind::Gesture, context)
-            .is_err()
-        {
-            return Ok(());
-        }
-        self.preempt_idle_or_thinking(now, core)?;
-        let run = core.play_generated_anchored_relative(definition, anchor, now)?;
-        self.surroundings.reaction = Some(Reaction {
-            kind: if pet {
-                ReactionKind::Pet
-            } else {
-                ReactionKind::Peek
+        self.perform(
+            Act {
+                kind: if pet {
+                    ReactionKind::Pet
+                } else {
+                    ReactionKind::Peek
+                },
+                key: object.interest_key.clone(),
+                motion: definition,
+                anchor,
+                centre,
+                track: 0,
+                category: Some(object.category.clone()),
+                object: Some((object.id.clone(), now, object.azimuth, object.elevation)),
+                seconds: 12.0,
+                behaviour: if pet { "pet_notice" } else { "object_peek" },
+                target: Some(object.id.clone()),
+                target_category: Some(object.category.clone()),
+                clip: if pet { "pet_notice" } else { "peek_new_object" },
+                remark: Some((
+                    RemarkEvent::NewObject,
+                    Some(object.category.clone()),
+                    Some(object.id.clone()),
+                )),
             },
-            category: Some(object.category.clone()),
-            track: 0,
-            started: now,
-            deadline: now + 12.0,
-            run: Some(run),
-            stage: Stage::Notice,
-            centre,
-            object: Some((object.id.clone(), now, object.azimuth, object.elevation)),
-        });
-        if let Some(log) = &self.behaviour_log {
-            log.motion(
-                if pet { "pet_notice" } else { "object_peek" },
-                run,
-                Some(object.id.clone()),
-                Some(object.category.clone()),
-                now,
-            );
-        }
-        self.status.active_clip = Some(if pet { "pet_notice" } else { "peek_new_object" }.into());
-        self.reset_timers(now);
-        self.offer_remark(
-            RemarkEvent::NewObject,
-            Some(&object.category),
-            Some(&object.id),
             now,
-        );
+            core,
+        )?;
         Ok(())
     }
 
@@ -995,7 +895,11 @@ mod execution_tests {
                 .unwrap();
         }
         character.set_curiosity_available(true);
-        character.set_remark_conditions(false, 12.0, 1);
+        character.set_conditions(crate::expression::situation::Conditions {
+            hour: 12.0,
+            day: 1,
+            ..Default::default()
+        });
         let anchor = character.status.active_anchor.clone().unwrap();
         let bearing = crate::control::camera_rays::Bearing::from_direction(
             core.camera_kinematics()
