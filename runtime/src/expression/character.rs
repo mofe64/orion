@@ -1584,6 +1584,14 @@ impl CharacterCoordinator {
                 && now >= attention.expires_at
                 && core.mode() == RuntimeMode::Holding
             {
+                if self.following_face(now) {
+                    // Face following carries on from here: no look away and back.
+                    self.status.active_anchor = Some(attention.previous.clone());
+                    self.status.active_clip = None;
+                    self.status.state = self.idle_state();
+                    self.reset_timers(now);
+                    return Ok(());
+                }
                 // in that case we should return to the previous anchor
                 // we use our runtime to play the attention return motion
                 attention.run_id = Some(core.play_generated_anchored_relative(

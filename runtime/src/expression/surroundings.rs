@@ -105,6 +105,7 @@ pub(super) struct SurroundingsState {
     present: bool,
     /// The owner asked Orion to follow a hand.
     following_hands: bool,
+    following_faces: bool,
     stamp: u64,
     pub(super) settings: BehaviourSettings,
     pub(super) glance: Option<ObjectGlance>,
@@ -141,6 +142,7 @@ impl SurroundingsState {
         self.received = None;
         self.present = false;
         self.following_hands = false;
+        self.following_faces = false;
         self.glance = None;
         self.settings = BehaviourSettings::default();
         self.mutual.clear();
@@ -186,6 +188,15 @@ impl CharacterCoordinator {
     /// A hand to follow owns the head, also during a conversation.
     pub(super) fn following_hands(&self, now: f64) -> bool {
         self.surroundings.following_hands
+            && self
+                .surroundings
+                .received
+                .is_some_and(|received| now - received < 2.0)
+    }
+    /// Face following is on and someone is in view.
+    pub(super) fn following_face(&self, now: f64) -> bool {
+        self.surroundings.following_faces
+            && self.surroundings.present
             && self
                 .surroundings
                 .received
@@ -477,6 +488,7 @@ impl CharacterCoordinator {
         }
         self.surroundings.received = Some(now);
         self.surroundings.following_hands = value.tracking_mode == "hands";
+        self.surroundings.following_faces = value.tracking_mode == "faces";
         self.surroundings.budget.set_demo(value.settings.demo_mode);
         self.surroundings.settings = value.settings.clone();
         self.surroundings.present_objects = value

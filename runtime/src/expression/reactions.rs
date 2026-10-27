@@ -1152,6 +1152,66 @@ mod execution_tests {
         );
     }
     #[test]
+    fn face_following_carries_on_after_a_conversation_without_looking_away() {
+        let (mut core, _, boot) = crate::expression::gaze::tests::following();
+        let mut character = CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        let tick = |step: u64, character: &mut CharacterCoordinator, core: &mut RuntimeCore<_>| {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, core, false, None, false, None, None)
+                .unwrap();
+        };
+        let face = |now: f64, character: &mut CharacterCoordinator, core: &mut RuntimeCore<_>| {
+            let value = serde_json::from_value(serde_json::json!({
+                "capture_boottime_ns":boot.load(Ordering::Relaxed), "camera_on":true, "tracking_mode":"faces",
+                "settings":{}, "objects":[], "looking_away":true,
+                "faces":[{"track_id":1,"azimuth":0.4,"elevation":0.0,"frontal":false}]
+            }))
+            .unwrap();
+            character.observe_surroundings(value, now, core).unwrap();
+        };
+        for step in 1..=250 {
+            tick(step, &mut character, &mut core);
+        }
+        let home = character.status.active_anchor.clone().unwrap();
+        character
+            .attend_tracked_bearing(Some((0.4, 0.0)), Some(1), 5.0, &mut core)
+            .unwrap();
+        for step in 251..=400 {
+            tick(step, &mut character, &mut core);
+        }
+        character.set_reaction("neutral", 8.0, &mut core).unwrap();
+        let mut returned = false;
+        for step in 401..=1300 {
+            tick(step, &mut character, &mut core);
+            if step % 25 == 0 {
+                face(step as f64 * 0.02, &mut character, &mut core);
+            }
+            returned |= character.status.active_clip.as_deref() == Some("attention_return");
+        }
+        assert!(!returned, "Orion looked away from the face it follows");
+        assert!(character.attention.is_none());
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&home));
+        let target = crate::expression::gaze::GazeTarget {
+            track_id: 1,
+            capture_boottime_ns: boot.load(Ordering::Relaxed),
+            azimuth: 0.4,
+            elevation: 0.0,
+            confidence: 0.9,
+            category: Some("face".into()),
+            range: None,
+        };
+        assert!(
+            character
+                .queue_gaze_target(target, 26.0, &mut core)
+                .unwrap()
+        );
+    }
+    #[test]
     fn mutual_sequence_is_bounded_observed_and_privacy_returns_the_anchor() {
         let (mut core, _, boot) = crate::expression::gaze::tests::following();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
