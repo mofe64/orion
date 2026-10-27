@@ -571,6 +571,7 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 || scenes.is_active()
                 || routines.curiosity_quiet()
                 || audio.music_playing(),
+            talking: feedback.confirmed_activity() && !feedback.announcement(),
             hour: f64::from(chrono::Timelike::hour(&local))
                 + f64::from(chrono::Timelike::minute(&local)) / 60.0,
             day: i64::from(chrono::Datelike::num_days_from_ce(&local)),

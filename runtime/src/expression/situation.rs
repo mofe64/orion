@@ -77,6 +77,8 @@ pub struct Situation {
     pub day: i64,
     /// A voice turn, reply, music, alert, light routine or scene is running.
     pub busy: bool,
+    /// Someone is in a confirmed conversation with Orion.
+    pub talking: bool,
     pub lamp: LampView,
     /// Room light from the camera, in lux, when the camera reports it.
     pub room_lux: Option<f64>,
@@ -87,6 +89,7 @@ pub struct Situation {
 #[derive(Clone, Debug, Default)]
 pub struct Conditions {
     pub busy: bool,
+    pub talking: bool,
     pub hour: f64,
     pub day: i64,
     pub lamp: LampView,

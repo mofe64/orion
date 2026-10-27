@@ -84,6 +84,9 @@ pub struct RemarkContext {
     pub demo: bool,
     /// A voice turn, reply playback, music, alert, light routine or scene.
     pub busy: bool,
+    /// A confirmed conversation is running. Music, routines, sounds or a
+    /// wake that was not confirmed do not count.
+    pub talking: bool,
     /// The person has looked away from Orion for a long time.
     pub focused: bool,
     pub hour: f64,
@@ -98,6 +101,7 @@ impl From<&super::situation::Situation> for RemarkContext {
             proactive: situation.liveliness == super::situation::Liveliness::Lively,
             demo: situation.liveliness.demo(),
             busy: situation.busy,
+            talking: situation.talking,
             focused: situation.focused,
             hour: situation.hour,
             day: situation.day,
@@ -196,7 +200,7 @@ impl RemarkPolicy {
         if !context.enabled() || context.busy {
             self.pending = None;
         }
-        if context.busy {
+        if context.talking {
             self.last_conversation = Some(now);
         }
         if self
@@ -676,6 +680,28 @@ mod tests {
         let mut policy = policy(true);
         policy.engaged(1000.0);
         assert!(!policy.offer(RemarkEvent::PersonLooking, None, None, 1100.0));
+    }
+
+    #[test]
+    fn only_a_real_conversation_holds_remarks_back_afterwards() {
+        let context = |busy, talking| RemarkContext {
+            proactive: true,
+            hour: 12.0,
+            busy,
+            talking,
+            ..Default::default()
+        };
+        // Music, a routine or a wake that was not confirmed: busy, not talking.
+        let mut policy = RemarkPolicy::default();
+        policy.set_context(context(true, false), 1000.0);
+        policy.set_context(context(false, false), 1060.0);
+        assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 1060.0));
+        // A conversation holds remarks back for a while after it ends.
+        let mut policy = RemarkPolicy::default();
+        policy.set_context(context(true, true), 1000.0);
+        policy.set_context(context(false, false), 1060.0);
+        assert!(!policy.offer(RemarkEvent::PersonArrived, None, None, 1060.0));
+        assert!(policy.offer(RemarkEvent::PersonArrived, None, None, 1000.0 + 5.0 * 60.0));
     }
 
     #[test]

@@ -421,6 +421,7 @@ impl CharacterCoordinator {
             hour: conditions.hour,
             day: conditions.day,
             busy: conditions.busy,
+            talking: conditions.talking,
             lamp: conditions.lamp.clone(),
             room_lux: value
                 .room_lux
