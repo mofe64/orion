@@ -17,12 +17,12 @@ TARGET_HOLD_NS = 1_000_000_000
 
 
 def raised_near(palm, face):
-    """A palm beside or above a face, not on it: a hand held up to wave.
-    A hand on the desk sits well below the face in the picture."""
+    """A palm held up beside or above a face, not on it: a hand raised to wave.
+    A hand on the chin, on the desk or holding a cup sits lower in the picture."""
     x, y, width, height = face.box
     px, py = palm.centre
     on_face = x <= px <= x + width and y <= py <= y + height
-    return not on_face and py <= y + 2 * height and abs(px - (x + width / 2)) <= 4 * width
+    return not on_face and py <= y + .75 * height and abs(px - (x + width / 2)) <= 3 * width
 
 class FacePipeline:
     def __init__(self, detector, intrinsics, client, clock=time.monotonic, boot_clock=boottime_ns,

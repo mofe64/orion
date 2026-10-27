@@ -24,7 +24,11 @@ struct State {
     faces: usize,
     /// The latest situation, saved with each decision.
     context: Option<serde_json::Value>,
+    /// When each kind of skip was last written.
+    skips: BTreeMap<(String, String), f64>,
 }
+/// The same skip for the same reason is written once in this time.
+const SKIP_REPEAT_SECONDS: f64 = 60.0;
 
 impl BehaviourLog {
     pub(crate) fn new(writer: &BehaviourWriter) -> Self {
@@ -40,6 +44,7 @@ impl BehaviourLog {
             rest_action: None,
             initialized: false,
             held_gaze: None,
+            skips: BTreeMap::new(),
             faces: 0,
             context: None,
         })))
@@ -72,6 +77,15 @@ impl BehaviourLog {
         now: f64,
     ) {
         let mut state = self.0.lock().unwrap();
+        let key = (behaviour.to_owned(), reason.to_owned());
+        if state
+            .skips
+            .get(&key)
+            .is_some_and(|last| now - last < SKIP_REPEAT_SECONDS)
+        {
+            return;
+        }
+        state.skips.insert(key, now);
         let mut event = state.event("attention", behaviour, "skipped", target, category, now);
         event.reason = Some(reason.into());
         event.context = state.context.clone();
@@ -454,6 +468,32 @@ mod tests {
             assert_eq!(ended["durationSeconds"], duration);
         }
         assert!(!events.iter().any(|e| e["phase"] == "completed"));
+    }
+    #[test]
+    fn the_same_skip_is_written_once_a_minute() {
+        let directory = tempfile::tempdir().unwrap();
+        let writer = BehaviourWriter::start(directory.path().into()).unwrap();
+        let log = BehaviourLog::new(&writer);
+        for (time, reason) in [
+            (0., "busy"),
+            (5., "busy"),
+            (6., "cooldown"),
+            (59., "busy"),
+            (61., "busy"),
+        ] {
+            log.skipped("wave_back", None, Some("person".into()), reason, time);
+        }
+        drop(writer);
+        let history = orion_history::Store::new(directory.path().into())
+            .behaviours(None, None)
+            .unwrap();
+        let skips = history["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["phase"] == "skipped")
+            .count();
+        assert_eq!(skips, 3);
     }
     fn motion(run: u64, phase: MovementPhase) -> crate::MotionState {
         crate::MotionState {

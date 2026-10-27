@@ -62,6 +62,9 @@
 .behaviour-row.said { border-left-color: #4f9d69; }
 .behaviour-row.skipped { border-left-color: var(--line); }
 .behaviour-row.skipped strong { font-weight: 500; color: var(--muted); }
+.behaviour-count { margin-left: .5rem; padding: .05rem .45rem; border-radius: 999px; background: var(--surface-3); font-size: .72rem; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.behaviour-reasons { margin: .3rem 0 0; padding-left: 1rem; font-size: .8rem; line-height: 1.5; color: var(--muted); }
+.behaviour-reasons span { margin-left: .3rem; font-size: .72rem; opacity: .8; }
 .behaviour-row.idle p { color: var(--muted); margin: 0; }
 @media (max-width: 40rem) { .behaviour-row { grid-template-columns: 3.6rem minmax(0,1fr); padding: .5rem .6rem; } }
 

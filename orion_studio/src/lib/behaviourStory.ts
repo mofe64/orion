@@ -3,7 +3,11 @@ import type { BehaviourEvent } from "../components/VoiceHistory";
 /** What a row in the behaviour story is about. */
 export type StoryKind = "did" | "said" | "skipped" | "noticed" | "sleep";
 export type StoryFilter = "all" | StoryKind;
-export interface StoryRow { id: string; at: string; kind: StoryKind; title: string; detail?: string; note?: string; remark?: boolean; seen?: string }
+export interface StoryRow {
+  id: string; at: string; kind: StoryKind; title: string; detail?: string; note?: string; remark?: boolean; seen?: string;
+  /** Repeats of the same "didn't" in a row fold into one row from this time. */
+  from?: string; count?: number; reasons?: { text: string; count: number }[];
+}
 export interface StoryBlock { id: string; visit: boolean; start: string; end: string; rows: StoryRow[]; idle: number }
 export interface StoryCounts { visits: number; did: number; said: number; answered: number; skipped: number }
 
@@ -150,6 +154,20 @@ function visitFlags(sorted: BehaviourEvent[]): boolean[] {
   });
 }
 
+/** One more of the same "didn't": count it and its reason on the earlier row. */
+function foldSkip(row: StoryRow, next: StoryRow) {
+  row.reasons ??= [{ text: row.detail ?? "", count: 1 }];
+  row.from ??= row.at;
+  row.count = (row.count ?? 1) + 1;
+  row.at = next.at;
+  row.seen = next.seen ?? row.seen;
+  const reason = row.reasons.find(item => item.text === next.detail);
+  if (reason) reason.count++;
+  else row.reasons.push({ text: next.detail ?? "", count: 1 });
+  row.reasons.sort((a, b) => b.count - a.count);
+  row.detail = row.reasons.length === 1 ? row.reasons[0].text : undefined;
+}
+
 /**
  * Groups raw events into visits and the time between them. Idle movements
  * collapse to a count; a movement that stopped early notes it on its row.
@@ -180,6 +198,11 @@ export function behaviourStory(events: BehaviourEvent[], filter: StoryFilter = "
     if (spoken) {
       if (event.phase === "silent") spoken.title = "Thought of something to say, then stayed quiet";
       else spoken.detail = row.detail;
+      return;
+    }
+    const last = block.rows.at(-1);
+    if (row.kind === "skipped" && last?.kind === "skipped" && last.title === row.title) {
+      foldSkip(last, row);
       return;
     }
     const note = event.actionId ? outcome.get(event.actionId) : undefined;

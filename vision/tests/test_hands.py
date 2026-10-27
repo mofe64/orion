@@ -116,6 +116,11 @@ class PalmTests(unittest.TestCase):
         now[0] += .6
         pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
         self.assertEqual((pipeline.hand_count, pipeline.raised_hands), (2, 1))
+        # A hand at the chin or chest, beside the face, is not a wave.
+        palms.detect.return_value = [Palm([360,160,40,40],.9), Palm([300,190,60,40],.9)]
+        now[0] += 1.1
+        pipeline._tracking_frame(int(now[0]*1e9), frame, pipeline.generation)
+        self.assertEqual((pipeline.hand_count, pipeline.raised_hands), (2, 0))
 
     def test_motion_rejection_preserves_paired_preview(self):
         pipeline, detector, client, now = self.pipeline()

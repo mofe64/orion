@@ -24,6 +24,10 @@ const DARK_SECONDS: f64 = 60.0;
 const DEMO_DARK_SECONDS: f64 = 5.0;
 /// A hand must stay raised this long before Orion waves back.
 const WAVE_RAISE_SECONDS: f64 = 0.6;
+/// A hand counts as lowered after this long, so a flicker in the camera is not a new wave.
+const WAVE_LOWERED_SECONDS: f64 = 3.0;
+/// After a wave, or a wave it could not do, Orion waits this long before the next.
+const WAVE_AGAIN_SECONDS: f64 = 30.0;
 
 #[derive(Debug, Default)]
 pub(super) struct LivelyState {
@@ -33,6 +37,8 @@ pub(super) struct LivelyState {
     raised_since: Option<f64>,
     /// The raised hand was answered; wait until it is lowered.
     waved: bool,
+    lowered_since: Option<f64>,
+    wave_tried: Option<f64>,
     /// When Orion rests after a goodnight, unless someone comes back.
     pub(super) goodnight_rest: Option<f64>,
 }
@@ -114,8 +120,12 @@ impl CharacterCoordinator {
         }
         if raised_hands == 0 || faces.is_empty() {
             lively.raised_since = None;
-            lively.waved = false;
+            let lowered = *lively.lowered_since.get_or_insert(now);
+            if now - lowered >= WAVE_LOWERED_SECONDS {
+                lively.waved = false;
+            }
         } else {
+            lively.lowered_since = None;
             lively.raised_since.get_or_insert(now);
         }
         let Some(face) = faces.first() else {
@@ -130,10 +140,14 @@ impl CharacterCoordinator {
             && rules.wave_back
             && !lively.waved
             && lively
+                .wave_tried
+                .is_none_or(|at| now - at >= WAVE_AGAIN_SECONDS)
+            && lively
                 .raised_since
                 .is_some_and(|since| now - since >= WAVE_RAISE_SECONDS)
         {
             self.surroundings.lively.waved = true;
+            self.surroundings.lively.wave_tried = Some(now);
             return self.wave_back(face, now, core);
         }
         let break_due = lively.desk_since.is_some_and(|since| {
@@ -366,6 +380,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_flickering_hand_gets_one_wave_and_the_next_waits() {
+        let mut desk = Desk::new(19.0);
+        let person = serde_json::json!({"faces": true, "room_lux": 300.0});
+        let wave = serde_json::json!({"faces": true, "room_lux": 300.0, "raised_hands": 1});
+        desk.run(5.0, 3.0, Some(person.clone()));
+        desk.run(8.0, 1.5, Some(wave.clone()));
+        assert!(desk.character.surroundings.lively.waved);
+        let tried = desk.character.surroundings.lively.wave_tried;
+        assert!(tried.is_some());
+        // The camera loses the palm for a moment: the same raise.
+        desk.run(9.5, 1.0, Some(person.clone()));
+        assert!(desk.character.surroundings.lively.waved);
+        // Lowered and raised again soon after: no second wave yet.
+        desk.run(10.5, 3.5, Some(person.clone()));
+        desk.run(14.0, 2.0, Some(wave.clone()));
+        assert_eq!(desk.character.surroundings.lively.wave_tried, tried);
+        desk.run(16.0, 4.0, Some(person));
+        desk.run(40.0, 2.0, Some(wave));
+        assert!(desk.character.surroundings.lively.wave_tried > tried);
+    }
     #[test]
     fn lively_orion_waves_back_and_offers_light_in_a_dark_room() {
         let mut desk = Desk::new(19.0);

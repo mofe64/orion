@@ -146,8 +146,9 @@ export function CharacterPanel({ initiative, ignored, quiet }: { initiative?: In
   return <section className="settings-card"><header><Sparkles size={20}/><div><h2>Character decisions</h2><p>What Orion sees now, and what it would say if something happened.</p></div></header>
     <dl className="debug-values">{facts.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>
     {initiative.rules && <><h3>Lively rules</h3><ul className="debug-rules">{rulesInWords(initiative.rules).map(line => <li key={line}>{line}</li>)}</ul></>}
-    <h3>Remarks right now</h3>
-    <dl className="debug-values">{Object.entries(initiative.remark_refusals).map(([event, reason]) => <div key={event}><dt>{remarkName(event)}</dt>
-      <dd>{reason ? refusals[reason] ?? reason : "Would speak"}</dd></div>)}</dl>
+    <h3>Could Orion speak up right now?</h3>
+    <p className="settings-help">If each of these happened now, would Orion say something? If not, why it would stay quiet.</p>
+    <dl className="debug-values">{Object.entries(initiative.remark_refusals).sort(([, a], [, b]) => Number(!!a) - Number(!!b)).map(([event, reason]) => <div key={event}><dt>{remarkName(event)}</dt>
+      <dd>{reason ? <>Would stay quiet: {refusals[reason] ?? reason}</> : <strong>Would speak</strong>}</dd></div>)}</dl>
   </section>;
 }

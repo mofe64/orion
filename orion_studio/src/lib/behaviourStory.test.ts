@@ -69,3 +69,22 @@ it("says what Orion saw when it decided", () => {
   expect(row?.seen).toBe("1 person in view · someone busy working · visit 42 minutes long · Orion’s light warm white 60% · room dark · Lively · 1 gesture in the last 10 minutes");
   expect(storyRow(event("21:00", "wave_back", "started"))?.seen).toBeUndefined();
 });
+
+it("folds the same thing not done in a row into one row with its reasons", () => {
+  const events = [
+    event("07:00", "visit", "started", { targetCategory: "person" }),
+    event("07:01", "wave_back", "skipped", { targetCategory: "person", reason: "habituation" }),
+    event("07:02", "wave_back", "skipped", { targetCategory: "person", reason: "window" }),
+    event("07:03", "wave_back", "skipped", { targetCategory: "person", reason: "window" }),
+    event("07:04", "wave_back", "started", { targetCategory: "person" }),
+    event("07:05", "wave_back", "skipped", { targetCategory: "person", reason: "window" }),
+  ];
+  const [visit] = behaviourStory(events);
+  const [single, waved, folded] = visit.rows;
+  expect(single).toMatchObject({ title: "Didn’t wave back", detail: "It had already reacted several times in the last 10 minutes." });
+  expect(single.count).toBeUndefined();
+  expect(waved.title).toBe("Waved back");
+  expect(folded).toMatchObject({ title: "Didn’t wave back", count: 3, from: "2026-10-26T07:01:00Z", at: "2026-10-26T07:03:00Z", detail: undefined,
+    reasons: [{ text: "It had already reacted several times in the last 10 minutes.", count: 2 }, { text: "It looked at this a short while ago.", count: 1 }] });
+  expect(storyCounts(events).skipped).toBe(4);
+});
