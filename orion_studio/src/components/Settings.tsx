@@ -12,6 +12,7 @@ import { useAgentProfileParts } from "./AgentProfileSettings";
 import { LocationSettings } from "./LocationSettings";
 import { SoundSettings } from "./SoundSettings";
 import { FailureNotice } from "./FailureNotice";
+import { CameraLightSetting } from "./CameraLightSetting";
 import { useScopedFeedback } from "../hooks/useScopedNotice";
 import { assetDisplayName } from "../lib/displayName";
 import { orionStateLabel } from "../lib/orionMode";
@@ -75,6 +76,7 @@ export function Settings({ active = true, voice, preferences, onPreferences, the
         <SettingToggle label="Listening" help={voice.label} checked={voice.listening} disabled={!connected || voice.snapshot.muted === undefined || voice.toggling} onChange={() => void voice.toggle()} />
         {voice.notice && <p role="status">{voice.listeningError ? voice.notice : `Saved. ${voice.notice}`}</p>}<FailureNotice value={voice.listeningError} />
         <SoundSettings embedded connected={connected} connectionScope={connectionScope} routines={status?.routines} onSound={onSound} />
+        {camera && <CameraLightSetting connection={connection} />}
       </section>
       <section className="settings-card" id="settings-personality"><header><Sparkles size={20} /><div><h2>Personality</h2><p>Who Orion is: how lively it is, its quirks and how it talks. Changes save automatically.</p></div></header>
         <CharacterSettings active={active} connection={connection} supported={camera} behaviours={behaviours} />

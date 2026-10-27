@@ -11,7 +11,8 @@ use crate::{
 pub const DEFAULT_REST_AFTER_SECONDS: f64 = 1800.0;
 const REST_FADE_SECONDS: f64 = 1.0;
 // The front-view top-centre band on the V2 ring spans pixels 15, 16 and 17.
-const V2_CAMERA_VIEWER_START_PIXEL: usize = 15;
+/// The light that shows the camera is watched, until the owner places it.
+pub const V2_CAMERA_VIEWER_PIXEL: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -628,7 +629,7 @@ pub struct RestLighting {
     frame: Vec<Rgbw8>,
     fade: Option<(f64, Vec<Rgbw8>)>,
     wake_pulse: Option<Rgbw8>,
-    camera_viewer: bool,
+    camera_viewer: Option<usize>,
     viewer_rendered: bool,
     now: f64,
 }
@@ -641,7 +642,7 @@ impl RestLighting {
             frame,
             fade: None,
             wake_pulse: None,
-            camera_viewer: false,
+            camera_viewer: None,
             viewer_rendered: false,
             now: 0.0,
         }
@@ -654,11 +655,11 @@ impl RestLighting {
         self.wake_pulse = color;
     }
 
-    /// Three steady, full-brightness cyan pixels above ordinary lighting writes.
+    /// One steady, full-brightness cyan pixel above ordinary lighting writes.
     /// Keep it out of the base frame and below rest darkness so expiry restores
     /// the latest underlying lighting without changing its owner's preferences.
-    pub fn set_camera_viewer(&mut self, active: bool) {
-        self.camera_viewer = active;
+    pub fn set_camera_viewer(&mut self, pixel: Option<usize>) {
+        self.camera_viewer = pixel;
     }
 
     pub fn update(&mut self, dark: bool, now: f64) -> Result<()> {
@@ -669,7 +670,7 @@ impl RestLighting {
         if !dark {
             self.fade = None;
         }
-        if dark || self.camera_viewer || self.viewer_rendered {
+        if dark || self.camera_viewer.is_some() || self.viewer_rendered {
             self.render(&self.frame.clone())?;
         }
         Ok(())
@@ -695,15 +696,15 @@ impl LightingDevice for RestLighting {
         } else {
             pixels.to_vec()
         };
-        self.viewer_rendered = self.camera_viewer && self.fade.is_none();
+        self.viewer_rendered = self.camera_viewer.is_some() && self.fade.is_none();
         if let (Some(color), Some(_)) = (self.wake_pulse, &self.fade) {
             self.device.render_uniform(color)?;
         } else {
             let mut output = frame.clone();
-            if self.viewer_rendered {
-                for pixel in output.iter_mut().skip(V2_CAMERA_VIEWER_START_PIXEL).take(3) {
-                    *pixel = Rgbw8::new(0, 255, 255, 0);
-                }
+            if self.viewer_rendered
+                && let Some(pixel) = self.camera_viewer.and_then(|index| output.get_mut(index))
+            {
+                *pixel = Rgbw8::new(0, 255, 255, 0);
             }
             self.device.render(&output)?;
         }
@@ -727,16 +728,16 @@ mod tests {
         let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone(), 24)));
         let base = Rgbw8::new(2, 3, 4, 5);
         light.render_uniform(base).unwrap();
-        light.set_camera_viewer(true);
+        light.set_camera_viewer(Some(16));
         light.update(false, 1.0).unwrap();
         let mut expected = vec![base; 24];
-        expected[15..18].fill(Rgbw8::new(0, 255, 255, 0));
+        expected[16] = Rgbw8::new(0, 255, 255, 0);
         assert_eq!(*observed.borrow(), expected);
         assert_eq!(light.frame, vec![base; 24]);
-        light.set_camera_viewer(false);
+        light.set_camera_viewer(None);
         light.update(false, 2.0).unwrap();
         assert_eq!(*observed.borrow(), vec![base; 24]);
-        light.set_camera_viewer(true);
+        light.set_camera_viewer(Some(16));
         light.update(true, 3.0).unwrap();
         assert_eq!(*observed.borrow(), vec![base; 24]);
         light.update(true, 3.0 + REST_FADE_SECONDS).unwrap();
@@ -751,7 +752,7 @@ mod tests {
     fn viewer_band_is_steady_preserves_other_pixels_and_restores_latest_frame() {
         let observed = Rc::new(RefCell::new(Vec::new()));
         let mut light = RestLighting::new(Box::new(ObservedLight(observed.clone(), 24)));
-        light.set_camera_viewer(true);
+        light.set_camera_viewer(Some(16));
         let frames = [
             vec![Rgbw8::new(255, 255, 255, 255); 24],
             vec![Rgbw8::OFF; 24],
@@ -763,15 +764,15 @@ mod tests {
                 light.render(frame).unwrap();
                 let output = observed.borrow();
                 let cyan = Rgbw8::new(0, 255, 255, 0);
-                assert_eq!(output.iter().filter(|pixel| **pixel == cyan).count(), 3);
-                assert_eq!(&output[15..18], &[cyan; 3]);
-                assert_eq!(&output[..15], &frame[..15]);
-                assert_eq!(&output[18..], &frame[18..]);
+                assert_eq!(output.iter().filter(|pixel| **pixel == cyan).count(), 1);
+                assert_eq!(output[16], cyan);
+                assert_eq!(&output[..16], &frame[..16]);
+                assert_eq!(&output[17..], &frame[17..]);
                 assert_eq!(&light.frame, frame);
             }
             assert!(light.is_on());
         }
-        light.set_camera_viewer(false);
+        light.set_camera_viewer(None);
         light.update(false, 1235.0).unwrap();
         assert_eq!(*observed.borrow(), frames[2]);
     }

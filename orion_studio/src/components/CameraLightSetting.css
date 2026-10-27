@@ -1,0 +1,19 @@
+.camera-light-dialog header h2 { margin: 0; font-size: 1.15rem; }
+.camera-light-ring { display: block; width: min(16.25rem, 100%); margin: .5rem auto; touch-action: none; cursor: pointer; border-radius: 50%; user-select: none; -webkit-user-select: none; }
+.camera-light-ring:focus { outline: none; }
+.camera-light-ring:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.camera-light-track { fill: none; stroke: var(--line); stroke-width: 22; }
+.camera-light-led { fill: var(--surface-3); stroke: var(--line-strong); stroke-width: 1; }
+.camera-light-glow { fill: #00ffff; opacity: .18; pointer-events: none; }
+.camera-light-chosen { fill: #00e5ff; stroke: #e6ffff; stroke-width: 2; pointer-events: none; transition: cx .12s ease, cy .12s ease; }
+.camera-light-label { fill: var(--text); font-size: 18px; font-weight: 600; }
+.camera-light-sub { fill: var(--muted); font-size: 12px; }
+.camera-light-nudge { display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem; }
+.camera-light-nudge button { display: inline-flex; align-items: center; gap: .35rem; }
+.camera-light-dialog p[role="status"] { min-height: 2.6rem; text-align: center; }
+@media (prefers-reduced-motion: reduce) { .camera-light-chosen { transition: none; } }
+.camera-light-dialog { width: min(26rem, calc(100% - 2rem)); padding: 1.5rem; color: var(--text); background: var(--surface-1); border: 1px solid var(--line-strong); border-radius: 1.5rem; }
+.camera-light-dialog::backdrop { background: #0009; backdrop-filter: blur(5px); }
+.camera-light-dialog > header, .camera-light-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.camera-light-dialog > p { color: var(--muted); font-size: .85rem; line-height: 1.6; }
+.camera-light-row { border-top: 1px solid var(--line); margin-top: .6rem; }

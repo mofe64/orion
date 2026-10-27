@@ -57,7 +57,7 @@ Capture-time geometry converts camera rays into base-frame bearings. Gaze reques
 
 Camera privacy closes capture and clears image buffers. Tracking Off stops background inference but permits plain viewing. Other tracking modes select observations or following behavior.
 
-Gateway viewing requires runtime permission. A cyan ring band indicates active viewing. Rest blocks streams and snapshots. Detection polling cannot create viewing permission.
+Gateway viewing requires runtime permission. One cyan light on the ring shows active viewing. The owner chooses this light in Studio Settings. Rest blocks streams and snapshots. Detection polling cannot create viewing permission.
 
 Explicit object aiming follows agent, coordinator, gateway, vision and runtime planning. A voice resource lock separates object lookup from speech inference and playback. Search movement uses runtime-owned poses and completion checks.
 

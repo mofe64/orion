@@ -707,6 +707,26 @@ class CameraProxyTests(unittest.TestCase):
             self.assertTrue(json.load(response)['camera_enabled'])
         self.assertTrue(self.gateway.camera_is_enabled())
 
+    def test_owner_places_the_camera_light_and_sees_it_on_the_lamp(self):
+        with urllib.request.urlopen(self.request('light')) as response:
+            self.assertEqual(json.load(response), {'api_version': self.gateway.get_camera_light()['api_version'], 'position': 16, 'count': 24})
+        with urllib.request.urlopen(self.request('enabled', {'camera_enabled': False})):
+            pass
+        with urllib.request.urlopen(self.request('light', {'position': 5})) as response:
+            self.assertEqual(json.load(response)['shown'], True)
+        self.assertEqual(self.marker_commands(), ['camera-viewer 3 5'])
+        self.assertEqual(json.loads(self.gateway.camera_preference_file.read_text()), {'camera_enabled': False, 'light_position': 5})
+        self.assertEqual(self.gateway.camera_viewers.lease(), 'camera-viewer 3 5')
+        for wrong in (24, -1, 2.0, '3', None):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(self.request('light', {'position': wrong}))
+            self.assertEqual(error.exception.code, 400); error.exception.close()
+        self.rest_state = 'resting'
+        with urllib.request.urlopen(self.request('light', {'position': 7})) as response:
+            self.assertEqual(json.load(response)['shown'], False)
+        with urllib.request.urlopen(self.request('light')) as response:
+            self.assertEqual(json.load(response)['position'], 7)
+
     def test_tracking_routes_save_and_read_mode_without_a_viewer_or_runtime_command(self):
         url = f'http://127.0.0.1:{self.server.server_port}/api/v2/tracking/mode'
         headers = {'Authorization': 'Bearer ' + 'a' * 32, 'Content-Type': 'application/json'}

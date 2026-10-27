@@ -227,9 +227,10 @@ class UnixOrionClient:
 
 class CameraViewers:
     """Shared viewing lease, rest monitor and minimum snapshot indication."""
-    def __init__(self, request, require_awake=lambda: None, clock=time.monotonic):
+    def __init__(self, request, require_awake=lambda: None, clock=time.monotonic, light=lambda: None):
         self.request = request
         self.require_awake = require_awake
+        self.light = light
         self.clock = clock
         self.lock = threading.Lock()
         self.clients = 0
@@ -247,7 +248,7 @@ class CameraViewers:
                 raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable", "Orion's camera viewer indicator is unavailable.")
             if self.clients == 0:
                 try:
-                    self.request("camera-viewer 3")
+                    self.request(self.lease())
                 except GatewayError as error:
                     raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable",
                         "Orion's camera viewer indicator is unavailable.") from error
@@ -265,7 +266,7 @@ class CameraViewers:
                         # Renew after delivery, so even a slow snapshot leaves
                         # three seconds of indication. Other viewers cannot
                         # clear this lease early when they disconnect.
-                        self.request("camera-viewer 3")
+                        self.request(self.lease())
                     except GatewayError:
                         self.healthy = False
                     finally:
@@ -281,6 +282,18 @@ class CameraViewers:
                         except GatewayError:
                             pass  # The runtime lease expires if cleanup cannot reach it.
 
+    def lease(self):
+        """Three seconds of camera light, on the light the owner chose."""
+        light = self.light()
+        return "camera-viewer 3" if light is None else f"camera-viewer 3 {light}"
+
+    def show_light(self):
+        """Light the chosen light for three seconds while the owner places it."""
+        with self.lock:
+            self.require_awake()
+            self.request(self.lease())
+            self.snapshot_until = max(self.snapshot_until, self.clock() + 3)
+
     def _renew(self, stop):
         renew_at = self.clock() + 1
         while not stop.wait(.1):
@@ -292,7 +305,7 @@ class CameraViewers:
                     # viewer count. Rest or unavailable telemetry ends feeds.
                     self.require_awake()
                     if self.clock() >= renew_at:
-                        self.request("camera-viewer 3")
+                        self.request(self.lease())
                         renew_at = self.clock() + 1
                 except GatewayError:
                     self.healthy = False
@@ -340,7 +353,7 @@ class OrionGateway:
         self.behaviours_file = self.camera_preference_file.with_name('behaviours.json')
         self.behaviours_lock = threading.Lock()
         self.personality_file = self.camera_preference_file.with_name('personality.json')
-        self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake)
+        self.camera_viewers = CameraViewers(self._checked, self.require_camera_awake, light=self.camera_light)
 
     def spotify_request(self, action, payload=None):
         try:
@@ -438,35 +451,74 @@ class OrionGateway:
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_indicator_unavailable",
                 "Could not verify Orion's rest state.")
 
-    def camera_is_enabled(self):
+    CAMERA_LIGHTS = 24  # The V2 light ring.
+    CAMERA_LIGHT_DEFAULT = 16
+
+    def _camera_preferences(self):
         try:
-            return json.loads(self.camera_preference_file.read_text()).get("camera_enabled") is True
+            value = json.loads(self.camera_preference_file.read_text())
+            return value if isinstance(value, dict) else None
         except FileNotFoundError:
-            return True
-        except (OSError, ValueError, AttributeError):
-            return False
+            return {}
+        except (OSError, ValueError):
+            return None
+
+    def camera_is_enabled(self):
+        value = self._camera_preferences()
+        return value is not None and value.get("camera_enabled", True) is True
+
+    def camera_light(self):
+        """The light that shows the camera is watched, or None for Orion's default."""
+        light = (self._camera_preferences() or {}).get("light_position")
+        return light if type(light) is int and 0 <= light < self.CAMERA_LIGHTS else None
+
+    def _save_camera(self, change):
+        path = self.camera_preference_file
+        value = {**(self._camera_preferences() or {}), **change}
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".camera-", delete=False) as output:
+                temporary = Path(output.name)
+                json.dump(value, output)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(path)
+        except OSError as error:
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_setting_unavailable", "Could not save the camera setting.") from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def set_camera_enabled(self, payload):
         if self.hardware != "v2":
             raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "This Orion has no camera.")
         if not isinstance(payload, dict) or type(payload.get("camera_enabled")) is not bool:
             raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_camera_setting", "camera_enabled must be true or false.")
-        path = self.camera_preference_file
-        temporary = None
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".camera-", delete=False) as output:
-                temporary = Path(output.name)
-                json.dump({"camera_enabled": payload["camera_enabled"]}, output)
-                output.flush()
-                os.fsync(output.fileno())
-            temporary.replace(path)
-        except OSError as error:
-            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_setting_unavailable", "Could not save camera privacy setting.") from error
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        self._save_camera({"camera_enabled": payload["camera_enabled"]})
         return {"api_version": API_VERSION, "camera_enabled": payload["camera_enabled"]}
+
+    def get_camera_light(self):
+        if self.hardware != "v2":
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "This Orion has no camera.")
+        light = self.camera_light()
+        return {"api_version": API_VERSION, "position": self.CAMERA_LIGHT_DEFAULT if light is None else light,
+                "count": self.CAMERA_LIGHTS}
+
+    def set_camera_light(self, payload):
+        """Save where the camera light sits and show it there on the lamp."""
+        if self.hardware != "v2":
+            raise GatewayError(HTTPStatus.SERVICE_UNAVAILABLE, "camera_unavailable", "This Orion has no camera.")
+        position = payload.get("position") if isinstance(payload, dict) else None
+        if type(position) is not int or not 0 <= position < self.CAMERA_LIGHTS:
+            raise GatewayError(HTTPStatus.BAD_REQUEST, "invalid_camera_light", "Choose one of the lights on the ring.")
+        self._save_camera({"light_position": position})
+        try:
+            self.camera_viewers.show_light()
+            shown = True
+        except GatewayError:
+            shown = False
+        return {"api_version": API_VERSION, "position": position, "count": self.CAMERA_LIGHTS, "shown": shown}
 
     BEHAVIOURS = ('object_glances', 'mutual_gaze', 'arrival_notice', 'new_object_peek', 'presence_defers_rest',
                   'mind_idle_rhythm', 'listen_lean_in', 'thinking_beats', 'wake_sleep_acts', 'posture_drift', 'act_sounds', 'move_to_music',
@@ -2358,6 +2410,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return HTTPStatus.OK, gateway.get_personality()
             if path == '/api/v2/tracking/mode':
                 return HTTPStatus.OK, gateway.get_tracking_mode()
+            if path == '/api/v2/camera/light':
+                return HTTPStatus.OK, gateway.get_camera_light()
             camera_paths = {"/api/v2/camera/stream": "/stream", "/api/v2/camera/snapshot": "/frame.jpg",
                             "/api/v2/camera/observations": "/observations",
                             "/api/v2/camera/detections": "/detections"}
@@ -2407,6 +2461,8 @@ def make_handler(gateway: OrionGateway, token: str, allowed_origins: str | list[
                 return HTTPStatus.OK, gateway.set_tracking_mode(self._read_json())
             if path == "/api/v2/camera/enabled":
                 return HTTPStatus.OK, gateway.set_camera_enabled(self._read_json())
+            if path == "/api/v2/camera/light":
+                return HTTPStatus.OK, gateway.set_camera_light(self._read_json())
             if path == "/api/v2/pair/code":
                 return HTTPStatus.OK, pairing_codes.request_code()
             if path == "/api/v2/pair/token":

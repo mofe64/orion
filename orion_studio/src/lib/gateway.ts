@@ -134,6 +134,11 @@ export interface CameraDetectionBatch {
 export type CameraStreamState = "connecting" | "live" | "reconnecting" | "off" | "unavailable";
 export const setCameraEnabled = (connection: GatewayConnection, camera_enabled: boolean) =>
   request<{ camera_enabled: boolean }>(connection, "/api/v2/camera/enabled", { method: "POST", body: JSON.stringify({ camera_enabled }) });
+export interface CameraLight { position: number; count: number; shown?: boolean }
+export const getCameraLight = (connection: GatewayConnection, signal?: AbortSignal) =>
+  request<CameraLight>(connection, "/api/v2/camera/light", { signal, cache: "no-store" });
+export const setCameraLight = (connection: GatewayConnection, position: number) =>
+  request<CameraLight>(connection, "/api/v2/camera/light", { method: "POST", body: JSON.stringify({ position }) });
 export type TrackingMode = "off" | "idle" | "faces" | "hands";
 export interface TrackingSetting { tracking_mode: TrackingMode; camera_enabled: boolean }
 export const getTrackingMode = (connection: GatewayConnection, signal?: AbortSignal) =>
