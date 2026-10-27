@@ -12,7 +12,7 @@ export const ruleSwitches: [Switch, string, string][] = [
   ["wave_back", "Wave back", "Waves back when you wave at it."],
   ["light_care", "Offer light", "Offers to turn its light on or up when the room gets dark."],
   ["break_nudge", "Suggest a break", "Stretches and suggests a break after a long time at the desk."],
-  ["goodnight", "Say goodnight", "Says goodnight when you leave late, then goes to sleep."],
+  ["goodnight", "Say goodnight", "Says goodnight when the last person leaves late, then goes to sleep if nobody comes back."],
   ["follow_ups", "Ask about things you mentioned", "Remembers an interview or a trip you talk about, and asks how it went."],
   ["new_things", "Talk about new things", "Says something about a new thing it sees on the desk."],
   ["looks", "Talk when you look at it", "Says something when you look at it for a while."],
@@ -60,8 +60,8 @@ export function LivelyRules({ rules, pending, onChange }: { rules: Rules; pendin
     <h4>Looking after you</h4>
     <ul className="rule-list">
       <li><span>Suggest a break after</span><Stepper label="Minutes at the desk before a break" value={shown.break_after_minutes} min={20} max={240} step={10} unit="min" onChange={value => change({ break_after_minutes: value })} /><span>at the desk</span></li>
-      <li><span>Say goodnight to people who leave after</span><Time label="Goodnight from" value={shown.goodnight_from} min={18 * 60} onChange={value => change({ goodnight_from: value })} /></li>
-      <li>{never ? <span>After a goodnight, stay awake</span> : <><span>After a goodnight, go to sleep after</span><Stepper label="Minutes before sleep after a goodnight" value={shown.sleep_after_goodnight_minutes ?? 2} min={1} max={60} unit="min" onChange={value => change({ sleep_after_goodnight_minutes: value })} /></>}
+      <li><span>Say goodnight when the last person leaves after</span><Time label="Goodnight from" value={shown.goodnight_from} min={18 * 60} onChange={value => change({ goodnight_from: value })} /></li>
+      <li>{never ? <span>After a goodnight, stay awake</span> : <><span>If nobody comes back, go to sleep after</span><Stepper label="Minutes before sleep after a goodnight" value={shown.sleep_after_goodnight_minutes ?? 2} min={1} max={60} unit="min" onChange={value => change({ sleep_after_goodnight_minutes: value })} /></>}
         <button type="button" className="quiet-button rule-link" onClick={() => change({ sleep_after_goodnight_minutes: never ? 2 : null })}>{never ? "Go to sleep instead" : "Stay awake instead"}</button></li>
     </ul>
     <h4>What Orion does</h4>
