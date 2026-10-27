@@ -103,6 +103,8 @@ pub(super) struct SurroundingsState {
     pub(super) budget: CuriosityBudget,
     received: Option<f64>,
     present: bool,
+    /// The owner asked Orion to follow a hand.
+    following_hands: bool,
     stamp: u64,
     pub(super) settings: BehaviourSettings,
     pub(super) glance: Option<ObjectGlance>,
@@ -138,6 +140,7 @@ impl SurroundingsState {
     pub(super) fn clear(&mut self) {
         self.received = None;
         self.present = false;
+        self.following_hands = false;
         self.glance = None;
         self.settings = BehaviourSettings::default();
         self.mutual.clear();
@@ -179,6 +182,14 @@ impl CharacterCoordinator {
         self.surroundings.clear();
         self.settle_object_idle(now, core)?;
         self.settle_reaction(now, core)
+    }
+    /// A hand to follow owns the head, also during a conversation.
+    pub(super) fn following_hands(&self, now: f64) -> bool {
+        self.surroundings.following_hands
+            && self
+                .surroundings
+                .received
+                .is_some_and(|received| now - received < 2.0)
     }
     /// Deferral is read-only: it never grants motion, renews a voice deadline,
     /// enables torque or manufactures a wake event.
@@ -465,6 +476,7 @@ impl CharacterCoordinator {
             return Ok(());
         }
         self.surroundings.received = Some(now);
+        self.surroundings.following_hands = value.tracking_mode == "hands";
         self.surroundings.budget.set_demo(value.settings.demo_mode);
         self.surroundings.settings = value.settings.clone();
         self.surroundings.present_objects = value

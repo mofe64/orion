@@ -1090,6 +1090,68 @@ mod execution_tests {
         );
     }
     #[test]
+    fn a_hand_to_follow_takes_the_head_back_from_the_speaker_during_the_conversation() {
+        let (mut core, _, boot) = crate::expression::gaze::tests::following();
+        let mut character = CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0., &mut core).unwrap();
+        let tick = |step: u64, character: &mut CharacterCoordinator, core: &mut RuntimeCore<_>| {
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(now, core, false, None, false, None, None)
+                .unwrap();
+        };
+        for step in 1..=250 {
+            tick(step, &mut character, &mut core);
+        }
+        let home = character.status.active_anchor.clone().unwrap();
+        character
+            .attend_tracked_bearing(Some((0.4, 0.0)), Some(1), 5.0, &mut core)
+            .unwrap();
+        for step in 251..=400 {
+            tick(step, &mut character, &mut core);
+        }
+        assert!(character.attention.is_some());
+        character.set_reaction("thinking", 8.0, &mut core).unwrap();
+        let hand = |now: f64, character: &mut CharacterCoordinator, core: &mut RuntimeCore<_>| {
+            let stamp = boot.load(Ordering::Relaxed);
+            let value = serde_json::from_value(serde_json::json!({
+                "capture_boottime_ns":stamp, "camera_on":true, "tracking_mode":"hands",
+                "settings":{}, "objects":[], "looking_away":null, "faces":[], "hand_count":1
+            }))
+            .unwrap();
+            character.observe_surroundings(value, now, core).unwrap();
+            let target = crate::expression::gaze::GazeTarget {
+                track_id: 7,
+                capture_boottime_ns: stamp,
+                azimuth: -0.3,
+                elevation: 0.1,
+                confidence: 0.9,
+                category: Some("hand".into()),
+                range: None,
+            };
+            character.queue_gaze_target(target, now, core).unwrap()
+        };
+        assert!(hand(8.0, &mut character, &mut core));
+        assert!(character.attention.is_none());
+        assert_eq!(character.status.active_anchor.as_ref(), Some(&home));
+        let mut followed = false;
+        for step in 401..=500 {
+            tick(step, &mut character, &mut core);
+            if step % 5 == 0 {
+                hand(step as f64 * 0.02, &mut character, &mut core);
+            }
+            followed |= character.status.active_clip.as_deref() == Some("gaze_performance");
+        }
+        assert_eq!(character.status.state, CharacterState::Thinking);
+        assert!(
+            followed,
+            "the hand was not followed while Orion was thinking"
+        );
+    }
+    #[test]
     fn mutual_sequence_is_bounded_observed_and_privacy_returns_the_anchor() {
         let (mut core, _, boot) = crate::expression::gaze::tests::following();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

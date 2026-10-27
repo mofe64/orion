@@ -591,6 +591,9 @@ impl CharacterCoordinator {
             // Face observations continue; this one bounded response owns motion.
             return Ok(true);
         }
+        if target.category.as_deref() == Some("hand") && !self.leave_speaker_for_hand(core) {
+            return Ok(false);
+        }
         if self.attention.is_some() {
             return self.update_speaker_bearing(target, now, core);
         }
@@ -832,6 +835,23 @@ impl CharacterCoordinator {
     }
 
     /// Command-time planning, never detector work or IK in the servo tick.
+    /// After the turn toward the speaker, a hand to follow takes the head
+    /// back. The anchor from before the conversation stays the home for gaze.
+    fn leave_speaker_for_hand<D: RuntimeDriver>(&mut self, core: &RuntimeCore<D>) -> bool {
+        let Some(attention) = self.attention.as_ref() else {
+            return true;
+        };
+        if attention
+            .run_id
+            .is_some_and(|id| terminal_phase(core, id).is_none())
+        {
+            return false;
+        }
+        self.status.active_anchor = Some(attention.previous.clone());
+        self.attention = None;
+        self.status.active_clip = None;
+        true
+    }
     fn update_speaker_bearing<D: RuntimeDriver>(
         &mut self,
         target: super::gaze::GazeTarget,
@@ -1718,6 +1738,16 @@ impl CharacterCoordinator {
             return Ok(());
         }
         if !self.music.eligible && self.tick_posture(now, core)? {
+            return Ok(());
+        }
+        if self.following_hands(now)
+            && !self.foreground_pending
+            && self.attention.is_none()
+            && let Some(anchor) = self.status.active_anchor.clone()
+            && self.gaze.tick(now, &anchor, core)
+        {
+            // A hand to follow comes before the listening lean-in and thinking beats.
+            self.status.active_clip = Some("gaze_performance".into());
             return Ok(());
         }
         if self.status.state == CharacterState::Listening {
