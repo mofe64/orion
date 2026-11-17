@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class ActCueTests(unittest.TestCase):
-    def test_rare_cues_are_short_and_quieter_than_voice_wake(self):
+    def test_act_cues_are_short_and_quieter_than_voice_wake(self):
         directory = Path(__file__).resolve().parents[2] / 'audio/cues'
         def read(name):
             with wave.open(str(directory / f'{name}.wav'), 'rb') as wav:
@@ -15,10 +15,10 @@ class ActCueTests(unittest.TestCase):
                 self.assertEqual(samples[::2], samples[1::2])
                 return seconds, max(abs(value) for value in samples)
         _, voice_peak = read('voice_wake')
-        for name in ('wake_chirp', 'sleep_sigh', 'yawn_hum'):
+        for name in ('wake_chirp', 'sleep_sigh', 'yawn_hum', 'think_hum'):
             with self.subTest(cue=name):
                 seconds, peak = read(name)
                 self.assertGreater(seconds, 0)
-                self.assertLess(seconds, 1.2)
+                self.assertLess(seconds, 3.0)
                 self.assertGreater(peak, 0)
                 self.assertLess(peak, voice_peak)

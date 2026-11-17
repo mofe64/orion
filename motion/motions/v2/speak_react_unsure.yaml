@@ -1,7 +1,7 @@
 format_version: 2
 motion:
   name: speak_react_unsure
-  description: Look slightly down while turning the neck from side to side.
+  description: Look slightly down while turning the neck from side to side, with the arm easing back.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
@@ -10,6 +10,8 @@ motion:
       head_roll_joint: 0.19
       base_yaw_joint: 0.05
       head_pitch_joint: 0.08
+      elbow_pitch_joint: 0.048
+      shoulder_pitch_joint: -0.048
     duration: 0.32
     arrival: through
     marker: unsure
@@ -17,6 +19,8 @@ motion:
       head_roll_joint: -0.17
       base_yaw_joint: -0.05
       head_pitch_joint: 0.08
+      elbow_pitch_joint: 0.048
+      shoulder_pitch_joint: -0.042
     duration: 0.38
     arrival: through
   - offsets: {}

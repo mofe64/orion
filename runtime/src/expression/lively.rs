@@ -192,9 +192,24 @@ impl CharacterCoordinator {
             .ok_or_else(|| Error::InvalidState("Care needs an anchor".into()))?;
         let (motion, clip) = if event == RemarkEvent::BreakNudge {
             // A stretch says "time to stretch" before any word.
-            let definition = core.motions().motion("wake_stretch")?.clone();
-            core.validate_curiosity_motion(&definition, &anchor, None)?;
-            (definition, "wake_stretch")
+            // A desk pose can leave little room: keep the largest stretch that fits.
+            let authored = core.motions().motion("wake_stretch")?.clone();
+            let mut fitted = Err(Error::InvalidState("Stretch does not fit".into()));
+            for gain in [1.0, 0.7, 0.45, 0.25, 0.1, 0.04] {
+                let mut candidate = authored.clone();
+                for keyframe in &mut candidate.keyframes {
+                    for offset in keyframe.target.values_mut() {
+                        *offset *= gain;
+                    }
+                }
+                fitted = core
+                    .validate_curiosity_motion(&candidate, &anchor, None)
+                    .map(|_| candidate);
+                if fitted.is_ok() {
+                    break;
+                }
+            }
+            (fitted?, "wake_stretch")
         } else {
             (
                 core.prepare_arrival_motion(&anchor, face.azimuth, face.elevation)?,

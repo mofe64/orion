@@ -15,24 +15,42 @@ Use the Volume slider on the Orion page. Changes apply while you move the slider
 Say “Volume 40”, “Louder” or “Quieter” to change it by voice.
 Louder and Quieter change the level by 10.
 
-## Generate cues
+## Build cues
 
-Run these steps from the repository root. The generator uses Python's standard library.
+The cues are short voice-like sounds. Each cue is one part of a recording from the Reachy Mini Emotions Library with a lower pitch.
+See [third-party notices](../THIRD_PARTY_NOTICES.md#reachy-mini-emotions-library) for the source and license.
 
-1. Regenerate the cue WAV files.
+Run these steps from the repository root. The builder needs a local copy of the library.
+
+1. Download the library into a directory.
 
    ```bash
-   uv run --project motion --locked --managed-python python audio/generate_cues.py
+   uvx --from huggingface_hub hf download pollen-robotics/reachy-mini-emotions-library --repo-type dataset --local-dir reachy-emotions
    ```
 
-2. Rebuild the runtime after changing embedded alarm audio.
+2. Rebuild the cue WAV files.
 
-The cue vocabulary includes `notice_warm`, `acknowledge_warm`, `curious_rise`, `agree_soft`, `delight_warm`, `settle_soft` and `error_muted`.
-`voice_wake` uses rising 880 Hz and 1320 Hz notes at a -12 dBFS peak.
-`voice_processing` uses a 660 Hz note at a -18 dBFS peak.
+   ```bash
+   uv run --with librosa --with soundfile python audio/build_cues.py reachy-emotions
+   ```
 
-`wake_chirp`, `sleep_sigh` and `yawn_hum` accompany rare character acts at their motion markers.
-These sounds use a lower generator gain than `voice_wake`. `act_sounds` controls these sounds.
+[The cue builder](build_cues.py) contains the source recording, the cut times and the peak level for each cue.
+
+| Cue | Orion plays it when |
+|---|---|
+| `voice_wake` | Orion hears its wake word |
+| `voice_processing` | A command ends and Orion starts to think |
+| `didnt_catch` | Orion hears its wake word but no command |
+| `error_muted` | A voice request fails or the voice service is not available |
+| `wake_chirp`, `sleep_sigh`, `yawn_hum` | The wake stretch, sleep settle or yawn reaches its marker |
+| `think_hum` | A thinking glance reaches its marker |
+| `notice_warm` | Orion notices an arrival or starts an announcement |
+| `curious_rise` | Orion peeks at a new object |
+| `delight_warm` | Orion waves back |
+| `acknowledge_warm`, `settle_soft` | A scene requests the cue |
+
+`listen_hm`, `agree_soft`, `disagree_soft`, `success_bright`, `laugh_light`, `surprise_pop` and `sorry_low` are available to scenes.
+`act_sounds` controls the sounds that follow motion markers.
 See [character behaviors](../docs/configuration.md#character-behaviors) for switches and [sound ownership](../docs/motion-architecture.md#shared-mind-state) for suppression rules.
 
 ## Alarm audio

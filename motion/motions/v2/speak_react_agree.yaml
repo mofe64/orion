@@ -1,22 +1,28 @@
 format_version: 2
 motion:
   name: speak_react_agree
-  description: Make two clear downward nods with an upward return between them.
+  description: Make two clear downward nods with the arm dipping along.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
   - offsets:
-      head_pitch_joint: 0.20943951023931956
+      head_pitch_joint: 0.2094
+      elbow_pitch_joint: 0.1257
+      shoulder_pitch_joint: 0.0628
     duration: 0.26
     arrival: through
     marker: agree
   - offsets:
-      head_pitch_joint: -0.03490658503988659
+      head_pitch_joint: -0.0349
+      elbow_pitch_joint: -0.0209
+      shoulder_pitch_joint: -0.0052
     duration: 0.22
     arrival: through
   - offsets:
-      head_pitch_joint: 0.17453292519943295
+      head_pitch_joint: 0.1745
+      elbow_pitch_joint: 0.1047
+      shoulder_pitch_joint: 0.0524
     duration: 0.22
     arrival: through
   - offsets: {}

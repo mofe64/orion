@@ -1,14 +1,16 @@
 format_version: 2
 motion:
   name: mutual_gaze_away
-  description: Turn the neck aside with a raised gaze, then return.
+  description: Turn the neck aside with a raised gaze and a small arm lift, then return.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
   - offsets:
-      head_roll_joint: -0.17453292519943295
+      head_roll_joint: -0.1745
       head_pitch_joint: -0.1
+      elbow_pitch_joint: -0.06
+      shoulder_pitch_joint: -0.0674
     duration: 0.55
     arrival: settle
     hold: 0.35

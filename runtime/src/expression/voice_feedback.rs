@@ -98,7 +98,7 @@ impl VoiceFeedback {
         self.record(
             if cue == "voice_wake" {
                 "acknowledgment_start"
-            } else if cue == "error_muted" {
+            } else if cue == "error_muted" || cue == "didnt_catch" {
                 "unavailable_cue_start"
             } else {
                 "processing_cue_start"
@@ -281,6 +281,18 @@ impl VoiceFeedback {
                 self.clear();
                 Ok(visible.then_some(("neutral", None)))
             }
+            // A turn that ended without an answer says so with a sound.
+            "unheard" | "failed" => {
+                let visible = self.confirmed;
+                self.record(event, now);
+                self.clear();
+                let cue = if event == "unheard" {
+                    "didnt_catch"
+                } else {
+                    "error_muted"
+                };
+                Ok(visible.then_some(("neutral", Some(cue))))
+            }
             "unavailable" if self.phase != "unavailable" => {
                 self.phase = "unavailable".into();
                 self.since = now;
@@ -392,6 +404,24 @@ mod tests {
         assert_eq!(feedback.vision_session(66.), None);
         feedback.clear();
         assert_eq!(feedback.vision_session(67.), None);
+    }
+    #[test]
+    fn a_turn_without_an_answer_plays_its_own_sound_and_ends_the_session() {
+        for (event, cue) in [("unheard", "didnt_catch"), ("failed", "error_muted")] {
+            let mut feedback = VoiceFeedback::default();
+            feedback.event(ID, "wake", 0.).unwrap();
+            feedback.event(ID, "endpoint", 0.5).unwrap();
+            assert!(feedback.confirm(ID, 1.));
+            assert_eq!(
+                feedback.event(ID, event, 2.).unwrap(),
+                Some(("neutral", Some(cue)))
+            );
+            assert!(!feedback.owns(ID));
+            // An unconfirmed wake stays silent.
+            let mut feedback = VoiceFeedback::default();
+            feedback.event(ID, "wake", 0.).unwrap();
+            assert_eq!(feedback.event(ID, event, 1.).unwrap(), None);
+        }
     }
     #[test]
     fn remark_authorizes_playback_without_a_cue() {

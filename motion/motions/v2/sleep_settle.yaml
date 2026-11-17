@@ -1,19 +1,24 @@
 format_version: 2
 motion:
   name: sleep_settle
-  description: Sink the head and arm slowly, then return.
+  description: Lift a little, then sink the head and arm slowly, and return.
   space: anchor_relative
   style: living_idle
   return_to_anchor: true
   keyframes:
   - offsets:
-      shoulder_pitch_joint: -0.025
-      elbow_pitch_joint: 0.005
-      head_pitch_joint: 0.08
-    duration: 1.5
+      head_pitch_joint: -0.05
+      elbow_pitch_joint: -0.04
+    duration: 0.4
+    arrival: through
+  - offsets:
+      shoulder_pitch_joint: -0.1
+      elbow_pitch_joint: 0.24
+      head_pitch_joint: 0.32
+    duration: 1.6
     arrival: settle
+    hold: 0.5
     marker: sleep_settle
-    hold: 0.25
   - offsets: {}
     duration: 1.1
     arrival: settle

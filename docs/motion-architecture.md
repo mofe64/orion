@@ -72,7 +72,7 @@ After confirmed wake reaches home, `wake_stretch` lifts and settles. A failed st
 Only successful measured completion of the rest descent permits torque release.
 
 Low energy can select `yawn` when automatic rest is less than two minutes away.
-Wake, sleep and yawn markers can play short sounds. Routine idles, posture drift, listening and thinking remain silent.
+Wake, sleep, yawn, thinking, arrival, peek and wave markers can play short sounds. Routine idles, posture drift and listening remain silent.
 Speech, active alerts, light routines and local quiet hours suppress these sounds. Quiet hours run from 22:00 to 07:00.
 Sound failure does not control motion or rest. See [character switches](configuration.md#character-behaviors).
 

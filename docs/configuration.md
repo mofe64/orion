@@ -59,7 +59,7 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 | `thinking_beats` | true | Add alternating gestures during longer thoughts |
 | `wake_sleep_acts` | true | Stretch after confirmed wake and settle before rest |
 | `posture_drift` | false | Change the held posture during quiet idle periods |
-| `act_sounds` | true | Play sounds at wake, sleep and yawn markers |
+| `act_sounds` | true | Play sounds at the markers of wake, sleep, yawn, thinking, arrival, peek and wave movements |
 | `move_to_music` | `sometimes` | Select `off`, `sometimes` or `always` for dance |
 
 Older boolean dance settings become `sometimes` for true and `off` for false.

@@ -491,7 +491,7 @@ async fn connected(
                             }
                             announcement_ready = None;
                             gateway.cancel(&active).await;
-                            pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
+                            pi.send(json!({"type":"session.cancel", "sessionId":sid,"outcome":"failed"})).await?;
                             event(hub, &sid, error("voice_request_failed", &message, true));
                             session = None; followup = None;
                             response_stop = None;
@@ -548,7 +548,7 @@ async fn connected(
                                 session = None; followup = None; continue;
                             }
                             if command.is_empty() {
-                                pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
+                                pi.send(json!({"type":"session.cancel", "sessionId":sid,"outcome":"unheard"})).await?;
                                 event(hub, &sid, error("transcription_failed", "No command was heard", true));
                                 session = None; continue;
                             }

@@ -249,44 +249,44 @@ V2 uses the motions below. [V1 motion files](../motion/motions/v1/) remain separ
 
 | Motion | Intent | File |
 | --- | --- | --- |
-| `arrival_notice` | Raise the head first, then adopt the attentive posture and return. | [V2](../motion/motions/v2/arrival_notice.yaml) |
+| `arrival_notice` | Raise and turn the head first, then rise into the attentive posture and return. | [V2](../motion/motions/v2/arrival_notice.yaml) |
 | `attention_left` | A small grounded turn toward the confirmed speaker on the left. | [V2](../motion/motions/v2/attention_left.yaml) |
 | `attention_right` | A small grounded turn toward the confirmed speaker on the right. | [V2](../motion/motions/v2/attention_right.yaml) |
 | `delight_lift` | Lift the head and look up into the delight posture. | [V2](../motion/motions/v2/delight_lift.yaml) |
-| `idle_attentive_hold` | Raise the gaze slowly while holding an attentive posture. | [V2](../motion/motions/v2/idle_attentive_hold.yaml) |
-| `idle_breathe` | Raise the head slowly, breathe through the arm, and settle back. | [V2](../motion/motions/v2/idle_breathe.yaml) |
-| `idle_directional_hold` | Raise the gaze slowly while holding a directional or desk anchor. | [V2](../motion/motions/v2/idle_directional_hold.yaml) |
-| `idle_head_curiosity` | Raise the gaze and turn the neck slowly to inspect the surroundings. | [V2](../motion/motions/v2/idle_head_curiosity.yaml) |
-| `idle_micro_glance` | Turn the base slowly for a brief glance with a full return. | [V2](../motion/motions/v2/idle_micro_glance.yaml) |
+| `idle_attentive_hold` | Raise the gaze and lift the arm slowly while holding an attentive posture. | [V2](../motion/motions/v2/idle_attentive_hold.yaml) |
+| `idle_breathe` | Raise the head slowly, lift the arm with it, and settle back. | [V2](../motion/motions/v2/idle_breathe.yaml) |
+| `idle_directional_hold` | Raise the gaze and lift the arm slowly while holding a directional or desk anchor. | [V2](../motion/motions/v2/idle_directional_hold.yaml) |
+| `idle_head_curiosity` | Raise the gaze and turn the neck slowly to inspect the surroundings, with a small arm lift. | [V2](../motion/motions/v2/idle_head_curiosity.yaml) |
+| `idle_micro_glance` | Turn the base slowly for a brief glance while the arm eases back, with a full return. | [V2](../motion/motions/v2/idle_micro_glance.yaml) |
 | `idle_shoulder_adjust` | Redistribute the shoulder and elbow slowly, then return. | [V2](../motion/motions/v2/idle_shoulder_adjust.yaml) |
-| `idle_soft_head_shake` | Turn the neck slowly left and right with a soft return. | [V2](../motion/motions/v2/idle_soft_head_shake.yaml) |
+| `idle_soft_head_shake` | Turn the neck slowly left and right while the arm eases back, with a soft return. | [V2](../motion/motions/v2/idle_soft_head_shake.yaml) |
 | `idle_weight_shift` | Shift the shoulder and elbow slowly, then restore their balance. | [V2](../motion/motions/v2/idle_weight_shift.yaml) |
 | `look_around` | Deliberate three-stop desk search, neck leading the base, then returning to its anchor. | [V2](../motion/motions/v2/look_around.yaml) |
 | `look_at_left` | Turn directly toward the predefined target on Orion's left. | [V2](../motion/motions/v2/look_at_left.yaml) |
 | `look_at_left_expressive` | Notice, lean toward, and settle on the predefined left target. | [V2](../motion/motions/v2/look_at_left_expressive.yaml) |
 | `look_at_right` | Turn directly toward the predefined target on Orion's right. | [V2](../motion/motions/v2/look_at_right.yaml) |
 | `look_at_right_expressive` | Notice, lean toward, and settle on the predefined right target. | [V2](../motion/motions/v2/look_at_right_expressive.yaml) |
-| `mutual_gaze_away` | Turn the neck aside with a raised gaze, then return. | [V2](../motion/motions/v2/mutual_gaze_away.yaml) |
-| `mutual_gaze_hi` | Raise the gaze in a clear head-only greeting and return. | [V2](../motion/motions/v2/mutual_gaze_hi.yaml) |
-| `mutual_gaze_notice` | Raise the gaze, turn the neck with curiosity, and return. | [V2](../motion/motions/v2/mutual_gaze_notice.yaml) |
+| `mutual_gaze_away` | Turn the neck aside with a raised gaze and a small arm lift, then return. | [V2](../motion/motions/v2/mutual_gaze_away.yaml) |
+| `mutual_gaze_hi` | Raise the gaze and lift the arm in a clear greeting, then return. | [V2](../motion/motions/v2/mutual_gaze_hi.yaml) |
+| `mutual_gaze_notice` | Raise the gaze, turn the neck with curiosity while the arm lifts, and return. | [V2](../motion/motions/v2/mutual_gaze_notice.yaml) |
 | `peek_new_object` | Arm-led desk peek with a curious neck turn and a full anchor return. | [V2](../motion/motions/v2/peek_new_object.yaml) |
 | `pet_notice` | Lift into delight, follow the pet briefly, and return to the held anchor. | [V2](../motion/motions/v2/pet_notice.yaml) |
 | `return_home` | Move from the current joint state to Orion's home pose. | [V2](../motion/motions/v2/return_home.yaml) |
-| `speak_calm_sway` | Sway the neck and arm gently with alternating raised and lowered gaze. | [V2](../motion/motions/v2/speak_calm_sway.yaml) |
+| `speak_calm_sway` | Sway the neck and arm with alternating raised and lowered gaze. | [V2](../motion/motions/v2/speak_calm_sway.yaml) |
 | `speak_emphasis_nod` | Nod down at a phrase boundary, lift back, and settle at the anchor. | [V2](../motion/motions/v2/speak_emphasis_nod.yaml) |
 | `speak_explanatory_lean` | Lean forward with a raised gaze for explanatory emphasis, then return. | [V2](../motion/motions/v2/speak_explanatory_lean.yaml) |
-| `speak_react_agree` | Make two clear downward nods with an upward return between them. | [V2](../motion/motions/v2/speak_react_agree.yaml) |
+| `speak_react_agree` | Make two clear downward nods with the arm dipping along. | [V2](../motion/motions/v2/speak_react_agree.yaml) |
 | `speak_react_curious` | Raise the gaze and turn the neck with a slight upright lean. | [V2](../motion/motions/v2/speak_react_curious.yaml) |
-| `speak_react_disagree` | A clear three-beat head shake used as a spoken disagreement reaction. | [V2](../motion/motions/v2/speak_react_disagree.yaml) |
+| `speak_react_disagree` | A clear three-beat head shake led by the neck, with the base following. | [V2](../motion/motions/v2/speak_react_disagree.yaml) |
 | `speak_react_happy` | Lift the head and gaze with two bright upward bounces. | [V2](../motion/motions/v2/speak_react_happy.yaml) |
-| `speak_react_laugh` | Make three raised head bounces with a light arm lift. | [V2](../motion/motions/v2/speak_react_laugh.yaml) |
+| `speak_react_laugh` | Make three raised head bounces with the arm bouncing along. | [V2](../motion/motions/v2/speak_react_laugh.yaml) |
 | `speak_react_surprised` | Pull the arm back and raise the head for a surprised pause. | [V2](../motion/motions/v2/speak_react_surprised.yaml) |
-| `speak_react_sympathy` | Lower the head and turn the neck softly for sympathy. | [V2](../motion/motions/v2/speak_react_sympathy.yaml) |
+| `speak_react_sympathy` | Sink with the head down, the arm lowered and a soft turn, hold, and rise. | [V2](../motion/motions/v2/speak_react_sympathy.yaml) |
 | `speak_react_sorry` | Shrink back and lower the head after a mistake. | [V2](../motion/motions/v2/speak_react_sorry.yaml) |
 | `speak_react_shy` | Turn away and lower the head, peek back, then return. | [V2](../motion/motions/v2/speak_react_shy.yaml) |
 | `speak_react_thinking` | Look aside and slightly up during a thoughtful pause. | [V2](../motion/motions/v2/speak_react_thinking.yaml) |
-| `speak_react_unsure` | Look slightly down while turning the neck from side to side. | [V2](../motion/motions/v2/speak_react_unsure.yaml) |
-| `speak_reflective_tilt` | Turn the neck aside and lower the gaze, then return quietly. | [V2](../motion/motions/v2/speak_reflective_tilt.yaml) |
+| `speak_react_unsure` | Look slightly down while turning the neck from side to side, with the arm easing back. | [V2](../motion/motions/v2/speak_react_unsure.yaml) |
+| `speak_reflective_tilt` | Turn the neck aside, lower the gaze and ease back, then return quietly. | [V2](../motion/motions/v2/speak_reflective_tilt.yaml) |
 
 V2 poses include home, rest, attentive, delight, desk-work and desk-reach postures. Left and right look targets include anticipation, lean and overshoot poses. Exact angles remain in [poses.yaml](../motion/config/v2/poses.yaml).
 

@@ -1,23 +1,23 @@
 format_version: 2
 motion:
   name: speak_calm_sway
-  description: Sway the neck and arm gently with alternating raised and lowered gaze.
+  description: Sway the neck and arm with alternating raised and lowered gaze.
   space: anchor_relative
   style: speaking_calm
   return_to_anchor: true
   keyframes:
   - offsets:
-      head_roll_joint: 0.12
-      shoulder_pitch_joint: -0.025
-      elbow_pitch_joint: 0.015
-      head_pitch_joint: -0.04
+      head_roll_joint: 0.24
+      shoulder_pitch_joint: -0.07
+      elbow_pitch_joint: 0.05
+      head_pitch_joint: -0.09
     duration: 0.52
     arrival: through
   - offsets:
-      head_roll_joint: -0.1
-      shoulder_pitch_joint: 0.02
-      elbow_pitch_joint: -0.015
-      head_pitch_joint: 0.03
+      head_roll_joint: -0.2
+      shoulder_pitch_joint: 0.06
+      elbow_pitch_joint: -0.05
+      head_pitch_joint: 0.07
     duration: 0.58
     arrival: through
   - offsets: {}

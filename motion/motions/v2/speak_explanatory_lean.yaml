@@ -7,17 +7,17 @@ motion:
   return_to_anchor: true
   keyframes:
   - offsets:
-      shoulder_pitch_joint: 0.1
-      elbow_pitch_joint: -0.12
-      head_pitch_joint: -0.08
+      shoulder_pitch_joint: 0.2
+      elbow_pitch_joint: -0.22
+      head_pitch_joint: -0.14
     duration: 0.46
     arrival: through
     marker: phrase
   - offsets:
-      shoulder_pitch_joint: 0.045
-      elbow_pitch_joint: -0.05
-      head_roll_joint: -0.04
-      head_pitch_joint: -0.02
+      shoulder_pitch_joint: 0.09
+      elbow_pitch_joint: -0.1
+      head_roll_joint: -0.1
+      head_pitch_joint: -0.04
     duration: 0.42
     arrival: through
   - offsets: {}

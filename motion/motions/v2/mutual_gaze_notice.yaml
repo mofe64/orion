@@ -1,20 +1,24 @@
 format_version: 2
 motion:
   name: mutual_gaze_notice
-  description: Raise the gaze, turn the neck with curiosity, and return.
+  description: Raise the gaze, turn the neck with curiosity while the arm lifts, and return.
   space: anchor_relative
   style: attentive
   return_to_anchor: true
   keyframes:
   - offsets:
-      head_pitch_joint: -0.17453292519943295
+      head_pitch_joint: -0.1745
+      elbow_pitch_joint: -0.1047
+      shoulder_pitch_joint: -0.0262
     duration: 0.4
     arrival: settle
     hold: 0.15
     marker: meet
   - offsets:
-      head_pitch_joint: -0.17453292519943295
-      head_roll_joint: 0.17453292519943295
+      head_pitch_joint: -0.1745
+      head_roll_joint: 0.1745
+      elbow_pitch_joint: -0.1047
+      shoulder_pitch_joint: -0.0785
     duration: 0.6
     arrival: settle
     hold: 2.0

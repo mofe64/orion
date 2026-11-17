@@ -240,7 +240,13 @@ impl CharacterCoordinator {
             core.motions().motion("listen_lean_in").cloned(),
             self.status.active_anchor.clone(),
         ) {
-            motion.keyframes[0].hold_seconds = 180.;
+            // The lean is the keyframe that carries the marker; a wind-up can precede it.
+            let lean = motion
+                .keyframes
+                .iter()
+                .position(|keyframe| keyframe.marker.as_deref() == Some("listen_hold"))
+                .unwrap_or(0);
+            motion.keyframes[lean].hold_seconds = 180.;
             if let Ok(run) = core.play_generated_anchored_relative(motion, anchor, now) {
                 self.thinking_run = Some(run);
                 self.status.active_clip = Some("listen_lean_in".into());

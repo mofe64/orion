@@ -40,16 +40,21 @@ impl ActSounds {
         if self.consumed {
             return;
         }
-        let cue = match motion.name.as_str() {
-            "wake_stretch" => "wake_chirp",
-            "sleep_settle" => "sleep_sigh",
-            "yawn" => "yawn_hum",
+        // Each act plays one sound when its named marker is reached.
+        let (marker, cue) = match motion.name.as_str() {
+            "wake_stretch" => ("wake_stretch", "wake_chirp"),
+            "sleep_settle" => ("sleep_settle", "sleep_sigh"),
+            "yawn" => ("yawn", "yawn_hum"),
+            "think_beat_a" => ("think_glance", "think_hum"),
+            "arrival_notice" => ("arrival_attentive", "notice_warm"),
+            "peek_new_object" => ("curious", "curious_rise"),
+            "wave_back" => ("wave_lift", "delight_warm"),
             _ => return,
         };
         if !motion
             .reached_markers
             .iter()
-            .any(|marker| marker == &motion.name)
+            .any(|reached| reached == marker)
         {
             return;
         }
@@ -164,15 +169,19 @@ mod tests {
     }
     #[test]
     fn each_rare_act_uses_its_own_marker_and_cue() {
-        for (name, cue) in [
-            ("wake_stretch", "wake_chirp"),
-            ("sleep_settle", "sleep_sigh"),
-            ("yawn", "yawn_hum"),
+        for (name, marker, cue) in [
+            ("wake_stretch", "wake_stretch", "wake_chirp"),
+            ("sleep_settle", "sleep_settle", "sleep_sigh"),
+            ("yawn", "yawn", "yawn_hum"),
+            ("think_beat_a", "think_glance", "think_hum"),
+            ("arrival_notice", "arrival_attentive", "notice_warm"),
+            ("peek_new_object", "curious", "curious_rise"),
+            ("wave_back", "wave_lift", "delight_warm"),
         ] {
             let mut state = snapshot(true);
             let motion = state.motion.as_mut().unwrap();
             motion.name = name.into();
-            motion.reached_markers = vec![name.into()];
+            motion.reached_markers = vec![marker.into()];
             let mut player = ActSounds::default();
             let mut audio = RecordingAudioDevice::default();
             player.tick(&state, context(), &mut audio);

@@ -1,5 +1,6 @@
 format_version: 1
 margin_degrees: 3
+minimum_head_travel_mm: 20
 rest_margin_exempt: true
 poses:
   home: home
@@ -30,7 +31,7 @@ poses:
   attention_right_overshoot: up
 motions:
   arrival_notice:
-    intent: Raise the head first, then adopt the attentive posture and return.
+    intent: Raise and turn the head first, then rise into the attentive posture and return.
     direction: up
     main_keyframe: 1
     contexts:
@@ -64,7 +65,7 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   idle_attentive_hold:
-    intent: Raise the gaze slowly while holding an attentive posture.
+    intent: Raise the gaze and lift the arm slowly while holding an attentive posture.
     direction: up
     main_keyframe: 0
     contexts:
@@ -76,7 +77,7 @@ motions:
     - 15
     main_joint: head_pitch_joint
   idle_breathe:
-    intent: Raise the head slowly, breathe through the arm, and settle back.
+    intent: Raise the head slowly, lift the arm with it, and settle back.
     direction: up
     main_keyframe: 0
     contexts:
@@ -88,7 +89,7 @@ motions:
     - 15
     main_joint: head_pitch_joint
   idle_directional_hold:
-    intent: Raise the gaze slowly while holding a directional or desk anchor.
+    intent: Raise the gaze and lift the arm slowly while holding a directional or desk anchor.
     direction: up
     main_keyframe: 0
     contexts:
@@ -102,7 +103,7 @@ motions:
     - 15
     main_joint: head_pitch_joint
   idle_head_curiosity:
-    intent: Raise the gaze and turn the neck slowly to inspect the surroundings.
+    intent: Raise the gaze and turn the neck slowly to inspect the surroundings, with a small arm lift.
     direction: up
     main_keyframe: 0
     contexts:
@@ -114,7 +115,7 @@ motions:
     - 15
     main_joint: head_roll_joint
   idle_micro_glance:
-    intent: Turn the base slowly for a brief glance with a full return.
+    intent: Turn the base slowly for a brief glance while the arm eases back, with a full return.
     direction: lateral
     main_keyframe: 0
     contexts:
@@ -138,7 +139,7 @@ motions:
     - 15
     main_joint: shoulder_pitch_joint
   idle_soft_head_shake:
-    intent: Turn the neck slowly left and right with a soft return.
+    intent: Turn the neck slowly left and right while the arm eases back, with a soft return.
     direction: lateral
     main_keyframe: 0
     contexts:
@@ -202,7 +203,7 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   mutual_gaze_away:
-    intent: Turn the neck aside with a raised gaze, then return.
+    intent: Turn the neck aside with a raised gaze and a small arm lift, then return.
     direction: up
     main_keyframe: 0
     contexts:
@@ -214,7 +215,7 @@ motions:
     - null
     main_joint: head_roll_joint
   mutual_gaze_hi:
-    intent: Raise the gaze in a clear head-only greeting and return.
+    intent: Raise the gaze and lift the arm in a clear greeting, then return.
     direction: up
     main_keyframe: 0
     contexts:
@@ -226,7 +227,7 @@ motions:
     - null
     main_joint: head_pitch_joint
   mutual_gaze_notice:
-    intent: Raise the gaze, turn the neck with curiosity, and return.
+    intent: Raise the gaze, turn the neck with curiosity while the arm lifts, and return.
     direction: up
     main_keyframe: 0
     contexts:
@@ -302,13 +303,16 @@ motions:
       anchor: attentive
     source: 'runtime/src/control/core.rs: play starts from the measured pose and return_home targets home'
   speak_calm_sway:
-    intent: Sway the neck and arm gently with alternating raised and lowered gaze.
+    intent: Sway the neck and arm with alternating raised and lowered gaze.
     direction: lateral
     main_keyframe: 0
     contexts:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - null
   speak_emphasis_nod:
     intent: Nod down at a phrase boundary, lift back, and settle at the anchor.
     direction: nod
@@ -329,8 +333,11 @@ motions:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - null
   speak_react_agree:
-    intent: Make two clear downward nods with an upward return between them.
+    intent: Make two clear downward nods with the arm dipping along.
     direction: nod
     main_keyframe: 0
     contexts:
@@ -350,13 +357,16 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   speak_react_disagree:
-    intent: A clear three-beat head shake used as a spoken disagreement reaction.
+    intent: A clear three-beat head shake led by the neck, with the base following.
     direction: lateral
     main_keyframe: 0
     contexts:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - null
   speak_react_happy:
     intent: Lift the head and gaze with two bright upward bounces.
     direction: up
@@ -366,7 +376,7 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   speak_react_laugh:
-    intent: Make three raised head bounces with a light arm lift.
+    intent: Make three raised head bounces with the arm bouncing along.
     direction: up
     main_keyframe: 0
     contexts:
@@ -382,13 +392,16 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   speak_react_sympathy:
-    intent: Lower the head and turn the neck softly for sympathy.
+    intent: Sink with the head down, the arm lowered and a soft turn, hold, and rise.
     direction: down
     main_keyframe: 0
     contexts:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - null
   speak_react_thinking:
     intent: Glance aside and raise the gaze during a thoughtful pause.
     direction: up
@@ -398,7 +411,7 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   speak_react_unsure:
-    intent: Look slightly down while turning the neck from side to side.
+    intent: Look slightly down while turning the neck from side to side, with the arm easing back.
     direction: down
     main_keyframe: 0
     contexts:
@@ -406,13 +419,16 @@ motions:
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
   speak_reflective_tilt:
-    intent: Turn the neck aside and lower the gaze, then return quietly.
+    intent: Turn the neck aside, lower the gaze and ease back, then return quietly.
     direction: down
     main_keyframe: 0
     contexts:
     - start: home
       anchor: home
     source: 'runtime/src/expression/character.rs: active_anchor; relative clips return to the held pose'
+    movement_degrees:
+    - 10
+    - null
   speak_react_sorry:
     intent: Shrink back and lower the head after a mistake.
     direction: down
@@ -438,50 +454,68 @@ motions:
     - null
     main_joint: head_roll_joint
   listen_lean_in:
-    intent: Lean slightly toward the speaker, hold, and return.
+    intent: Pull back a little, lean toward the speaker, hold, and return.
     direction: up
-    main_keyframe: 0
+    main_keyframe: 1
     contexts:
     - start: home
       anchor: home
     source: runtime/src/expression/acts.rs uses the held character anchor
+    movement_degrees:
+    - 8
+    - null
   think_beat_a:
-    intent: Turn the head slightly to one side and return.
+    intent: Glance up and aside to think, hold, and return.
     direction: lateral
     main_keyframe: 0
     contexts:
     - start: home
       anchor: home
     source: runtime/src/expression/acts.rs uses the held character anchor
+    movement_degrees:
+    - 15
+    - null
   think_beat_b:
-    intent: Lower the head slightly and return.
+    intent: Lower the head and sink a little in thought, hold, and return.
     direction: down
     main_keyframe: 0
     contexts:
     - start: home
       anchor: home
     source: runtime/src/expression/acts.rs uses the held character anchor
+    movement_degrees:
+    - 12
+    - null
   wake_stretch:
-    intent: Lift the head and arm gently, then settle.
+    intent: Dip, stretch tall with the head up, shake out, and settle.
     direction: up
-    main_keyframe: 0
+    main_keyframe: 1
     contexts:
     - start: home
       anchor: home
     source: runtime/src/expression/acts.rs uses the held character anchor
+    movement_degrees:
+    - 15
+    - null
   sleep_settle:
-    intent: Sink the head and arm slowly, then return.
+    intent: Lift a little, then sink the head and arm slowly, and return.
     direction: down
-    main_keyframe: 0
+    main_keyframe: 1
     contexts:
     - start: home
       anchor: home
     source: runtime/src/expression/acts.rs uses the held character anchor
+    movement_degrees:
+    - 12
+    - null
   yawn:
-    intent: Raise the head, hold briefly, then sink back.
+    intent: Dip, rise tall with the head up, hold, then sink back.
     direction: up
-    main_keyframe: 0
+    main_keyframe: 1
     contexts:
     - start: home
       anchor: home
     source: runtime/src/expression/acts.rs uses the held character anchor
+    movement_degrees:
+    - 12
+    - null

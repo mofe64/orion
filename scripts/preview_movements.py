@@ -121,6 +121,7 @@ def inspect(item, document, model):
     start = item['samples'][0]['positions']
     start_fk = fk(model, data, start)
     gaze_series = []
+    start_face = data.site('v21_face').xpos.copy(); head_travel = 0.0
     bounds = np.array([[np.inf] * 3, [-np.inf] * 3])
     lamp = np.where(model.geom_bodyid > 0)[0]
     minimum_margin = np.inf
@@ -138,6 +139,7 @@ def inspect(item, document, model):
             peaks[name] = max(peaks[name], abs(sample.get('velocities', {}).get(name, 0)))
         data.time = sample['time']
         gaze_series.append(float(fk(model, data, positions)[1] - start_fk[1]))
+        head_travel = max(head_travel, float(np.linalg.norm(data.site('v21_face').xpos - start_face)) * 1000)
         radii = model.geom_rbound[lamp, None]
         bounds[0] = np.minimum(bounds[0], (data.geom_xpos[lamp] - radii).min(axis=0))
         bounds[1] = np.maximum(bounds[1], (data.geom_xpos[lamp] + radii).max(axis=0))
@@ -190,6 +192,10 @@ def inspect(item, document, model):
         problems.extend(intent_problems(spec, height, gaze, main_joint_movement, gaze_series, apex_time, item['samples']))
         if spec['direction'] == 'lateral' and abs(heading_change) < 1:
             problems.append('Intent requires a sideways head turn')
+    # A clip the eye cannot see is a defect. Every authored clip must move the head this far.
+    floor = table.get('minimum_head_travel_mm', 0)
+    if spec and head_travel < floor - 1e-6:
+        problems.append(f'Head travels only {head_travel:.0f} mm; the minimum is {floor} mm')
     no_op = max(abs(sample['positions'][name] - start[name]) for sample in item['samples'] for name in names) < 1e-9
     if no_op and item['start_pose'] == 'rest': problems = []
     arm_movement = max(np.degrees(abs(s['positions'][n] - start[n])) for s in item['samples'] for n in ('shoulder_pitch_joint', 'elbow_pitch_joint'))
@@ -198,7 +204,7 @@ def inspect(item, document, model):
             'outside_limits': sorted(outside), 'peak_speed': peaks, 'peak_speed_degrees_s': {n: float(np.degrees(v)) for n, v in peaks.items()},
             'end_anchor_error_rad': end_error,
             'main_joint_movement_deg': main_joint_movement, 'head_heading_change_deg': heading_change,
-            'head_height_change_mm': height, 'gaze_pitch_change_deg': gaze, 'largest_joint_movement_deg': movement,
+            'head_height_change_mm': height, 'head_travel_mm': head_travel, 'gaze_pitch_change_deg': gaze, 'largest_joint_movement_deg': movement,
             'intent': spec['intent'] if spec else table['poses'].get(item['name'], item['kind']),
             'no_op': no_op, 'view_bounds': bounds.tolist()}
 

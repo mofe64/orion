@@ -1027,7 +1027,9 @@ async def serve(args):
                             announce(identity)
                             await confirmed_feedback(identity, observation, observed_at, message.get("followup"), skip_attention)
                         elif message["type"] in {"session.finish", "session.reject", "session.cancel"}:
+                            outcome = message.get("outcome") if message["type"] == "session.cancel" else None
                             expression("guard" if message["type"] == "session.finish" and session.phase == "echo_guard"
+                                       else outcome if outcome in ("unheard", "failed")
                                        else message["type"].split(".")[1], identity)
                         await deliver(result)
                     except Exception as error:
