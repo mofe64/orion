@@ -7,7 +7,7 @@ motion:
   return_to_anchor: true
   keyframes:
   - offsets:
-      base_yaw_joint: 0.2094
+      base_yaw_joint: 0.20943951023931956
       head_roll_joint: -0.07
       shoulder_pitch_joint: -0.0838
     duration: 0.65
@@ -15,7 +15,7 @@ motion:
     hold: 0.75
     marker: glance_fixation
   - offsets:
-      base_yaw_joint: 0.0838
+      base_yaw_joint: 0.08377580409572782
       head_roll_joint: -0.03
       shoulder_pitch_joint: -0.0341
     duration: 0.55

@@ -7,7 +7,7 @@ motion:
   return_to_anchor: true
   keyframes:
   - offsets:
-      head_roll_joint: -0.1745
+      head_roll_joint: -0.17453292519943295
       head_pitch_joint: -0.1
       elbow_pitch_joint: -0.06
       shoulder_pitch_joint: -0.0674
