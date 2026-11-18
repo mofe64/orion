@@ -392,6 +392,19 @@ impl GazeCoordinator {
         ))
     }
 
+    /// The direction that the camera faces in a pose, as azimuth and elevation.
+    pub(crate) fn facing_bearing<D: RuntimeDriver>(
+        &self,
+        pose: &JointPositions,
+        core: &RuntimeCore<D>,
+    ) -> Result<(f64, f64)> {
+        let model = core
+            .camera_kinematics()
+            .ok_or_else(|| Error::InvalidState("Gaze kinematics unavailable".into()))?;
+        let facing = Bearing::from_direction(model.fk(pose)?.camera.rotate_vector([0., 0., 1.]));
+        Ok((facing.azimuth, facing.elevation))
+    }
+
     pub(crate) fn forget(&mut self) {
         self.target = None;
         self.status.track_id = None;
@@ -982,6 +995,112 @@ pub(crate) mod tests {
             .attend_bearing(Some((0.4, 0.)), 0., &mut core)
             .unwrap_err();
         assert!(error.to_string().contains("Gaze is unavailable"));
+    }
+
+    #[test]
+    fn a_reply_turns_to_a_listener_who_moves_and_ignores_small_shifts() {
+        let (mut core, _, boot) = following();
+        let mut character = crate::CharacterCoordinator::new(1);
+        character.set_gaze_enabled(true);
+        character.start(0.0, &mut core).unwrap();
+        let analysis = crate::expression::speech::SpeechAnalysis {
+            rms_20ms: vec![0.2; 1_000],
+            quiet_regions: vec![(240, 255), (690, 705)],
+            phrase_peaks: vec![60, 210, 360, 510, 660, 810, 940],
+            cues: Vec::new(),
+            duration_seconds: 20.0,
+            streaming: false,
+        };
+        let reference = core
+            .camera_kinematics()
+            .unwrap()
+            .joint_reference("base_yaw_joint")
+            .unwrap();
+        let mut step = 0_u64;
+        let mut advance = |speech_frame: Option<usize>,
+                           character: &mut crate::CharacterCoordinator,
+                           core: &mut RuntimeCore<FollowingDriver>| {
+            step += 1;
+            let now = step as f64 * 0.02;
+            boot.store(1_000_000_000 + (now * 1e9) as u64, Ordering::Relaxed);
+            core.tick(now).unwrap();
+            character
+                .tick(
+                    now,
+                    core,
+                    false,
+                    None,
+                    speech_frame.is_some(),
+                    speech_frame.map(|_| &analysis),
+                    speech_frame,
+                )
+                .unwrap();
+            now
+        };
+        for _ in 0..250 {
+            advance(None, &mut character, &mut core);
+        }
+        character
+            .attend_tracked_bearing(Some((0.4, 0.0)), Some(1), 5.0, &mut core)
+            .unwrap();
+        for _ in 0..150 {
+            advance(None, &mut character, &mut core);
+        }
+        let facing = character.status().active_anchor.clone().unwrap();
+        // The listener leans 6 degrees: the reply keeps its direction.
+        for frame in 0..150 {
+            let now = advance(Some(frame), &mut character, &mut core);
+            if frame % 5 == 0 {
+                let _ = character.queue_gaze_target(
+                    target(boot.load(Ordering::Relaxed), 0.5),
+                    now,
+                    &mut core,
+                );
+            }
+        }
+        assert_eq!(
+            character.status().state,
+            crate::expression::character::CharacterState::Speaking
+        );
+        assert_eq!(character.status().active_anchor.as_ref(), Some(&facing));
+        // The listener walks 23 degrees to the side: the reply turns there.
+        let mut previous = core.driver().positions.clone();
+        let mut peak = 0.0_f64;
+        for frame in 150..500 {
+            let now = advance(Some(frame), &mut character, &mut core);
+            if frame % 5 == 0 {
+                let _ = character.queue_gaze_target(
+                    target(boot.load(Ordering::Relaxed), 0.8),
+                    now,
+                    &mut core,
+                );
+            }
+            let positions = core.driver().positions.clone();
+            for (joint, value) in &positions {
+                if frame < 230 {
+                    peak = peak.max((value - previous[joint]).abs() / 0.02);
+                }
+            }
+            previous = positions;
+        }
+        let turned = character.status().active_anchor.clone().unwrap();
+        assert!(
+            (turned["base_yaw_joint"] - reference - 0.8).abs() < 0.01,
+            "{turned:?}"
+        );
+        assert_eq!(
+            character.status().state,
+            crate::expression::character::CharacterState::Speaking
+        );
+        assert_eq!(
+            character.status().active_clip.as_deref(),
+            Some("speaking_performance")
+        );
+        // The turn is a look, not a snap: it stays at the speed of a gaze move.
+        assert!(
+            peak <= GAZE_COMPILED_PEAK_RAD_S,
+            "peak joint speed {peak} rad/s"
+        );
     }
 
     #[test]

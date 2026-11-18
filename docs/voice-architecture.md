@@ -47,7 +47,7 @@ After prefix acceptance, this transcript cannot reject the wake. The coordinator
 A wake without a command opens another capture opportunity.
 
 Recognition receives speech with pauses longer than 600 ms shortened to 320 ms. The listener keeps both ends of each pause and all speech frames in order.
-Capture permits 15 seconds after detection, or 18 seconds including pre-roll. A recording that reaches the limit is rejected.
+Capture permits 15 seconds after detection, or 18 seconds including pre-roll. A recording that reaches the limit is rejected. A capture with no speech stops after 6 seconds. In the two conditions, Orion plays the sound for a request that it did not hear and makes the unsure movement.
 
 The optional `--wake-engine rustpotter` selection uses the previous candidate detector. It can use an acoustic verifier before command transcription.
 

@@ -213,6 +213,8 @@ Presence does not wake Orion, enable torque or reset voice confirmation. Explici
 
 Tracking Idle publishes observations without ambient face following. A confirmed conversation can follow its selected speaker. It does not replace a missing speaker with a bystander.
 
+While Orion speaks, the speaking movement keeps the body. If the face of the listener moves more than 10° from the direction of the lamp, Orion turns to the face. The turn starts when the current speaking gesture ends, or after 1.5 s. The neck turns first, then the base. The speaking gestures continue in the new direction. Orion does not turn if a reaction is due during the turn or if the reply is almost complete.
+
 Tracking mode differs from Idle/Lamp routine mode. See [camera modes](../vision/README.md#tracking-modes).
 
 ### Hands following

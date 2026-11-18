@@ -74,6 +74,10 @@ const SPEECH_MIN_PRECEDING_SECONDS: f64 = 0.35;
 /// Longest stretch of audio one speech plan covers. Longer replies are planned
 /// in pieces and extended as playback approaches the end of each piece, the
 /// same way streamed audio is, so planning cost does not grow with reply length.
+/// A listener who moves farther than this from where Orion faces gets a turn.
+const SPEECH_REAIM_RAD: f64 = 10.0 * std::f64::consts::PI / 180.0;
+/// A turn waits for the current gesture to end, but not longer than this.
+const SPEECH_REAIM_WAIT_SECONDS: f64 = 1.5;
 const SPEECH_PLAN_HORIZON_SECONDS: f64 = 20.0;
 /// Remaining audio up to this length is planned in one piece rather than
 /// leaving a short final piece that might not be reached at a gesture boundary.
@@ -397,6 +401,8 @@ pub struct CharacterCoordinator {
     speech_cue_frame_offset: usize,
     /// Preserve an installed reaction through EOF, then trim any ordinary future.
     speech_reaction_finish_at: Option<usize>,
+    /// Where the listener moved to during a reply: bearing, first seen, last seen.
+    speech_reaim: Option<((f64, f64), f64, f64)>,
     /// Adopted facing offset, retained when a reaction starts a replacement tail.
     speech_previous_yaw: f64,
 
@@ -465,6 +471,7 @@ impl CharacterCoordinator {
             speech_cues_planned: Vec::new(),
             speech_cue_frame_offset: 0,
             speech_reaction_finish_at: None,
+            speech_reaim: None,
             speech_previous_yaw: 0.0,
             speech_yaw_reference: 0.0,
             speech_checkpoints: Vec::new(),
@@ -569,6 +576,15 @@ impl CharacterCoordinator {
     ) -> Result<bool> {
         if !self.gaze.status().enabled {
             return Err(Error::InvalidState("Gaze is unavailable".into()));
+        }
+        if self.status.enabled
+            && self.work.is_none()
+            && !self.work_anchor
+            && self.foreground_scene_run_id.is_none()
+            && self.status.state == CharacterState::Speaking
+            && self.speech_motion_run_id.is_some()
+        {
+            return self.note_listener_moved(target, now, core);
         }
         if !self.status.enabled
             || self.work.is_some()
@@ -897,6 +913,135 @@ impl CharacterCoordinator {
         self.status.active_clip = Some("gaze_attention".into());
         self.reset_timers(now);
         Ok(true)
+    }
+
+    /// While Orion talks, the body stays with the speaking movement. A face
+    /// that moved away from where Orion faces is remembered here, and the
+    /// speaking movement turns to it at the next gesture boundary.
+    fn note_listener_moved<D: RuntimeDriver>(
+        &mut self,
+        target: super::gaze::GazeTarget,
+        now: f64,
+        core: &RuntimeCore<D>,
+    ) -> Result<bool> {
+        if target.category.as_deref() != Some("face")
+            || self.attention.as_ref().is_some_and(|attention| {
+                attention
+                    .speaker_track_id
+                    .is_some_and(|id| id != target.track_id)
+            })
+        {
+            return Ok(false);
+        }
+        self.gaze.validate_target(&target, core)?;
+        let Some(anchor) = self.status.active_anchor.as_ref() else {
+            return Ok(false);
+        };
+        let (azimuth, elevation) = self.gaze.facing_bearing(anchor, core)?;
+        let delta = target.azimuth - azimuth;
+        if delta
+            .sin()
+            .atan2(delta.cos())
+            .hypot(target.elevation - elevation)
+            <= SPEECH_REAIM_RAD
+        {
+            self.speech_reaim = None;
+            return Ok(true);
+        }
+        let since = self.speech_reaim.map_or(now, |(_, since, _)| since);
+        self.speech_reaim = Some(((target.azimuth, target.elevation), since, now));
+        Ok(true)
+    }
+
+    /// Turns the speaking movement to a listener who moved. The turn uses the
+    /// same neck-first motion as a turn to a speaker, then the gestures go on
+    /// around the new direction. Returns false when no turn started.
+    fn reaim_speech<D: RuntimeDriver>(
+        &mut self,
+        bearing: (f64, f64),
+        run_id: u64,
+        analysis: &SpeechAnalysis,
+        frame: usize,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> bool {
+        let Some(anchor) = self.status.active_anchor.clone() else {
+            return false;
+        };
+        let Ok((turn, facing)) = self.gaze.attention_motion(Some(bearing), &anchor, core) else {
+            return false;
+        };
+        // The speaking style moves a little faster than the plain turn was
+        // timed for. The longer time keeps the turn at the speed of a look.
+        let mut turn = turn;
+        for keyframe in &mut turn.keyframes {
+            keyframe.duration_seconds *= 1.1;
+        }
+        let lead: f64 = turn
+            .keyframes
+            .iter()
+            .map(|k| k.duration_seconds + k.hold_seconds)
+            .sum();
+        let lead_frames = (lead / 0.020).ceil() as usize;
+        // A reaction that is due during the turn keeps its place; the turn waits.
+        if analysis
+            .cues
+            .iter()
+            .any(|(at, _)| (frame..frame + lead_frames).contains(at))
+        {
+            return false;
+        }
+        let tail = speech_analysis_tail(analysis, frame + lead_frames);
+        if !tail.streaming && tail.duration_seconds <= 0.9 {
+            return false;
+        }
+        let previous_offset = self.speech_cue_frame_offset;
+        self.speech_cue_frame_offset = frame + lead_frames;
+        let planned = self.plan_speech(&tail, core.motions(), &facing);
+        let Ok((mut performance, mut checkpoints)) = planned else {
+            self.speech_cue_frame_offset = previous_offset;
+            return false;
+        };
+        // The markers hold audio times from the start of the plan. The plan
+        // now starts with the turn, so the reported times move with it.
+        for keyframe in &mut performance.keyframes {
+            if let Some(marker) = &mut keyframe.marker {
+                for key in ["@peak=", "@cue="] {
+                    if let Some((name, value)) = marker.rsplit_once(key)
+                        && let Ok(value) = value.parse::<f64>()
+                    {
+                        *marker = format!("{name}{key}{:.6}", value + lead);
+                    }
+                }
+            }
+        }
+        let turn_frames = turn.keyframes.len();
+        performance.keyframes.splice(0..0, turn.keyframes);
+        for (index, _) in &mut checkpoints {
+            *index += turn_frames;
+        }
+        if core
+            .extend_character_performance(run_id, performance, facing.clone(), now)
+            .is_err()
+        {
+            self.speech_cue_frame_offset = previous_offset;
+            return false;
+        }
+        self.speech_checkpoints = checkpoints;
+        self.speech_prepare_allowed = false;
+        self.speech_planned_until =
+            frame as f64 * 0.020 + lead + speech_plan_seconds(tail.duration_seconds);
+        self.speech_plan_streaming = analysis.streaming;
+        self.status.active_anchor = Some(facing);
+        if let Some(attention) = self.attention.as_mut() {
+            attention.bearing = Some(bearing);
+        }
+        eprintln!(
+            "{}",
+            serde_json::json!({"event": "speech.motion_reaimed", "motion_run_id": run_id,
+                "azimuth": bearing.0, "elevation": bearing.1, "turn_ms": (lead * 1000.0) as u64})
+        );
+        true
     }
 
     /// Returns a reference to the character's current status struct.
@@ -1350,6 +1495,7 @@ impl CharacterCoordinator {
         self.speech_cues_planned.clear();
         self.speech_cue_frame_offset = 0;
         self.speech_reaction_finish_at = None;
+        self.speech_reaim = None;
         self.speech_previous_yaw = 0.0;
         self.speech_checkpoints.clear();
     }
@@ -2285,6 +2431,21 @@ impl CharacterCoordinator {
                     self.pending_speech_reaction(core, now, analysis.duration_seconds - elapsed);
                 if self.speech_reaction_finish_at.is_some() {
                     return;
+                }
+            }
+            if !finalizing {
+                if let Some((bearing, since, seen)) = self.speech_reaim {
+                    if now - seen > 1.0 {
+                        // The face is gone; do not turn to an old place.
+                        self.speech_reaim = None;
+                    } else if gesture_finished || now - since >= SPEECH_REAIM_WAIT_SECONDS {
+                        if self.reaim_speech(bearing, run_id, analysis, frame, now, core) {
+                            self.speech_reaim = None;
+                            return;
+                        }
+                        // Try again soon, not on every tick.
+                        self.speech_reaim = Some((bearing, now - 1.0, seen));
+                    }
                 }
             }
             let late_end = finalizing && analysis.duration_seconds - elapsed <= 0.9;
