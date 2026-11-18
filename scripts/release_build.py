@@ -78,7 +78,7 @@ def native(codename):
           '-C', 'setup-args=-Dwerror=false',
           '-C', 'compile-args=-j2', destination=out,
           # libcamera 0.5 binds Camera with its own shared-pointer holder, which
-          # pybind11 3 rejects; libcamera 0.7 needs pybind11 3's smart holder.
+          # pybind11 3 rejects; libcamera 0.7 and later need pybind11 3's smart holder.
           constraints=['pybind11==' + pins['pybind11_version']])
     check_pybind11(next(out.glob('rpi_libcamera-*.whl')), pins['pybind11_version'])
     kms = binding_wrapper('pykms', manifest['kms_wrapper_revision'])
