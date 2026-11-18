@@ -196,7 +196,10 @@ def shared(*, check_only=False):
         run('git', 'clone', '--depth', '1', '--branch', LLAMA_VERSION, 'https://github.com/ggml-org/llama.cpp.git', source)
         run('cmake', '-S', source, '-B', source / 'build', '-DCMAKE_BUILD_TYPE=Release',
             '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=OFF',
-            '-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF')
+            '-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16', '-DLLAMA_CURL=OFF', '-DLLAMA_BUILD_TESTS=OFF',
+            # Orion does not use the web page of the server. Without this, the build downloads the
+            # newest page from Hugging Face, and that page can be wrong for the pinned version.
+            '-DLLAMA_USE_PREBUILT_UI=OFF')
         run('cmake', '--build', source / 'build', '--target', 'llama-server', '-j', '2')
     dest = release / 'native'; dest.mkdir()
     from build_spotify import build as build_spotify
