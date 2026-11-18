@@ -78,7 +78,9 @@ dkms_source=/usr/src/${dkms_name}-${dkms_version}
 # Earlier installs copied a single-kernel build here. Remove it before DKMS
 # installs its own copy, which may use the same directory.
 rm -f "/lib/modules/${kernel_release}/extra/rp1_ws281x_pwm.ko"
-if dkms status "${dkms_name}/${dkms_version}" | grep -q .; then
+# Read the whole status first. A pipe into "grep -q" stops dkms early when it
+# prints more than one kernel, and pipefail then reports the check as failed.
+if [[ -n $(dkms status "${dkms_name}/${dkms_version}") ]]; then
     dkms remove "${dkms_name}/${dkms_version}" --all
 fi
 rm -rf "${dkms_source}"
