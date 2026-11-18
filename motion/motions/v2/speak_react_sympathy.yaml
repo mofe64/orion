@@ -11,10 +11,10 @@ motion:
       elbow_pitch_joint: 0.22
       head_pitch_joint: 0.22
       head_roll_joint: 0.12
-    duration: 0.55
+    duration: 0.8
     arrival: settle
     marker: sympathy
-    hold: 0.25
+    hold: 0.5
   - offsets: {}
-    duration: 0.5
+    duration: 0.7
     arrival: settle

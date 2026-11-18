@@ -64,6 +64,8 @@ The agent omits state older than ten minutes. Studio Debug shows the state throu
 
 Older boolean dance settings become `sometimes` for true and `off` for false.
 
+The first installation writes `behaviours.json` with `proactive_speech`, `arrival_notice`, `mutual_gaze` and `new_object_peek` set to true. A new lamp thus starts in Lively. An update keeps the saved file.
+
 Studio shows `proactive_speech` and `demo_mode` as one choice, **How lively Orion is**: Quiet, Lively or Demo. Demo keeps the `proactive_speech` value, so Orion returns to it when Demo stops. When `proactive_speech` or `demo_mode` changes to true, the gateway also sets `mutual_gaze`, `arrival_notice` and `new_object_peek` to true. If tracking is Off or Hands, it sets tracking to Idle. While `demo_mode` is true, vision also enables `object_glances`, `mutual_gaze`, `arrival_notice` and `new_object_peek`.
 
 Studio shows liveliness and quirks in **Personality and memory**. It shows dance under **Character behaviours**, and the other switches under **Advanced** in that section. The runtime reads act settings independently of camera observations.

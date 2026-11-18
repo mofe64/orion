@@ -1000,7 +1000,8 @@ mod tests {
                 .map(|keyframe| keyframe.duration_seconds + keyframe.hold_seconds)
                 .sum();
             assert!(
-                (0.8..=1.3).contains(&duration),
+                // Each feeling keeps its own speed: joy is quick, sympathy is slow.
+                (0.8..=2.0).contains(&duration),
                 "{} duration {duration}",
                 cue.as_str()
             );

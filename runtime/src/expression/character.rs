@@ -1849,9 +1849,17 @@ impl CharacterCoordinator {
             return Ok(());
         }
 
+        // A feeling that waited for the body to hold plays before any idle.
+        if self.tick_feeling(now, core) {
+            return Ok(());
+        }
         // if we are under attention, we return early, no idle while holding attention
         // This lets Orion retain its deliberate speaker-facing direction without an ordinary idle delaying the attention return.
         if self.attention.is_some() {
+            return Ok(());
+        }
+        // A lamp that lights a task stays still: movement there distracts from the work.
+        if self.work_anchor {
             return Ok(());
         }
         // if we get here, that means we are allowed to idle

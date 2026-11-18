@@ -9,10 +9,10 @@ motion:
   - offsets:
       shoulder_pitch_joint: -0.1
       head_pitch_joint: 0.31
-    duration: 0.42
+    duration: 0.6
     arrival: settle
-    hold: 0.2
+    hold: 0.35
     marker: sorry
   - offsets: {}
-    duration: 0.43
+    duration: 0.6
     arrival: settle

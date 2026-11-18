@@ -915,6 +915,16 @@ pub(super) fn dispatch_command<D: RuntimeDriver>(
                 if rest.reactions_ready() && cue != Some("voice_wake") {
                     let _ = character.set_reaction(reaction, now_seconds, core);
                 }
+                // A turn that ends without an answer shows it: unsure when nothing
+                // was heard, sorry when the request failed.
+                if rest.reactions_ready() && matches!(parts[1], "unheard" | "failed") {
+                    let clip = if parts[1] == "unheard" {
+                        "speak_react_unsure"
+                    } else {
+                        "speak_react_sorry"
+                    };
+                    character.show_feeling(clip, now_seconds);
+                }
                 let cue_ready = rest.reactions_ready()
                     || (cue == Some("notice_warm")
                         && feedback.announcement()

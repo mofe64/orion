@@ -15,6 +15,8 @@ pub(super) struct Acts {
     next_beat: f64,
     last_beat: Option<bool>,
     listening_attempted: bool,
+    /// A feeling clip that waits for the body to hold, with the time it expires.
+    pub feeling: Option<(&'static str, f64)>,
 }
 impl Default for Acts {
     fn default() -> Self {
@@ -30,6 +32,7 @@ impl Default for Acts {
             next_beat: 0.,
             last_beat: None,
             listening_attempted: false,
+            feeling: None,
         }
     }
 }
@@ -59,6 +62,40 @@ impl CharacterCoordinator {
     pub(crate) fn finish_lifecycle_act(&mut self) {
         self.acts.lifecycle = None;
         self.status.active_clip = None;
+    }
+    /// Shows a feeling after a turn ends without speech. The clip starts when
+    /// the body next holds still, and is dropped if that takes too long.
+    pub(crate) fn show_feeling(&mut self, clip: &'static str, now: f64) {
+        self.acts.feeling = Some((clip, now + 2.5));
+    }
+    pub(super) fn tick_feeling<D: RuntimeDriver>(
+        &mut self,
+        now: f64,
+        core: &mut RuntimeCore<D>,
+    ) -> bool {
+        let Some((clip, until)) = self.acts.feeling else {
+            return false;
+        };
+        self.acts.feeling = None;
+        if now > until {
+            return false;
+        }
+        let (Ok(definition), Some(anchor)) = (
+            core.motions().motion(clip).cloned(),
+            self.status.active_anchor.clone(),
+        ) else {
+            return false;
+        };
+        let Ok(run) = core.play_generated_anchored_relative(definition, anchor, now) else {
+            return false;
+        };
+        if let Some(log) = &self.behaviour_log {
+            log.motion(clip, run, None, None, now);
+        }
+        self.active_idle_run_id = Some(run);
+        self.active_idle_category = Some(NextIdleCategory::Micro);
+        self.status.active_clip = Some(clip.into());
+        true
     }
     pub(crate) fn play_lifecycle_act<D: RuntimeDriver>(
         &mut self,
@@ -321,10 +358,13 @@ impl CharacterCoordinator {
         } else {
             "think_beat_b"
         };
-        self.acts.next_beat = now + self.rng.range(3., 5.);
+        let gap = self.rng.range(2.6, 3.6);
         if self.work_anchor {
+            self.acts.next_beat = now + gap;
             return true;
         }
+        // A beat that cannot start yet tries again soon, so the wait does not go still.
+        self.acts.next_beat = now + 0.2;
         if let (Ok(definition), Some(anchor)) = (
             core.motions().motion(clip).cloned(),
             self.status.active_anchor.clone(),
@@ -342,6 +382,7 @@ impl CharacterCoordinator {
                 return true;
             };
             if let Ok(run) = run {
+                self.acts.next_beat = now + gap;
                 self.thinking_run = Some(run);
                 self.acts.last_beat = Some(choice);
                 self.status.active_clip = Some(clip.into());
@@ -687,6 +728,41 @@ mod tests {
         }
     }
     #[test]
+    fn a_feeling_plays_once_the_body_holds_and_expires_if_it_cannot() {
+        let (mut core, mut character) = fixture();
+        advance(&mut core, &mut character, 0., 0.5);
+        character.show_feeling("speak_react_sorry", 0.5);
+        advance(&mut core, &mut character, 0.5, 0.6);
+        assert_eq!(
+            character.status.active_clip.as_deref(),
+            Some("speak_react_sorry")
+        );
+        advance(&mut core, &mut character, 0.6, 4.);
+        assert_ne!(
+            character.status.active_clip.as_deref(),
+            Some("speak_react_sorry")
+        );
+        // A feeling that waited too long is dropped, not played late.
+        character.show_feeling("speak_react_unsure", 4.);
+        character.acts.feeling = character.acts.feeling.map(|(clip, _)| (clip, 3.));
+        advance(&mut core, &mut character, 4., 4.2);
+        assert!(character.acts.feeling.is_none());
+        assert_ne!(
+            character.status.active_clip.as_deref(),
+            Some("speak_react_unsure")
+        );
+    }
+    #[test]
+    fn a_work_light_stays_still_while_a_free_lamp_idles() {
+        for work in [false, true] {
+            let (mut core, mut character) = fixture();
+            advance(&mut core, &mut character, 0., 0.5);
+            character.work_anchor = work;
+            advance(&mut core, &mut character, 0.5, 90.);
+            assert_eq!(character.last_idle.is_none(), work);
+        }
+    }
+    #[test]
     fn thinking_beats_wait_alternate_and_preserve_continuation() {
         let (mut core, mut character) = fixture();
         character.set_reaction("thinking", 0., &mut core).unwrap();
@@ -706,12 +782,12 @@ mod tests {
         assert_eq!(character.thinking_run, Some(run));
         let first = character.acts.last_beat.unwrap();
         let due = character.acts.next_beat;
-        assert!((3. ..=5.).contains(&(due - 3.)));
-        advance(&mut core, &mut character, 3.02, 8.02);
+        assert!((2.6..=3.6).contains(&(due - 3.)));
+        advance(&mut core, &mut character, 3.02, 7.02);
         assert_eq!(character.acts.last_beat, Some(!first));
-        character.note_speech_started(8.04);
+        character.note_speech_started(7.04);
         character
-            .tick(8.04, &mut core, false, None, true, Some(&speech()), Some(0))
+            .tick(7.04, &mut core, false, None, true, Some(&speech()), Some(0))
             .unwrap();
         assert_eq!(character.status.state, CharacterState::Speaking);
         assert!(character.thinking_run.is_none());

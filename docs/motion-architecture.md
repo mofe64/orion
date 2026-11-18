@@ -72,6 +72,8 @@ After confirmed wake reaches home, `wake_stretch` lifts and settles. A failed st
 Only successful measured completion of the rest descent permits torque release.
 
 Low energy can select `yawn` when automatic rest is less than two minutes away.
+A voice turn can end without an answer. Orion plays `speak_react_unsure` when it heard no command. It plays `speak_react_sorry` when the request failed. Each clip starts when the body holds still. Orion drops the clip after 2.5 s.
+
 Wake, sleep, yawn, thinking, arrival, peek and wave markers can play short sounds. Routine idles, posture drift and listening remain silent.
 Speech, active alerts, light routines and local quiet hours suppress these sounds. Quiet hours run from 22:00 to 07:00.
 Sound failure does not control motion or rest. See [character switches](configuration.md#character-behaviors).
@@ -93,6 +95,7 @@ Off → Starting → HomeIdle / PoseIdle
 ```
 
 A held pose becomes the anchor for idle and speech motion. Relative animation returns to that anchor. An explicit pose or completed foreground scene can replace it.
+A held work anchor has no idle motion. The lamp stays still while it lights a task.
 
 Character Stop returns home and leaves holding torque enabled. Mechanical rest uses a separate coordinator that releases torque after descent. See [rest and waking](system-architecture.md#automatic-rest-and-waking).
 

@@ -49,6 +49,21 @@ class Fixture(unittest.TestCase):
             self.write(path, text.replace(str(self.release), '/old/release'))
 
 
+class FirstBehaviourTests(unittest.TestCase):
+    def test_a_new_lamp_starts_lively_and_a_saved_choice_is_kept(self):
+        import release_install
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            path = home / '.config/orion/behaviours.json'
+            self.assertFalse(release_install.write_first_behaviours(home, first_install=False))
+            self.assertFalse(path.exists())
+            self.assertTrue(release_install.write_first_behaviours(home, first_install=True))
+            self.assertEqual(json.loads(path.read_text()), release_install.LIVELY_BEHAVIOURS)
+            path.write_text('{"proactive_speech": false}')
+            self.assertFalse(release_install.write_first_behaviours(home, first_install=True))
+            self.assertEqual(json.loads(path.read_text()), {'proactive_speech': False})
+
+
 class ConfigurationTests(Fixture):
     def test_existing_spotify_restart_delay_is_migrated_and_custom_delay_is_kept(self):
         self.write(self.release / 'scripts/spotify_connect.py', '# receiver')

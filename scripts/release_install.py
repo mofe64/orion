@@ -180,6 +180,19 @@ def prepare_environments(release, wheels, uv, codename, hailo):
             run(environment / 'bin/python', '-c', 'import libcamera, pykms, picamera2')
 
 
+LIVELY_BEHAVIOURS = {'proactive_speech': True, 'arrival_notice': True, 'mutual_gaze': True, 'new_object_peek': True}
+
+
+def write_first_behaviours(home, first_install):
+    """A new lamp starts in Lively. An owner's saved choice is never replaced."""
+    path = home / '.config/orion/behaviours.json'
+    if not first_install or path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(LIVELY_BEHAVIOURS, indent=2) + '\n')
+    return True
+
+
 def install(payload, root, codename):
     manifest = json.loads((payload / 'bundle.json').read_text())
     verify_payload(payload, manifest)
@@ -228,6 +241,7 @@ def install(payload, root, codename):
         token = home / '.config/orion/studio-token'
         if not token.exists():
             run(release / 'orion_studio/.venv/bin/python', release / 'orion_studio/gateway.py', 'create-token', '--token-file', token)
+        write_first_behaviours(home, first_install=not active)
         inventory = root / 'catalog-assets.json'
         project = Path(json.loads(inventory.read_text())['project']) if inventory.exists() else root / 'catalog'
         project.mkdir(parents=True, exist_ok=True)
