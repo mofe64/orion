@@ -50,6 +50,8 @@ class EndpointConfig:
     trailing_silence_ms: int = 1_000
     speech_confirmation_ms: int = 60
     max_utterance_ms: int = 15_000
+    # A capture with no speech at all stops here; nobody is talking.
+    no_speech_ms: int = 6_000
 
 
 class EnergyEndpointDetector:
@@ -99,6 +101,9 @@ class EnergyEndpointDetector:
             if (past_grace and enough_speech and self._speech_run_ms == 0
                     and self._silence_ms >= self.config.trailing_silence_ms):
                 self.end_reason = "silence"
+                return True
+            if not enough_speech and self._total_ms >= self.config.no_speech_ms:
+                self.end_reason = "no_speech"
                 return True
             if self._total_ms >= self.config.max_utterance_ms:
                 self.end_reason = "max_duration"

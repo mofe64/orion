@@ -797,7 +797,10 @@ async fn recording_limit_never_sends_an_incomplete_command_to_the_agent() {
     let pcm = b"Hey Orion, incomplete request!".to_vec();
     send(&mut h.pi, json!({"type":"utterance","sessionId":SID,"purpose":"wake_and_command","bytes":pcm.len(),"endReason":"max_duration"})).await;
     h.pi.send(Message::Binary(pcm.into())).await.unwrap();
-    until(&mut h.pi, "session.cancel").await;
+    assert_eq!(
+        until(&mut h.pi, "session.cancel").await["outcome"],
+        "unheard"
+    );
     assert_eq!(next(&mut h.observer).await["type"], "wake.candidate");
     assert_eq!(next(&mut h.observer).await["code"], "utterance_too_long");
     assert!(h.gateway.lock().await.uploads.is_empty());

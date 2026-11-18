@@ -64,9 +64,9 @@ class EndpointTests(unittest.TestCase):
 
     def test_followup_needs_speech_and_has_bounded_empty_wait(self):
         detector = EnergyEndpointDetector()
-        for _ in range(749): self.assertFalse(detector.accept(frame()))
+        for _ in range(299): self.assertFalse(detector.accept(frame()))
         self.assertTrue(detector.accept(frame()))
-        self.assertEqual(detector.end_reason, 'max_duration')
+        self.assertEqual(detector.end_reason, 'no_speech')
 
     def test_chunk_boundaries_do_not_change_endpoint(self):
         pcm = frame(2000) * 50 + frame() * 50

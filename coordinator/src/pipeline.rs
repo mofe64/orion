@@ -727,9 +727,14 @@ async fn connected(
                                 cancel_turn!(&reason, sid);
                                 continue;
                             }
-                            if message["endReason"] == "max_duration" {
-                                pi.send(json!({"type":"session.cancel", "sessionId":sid})).await?;
-                                event(hub, sid, error("utterance_too_long", "The recording limit was reached. Please repeat a shorter request.", true));
+                            if matches!(message["endReason"].as_str(), Some("max_duration" | "no_speech")) {
+                                // Orion shows that it did not get a request; it does not end the turn silently.
+                                pi.send(json!({"type":"session.cancel", "sessionId":sid,"outcome":"unheard"})).await?;
+                                event(hub, sid, if message["endReason"] == "no_speech" {
+                                    error("transcription_failed", "No command was heard", true)
+                                } else {
+                                    error("utterance_too_long", "The recording limit was reached. Please repeat a shorter request.", true)
+                                });
                                 session = None; followup = None;
                                 continue;
                             }
