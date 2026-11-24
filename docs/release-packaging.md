@@ -1,18 +1,14 @@
 # Raspberry Pi releases
 
+This guide is for maintainers building, testing and publishing Orion Pi releases and asset packs.
+
 ## App and asset packages
 
-An app release contains Rust executables, Python 3.12.13, uv, component wheels, native wheels, systemd templates and lighting driver sources. It excludes model weights, Git data, virtual environments and compiler caches.
+An app release bundles Rust executables, Python 3.12.13, `uv`, component wheels, native wheels, systemd unit templates and lighting driver sources. It leaves out model weights, Git metadata, virtual environments and build caches.
 
-Bookworm builds shared executables against glibc 2.36. Bookworm and Trixie build separate camera, KMS and Hailo bindings. An application binary interface defines how compiled programs call a library. The installer selects native wheels from `VERSION_CODENAME`.
+Bookworm builds shared executables against glibc 2.36, while Bookworm and Trixie each build their own camera, KMS and Hailo native wheels (matching the OS `VERSION_CODENAME` because native libraries have different ABIs across releases). `scripts/release-native.json` pins those native versions and revisions, and the build applies patches from `scripts/native/`, failing immediately if any patch does not apply.
 
-`scripts/release-native.json` defines native package versions and source revisions. The build applies camera and KMS patches from `scripts/native/`. A patch error stops the build.
-
-An asset pack contains built-in YAML from `motion/config`, `motion/motions` and `scenes`. It also contains files from `audio/cues`. It excludes every `user` folder.
-
-`orion-assets-X.Y.Z.tar.gz.manifest.json` defines the asset format version, joint-profile checksum and file checksums. The archive contains the same manifest as `asset-manifest.json`. The joint-profile checksum covers `hardware/profiles/v2-joints.json` from the app used for compilation.
-
-App archives contain a compressed default pack for first installation. They do not contain loose built-in movement or cue files. Services read these files from the persistent catalog.
+An asset pack packages the built-in YAML files from `motion/config`, `motion/motions` and `scenes`, along with the WAV files in `audio/cues`, excluding every `user` directory. Its `orion-assets-X.Y.Z.tar.gz.manifest.json` (embedded inside the archive as `asset-manifest.json`) records the asset format version, per-file checksums, and the checksum of `hardware/profiles/v2-joints.json` from the app used to validate it. App archives also embed a compressed default pack for first installation, while running services read from the persistent catalogue on disk.
 
 ## Release branches and versions
 
@@ -57,7 +53,7 @@ The build copies Git's file inventory into a temporary source directory. Ignored
 
 The unpacked payload uses a Linux Docker volume. This preserves file names that differ only in letter case on macOS.
 
-The build runs [service startup checks](../tests/test_release_services.py) with separate release and catalog folders. The fixture has no Git metadata or `AGENTS.md`. It checks all six managed services and compiles a trajectory through the gateway. Device access and inference use test substitutes.
+The build runs [service startup checks](../tests/test_release_services.py) with separate release and catalogue folders (without Git metadata or `AGENTS.md`). It starts and verifies all six managed services (`oriond`, `orion-studio-gateway`, `orion-listener`, `orion-voice-stack`, `orion-vision` and `orion-spotify`) and compiles a trajectory through the gateway using test substitutes for hardware and AI inference.
 
 ## Install and deploy
 

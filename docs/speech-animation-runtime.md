@@ -1,8 +1,6 @@
 # Speech animation runtime
 
-The character coordinator turns speech analysis into continuous relative motion. The runtime owns playback and movement. Audio analysis does not send servo goals.
-
-## Data flow
+While Orion speaks, it shouldn't freeze like a speaker box or wave randomly. The character coordinator analyzes the reply's audio waveform in short rolling windows and stitches together authored gestures—aligning any tagged reaction strokes (`happy`, `surprised`, `agree`, etc.) with the right moments in the audio—while `oriond`'s 50 Hz runtime executes every resulting joint command safely.
 
 ```text
 PCM audio → speech analysis → character plan → trajectory compiler
@@ -10,72 +8,53 @@ PCM audio → speech analysis → character plan → trajectory compiler
                  └── playback position ───────→ movement updates
 ```
 
-PCM means pulse-code modulation, a sequence of audio samples. Analysis supplies duration, energy, voiced regions, quiet intervals and local peaks. Reaction cues add named semantic gestures.
-
-The main planner lives in `runtime/src/expression/character.rs`. Playback and waveform analysis live in `runtime/src/expression/speech.rs`.
+Audio analysis (`runtime/src/expression/speech.rs`) measures duration, loudness, voiced stretches, quiet pauses and local energy peaks from 20 ms chunks of PCM audio. The main planner (`runtime/src/expression/character.rs`) turns those features plus any Codex reaction tags into anchor-relative motion plans.
 
 ## Coordinates and clocks
 
-The anchor is the complete pose around which speech moves. Generated targets use offsets from that anchor. The selected hardware profile limits the resulting joint positions.
+Every speaking gesture moves around Orion's current anchor pose using offsets clamped by the active hardware profile.
 
-Runtime time measures execution. Audio time measures progress through the reply. Analysis uses 20 ms frames. Motion replacement also has local trajectory time. These clocks have different starting points.
-
-Speech extensions preserve the original movement run ID. Each replacement increments its trajectory revision. Progress must use the matching run and current revision.
+Planning and playback coordinate four different clocks: runtime execution time, audio playback progress, 20 ms analysis frames and local trajectory time. Because streaming replies extend an active motion in place, every replacement keeps the original movement `run_id` while bumping its trajectory `revision`, ensuring updates only apply to the matching active run.
 
 ## Planning history
 
-`SpeechMemory` stores the random generator, recent clips, direction choices, body state, emphasis time and planned cues. This history belongs to performed motion.
+When planning ahead for streaming audio, Orion needs to avoid repeating the same gestures without corrupting its history if a draft plan gets replaced or cancelled:
 
-`plan_speech` saves that history before composing a candidate. Composition can change temporary planning state. The function restores performed history before returning the candidate and its checkpoints.
+- `SpeechMemory` stores the random generator, recent clips, side choices, body state, emphasis timing and planned cues for motion that has *actually played*.
+- `plan_speech` snapshots that memory before composing a window, restores it afterward, and emits checkpoints after each planned gesture.
+- `advance_speech_memory` adopts checkpoints only once the active run passes each corresponding keyframe on the compiled timeline, ensuring discarded or replaced future plans never pollute gesture history.
 
-A checkpoint stores the history after one planned gesture. Planning does not count that gesture as performed. Rejected or replaced future plans therefore do not consume gesture history.
+Timeline checkpoints track planned progress rather than physical settling; final completion still waits for measured joint settling after the reply ends.
 
-`advance_speech_memory` finds the active speech run and its current keyframe. It adopts only checkpoints strictly before that keyframe. It removes consumed checkpoints and applies the newest eligible snapshot once.
+## Composing a performance
 
-This progress follows the compiled timeline. It does not confirm physical arrival at every intermediate gesture. Final motion completion still uses measured settling.
+Rather than planning a whole long reply upfront, the planner works one bounded audio window ahead and always reserves enough time at the end to return smoothly to the anchor.
 
-## Compose a performance
-
-The planner selects a bounded audio window. It keeps enough time for the final return. Long replies extend through later windows instead of planning the entire reply at once.
-
-Quiet and energetic regions influence gesture choice. Head motion leads the action. Shoulder and elbow motion provide a later, smaller response. Emphasis gestures have a spacing limit.
-
-Authored speaking clips supply motion shapes. The planner fits their offsets and timing to the audio window. One uniform amplitude factor keeps a relative shape inside the permitted range.
-
-Yaw choice uses the model reference and anchor together. Thus, a coordinate-zero change does not change the intended facing direction. The planner alternates choices while avoiding recent repetition.
-
-The compiler can stretch a segment to respect motor speed. The planner uses compiled timing when aligning gesture peaks. It limits alignment passes instead of repeatedly searching inside the movement loop.
+- Quiet stretches favor gentle sways, while energetic peaks invite nods and emphasis beats (with spacing limits so Orion doesn't bob endlessly).
+- The head leads each gesture, with the shoulder and elbow following slightly later and smaller.
+- Authored speaking clips supply the shapes, uniformly scaled so they always fit inside joint limits; yaw turns combine the model reference and current anchor so zeroing never flips Orion's intended direction.
+- Because the trajectory compiler may stretch fast segments to obey servo speed limits, the planner aligns reaction peaks against compiled timing within a bounded number of passes rather than iterating inside the 50 Hz control loop.
 
 ## Reaction cues
 
 Supported cues are `agree`, `disagree`, `happy`, `curious`, `thinking`, `surprised`, `sympathy`, `sorry`, `shy`, `unsure` and `laugh`.
 
-A reaction motion uses `anchor_relative`, returns to its anchor and has one apex marker. An apex marker identifies the gesture's main stroke. The runtime validates this contract when loading motions.
+Every reaction motion must use `anchor_relative` coordinates, return to its anchor, and contain exactly one `apex` marker marking its main visual stroke—`oriond` validates this contract on load. A reaction already playing near the end of speech may finish if its return fits the remaining allowance, preventing late cues from keeping Orion moving long after the voice stops.
 
-A reaction already underway can finish when its return fits the remaining allowance. A late cue cannot force unlimited motion after speech ends.
+## Extending streaming speech
 
-## Extend streaming speech
+On each tick during playback, `tick_speaking` advances performed checkpoints and checks whether newly arrived audio chunks (or the end of the reply) need a fresh plan extension. Valid replacements splice smoothly from the current **commanded** position, velocity and acceleration (never jumping back to lagged measured feedback), while failed plans simply leave the current valid plan running.
 
-`tick_speaking` first updates performed history. It then checks whether new audio or an end marker requires another plan.
+## Finishing or interrupting
 
-A successful replacement preserves the current commanded position, velocity and acceleration. It does not restart from delayed measured feedback. A failed replacement leaves the valid active plan in place.
+When speech ends, Orion keeps any valid return already underway or appends a short settle back to the anchor. Interrupting speech (with `"Hey Orion"`, a scene, Stop or rest) cancels speech ownership immediately so stale extensions can never resume. Even if animation planning fails entirely, audio playback continues normally and never bypasses `oriond` with direct servo writes.
 
-The runtime verifies voice ownership and the return-to-anchor contract before accepting generated movement. The normal trajectory compiler and joint-limit checks still apply.
+## Changing the planner
 
-## Finish or interrupt
-
-Speech end can preserve a valid reaction return. Otherwise, the coordinator creates a short return to the anchor. The character settles once after the reply.
-
-Interruption cancels the old speech owner. A later session cannot continue its stale plan. Scene, Stop, rest and torque controls retain their normal priority.
-
-Audio can continue when animation planning fails. The failure remains visible in runtime state. The planner never repairs a failure with direct servo writes.
-
-## Change the planner
-
-1. Locate the relevant planning function in `runtime/src/expression/character.rs`.
-2. Preserve performed-history checkpoints when changing streaming behavior.
-3. Preserve commanded-state continuity when changing replacement behavior.
+1. Locate the planning logic in `runtime/src/expression/character.rs`.
+2. Preserve performed-history checkpoints whenever changing streaming windows.
+3. Preserve commanded-state continuity whenever changing trajectory replacement.
 4. Run the [runtime tests](../runtime/README.md#build-and-test).
-5. Inspect the resulting motion with [MuJoCo](../simulation/mujoco/README.md).
+5. Inspect the resulting motion visually in [MuJoCo](../simulation/mujoco/README.md).
 
-Exact planner constants remain in the source file. Motion file fields are in the [motion reference](motion-reference.md).
+Exact planner constants live in `character.rs`; YAML motion fields are documented in the [motion reference](motion-reference.md).

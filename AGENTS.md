@@ -18,15 +18,14 @@ Use [the documentation index](docs/README.md) to find relevant project documents
 
 ### Writing rules
 
-- Write in ASD-STE100 style. Use one topic per paragraph. Use at most six sentences per paragraph.
-- Use at most 20 words in procedural sentences. Use at most 25 words in descriptive sentences.
-- Give one instruction per sentence. Use imperative verbs for procedures. Use active voice and present tense.
-- Use each word with one meaning. Prefer common words. Treat joint names, commands and file names as technical nouns.
-- Use numbered steps for procedures. Put each command in a fenced block. Put one sentence before each command to explain its function.
+- Write clear, natural technical English in active voice and present tense. Keep sentences concise and paragraphs focused on one topic, without artificial choppiness or word-count caps.
+- Lead each document and major section with what the system does and why it matters before diving into rules or internals.
+- Put user-facing setup and operation first, and place developer or low-level implementation details in clearly labelled sections below.
+- Prefer common, everyday words and define necessary technical terms naturally at first use. Treat joint names, commands and file names as technical nouns.
+- Use numbered steps for procedures. Put each command in a language-tagged fenced block with a short sentence explaining what it does.
 - Describe what Orion does and how to use, build or change it.
-- Delete verification status, measurement dates, capture dates, commissioning records, test evidence, review history and experiment results. Delete explanations of how values were found. Do not move this material to another document.
-- Replace jargon with common words. Define each necessary technical term in one short sentence at its first use.
-- Put a WARNING note immediately before a step that has an injury risk. Put a CAUTION note immediately before a step that has a damage risk.
+- Delete verification status, measurement dates, capture dates, commissioning records, test evidence, review history and experiment results, along with explanations of how values were found. Do not move this material to another document.
+- Put a `WARNING:` note immediately before a step that has an injury risk, and a `CAUTION:` note immediately before a step that has a damage risk.
 
 ### File responsibilities
 

@@ -1,6 +1,6 @@
 # Orion system architecture
 
-The Pi runs hardware control, camera processing, speech recognition, speech synthesis and the voice host. Studio provides remote controls and editing. Codex inference and web search use online services.
+Orion splits its work across small, focused programs on the Raspberry Pi so slow AI models and network requests never block real-time motor control or audio capture. Most work—hearing, speech recognition, speech synthesis, camera detection, lighting, alarms and movement—runs locally on the lamp; only Codex replies and web search require internet access. Studio runs remotely on your computer as an optional control and editing app.
 
 ## System boundary
 
@@ -31,65 +31,47 @@ flowchart LR
     codex <--> cloud
 ```
 
-Model execution and network waits stay outside the 50 Hz movement loop. Each process owns a specific resource or request boundary.
+Every program runs in its own process with a clear resource boundary, keeping model inference and network waits completely outside the 50 Hz movement loop.
 
 ## Authority boundaries
 
 | Service | Ownership |
 | --- | --- |
-| `oriond` | Servo bus, light output, speaker playback and movement lifecycle |
-| `orion-listener` | Microphone capture, wake candidates and voice sessions |
-| `orion-voice-stack` | Coordinator, agent and speech workers |
-| `orion-studio-gateway` | External authentication, asset publication and local request forwarding |
-| `orion-vision` | Camera capture, in-memory images and local detections |
+| `oriond` | Servo bus, LED ring, speaker playback and movement lifecycle |
+| `orion-listener` | Microphone capture, wake detection and voice-session boundaries |
+| `orion-voice-stack` | Coordinator, Codex agent and local speech workers |
+| `orion-studio-gateway` | External authentication, asset publication and local forwarding |
+| `orion-vision` | Camera capture, in-memory frames and local detections |
 
 ### Hardware runtime
 
-Only the runtime writes servo goals. It checks joint limits, compiles trajectories and measures completion. Scenes, speech, gaze and idle planners share its ownership rules.
-
-Hardware and MuJoCo implement the same driver interface. They receive the same compiled samples. Their feedback sources differ.
+`oriond` is the single gatekeeper for the motors. It checks every goal against joint limits, compiles trajectories and verifies measured completion—scenes, speech, gaze and idles all go through the same ownership rules. Hardware and MuJoCo implement the exact same driver interface and receive identical 50 Hz samples, differing only in where feedback comes from.
 
 ### Camera and vision
 
-Vision retains the latest frame in memory. Camera callbacks do not encode JPEGs or run models. One bounded worker schedules face, palm and object work.
+Vision keeps only the latest camera frame in memory (never written to disk) and schedules face, palm and object detection on one bounded worker outside the camera callback. Capture-time joint geometry turns pixel detections into stable base-frame bearings, so a picture taken mid-turn still points accurately. Gaze requests pass through runtime compilation and can never bypass Stop, rest, foreground ownership or joint limits.
 
-Capture-time geometry converts camera rays into base-frame bearings. Gaze requests pass through runtime compilation. Vision cannot bypass Stop, rest, foreground ownership or joint limits.
+Turning camera privacy off closes capture and clears image buffers. Setting tracking to `Off` stops background inference while still permitting live viewing in Studio. Live viewing requires runtime permission (blocked while resting), lights one cyan pixel on the LED ring while active, and cannot be triggered by background detection polling.
 
-Camera privacy closes capture and clears image buffers. Tracking Off stops background inference but permits plain viewing. Other tracking modes select observations or following behavior.
-
-Gateway viewing requires runtime permission. One cyan light on the ring shows active viewing. The owner chooses this light in Studio Settings. Rest blocks streams and snapshots. Detection polling cannot create viewing permission.
-
-Explicit object aiming follows agent, coordinator, gateway, vision and runtime planning. A voice resource lock separates object lookup from speech inference and playback. Search movement uses runtime-owned poses and completion checks.
-
-An aim can return `aimed`, `clamped`, `not_found` or `ambiguous`. Ambiguous results require a target choice. Desk rays assume a base-frame plane; they cannot establish an object's actual support surface.
-
-Explicit visual questions follow the [look contract](voice-architecture.md#look-tool-contract). Image access is separate from autonomous observations.
+Explicit object aims (`"look at the mug"`) return `aimed`, `clamped`, `not_found` or `ambiguous` (asking you to pick when several match), intersecting camera rays with the desk plane rather than measuring true 3D depth. Explicit visual questions follow the [look contract](voice-architecture.md#look-tool-contract) and are separate from autonomous background observations.
 
 ### Listener and voice host
 
-The listener owns audio capture and speech boundaries. Acoustic verification gates wake feedback. The coordinator confirms complete command text before an agent request.
+`orion-listener` owns microphone capture and speech endpoints, keeping 3 seconds of rolling pre-roll in memory so nothing before `"Hey Orion"` is cut off. Qwen confirms the wake phrase on a short prefix before visual/audio wake feedback runs, and rejected false alarms never reach the agent.
 
-The service host preserves the agent across speech-worker reloads. Workers use private pipes. The coordinator uploads reply audio through the local gateway and waits for runtime playback completion.
+`orion-voice-stack` keeps the Codex agent alive across speech-worker restarts, talks to Qwen and Piper over private pipes, and streams validated reply audio to `oriond` through the local gateway.
 
 ### Gateway and Studio
 
-The gateway uses bearer-token authentication. It accepts a fixed set of operations rather than arbitrary shell or servo commands. It forwards requests over local sockets or the service interface.
-
-Studio stores local drafts and desktop pairing. The Pi stores published user assets and operating settings. Closing Studio leaves Pi services running.
+`orion-studio-gateway` authenticates Studio over HTTP with a bearer token and exposes a fixed set of robot operations rather than arbitrary shell or servo commands. Studio keeps local drafts and pairing credentials on your computer, while the Pi stores published assets and runtime settings—closing Studio leaves Orion running uninterrupted.
 
 ## Assets and installed releases
 
-The installer separates immutable release programs, editable user assets and shared models. A release switch updates programs, built-in assets and service configuration together.
-
-The installer verifies archive and payload checksums. Virtual environments use the bundled Python and offline wheels. Native package holds preserve camera and Hailo compatibility.
-
-Rollback restores the previous release's package versions before restarting its services. It does not reverse servo EEPROM changes. See [release packaging](release-packaging.md).
+Release installations keep immutable program versions separate from editable user assets and shared AI models, verifying archive and payload checksums before switching. Native package holds preserve compatible camera, KMS and Hailo libraries across OS updates, and `--rollback` restores the previous release's packages and configuration (though it cannot undo servo EEPROM zeroing). See [release packaging](release-packaging.md).
 
 ## Automatic rest and waking
 
-Idle mode starts an inactivity deadline after successful homing. Lamp mode keeps Orion awake. Confirmed voice sessions refresh the deadline once. Unconfirmed candidates do not refresh it.
-
-Conversations, foreground motion, scenes and speech can delay descent. Optional fresh presence can also defer automatic rest. An expired deadline remains expired while work delays it.
+In **Idle mode**, Orion starts an inactivity timer after reaching `home` (Lamp mode disables automatic rest). Confirmed voice sessions reset the timer once, and active conversations, speech, scenes or optional presence sightings can defer descent without resetting the underlying deadline.
 
 ```text
 awake → going_to_rest → resting
@@ -103,66 +85,26 @@ failed sleep step → direct rest → resting
 failed wake → fault, light on
 ```
 
-The rest coordinator tracks descent by movement run ID. It releases torque only after measured completion.
+`oriond` tracks descent by run ID and releases servo torque only after measured arrival at `rest`. If a decorative sleep step fails, Orion tries a direct rest once; if that fails too, it returns `home` and keeps its light on with the failure reason in status (entering `fault` if homing also fails). Normal desk movements stay inside a comfort envelope, while `home` and `rest` returns plan from the measured pose using full calibrated limits.
 
-A failed sleep step starts direct rest once. If direct rest fails, Orion returns home and keeps the light on. Status retains the failure reason.
-If the home return also fails, Orion reports `fault` and keeps the light on.
-The desk comfort envelope limits normal desk movements. Home and rest returns start from the measured pose. They use calibrated joint limits without requiring a start inside this envelope.
-New home and foreground anchors replace the previous desk and posture-drift settings.
-
-A confirmed wake at rest starts home. Confirmation during descent waits for descent to finish. Capture continues while the body moves. Queued reply playback waits for home and accepted attention movement.
-
-Stop, disable and maintenance startup prevent automatic recovery. Explicit character start rearms it. Presence and camera viewing cannot enable torque or wake the lamp.
-
-Studio's **Go to rest** starts descent immediately. The sleep tool places rest after its acknowledgement and closes the follow-up window. A direct rest pose command needs separate torque release.
+A confirmed `"Hey Orion"` at rest raises the lamp back to `home` (or waits if it is mid-descent), keeping the microphone open while moving and holding queued reply audio until homing and attention complete. Stop, disable, presence sightings and Studio camera viewing never enable torque or wake a resting lamp. Studio's **Go to rest** and the voice sleep tool trigger descent immediately, while direct CLI `rest` moves require a separate `--disable` call.
 
 ## Timers and alarms
 
-The runtime owns timers, reminders and one-time or repeating alarms. They continue without Studio or network access. An accurate Pi clock is necessary for scheduled times and restart recovery.
+`oriond` owns timers, reminders and one-time or recurring alarms locally so they work even when Studio or the internet is offline (relying on an accurate Pi clock and time zone; spring DST gaps skip and autumn repeats fire once on the earlier pass). Up to 32 active alerts and 64 total entries are stored.
 
-Recurring alarms store weekdays, local time and the Pi time zone. Spring clock gaps skip the occurrence. Autumn repeated times use the earlier occurrence once.
-
-The store permits 32 active alert slots and 64 total entries. Recurring creation reserves a slot for its next occurrence. Terminal entries can be removed when the store reaches capacity.
-
-Ringing interrupts scene audio and speech without enabling torque. “Hey Orion” dismisses an active alert locally. Muted microphones cannot provide voice dismissal. Studio can stop the sound.
-
-Sound playback has a five-minute limit. Overlapping alerts share the first ringing group's sound and deadline. Saved sound changes apply to later groups.
-
-Reminders use idle-only spoken announcements. Completion acknowledgement prevents repeated delivery after a transport retry. Next-conversation reminders use the agent store and clear only after completed reply playback.
-
-Sunrise, wind-down and focus use the runtime scheduler. Foreground scenes and speech keep output priority. Sunrise can illuminate at mechanical rest without moving the body.
+When an alert rings, it interrupts speech and scene audio without enabling torque and stops after 5 minutes if left alone; saying `"Hey Orion"` dismisses it locally, or you can stop it in Studio. Reminders announce only while idle and mark delivery before sending acknowledgements so retries never double-speak; next-conversation reminders stay in the agent store until reply playback finishes. Sunrise, wind-down and focus light routines use the same scheduler, and sunrise can illuminate from mechanical rest without moving the arm.
 
 ## Light and rest status
 
-Descent fades the visible light to black. Rest suppresses ordinary output while retaining saved lamp preferences. Waking releases that suppression.
-
-Status reports `disabled`, `awake`, `going_to_rest`, `resting`, `waking` or `fault`. It includes the tracked movement, deadline and failure reason. Remaining time can be zero while active work delays rest.
-
-See [configuration](configuration.md), [motion architecture](motion-architecture.md) and [voice architecture](voice-architecture.md) for their local contracts.
+Going to rest fades Orion's light out and suppresses ordinary light output while preserving your saved lamp preferences until the next wake. Status reports `disabled`, `awake`, `going_to_rest`, `resting`, `waking` or `fault`, along with the active run ID, remaining deadline and any failure reason.
 
 ## System metrics
 
-The Studio gateway owns a background Linux counter sampler. It reads `/proc`, thermal files and cgroup counters.
-A cgroup is a Linux resource group for a service or container. The gateway reads systemd properties through `libsystemd`.
-It checks Raspberry Pi throttling flags at most once every ten seconds. Unavailable counters return null.
-The authenticated `/api/v2/system/metrics` endpoint returns the latest sample and 15-minute history arrays.
-The sampler stores no readings on disk. Studio polls every two seconds while the System page is visible.
+The gateway samples Pi CPU, memory, disk, temperature and throttling counters in memory for Studio's **System** page; no metrics are written to disk. See [system metrics configuration](configuration.md#system-metrics) for counter details.
 
 ## Household devices
 
-Home Assistant runs as an independent Docker container. Orion deployment transactions do not manage its container or configuration.
-The dedicated `orion-home-assistant-install.service` runs the Home Assistant installer as root.
-A polkit rule permits the gateway user to start only this installer service. Polkit controls permission for system services.
-The gateway keeps its existing service restrictions and receives no Docker socket access.
-The installer uses the release image manifest. Only an explicit Home Assistant update selects a different image for an existing container.
+Orion integrates with household devices through an independent `orion-home-assistant` Docker container installed on demand via a scoped `polkit` rule (`orion-home-assistant-install.service`), keeping Docker socket access away from the gateway.
 
-Studio uses authenticated `/api/v2/home/*` routes. The gateway uses Pi-local Home Assistant REST and WebSocket interfaces.
-It creates the owner account, completes onboarding and stores a private access token. The interface never receives this token.
-Device, entity and area registries join current states into room groups. Configuration flow schemas pass through to Studio.
-Unsupported flow controls link to the full Home Assistant interface.
-
-Agent home tools send a robot operation through the coordinator to the gateway.
-The gateway reads Home Assistant assistant exposure on every voice request. There is no separate Orion allowlist.
-Name matches require one exposed entity. Ambiguous matches request a room.
-Control permits supported lights, switches, fans, climate devices, covers and media players.
-The gateway refuses locks, alarm panels, garage doors and gates. It also refuses scenes and scripts, because they can operate those devices. Each service call targets one entity.
+The gateway holds the private Home Assistant token on the Pi and reads Home Assistant's native assistant exposure setting on every voice request rather than keeping a separate allowlist. Orion can control lights, switches, fans, climate devices, covers and media players (one entity per call, asking for a room if names conflict), and explicitly refuses locks, alarm panels, garage doors, gates, scenes and scripts. See [Home Assistant configuration](configuration.md#home-assistant) and [Studio Home](../orion_studio/README.md#home).

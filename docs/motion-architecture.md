@@ -1,20 +1,20 @@
 # How Orion moves
 
-Orion turns named actions into joint goals at 50 Hz. The Rust runtime controls execution for hardware and MuJoCo. Other processes request actions through checked interfaces.
+Orion turns named poses, motions and spoken interactions into smooth joint commands at 50 Hz. The Rust runtime (`oriond`) owns all motor execution for both physical hardware and the MuJoCo simulator, while voice, vision and Studio request movement through checked interfaces.
 
 ## Key terms
 
 | Term | Meaning |
 | --- | --- |
-| Pose | A named set of five joint angles |
-| Motion | An ordered set of keyframes |
-| Keyframe | A target with travel time and arrival behavior |
-| Anchor | The complete pose around which relative animation moves |
-| Trajectory | Joint position, velocity and acceleration over time |
-| Settling | Waiting for measured joints to remain near the final target |
-| Scene | Motion, light and audio on one clock |
+| Pose | A named set of all five joint angles |
+| Motion | An ordered sequence of keyframes |
+| Keyframe | A target pose or offset with travel duration and arrival style |
+| Anchor | The reference pose around which relative gestures move |
+| Trajectory | Planned joint positions, velocities and accelerations over time |
+| Settling | Waiting for measured joints to stay near the final target |
+| Scene | Motion, light and audio coordinated on one clock |
 
-The [motion reference](motion-reference.md) defines fields, styles and compiler rules.
+For exact file fields, styles and compiler rules, see the [motion reference](motion-reference.md).
 
 ## From request to servo
 
@@ -32,57 +32,40 @@ Rust trajectory compiler
 STS3215 driver or MuJoCo driver
 ```
 
-Ordinary movement starts from measured position and velocity. Speech continuation and gaze start from the current commanded state. Servo lag does not change their commanded starting position.
+Ordinary movements start from the lamp's measured joint positions and velocities. Streaming speech replacements and gaze updates start from the current commanded state instead, so normal servo lag does not pull the planned path backward mid-gesture.
 
-Absolute motions resolve named poses. Relative motions add offsets to the anchor. The compiler reduces relative amplitude uniformly when necessary. This preserves the gesture's joint proportions.
+Absolute motions move directly to named poses. Relative motions add offsets to the current anchor; if an offset would push any joint past its limit, the compiler scales the entire gesture down uniformly so the movement keeps its shape.
 
-The compiler connects keyframes with quintic curves. A quintic curve is a fifth-degree polynomial with position, velocity and acceleration boundary conditions. Through arrivals preserve flow. Settle arrivals end with zero velocity and acceleration.
-
-The compiler limits overshoot and adjusts timing for motor speed. The driver checks every goal against command limits. Runtime completion depends on measured settling after the timeline ends.
+Keyframes are joined with quintic curves—fifth-degree polynomials matched in position, velocity and acceleration at both ends. A `through` arrival flows smoothly past a waypoint without stopping, while a `settle` arrival brings velocity and acceleration cleanly to zero. The compiler also limits unintended overshoot, stretches segments that exceed the STS3215 speed ceiling, checks every 50 Hz sample against joint limits, and waits for measured settling before marking a run complete.
 
 ## Character mode
 
 ### Shared mind state
 
-`oriond` owns energy, mood, activity and attention in `expression/mind.rs`. The agent and Studio read this state.
-The state does not grant motion ownership, start detection or change wake confirmation.
+`oriond` tracks Orion's internal state (`energy`, `mood`, `activity` and `attention`) in `expression/mind.rs`, where the agent and Studio can read it. This state lightly shapes tone and idle pacing, but never grants movement ownership, triggers detection or changes wake confirmation.
 
-Energy combines local time and conversation activity. Each confirmed turn increases activity. Activity falls with a thirty-minute half-life.
-Mood is a value from minus one to one. Spoken reaction cues adjust it. Mood falls toward zero with a twenty-minute half-life.
-The state label is `sleepy`, `cheerful`, `subdued`, `curious` or `content`.
+- **Energy** blends the time of day with recent conversation activity. Each confirmed turn boosts `activity`, which fades with a 30-minute half-life.
+- **Mood** runs from `-1` to `1`. Spoken reaction cues nudge it up or down, and it drifts back toward zero with a 20-minute half-life.
+- **State label** summarizes the state as `sleepy`, `cheerful`, `subdued`, `curious` or `content`.
+- **Attention** tracks the active speaker, person, hand or object target and timestamps each target change.
 
-Attention uses existing speaker, person, Hands and object targets. Its timestamp changes when the target changes.
-A worker reads the local clock and saves state. The control loop uses arithmetic and a bounded message queue.
-See [saved files](configuration.md#saved-files) for storage and reader rules.
+A background worker reads the local clock and saves state to disk while the 50 Hz control loop relies only on fast arithmetic and a bounded message queue. See [saved files](configuration.md#saved-files) for storage and reader rules.
 
-Energy adjusts both idle delays, head movement variation, tempo and background light. Low energy gives a warmer background light.
-Hands and held aim anchors retain their existing rhythm and light behavior. Motion remains intermittent.
+Energy scales idle intervals, head variation, tempo and background light warmth (low energy produces a warmer ambient light). Hands mode and held desk-aim anchors keep their own rhythm and lighting while remaining intermittent.
 
-Listening can hold `listen_lean_in` around the current anchor. Processing releases the lean. Speech replaces its remaining path through commanded-state continuation.
-After three seconds of thinking, small beats alternate at intervals of three to five seconds. Speech takes priority over these beats.
+During conversations, Orion leans in slightly while listening (`listen_lean_in`) around its current anchor, then releases the lean once processing begins so speech gestures can take over smoothly. If a reply takes more than 3 seconds, alternating thinking beats play every **2.6 to 3.6 seconds** until speech starts.
 
-Posture drift selects `home_low`, `home_attentive`, `home` or `home_window` from the shared state. Drift selects `home_window` only when no person is in view.
-It requires an awake idle character without conversation, foreground work, Hands, held aim or pending rest.
-Each move takes at least three seconds and uses calibrated compilation and comfort checks. Successful measured arrival commits the new anchor.
-Stop, explicit movement and Hands can cancel drift. The behavior journal records each started move and its outcome.
+During quiet awake idle periods (no conversation, foreground scene, Hands mode, held work anchor or pending rest), posture drift can occasionally move between `home_low`, `home_attentive`, `home` and `home_window` (which is chosen only when no person is in view). Drift moves take at least 3 seconds, pass calibrated comfort checks, commit the new anchor on measured arrival, and are recorded in the behaviour journal. Stop, explicit movement or Hands mode cancels drift immediately.
 
-Automatic rest returns a drifted posture to home before descent. The return requires successful measured arrival.
-`sleep_settle` then lowers the head with a dimming light before the existing rest descent. A failed act still permits that descent.
-After confirmed wake reaches home, `wake_stretch` lifts and settles. A failed stretch still permits the existing wake sequence.
-Only successful measured completion of the rest descent permits torque release.
+Automatic rest returns any drifted posture to `home` before descending. When enabled, `sleep_settle` lowers the head and dims the light before the rest descent, and `wake_stretch` stretches up after a confirmed wake reaches `home`. If low energy meets an inactivity deadline within two minutes, Orion may play `yawn` beforehand. Even if any of these decorative acts fail, the safe rest and wake sequences still run, and torque is released only after measured arrival at `rest`.
 
-Low energy can select `yawn` when automatic rest is less than two minutes away.
-A voice turn can end without an answer. Orion plays `speak_react_unsure` when it heard no command. It plays `speak_react_sorry` when the request failed. Each clip starts when the body holds still. Orion drops the clip after 2.5 s.
+When a voice turn ends without an answer, Orion shows it in its body: `speak_react_unsure` plays if nothing was heard, and `speak_react_sorry` plays if the request failed. Each clip waits until the body holds still and expires if it cannot start within 2.5 seconds.
 
-Wake, sleep, yawn, thinking, arrival, peek and wave markers can play short sounds. Routine idles, posture drift and listening remain silent.
-Speech, active alerts, light routines and local quiet hours suppress these sounds. Quiet hours run from 22:00 to 07:00.
-Sound failure does not control motion or rest. See [character switches](configuration.md#character-behaviors).
+Short, voice-like sound cues can play at the markers of wake, sleep, yawn, thinking, arrival, peek and wave clips, while routine idles, posture drift and listening stay silent. Speech, active alerts, light routines and local quiet hours (22:00 to 07:00) suppress these sounds, and a sound playback failure never blocks motion or rest. See [character behaviors](configuration.md#character-behaviors) for the switches.
 
 ### Startup and anchors
 
-Character startup applies configuration, enables torque and moves to `home`. Successful measured arrival establishes the idle anchor. Failed or cancelled startup leaves character mode off.
-
-Installed services start character mode. Manual V2 serving defaults to maintenance mode. See [startup configuration](configuration.md#runtime-startup).
+Character startup applies saved settings, enables servo torque and moves to `home`. Once measured arrival succeeds, `home` becomes the idle anchor; if startup fails or is cancelled, character mode stays off. Installed Pi services start character mode automatically, while manual V2 serving defaults to maintenance mode (`--character-on-start off`; see [startup configuration](configuration.md#runtime-startup)).
 
 ```text
 Off → Starting → HomeIdle / PoseIdle
@@ -94,14 +77,13 @@ Off → Starting → HomeIdle / PoseIdle
               HomeIdle / PoseIdle
 ```
 
-A held pose becomes the anchor for idle and speech motion. Relative animation returns to that anchor. An explicit pose or completed foreground scene can replace it.
-A held work anchor has no idle motion. The lamp stays still while it lights a task.
+Any held pose becomes the new anchor for idle and speech motion until replaced by another explicit pose or completed foreground scene. When Orion is holding a desk-light work anchor, routine idle motions pause so the light stays steady on your work.
 
-Character Stop returns home and leaves holding torque enabled. Mechanical rest uses a separate coordinator that releases torque after descent. See [rest and waking](system-architecture.md#automatic-rest-and-waking).
+Character Stop returns the lamp to `home` and keeps holding torque on. Mechanical rest uses a separate coordinator that releases torque only after reaching `rest`; see [rest and waking](system-architecture.md#automatic-rest-and-waking).
 
 ## Movement priority
 
-Higher-priority ownership can cancel or suppress lower-priority work.
+Higher-priority owners take control immediately and cancel or suppress lower-priority work, while lower-priority requests are turned away until the lamp is free.
 
 | Priority | Owner |
 | --- | --- |
@@ -111,139 +93,117 @@ Higher-priority ownership can cancel or suppress lower-priority work.
 | Attention | Voice attention, gaze, listening and thinking |
 | Background | Idle motion and idle lighting |
 
-Scene, speech and character coordinators plan their work. `RuntimeCore` executes all joint movement.
+Scene, speech and character coordinators plan gestures in their own layers, while `RuntimeCore` arbitrates ownership and executes every joint command.
 
 ## Autonomous behaviors
 
 ### Situation and initiative
 
-`oriond` builds one situation for each camera update. The situation contains:
+On every camera update, `oriond` builds one shared `Situation` snapshot so every autonomous behavior reads the same picture of the moment:
 
-- The number of faces in view, and if a face looks at Orion.
-- Focus: a person looks away from Orion for a long time.
-- The visit: when it started, and since when nobody is in view.
-- The local hour and day.
-- Busy: a voice turn, a reply, music, an alert, a light routine or a scene is active.
-- Orion's own light: on or off, brightness and mood.
-- Room light in lux, when the camera gives it.
-- Liveliness: Quiet, Lively or Demo, from `proactive_speech` and `demo_mode`.
+- Faces in view and whether anyone is looking at Orion
+- Focus (whether a person has looked away for an extended stretch)
+- Visit start time and how long nobody has been seen
+- Local hour and calendar day
+- Whether Orion is busy (active voice turn, reply, music, alert, light routine or scene)
+- Orion's own light state (on/off, brightness and mood) and room brightness in lux
+- Liveliness setting (`Quiet`, `Lively` or `Demo`, set by `proactive_speech` and `demo_mode`)
 
-A visit starts when a face comes into view. It ends when nobody is in view for 10 min, or 30 s in Demo. When `oriond` starts, it treats the current visit as already started.
+A visit starts when a face enters view and ends after nobody has been seen for 10 minutes (30 seconds in Demo). On startup, `oriond` treats an ongoing visit as already active so it does not greet people who were already sitting at the desk.
 
-All reactions use one initiative path. A reaction asks the curiosity budget for admission. If the budget admits it, the path stops idle motion, plays the reaction, records it in the behaviour log and offers its remark. Remarks read the same situation.
+Every social reaction goes through one shared initiative path: ask the curiosity budget for permission; if admitted, stop idle motion, play the gesture, log the decision and optionally offer a spoken remark.
 
 ### Quirks
 
-Each Orion has quirks in `personality.json`. A quirk changes what Orion does:
+Each lamp stores two quirks in `personality.json` that give it distinct pacing and speech habits:
 
 | Quirk | Value | Effect |
 | --- | --- | --- |
-| Curiosity | Shy | 2 gestures in 10 min, 2 min apart, 4 min before the same target again. One idle glance in four looks at an object. |
-| Curiosity | Normal | 3 gestures in 10 min, 1 min apart, 2 min before the same target again. One idle glance in three looks at an object. |
-| Curiosity | Nosy | 5 gestures in 10 min, 30 s apart, 1 min before the same target again. One idle glance in two looks at an object. |
-| Chattiness | Reserved | Lively remarks at least 20 min apart, at most 2 in one hour. Very short remarks. |
-| Chattiness | Normal | Lively remarks at least 10 min apart, at most 4 in one hour. |
-| Chattiness | Chatty | Lively remarks at least 5 min apart, at most 6 in one hour. Remarks can add a playful thought. |
+| Curiosity | `shy` | 2 gestures in 10 min, 2 min apart, 4 min before repeating a target; 1 in 4 idle glances looks at an object |
+| Curiosity | `normal` | 3 gestures in 10 min, 1 min apart, 2 min before repeating a target; 1 in 3 idle glances looks at an object |
+| Curiosity | `nosy` | 5 gestures in 10 min, 30 s apart, 1 min before repeating a target; 1 in 2 idle glances looks at an object |
+| Chattiness | `reserved` | Lively remarks at least 20 min apart, at most 2 per hour; very short remarks |
+| Chattiness | `normal` | Lively remarks at least 10 min apart, at most 4 per hour |
+| Chattiness | `chatty` | Lively remarks at least 5 min apart, at most 6 per hour; may add a playful thought |
 
-Each remark request contains the quirks, so the reply model speaks in the same style. Demo ignores quirk limits.
+Remark prompts include Orion's quirks so the language model matches the body's temperament. Demo mode overrides quirk limits.
 
 ### Curiosity budget
 
-Optional visual behaviors share one curiosity budget. The budget limits gesture frequency and repeated targets. It uses bounded memory without identifying people.
+Optional visual behaviors share one curiosity budget so Orion does not look twitchy when things move around the desk. Privacy off, Tracking Off, Stop, rest, voice activity, foreground scenes, active alerts and light routines all close admission, while clock-based quiet hours do not block quiet movement on their own.
 
-Privacy off, Tracking Off, Stop, rest, voice and foreground work close admission. Active light routines and alerts also close admission. The runtime has no separate clock-based quiet-hours schedule.
-
-Object glances, mutual gaze, arrival notice and new-object peeks require their saved behavior switches. Failed execution does not refund a reserved gesture. Camera changes do not reset the budget.
+Object glances, mutual gaze, arrival notices and new-object peeks each require their individual behavior switches. Failed moves do not refund the budget, and toggling the camera does not reset it.
 
 ### Spoken remarks
 
-With `proactive_speech` or `demo_mode`, an arrival, a sustained look or a new-object peek can offer one spoken remark. The movement starts first. The voice listener then opens a session without a wake word. The agent writes the remark from the event and the recent remarks. It cannot use tools for a remark. An empty reply or `SILENT` gives no speech. After a remark, the user can reply without the wake word.
+When `proactive_speech` (Lively) or `demo_mode` is enabled, an arrival, sustained look or new-object peek can trigger a short spoken remark after its movement starts. Orion opens a voice session without a wake word; the agent generates a remark (with no tools allowed, and may return `SILENT` to stay quiet) and then listens briefly so you can reply naturally.
 
-The runtime controls when a remark can start:
+In Lively mode, remarks obey these safeguards in order:
 
-- Each event type has a cooldown. Arrival is 30 min, sustained look is 20 min and new object is 60 min.
-- Remarks are at least 10 min apart, or the time that the chattiness quirk sets. Each ignored remark doubles this time, to a maximum of four times. A reply resets it.
-- At most 4 remarks occur in one hour, or the number that the chattiness quirk sets.
-- Orion speaks to the people in view one time each visit, with a welcome, a remark about a look or a conversation. See the visit in [Situation and initiative](#situation-and-initiative). People in view when `oriond` starts get no welcome.
-- A remark waits 5 min after a conversation.
-- Common desk objects get no remark. Each object category gets a maximum of one remark each day. A new object must stay in view for 12 s.
-- No remark starts during a conversation, speech, music, scenes, focus, rest, Stop, or between 22:00 and 07:00.
-- A request older than 8 s is discarded.
-- The request "be quiet for a while" stops remarks for up to 8 hours.
+- **Per-event cooldowns:** 30 minutes for arrivals, 20 minutes for sustained looks, and 60 minutes for new objects.
+- **Spacing and backoff:** At least 10 minutes between remarks (or the chattiness quirk's interval). Each ignored remark doubles that wait up to four times; replying resets it.
+- **Hourly cap:** At most 4 remarks per hour (or the chattiness quirk's limit).
+- **Once per visit:** Orion initiates conversation with someone at most once per visit (arrival welcome, look remark or conversation), and skips welcomes for people already in view at startup.
+- **After conversations:** Waits at least 5 minutes after a normal conversation ends.
+- **New objects:** Ignores everyday desk items (such as laptops, cups or keyboards), requires an object to stay in view for 12 seconds, and mentions each object category at most once per day.
+- **Busy, focus and quiet hours:** Never speaks during conversations, speech, music, scenes, deep concentration, rest, Stop or between 22:00 and 07:00.
+- **Freshness and mute:** Drops queued remarks older than 8 seconds, and saying `"be quiet for a while"` silences remarks for up to 8 hours.
 
-A wake word during a remark stops the remark and starts a normal turn.
+Saying `"Hey Orion"` during a remark interrupts it immediately and starts a normal voice turn.
 
 ### Lively behaviors
 
-In Lively, Orion also cares for the people at the desk. Each behavior acts only while a face is in view. Remark rules apply to the words.
+In Lively mode, Orion also looks out for people at the desk (only while someone is in view, using the same remark rules for speech):
 
-| Behavior | When | What Orion does |
+| Behavior | Trigger | What Orion does |
 | --- | --- | --- |
-| Wave back | A palm is raised near a face for 0.6 s | Plays `wave_back`: the head turns to the face, the arm lifts and sways about 14° to each side two times, and the head nods. The curiosity budget and the eye contact switch apply. Orion does not speak. |
-| Light care | The room is below 15 lux for 60 s, and Orion's light is off or below 25% | Turns to the person and offers to turn the light on. The reply model knows which light people usually choose in the evening. |
-| Break nudge | A person is at the desk for 90 min. Absences shorter than 5 min do not stop the count. | Plays `wake_stretch` and suggests a short break. |
-| Goodnight | A farewell occurs between 21:00 and 05:00 | Says goodnight instead of goodbye. If nobody comes back in 120 s, automatic rest starts. Lamp mode keeps Orion awake. |
+| Wave back | A palm stays raised near a face for 0.6 s | Plays `wave_back` (turns to the face, lifts and sways the arm ~14° twice, nods) without speaking; respects the curiosity budget and eye-contact switch |
+| Light care | Room is below 15 lux for 60 s and Orion's light is off or under 25% | Turns to the person and offers to turn its light on, using their usual evening light preference |
+| Break nudge | Someone stays at the desk for 90 min (absences under 5 min do not reset the timer) | Plays `wake_stretch` and suggests taking a short break |
+| Goodnight | A farewell happens between 21:00 and 05:00 | Says goodnight instead of goodbye and enters automatic rest if nobody returns within 120 s (unless Lamp mode is active) |
 
-Light care and break nudge occur one time each visit. They do not use the curiosity budget, and focus does not stop them. A goodnight can occur at night and directly after a conversation. Nobody is expected to reply to a goodbye or a goodnight, so no reply does not increase the wait for the next remark.
-
-A welcome can ask about something to come back to. See [home memory](configuration.md#home-memory). In Demo, the break nudge comes after 60 s at the desk and light care after 5 s of darkness. Wave back does not occur in Demo, because a raised palm starts hand play.
+Light care and break nudges happen at most once per visit, skip the curiosity budget, and ignore focus detection. Because nobody is expected to answer a goodbye or goodnight, an unanswered parting does not trigger remark backoff. Welcomes can also mention upcoming events saved in [home memory](configuration.md#home-memory).
 
 ### Demo mode
 
-Demo mode is for showing Orion to people. It changes these limits:
+Demo mode speeds everything up for showing Orion to a group:
 
-- The curiosity budget allows 20 gestures in 10 min, 12 s apart, without longer waits for repeated targets. Turning demo mode on clears the budget.
-- Remarks can be 30 s apart, with a 45 s cooldown per event type and 20 s after a conversation. A new visit starts when nobody is in view for 30 s. The clock, focus and daily object limits do not apply.
-- Arrival needs 30 s of absence instead of 10 min.
-- A sustained look plays `mutual_gaze_notice_demo`, which has a nod and a larger neck turn.
-- Each remark sends one camera picture with the request.
+- Curiosity allows up to 20 gestures in 10 minutes, 12 seconds apart, with no per-target backoff (toggling Demo on clears the budget).
+- Remarks can run 30 seconds apart with 45-second event cooldowns and 20-second post-conversation pauses; visits reset after 30 seconds of absence, and clock, focus and daily-object limits are lifted.
+- Sustained looks play the larger `mutual_gaze_notice_demo` clip, and every remark includes one camera snapshot so Orion can comment on what it sees.
+- Two Demo-only behaviors activate: **Farewell** (plays `farewell_watch` and says goodbye when someone who stayed at least 20 seconds leaves for 5 seconds) and **Hand play** (in Idle tracking, holding a palm in view for 1 second switches tracking to Hands and invites play, returning after 4 seconds with no palm).
 
-Two reactions occur only in demo mode:
-
-- Farewell: a person who stayed for at least 20 s and is then gone for 5 s gets `farewell_watch` and a goodbye. The head turns to the last face bearing and gives a small sigh.
-- Hand play: in Idle tracking, vision runs palm detection. A palm in view for 1 s sets tracking to Hands and offers a remark that invites play. When no palm is visible for 4 s, tracking returns to the earlier mode.
+In Demo mode, break nudges trigger after 60 seconds, light care triggers after 5 seconds of darkness, and wave-back is disabled because a raised palm starts hand play instead.
 
 ### Presence defers automatic rest
 
-The `presence_defers_rest` option can delay automatic descent while fresh face or hand observations continue. It keeps the original inactivity deadline. When presence ends, an expired deadline can start rest immediately.
-
-Presence does not wake Orion, enable torque or reset voice confirmation. Explicit rest and sleep retain priority. Presence deferral consumes no movement budget.
+When `presence_defers_rest` is enabled, fresh face or hand sightings postpone automatic descent without resetting the inactivity deadline—as soon as presence ends, an expired deadline starts rest immediately. Presence never wakes a resting lamp, enables torque or counts against the curiosity budget.
 
 ### Idle tracking
 
-Tracking Idle publishes observations without ambient face following. A confirmed conversation can follow its selected speaker. It does not replace a missing speaker with a bystander.
+In `Idle` tracking mode, vision publishes observations without following bystanders. During an active conversation, Orion follows the confirmed speaker and never substitutes a bystander if they leave.
 
-While Orion speaks, the speaking movement keeps the body. If the face of the listener moves more than 10° from the direction of the lamp, Orion turns to the face. The turn starts when the current speaking gesture ends, or after 1.5 s. The neck turns first, then the base. The speaking gestures continue in the new direction. Orion does not turn if a reaction is due during the turn or if the reply is almost complete.
-
-Tracking mode differs from Idle/Lamp routine mode. See [camera modes](../vision/README.md#tracking-modes).
+If the listener moves more than 10° away from where Orion is pointing mid-reply, Orion waits for the current gesture to finish (or up to 1.5 seconds), turns its neck and then its base toward them, and resumes speaking gestures in the new direction. It skips the turn if a reaction is due or the reply is nearly done. See [tracking modes](../vision/README.md#tracking-modes).
 
 ### Hands following
 
-Hands and Faces use the same gaze planner. Vision sends a filtered image bearing for the selected target.
-
-The neck leads the turn. The base follows to center the neck. The shoulder and elbow keep the held anchor.
-
-A lost target follows the same settle and anchor return in both modes. A new target replans from the current commanded state.
-
-Hand presence cannot wake a resting lamp or clear Stop. Servo and bus faults use the shared runtime handling.
+`Hands` and `Faces` share the same gaze planner: vision streams filtered bearings for the selected target, the neck leads the turn, the base catches up to re-center the neck, and the shoulder and elbow hold their anchor. Losing the target holds briefly and then settles back to the anchor; a new target replans smoothly from the current commanded state. Hand presence never wakes a resting lamp or clears Stop.
 
 ### Object aims
 
-An explicit desk-object aim can establish a held work anchor. Face gaze leaves that anchor unchanged. Explicit movement, character restart or selecting Idle routine mode releases it.
+An explicit desk-object aim (`aim_light`) establishes a held work anchor. Ambient face gaze leaves that anchor undisturbed until an explicit move, character restart or routine mode change releases it.
 
 ## Failure behavior
 
-Invalid targets fail before execution. Driver or movement failures cancel affected work. A failed rest or wake movement enters the rest fault state. Runtime status exposes the failure reason.
-
-Hardware and simulation share compilation and lifecycle checks. V2 simulation follows kinematic targets; it does not model complete lamp dynamics.
+Invalid targets fail before execution, and driver or servo errors cancel affected movement while surfacing the failure reason in runtime status. A failed rest or wake move enters the `fault` state and keeps Orion's light on. Hardware and MuJoCo share the same compiler and lifecycle checks, though V2 simulation tracks kinematic targets rather than modeling full lamp dynamics.
 
 ## Change an animation
 
-1. Select the relevant hardware version.
-2. Edit a named pose or motion using the [schema](motion-reference.md#pose-schema).
-3. Preview the action in [MuJoCo](../simulation/mujoco/README.md).
-4. Inspect the compiled range and timing before hardware playback.
+1. Select the target hardware version (`v1` or `v2`).
+2. Edit a named pose or motion following the [pose and motion schemas](motion-reference.md#pose-schema).
+3. Preview the compiled result in [MuJoCo](../simulation/mujoco/README.md).
+4. Inspect the joint range and timing before running on hardware.
 
-WARNING: Playback moves powered joints. Keep the movement area clear.
+WARNING: Hardware playback moves powered joints. Keep the movement area clear before playing a motion.
 
-5. Run the action through the owning runtime.
+5. Run the pose or motion through `oriond`.

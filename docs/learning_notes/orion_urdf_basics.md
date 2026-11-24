@@ -1,53 +1,50 @@
 # URDF basics
 
-The Unified Robot Description Format describes links, joints, shapes and limits. Orion's V1 model is [orion.urdf](../../description/urdf/orion.urdf). V2 uses a separate model.
+URDF (Unified Robot Description Format) is an XML file that describes a robot's rigid parts, how they connect, where sensors sit, and how far joints can move. Orion's V2 model lives in [orion-v2.urdf](../../description/urdf/orion-v2.urdf) (with V1 kept separately in [orion.urdf](../../description/urdf/orion.urdf)).
 
 ## Links and frames
 
-A link represents one rigid assembly. Its parts move together. A frame defines a position and orientation used as a reference.
+A **link** represents one rigid assembly whose parts move together (such as the base or the lower arm). Each link carries its own coordinate **frame**, locating its 3D meshes, centre of mass and any joints attached to it. A link's frame does not have to sit in the middle of its mesh—a joint's origin places the link relative to its parent.
 
-Each link frame locates its meshes, center of mass and child joints. The frame does not need to coincide with the mesh center. A link's joint determines its position relative to its parent.
+## Visual shapes and meshes
 
-The root link has no parent. Later links form the robot's joint chain.
-
-## Visual and collision shapes
-
-A visual element supplies rendered geometry. A collision element supplies contact geometry. Their origins position shapes relative to the link frame.
-
-Mesh paths are relative to the URDF file. The V1 meshes live in `description/meshes/`. Renaming a mesh requires changing its references.
+Each `<visual>` block points to a mesh file (`STL` or `OBJ`) used to render the part. Mesh paths in `orion-v2.urdf` are relative to the URDF file (pointing into `../../simulation/mujoco/v2/meshes/`), so moving or renaming a mesh requires updating the URDF.
 
 ## Origins and axes
 
-`xyz` gives translation in metres. `rpy` gives roll, pitch and yaw in radians. Roll rotates around X, pitch around Y and yaw around Z.
+URDF positions use `xyz` in metres and rotations use `rpy` (roll around X, pitch around Y, yaw around Z) in radians.
 
-A joint origin locates its child frame at zero joint displacement. Its axis gives the permitted motion direction in the joint frame. The joint angle then adds motion about that axis.
-
-This fixed joint connects the V1 footprint and base:
+A joint's `<origin>` places the child frame when the joint angle is `0` radians—which on V2 corresponds directly to the folded mechanical-rest pose—and `<axis>` specifies which axis the joint rotates around. Here is the base yaw joint from `orion-v2.urdf`:
 
 ```xml
-<joint name="base_footprint_joint" type="fixed">
-  <origin xyz="0 0 0.0418" rpy="0 0 0"/>
-  <parent link="base_footprint"/>
-  <child link="base_link"/>
+<joint name="base_yaw_joint" type="revolute">
+  <parent link="v21_base" />
+  <child link="v21_base_yaw_link" />
+  <origin xyz="0.0 0.0 0.060000000000000005" rpy="0.0 0.0 -0.04908738521234052" />
+  <axis xyz="0 0 -1" />
+  <limit lower="-1.4879613642490719" upper="1.4910293258248433" effort="0" velocity="0" />
 </joint>
 ```
 
-The translation raises the base frame by 0.0418 metres. A fixed joint has no commanded motion.
-
 ## Joint types and limits
 
-A revolute joint rotates within lower and upper angle limits. A continuous joint rotates without URDF angle stops. A fixed joint connects parts without relative movement.
+- **`revolute`:** Rotates around its axis between `lower` and `upper` angle limits (used for all five powered joints).
+- **`fixed`:** Locks two frames rigidly together with no movement (used on V2 to place `camera_optical_frame` and `light_frame` inside the head):
 
-URDF limits describe the model. Runtime hardware configuration defines permitted physical commands. V1 model travel must not replace its calibrated command bounds.
+```xml
+<joint name="camera_optical_joint" type="fixed">
+  <parent link="v21_neck_swivel_link" />
+  <child link="camera_optical_frame" />
+  <origin xyz="0 -0.082 0.0157" rpy="-1.5707963267948966 0 3.141592653589793" />
+</joint>
+```
+
+While URDF `<limit>` tags mirror the hardware profile, `hardware/profiles/v2-joints.json` remains the authoritative source for runtime command limits (just as calibration defines bounds on V1).
 
 ## Mass and inertia
 
-The inertial element contains mass, center of mass and inertia. Inertia describes resistance to rotational acceleration. Its six independent values form a symmetric matrix.
-
-Mass uses kilograms. The inertial origin locates the center of mass relative to the link frame. It does not move the visible mesh.
+Each `<inertial>` block lists a link's mass (kg), centre of mass and symmetric `3×3` inertia matrix (resistance to rotational acceleration). These properties are used by physics tools without affecting the visual meshes.
 
 ## Combined motion
 
-Every child transform depends on its parent. Thus, head direction depends on the full chain, not only the last joint. Forward kinematics computes these combined transforms from joint angles.
-
-V2 uses mechanical-rest angles. Its URDF origins and MuJoCo references define the corresponding zero geometry. See [robot descriptions](../../description/README.md) and [joint structure](orion_joints.md).
+Because every child transform builds on its parent, forward kinematics multiplies the chain of transforms from `v21_base` up to `v21_neck_swivel_link` to compute where the camera and light actually point in space. See [robot descriptions](../../description/README.md) and [joint structure](orion_joints.md).

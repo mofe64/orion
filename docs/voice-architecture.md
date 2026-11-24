@@ -1,6 +1,6 @@
 # Orion voice architecture
 
-The listener captures speech. The coordinator runs recognition, agent requests and synthesis. The runtime plays audio and moves the lamp. Studio observes and configures the Pi through the gateway.
+Orion's voice pipeline splits capture, coordination, AI models and playback across dedicated processes so audio never drops while models think or reply. Speech recognition and speech synthesis run locally on the Pi; only Codex replies and web search go online. See [system boundaries](system-architecture.md#system-boundary).
 
 ## Audio and control flow
 
@@ -19,127 +19,78 @@ microphone
   → follow-up window
 ```
 
-Speech recognition and synthesis run locally. Codex App Server uses online inference. See [system boundaries](system-architecture.md#system-boundary).
-
 ## Capture ownership and session lifecycle
 
-The listener opens capture unless microphone mute is saved. One authenticated local connection owns processing. Separate control connections can change mute.
+`orion-listener` opens the microphone at startup unless microphone mute is saved. One authenticated local connection owns voice processing, while separate control connections can read or change mute.
 
-V1 uses stereo frames for direction and a mono downmix for recognition. V2 uses the XVF3800 processed channel. The listener retains three seconds of pre-roll in memory. Pre-roll preserves speech from before wake detection.
-
-Each candidate receives a fresh session ID. Cancellation, mute, disconnect and expiry discard its command buffers. Rejected candidates do not reach the agent.
+V1 captures stereo audio for coarse left/right direction and downmixes to mono for recognition; V2 captures the XVF3800 board's processed channel. The listener keeps 3 seconds of rolling pre-roll in memory so the start of `"Hey Orion"` is never cut off. Each wake candidate receives a fresh session ID—cancellation, mute, disconnect or expiry discards its command buffer, while rejecting a false alarm leaves the rolling pre-roll intact.
 
 ### Wake detection and confirmation
 
-openWakeWord scores every 20 ms frame during capture, processing, playback, alarms and conversation windows. One scorer keeps a continuous history across turns.
-A capture gap resets that history and applies the configured startup frames. The detector suppresses further detections for two seconds after each detection.
+`openWakeWord` scores every 20 ms frame continuously across listening, processing, playback, alarms and follow-up windows, suppressing repeat triggers for 2 seconds after each hit (only a capture gap resets its history).
 
-Qwen transcribes one prefix containing the full three-second pre-roll and the next 300 ms. The coordinator finds the wake phrase within the first eight words.
-Acceptance permits the wake cue, light pulse and confirmed-wake sequence. Rejection cancels only the turn and preserves pre-roll and detector history.
+When it fires, Qwen transcribes a prefix covering the 3-second pre-roll plus the next 300 ms while full command recording continues in parallel. If `"Hey Orion"` appears in the first eight words, Orion plays the wake cue, pulses its light and starts listening animation; otherwise the turn cancels invisibly without interrupting anything.
 
-Full command capture continues during the prefix check. The listener reduces music to ten percent during wake and command capture.
-Music uses twenty-five percent during Orion speech.
+During wake and command capture, Orion ducks music to 10% volume (and to 25% while Orion is speaking).
 
 ### Command transcription
 
-Qwen transcribes the complete recording to obtain the command. The recording starts with the full three-second pre-roll.
-After prefix acceptance, this transcript cannot reject the wake. The coordinator removes the wake phrase when present and uses the remaining text as the command.
-A wake without a command opens another capture opportunity.
+Once you stop speaking, Qwen transcribes the complete recording (starting with the 3-second pre-roll). Because the prefix already confirmed the wake phrase, the full transcript cannot reject the turn later; the coordinator simply strips the wake phrase and forwards the rest as your command. If you only said `"Hey Orion"` with no command, Orion waits for follow-up speech instead.
 
-Recognition receives speech with pauses longer than 600 ms shortened to 320 ms. The listener keeps both ends of each pause and all speech frames in order.
-Capture permits 15 seconds after detection, or 18 seconds including pre-roll. A recording that reaches the limit is rejected. A capture with no speech stops after 6 seconds. In the two conditions, Orion plays the sound for a request that it did not hear and makes the unsure movement.
+Before sending audio to Qwen, the listener shortens silences longer than 600 ms down to 320 ms while preserving all speech and pause edges in order. Capture stops after 6 seconds of complete silence or at the 15-second limit (18 seconds with pre-roll); in either case, Orion plays its `"didn't catch that"` cue and makes an unsure gesture rather than dropping the turn silently.
 
-The optional `--wake-engine rustpotter` selection uses the previous candidate detector. It can use an acoustic verifier before command transcription.
+Passing `--wake-engine rustpotter` switches back to the earlier detector (with an optional acoustic verifier).
 
 ### Speech boundaries
 
-Silero classifies speech with state carried across audio windows. Different enter and leave thresholds reduce repeated switching. The managed listener ends capture after its configured silence interval.
-
-The standalone listener can use an energy detector without a VAD model. VAD means voice activity detection. The installed profile supplies Silero.
+Silero VAD (`voice activity detection`) tracks speech probability across windows using separate start (`0.5`) and stop (`0.35`) thresholds so brief wobbles do not chop sentences apart, ending capture after 1.2 seconds of trailing silence. The standalone listener can fall back to an energy detector when no VAD model is configured.
 
 ## Confirmed waking
 
-An accepted confirmation can start the return from rest to home. Confirmation during descent waits for descent to finish. The listener keeps capturing while the body moves.
-
-After home completes, the runtime applies the latest listening or thinking state. It checks speaker selection before an attention turn. Reply audio waits until this movement finishes.
-
-Duplicate confirmations cannot extend the same session's inactivity deadline. Stale sessions cannot confirm, renew or move the lamp. Stop, disable and maintenance controls keep their normal recovery requirements.
+An accepted wake prefix wakes a resting lamp back to `home` (or waits if it is mid-descent) while keeping the microphone recording. Once homing completes, the runtime applies the latest listening or thinking state, turns toward the selected speaker if vision found one, and holds reply playback until that attention move finishes. Duplicate confirmations cannot extend the same session's inactivity timer, and Stop, disable or maintenance startup still prevent automatic recovery.
 
 ## Follow-up conversation
 
-After successful playback, the listener discards initial echo and waits for quiet. It then opens a five-second command window without another wake phrase. A teal pulse indicates that window.
+After reply playback succeeds, the listener discards initial speaker echo, waits for quiet, and opens a 5-second follow-up window (indicated by a teal pulse) where you can reply without saying `"Hey Orion"` again. Each follow-up receives a new session ID linked to the finished turn, requires at least 400 ms of speech, and ignores empty transcripts, single words or a bare wake phrase. Failed or cancelled playback skips follow-up and returns straight to wake listening.
 
-A follow-up receives a new session ID linked to the completed turn. The coordinator checks that link before recognition. Capture requires at least 400 ms of speech.
-Empty transcripts, single words and the wake phrase alone close the window without an agent request. Failed or cancelled playback returns to ordinary wake detection.
-
-Keepalive messages extend an active processing or playback deadline. They do not repeat phase changes or feedback. An absent owner eventually loses its session.
+Keepalive messages extend active processing or playback deadlines without repeating visual/audio cues, and an absent coordinator loses ownership on timeout.
 
 ## Wake-phrase interruption
 
-A detection during speech or processing interrupts the current turn and starts a new wake-prefix check. The old reply stops before the new command runs.
-Interruption sessions suppress speaker attention. Alarm dismissal takes priority over a new conversation.
-
-V2 uses the XVF3800 hardware echo cancellation. Orion adds no software echo canceller.
+Because V2 uses the XVF3800 board's hardware echo cancellation (with no extra software AEC), `openWakeWord` can still hear `"Hey Orion"` while Orion is speaking. Any wake detection during speech or processing stops the current reply immediately and starts a fresh prefix check (`"Hey Orion, stop"` ends the reply quietly; alarm dismissal takes priority over starting a new conversation). Interruptions skip the normal speaker attention turn.
 
 ## Agent conversation and memory
 
-The agent service outlives individual speech jobs. Completed turns can reuse Codex provider context. Protocol uncertainty retires that provider. A replacement receives bounded text context.
+The `orion-agent` service outlives individual turns and reuses Codex provider context across accepted turns within a fixed 24-hour conversation window (follow-ups do not extend that 24-hour boundary, and rejected or empty wakes create no turn). If protocol state becomes uncertain, a fresh Codex session receives bounded text recovery context.
 
-Accepted turns share a logical conversation for 24 hours from its first accepted turn. Follow-ups do not extend that fixed window. Rejected or empty wakes create no turn.
-
-Reply generation and delivery have separate outcomes. A generated reply can still fail or be interrupted during playback. Memory extraction uses retired conversations and independent proposal review.
-
-Explicit memory edits set a cutoff for recovered context. Automatic receipts prevent duplicate extraction and reintroducing deleted entries. See [agent storage](../agent/README.md#memory-and-profile-storage).
-
-The behavior journal stores runtime observations and actions. It excludes camera pixels and microphone audio. It does not identify people across sessions.
+Reply generation and delivery track separate outcomes so an interrupted reply does not pretend to have been heard. Automatic memory extraction runs on retired conversations using receipts and edit cutoffs so deleting a memory prevents it from coming back later (see [memory storage](../agent/README.md#memory-and-profile-storage)). The behavior journal records observations and actions without storing camera pixels, microphone audio or persistent people IDs.
 
 ## Direction and speaker selection
 
-V1 can use coarse left/right audio direction with configured microphone geometry. V2 confirmed sessions ask vision for one speaker selection. The selection includes a track ID for conversation following.
-
-Tracking Idle or Faces can supply a speaker. Off, Hands, camera privacy and unavailable vision suppress V2 attention turns. USB direction settings remain diagnostic inputs rather than wake steering.
-
-The selected speaker can remain the conversation target between replies. Missing speakers do not authorize substitution with a bystander. Speech movement retains priority.
+V1 estimates coarse left/right audio direction from stereo microphone timing. V2 asks `orion-vision` once per confirmed wake for the speaker whose mouth moved most during the wake phrase, and follows that track ID through the conversation (only in `Idle` or `Faces` tracking; `Off`, `Hands`, privacy off or unavailable vision suppress attention turns, and missing speakers are never replaced with bystanders). USB direction settings are diagnostic only and never steer V2 attention.
 
 ## Streaming replies and timing
 
-The coordinator splits final text into bounded synthesis jobs. Piper produces ordered PCM chunks and an explicit end marker. The coordinator validates IDs, sequence numbers, audio format and limits.
+The coordinator splits Codex's final reply at sentence/word boundaries into bounded Piper jobs and validates chunk order, IDs and PCM format before uploading to `oriond`. While Piper stays comfortably faster than real time, Orion builds a startup reserve and streams chunks smoothly; if Piper falls behind, the coordinator switches to buffering the whole reply so playback never stutters mid-sentence.
 
-Fast synthesis uses a startup reserve. Slow synthesis selects complete buffering for the rest of that reply. Once selected, complete buffering remains active even if later chunks arrive faster.
-
-Uploads pause when sufficient audio is queued ahead of playback. Complete buffered replies can continue uploading to deliver their end marker. This prevents an unfinished upload from expiring while queued audio waits.
-
-Playback progress is a software position, not an independent acoustic measurement. A first generated chunk does not mean the speaker has started. Runtime stream limits reject oversized replies instead of truncating them.
+Uploads apply backpressure once enough audio is queued ahead of playback, while fully buffered replies keep uploading to deliver their end marker. Playback progress reflects `oriond`'s software position rather than an acoustic sensor, and oversized replies are rejected rather than truncated.
 
 ## Tool feedback and cancellation
 
-A search acknowledgement uses a separate speech run within the active session. The final reply waits for it. Only final playback opens follow-up listening.
+When Codex runs a web search or slow tool, Orion speaks a brief acknowledgement run first, then waits for it before delivering the final reply (only the final reply opens a follow-up window). Robot tools return typed status and failure reasons from `oriond` before Codex confirms an action.
 
-Robot tools return typed requests through the coordinator and gateway. The runtime decides whether execution is permitted. Failed actions return their reason before the agent confirms a result.
-
-A failed turn sends cancellation and keeps the listener connection open. Cancellation retires only the affected speech worker when necessary. It cancels old uploads and playback ownership. Stale events and transcription results cannot cancel the current session. A new wake cancels the old session before admission. Late results cannot revive an expired session.
+Cancelled or failed turns retire only the affected speech worker when needed, clear old uploads and playback, and ignore stale events from expired sessions so late results can never resurrect a dead turn.
 
 ## Scheduled announcements
 
-The listener admits announcements only when ordinary voice work is idle. The coordinator waits for runtime ownership before synthesis and upload. A wake can interrupt an announcement.
-
-Completed playback is recorded before its separate acknowledgement. Retrying acknowledgement cannot replay delivered speech. Delivery failure leaves the runtime's retry policy in control.
-
-Briefings use a separate agent request after alarm dismissal. They do not create a user transcript or open a conversation window.
+Scheduled reminders and announcements run only when ordinary voice work is idle, wait for `oriond` ownership, and can be interrupted by `"Hey Orion"`. Completed playback is recorded before sending the separate completion acknowledgement so network retries never replay spoken reminders. Morning briefings after alarm dismissal run as their own agent turn without creating user transcripts or opening a follow-up window.
 
 ## Look tool contract
 
-An explicit visual question can request one camera snapshot. The coordinator obtains it through the authenticated gateway and sends it to Codex image input.
-
-Camera privacy, rest and viewing permission still apply. Images stay in memory on the Pi. They do not enter tool text, history or logs. An image access error returns a failure instead of invented visual content.
-
-Autonomous observations do not authorize image upload. General conversation does not capture a snapshot automatically.
+Explicit visual questions (`"what am I holding?"`) use the `look` tool to fetch one in-memory camera snapshot through the authenticated gateway and pass it to Codex. Camera privacy, rest and viewing permissions still apply; images are never saved to disk or written into history/logs, and image access failures return an error rather than guessing. Autonomous background behaviors never upload images (except Demo mode remarks).
 
 See [speech workers](../speech/README.md), [listener setup](../voice/README.md) and [configuration](configuration.md).
 
 ## Private recordings
 
-The listener saves no wake audio by default. `ORION_WAKE_CLIPS_DIR` enables bounded prefix recordings on a separate writer thread.
-See [listener troubleshooting](../voice/README.md#troubleshooting) for file limits and outcome fields.
-
-The Pi command `orion-record-voice` records training samples and restores the listener on exit. See [Record your voice](wake-word-training.md#record-your-voice).
+Orion saves no wake audio by default. Setting `ORION_WAKE_CLIPS_DIR` records bounded prefix WAV clips on a background thread for debugging; see [listener troubleshooting](../voice/README.md#troubleshooting). On the Pi, `orion-record-voice` records private training samples and restores the listener when finished; see [record your voice](wake-word-training.md#record-your-voice).

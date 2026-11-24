@@ -1,14 +1,13 @@
 # Orion quickstart
 
-Orion requires a Raspberry Pi 5 because the speech server uses instructions specific to its CPU. Orion supports Raspberry Pi OS Lite 64-bit Bookworm and Trixie. Studio runs on your computer.
+Orion runs on a Raspberry Pi 5 (required because the speech server uses CPU instructions specific to the Pi 5) with Raspberry Pi OS Lite 64-bit (Bookworm or Trixie). The Studio desktop app runs on your computer.
 
 ## Prepare the Pi
 
-1. Select the operating system in Raspberry Pi Imager.
-2. Configure the hostname, login user, SSH public key, Wi-Fi and country.
-3. Write the image to the boot drive.
-4. Boot the Pi.
-5. Connect through SSH with your configured user and hostname.
+1. Select **Raspberry Pi OS Lite (64-bit)** in Raspberry Pi Imager.
+2. In Imager's OS customisation settings, configure a hostname, login user, SSH public key, Wi-Fi network and country.
+3. Write the image to your microSD card or NVMe drive and boot the Pi.
+4. Connect over SSH from your computer.
 
    ```bash
    ssh USER@HOST.local
@@ -16,7 +15,7 @@ Orion requires a Raspberry Pi 5 because the speech server uses instructions spec
 
 ## Install Orion
 
-The login user needs sudo access. Models share storage across releases. Allow space for models, the active release and one previous release.
+The login user needs `sudo` access. Shared AI models stay outside individual releases, so leave room for the models, the active release and one previous release for rollback.
 
 1. Run the installer as the login user.
 
@@ -24,118 +23,108 @@ The login user needs sudo access. Models share storage across releases. Allow sp
    curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash
    ```
 
-2. Reboot for kernel changes and device permissions.
+2. Reboot so kernel changes and device permissions take effect.
 
    ```bash
    sudo reboot
    ```
 
-3. Reconnect through SSH.
-4. Sign in to Codex.
+3. Reconnect over SSH and sign in to Codex (used for Orion's replies and web search).
 
    ```bash
    codex login --device-auth
    ```
 
-5. Complete [servo setup](hardware-versions.md#calibrate-v2-first).
+4. Complete [servo setup](hardware-versions.md#calibrate-v2-first), which assigns each servo ID, sets the mechanical rest zero, and starts the Orion services.
+5. Clear the space around the lamp as it rises to `home`, then say **"Hey Orion, what time is it?"** to confirm it hears you, speaks back and moves.
 
-The installer enables the services. First installation leaves them stopped for servo setup. Orion rises slowly to `home` when the services start.
+First-time installation enables the systemd services but leaves them stopped until servo setup finishes.
 
-The AI HAT+ is optional. HAILO8L runs face, object and palm networks when available. Each detector can fall back to the CPU. Lamps without the HAT use CPU detectors. See [vision setup](vision-reference.md) for accelerator selection and backend names.
-
-If Hailo identification needs a reboot, run the same installer after reboot to fetch its model files.
+The Raspberry Pi AI HAT+ is optional. When a HAILO8L HAT is present, face, object and palm detection run on the accelerator with automatic CPU fallback; lamps without a HAT run all detectors on the CPU. If the Pi needs a reboot before it detects the HAT, run the same installer command once more after rebooting to download the Hailo model files. See [vision detectors](vision-reference.md) for details.
 
 ## Connect Studio
 
-1. Follow [Studio development](../orion_studio/README.md#development) on your computer.
-2. Select **Pair Orion**.
-3. Enter the Pi address, such as `http://HOST.local:7447`.
-4. Request a pairing code.
-5. Enter the code spoken by Orion.
-6. Select **Pair**.
+Studio is currently built and launched from source on your computer rather than shipped as a standalone installer.
 
-**Use a token instead** accepts the Pi's `~/.config/orion/studio-token` file. See [gateway configuration](configuration.md#studio-gateway).
+1. Follow the [Studio development setup](../orion_studio/README.md#development) on your computer to launch the app.
+2. Select **Pair Orion**.
+3. Enter the Pi gateway address, such as `http://HOST.local:7447`.
+4. Request a pairing code; Orion speaks a six-digit code aloud.
+5. Enter the code and select **Pair**.
+
+If Orion cannot speak the code, select **Use a token instead** and paste the contents of `~/.config/orion/studio-token` from the Pi (see [gateway configuration](configuration.md#studio-gateway)).
 
 ## Update or restore a release
 
-1. Install a selected release with its tag.
+1. Install a specific release by tag.
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --version vX.Y.Z
    ```
 
-2. Run the installation checks.
+2. Run the installation check to print servo readings, service status and Hailo status (exits non-zero on failure).
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --check
    ```
 
-The check prints servo readings, service status and the Hailo result. A failed check returns an error.
+CAUTION: Software rollback cannot undo servo EEPROM zeroing. Only roll back to a release that uses the same V2 mechanical-rest coordinates; the installer blocks rolling back into older pre-rest-frame releases.
 
-CAUTION: Software rollback cannot reverse servo EEPROM zeroing. Use a release with the same V2 rest coordinates after zeroing.
-
-1. Restore the previous release when an update needs reversal.
+3. Restore the previous release if an update needs to be reversed.
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --rollback
    ```
 
-Rollback restores service configuration and package versions. It cannot reverse servo EEPROM changes. The installer refuses rollback into the old V2 joint coordinates.
-
 ## Update built-in assets
 
-An asset pack contains built-in poses, motions, scenes and sound cues. User folders remain unchanged. Full app installation also fetches the latest compatible pack.
+Asset packs update built-in poses, motions, scenes and sound cues without touching your user-authored files. Full app releases already bundle and fetch the latest compatible pack automatically.
 
-1. Install the latest pack compatible with the active app.
+1. Install the latest asset pack compatible with your active Orion release.
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --assets
    ```
 
-2. Select a particular compatible pack when required.
+2. Install a specific asset pack version when needed.
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --assets --version assets-vX.Y.Z
    ```
 
-The installer checks the pack checksum, asset format and joint-profile checksum before it changes the catalog. It restarts `oriond` only when it was running. Use `--rollback` to restore the previous catalog.
+The installer verifies the pack checksum, asset format and joint-profile checksum before switching, and restarts `oriond` only if it was already running. `--rollback` restores the previous asset catalogue.
 
 ## Logs and local builds
 
-The installer keeps service logs across restarts and power loss. The logs use at most 200 MB.
+Service logs persist across reboots and power loss and are capped at 200 MB.
 
-1. Read recent service messages on the Pi.
+1. View recent messages from the core services on the Pi.
 
    ```bash
    journalctl -u oriond -u orion-voice-stack -u orion-vision -n 60 --no-pager
    ```
 
-See [release packaging](release-packaging.md) for local archives and SSH deployment. See [networking](networking.md) for the optional fallback hotspot.
+For building local release archives or deploying over SSH, see [release packaging](release-packaging.md). For setting up an offline Wi-Fi recovery hotspot, see [Wi-Fi fallback](networking.md).
 
 ## Home Assistant
 
-Home Assistant Container runs on Raspberry Pi OS ARM64. Install Orion first.
+Orion can run Home Assistant Container locally on the Pi (Raspberry Pi OS ARM64) so you can control household lights, switches, fans, climate devices, covers and media players. Install Orion first.
 
-1. Select **Home** in Studio.
-2. Select **Install Home Assistant**.
-3. Wait for Home Assistant to start.
-4. Complete **Set up Home** with your name, username and password.
-5. Select **Add** beside a discovered device, or select **Add device**.
-6. Enable **Orion can control** for each entity that Orion can use.
+1. Open **Home** in Studio and select **Install Home Assistant**.
+2. Wait for Home Assistant to start, then complete **Set up Home** with your name, username and password.
+3. Select **Add** beside a discovered device, or select **Add device** to search by brand.
+4. Turn on **Voice control** for each device you want Orion to control by voice.
 
-The installer installs Docker and starts the container. It requires no Docker group change or reboot.
-The command below runs the same installation step from the Pi terminal.
+Studio installs Docker and starts the `orion-home-assistant` container without requiring a reboot or Docker group changes. You can also run the same installation from the Pi terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --home-assistant
 ```
 
-Orion installs, updates and rollbacks leave the Home Assistant container unchanged.
-The command below updates Home Assistant to the image selected by the installed Orion release.
+Orion updates and rollbacks leave the Home Assistant container untouched. Update it explicitly to the image pinned by your installed release when needed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mofe64/orion/main/scripts/install.sh | bash -s -- --home-assistant --update
 ```
 
-Home Assistant uses port 8123 on the Pi. **Open Home Assistant** opens its full interface.
-USB Zigbee and Thread radios require a Docker `--device` mapping. Orion does not configure these radios automatically.
+Home Assistant listens on port `8123` (**Open Home Assistant** in Studio opens it in your browser). USB Zigbee and Thread radios require manual Docker `--device` mappings and are not configured automatically; see [Home Assistant configuration](configuration.md#home-assistant) for details.

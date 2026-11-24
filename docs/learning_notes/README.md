@@ -1,6 +1,6 @@
 # Orion learning notes
 
-These notes describe the V1 model. See [hardware versions](../hardware-versions.md) for V2.
+Short introductions to Orion's joints, robot description (URDF) and MuJoCo simulation model. These notes cover V2 first and point out where V1 differs.
 
 - [Joint structure](orion_joints.md)
 - [URDF links, joints and frames](orion_urdf_basics.md)

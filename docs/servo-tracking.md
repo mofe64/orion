@@ -1,20 +1,18 @@
 # Servo tracking tools
 
-Tracking records commanded and measured joint positions during movement and settling. It is disabled by default. The logger refuses to overwrite an existing file.
+Orion's trajectory compiler plans ideal joint paths, while physical servos carrying a real arm lag slightly behind and show small tracking errors. Tracking tools let you record commanded versus measured joint positions during a run and measure tracking error, lag, settling and high-frequency jitter without disturbing the 50 Hz control loop.
+
+Tracking is off by default, and the logger refuses to overwrite an existing output file.
 
 ## Control boundary
 
-The 50 Hz loop reads feedback before writing its next goal. Tracking includes that normal one-cycle ordering. It does not add servo writes.
-
-A bounded queue sends records to a writer thread. Full queues drop records rather than delay movement. Serialization and file writes stay outside the movement loop. Graceful shutdown drains the queue.
-
-Records include run ID, trajectory revision, local trajectory time and terminal outcome. Speech replacements retain the run ID while changing revision.
+Each 50 Hz cycle reads servo feedback before writing the next goal, and tracking logs that exact cycle snapshot with no extra bus traffic. Records pass over a bounded queue to a background writer thread (dropping samples if full rather than delaying the motors, and draining cleanly on shutdown), tagged with `run_id`, trajectory `revision`, local trajectory time and terminal outcome.
 
 ## Enable capture
 
-The output directory must exist. Use a unique file name. Stop the installed daemon before starting another owner of its socket and servo port.
+Make sure the output directory exists, pick a fresh filename, and stop the installed daemon first so only one process owns the serial bus and socket.
 
-WARNING: Tracking playback moves powered joints. Keep support and a physical power disconnect available.
+WARNING: Tracking playback moves powered joints. Keep physical support and an accessible power disconnect ready.
 
 1. Start a V2 daemon with tracking enabled.
 
@@ -22,53 +20,47 @@ WARNING: Tracking playback moves powered joints. Keep support and a physical pow
    runtime/target/release/oriond --serve --backend hardware --hardware v2 --tracking-log /tmp/orion-tracking.jsonl
    ```
 
-2. Run the required motion through Studio or the runtime client.
-3. Return Orion to rest through the normal rest coordinator.
-4. Stop the daemon after completed rest and torque release.
+2. Run the motion or speech test through Studio or the runtime CLI.
+3. Return Orion to `rest` through the normal rest coordinator.
+4. Stop the daemon once rest completes and torque is released.
 
 ## Analyze a capture
 
-The analysis tool uses Python's standard library.
-
-1. Produce JSON and Markdown summaries from a capture.
+1. Generate JSON and Markdown summaries using Python's standard library.
 
    ```bash
    /opt/orion/python/bin/python3.12 runtime/scripts/analyze_tracking.py /tmp/orion-tracking.jsonl --json /tmp/orion-tracking.json --markdown /tmp/orion-tracking.md
    ```
 
-`--trials` restricts analysis to run IDs from a trial file. The report includes tracking error, excursion, lag, settling and queue loss.
+Pass `--trials` to restrict analysis to run IDs from a trial file. The summary reports:
 
-RMS error is the time-weighted root mean square of commanded-minus-measured position. Lag estimates a correlation delay. Low-motion or nonlinear traces can make that delay ambiguous.
-
-Present speed uses counts per second with the configured Phase register. Position derivatives also contain encoder and timing quantization. A compiled waypoint and a measured movement peak are different quantities.
-
-The report separates high-frequency tracking error by positive movement, negative movement and stationary commands. These directions use joint coordinates.
-
-The jitter measure subtracts a five-sample mean from tracking error. This window spans 100 ms at 50 Hz. Encoder quantization remains in this measure.
-
-The measure excludes windows with missing cycles, intervals above 30 ms, trajectory replacements or settling. Use the capture diagnostics to check excluded samples.
+- **RMS error:** Time-weighted root-mean-square difference between commanded and measured joint angles.
+- **Lag:** Estimated correlation delay between plan and response (note that low-motion or nonlinear traces can make correlation lag ambiguous).
+- **Directional error:** High-frequency error split by positive motion, negative motion and stationary holds in joint coordinates.
+- **Jitter:** Tracking error minus a 5-sample (100 ms at 50 Hz) moving average, omitting cycles with dropped ticks, intervals over 30 ms, trajectory replacements or settling.
+- **Present speed:** Converted from signed counts/second using the servo `Phase` register (subject to encoder and timing quantization; measured movement peaks differ from compiled waypoints).
 
 ## Gain development
 
-`--experimental-servo-gains JOINT:P:I` permits a tracked shoulder or elbow configuration. It requires hardware serving with `--tracking-log`. It leaves motion assets and completion thresholds unchanged.
+`--experimental-servo-gains JOINT:P:I` tests PID gains on a tracked shoulder or elbow run (requiring hardware mode with `--tracking-log`) without altering motion assets or completion thresholds.
 
-Gain tools use `runtime/scripts/experiment_safety.py`. A safety trip retains holding torque and creates `.experiment-safety-hold.json`. A paused daemon supplies no fresh feedback.
+Gain runs use `runtime/scripts/experiment_safety.py`; if a safety trip triggers, the daemon retains holding torque and writes `.experiment-safety-hold.json`.
 
-WARNING: Killing a paused daemon can release joint support. Support the arm before any recovery action.
+WARNING: Killing a paused daemon can drop joint support suddenly. Support the arm physically before any recovery action.
 
-1. Arrange supervised recovery after a safety hold.
-2. Keep the existing hold until the recovery procedure controls the arm.
+1. Arrange physical support and supervised recovery after a safety hold.
+2. Keep the safety hold active until the recovery procedure has control of the arm.
 
-Servo gain changes write EEPROM. Repeated alternating configurations consume write endurance. The driver reads first, writes changed values, verifies them and relocks EEPROM.
+Because servo gain changes write to EEPROM (which has finite write endurance), the driver reads existing values first, writes only changed registers, verifies them, and relocks EEPROM.
 
 ## Speech timing analysis
 
-The runtime emits `speech.motion_compiled` events with compiled stroke timing. The analyzer compares those events with recorded joint motion.
+When `oriond` logs `speech.motion_compiled` events, you can compare compiled gesture strokes against actual recorded joint motion:
 
-1. Analyze head-stroke timing with matching capture and daemon logs.
+1. Run the apex analyzer against matching tracking and daemon logs.
 
    ```bash
    /opt/orion/python/bin/python3.12 runtime/scripts/analyze_speech_apices.py hardware.jsonl daemon.log --json speech-apices.json
    ```
 
-See [speech planning](speech-animation-runtime.md) and [runtime controls](../runtime/README.md).
+See [speech animation runtime](speech-animation-runtime.md) and [runtime controls](../runtime/README.md).

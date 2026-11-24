@@ -74,7 +74,11 @@ An installed gateway reads poses and scenes from the asset catalog. It finds `or
 3. Run the source gateway with the V2 catalogue and compiled trajectory program.
 
    ```bash
-   uv run --project orion_studio --locked --managed-python python orion_studio/gateway.py serve      --bind :: --port 7447 --socket /tmp/oriond.sock      --token-file ~/.config/orion/studio-token --project-root "$PWD"      --hardware v2 --calibration "$PWD/hardware/profiles/v2-joints.json"      --trajectory-compiler "$PWD/runtime/target/release/orion-trajectory"
+   uv run --project orion_studio --locked --managed-python python orion_studio/gateway.py serve \
+     --bind :: --port 7447 --socket /tmp/oriond.sock \
+     --token-file ~/.config/orion/studio-token --project-root "$PWD" \
+     --hardware v2 --calibration "$PWD/hardware/profiles/v2-joints.json" \
+     --trajectory-compiler "$PWD/runtime/target/release/orion-trajectory"
    ```
 
 4. Run the gateway tests in its managed environment.
@@ -160,4 +164,4 @@ Orion cannot control locks, alarms, garage doors, gates, scenes or scripts.
 
 Studio displays supported setup forms. Other steps provide **Continue in Home Assistant** and **Check setup**.
 **Open Home Assistant** opens the system browser at the connected lamp’s address on port 8123.
-The Mac and lamp must share a network that permits access to that port.
+Your computer and the lamp must share a network that permits access to that port.
